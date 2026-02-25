@@ -3,6 +3,7 @@ defmodule Froth.Analyzer.API do
 
   @gemini_url "https://generativelanguage.googleapis.com/v1beta/models"
   @xai_url "https://api.x.ai/v1/chat/completions"
+  @xai_responses_url "https://api.x.ai/v1/responses"
 
   def gemini(model \\ "gemini-3-flash-preview", contents, opts \\ []) do
     api_key = System.get_env("GOOGLE_API_KEY")
@@ -72,6 +73,44 @@ defmodule Froth.Analyzer.API do
 
     case post_json(@xai_url, body, headers) do
       {:ok, %{"choices" => [%{"message" => %{"content" => text}} | _]}} ->
+        {:ok, text}
+
+      {:ok, other} ->
+        {:error, {:unexpected_response, other}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+
+  def grok_search(prompt, opts \\ []) do
+    api_key = System.get_env("XAI_API_KEY")
+    model = opts[:model] || "grok-4-1-fast-reasoning"
+
+    body = %{
+      "model" => model,
+      "input" => [%{"role" => "user", "content" => prompt}],
+      "tools" => [%{"type" => "x_search"}]
+    }
+
+    body = if opts[:max_tokens],
+      do: Map.put(body, "max_output_tokens", opts[:max_tokens]),
+      else: body
+
+    headers = [
+      {"authorization", "Bearer #{api_key}"},
+      {"content-type", "application/json"}
+    ]
+
+    case post_json(@xai_responses_url, body, headers) do
+      {:ok, %{"output" => output}} ->
+        text = output
+          |> Enum.filter(&(&1["type"] == "message"))
+          |> Enum.flat_map(& &1["content"])
+          |> Enum.filter(&(&1["type"] == "output_text"))
+          |> Enum.map(& &1["text"])
+          |> Enum.join("\n\n")
         {:ok, text}
 
       {:ok, other} ->
