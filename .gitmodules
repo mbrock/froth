@@ -1,0 +1,27 @@
+[submodule "vendor/tdlib"]
+	path = vendor/tdlib
+	url = https://github.com/tdlib/td.git
+[submodule "vendor/tgcalls"]
+	path = vendor/tgcalls
+	url = https://github.com/TelegramMessenger/tgcalls
+[submodule "vendor/webrtc"]
+	path = vendor/webrtc
+	url = https://github.com/ali-fareed/webrtc.git
+[submodule "vendor/abseil-cpp"]
+	path = vendor/abseil-cpp
+	url = https://github.com/abseil/abseil-cpp.git
+[submodule "vendor/libyuv"]
+	path = vendor/libyuv
+	url = https://chromium.googlesource.com/libyuv/libyuv.git
+[submodule "vendor/chromium-build"]
+	path = vendor/chromium-build
+	url = https://chromium.googlesource.com/chromium/src/build
+[submodule "vendor/chromium-base"]
+	path = vendor/chromium-base
+	url = https://chromium.googlesource.com/chromium/src/base
+[submodule "vendor/rnnoise"]
+	path = vendor/rnnoise
+	url = https://github.com/xiph/rnnoise.git
+[submodule "vendor/ffmpeg"]
+	path = vendor/ffmpeg
+	url = https://chromium.googlesource.com/chromium/third_party/ffmpeg.git

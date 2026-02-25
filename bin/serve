@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Wrapper for systemd: sources asdf and runs mix phx.server with --sname.
+set -euo pipefail
+
+export HOME="${HOME:-$(eval echo ~$(whoami))}"
+. "$HOME/.asdf/asdf.sh"
+
+cd /srv/froth
+epmd -daemon
+exec elixir --sname froth -S mix phx.server

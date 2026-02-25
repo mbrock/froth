@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Ensure asdf shims are available when running inside tmux/non-interactive shells.
+if [[ -f "${HOME}/.asdf/asdf.sh" ]]; then
+  # shellcheck disable=SC1090
+  . "${HOME}/.asdf/asdf.sh"
+fi
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC_DIR="$ROOT/cnode/tdlib_cnode"
+OUT_DIR="$ROOT/priv/native/tdlib_cnode"
+
+WEBRTC_OUT="${WEBRTC_OUT:-$ROOT/vendor/webrtc/out/froth_headless}"
+CLANGXX="${CLANGXX:-$ROOT/vendor/webrtc/third_party/llvm-build/Release+Asserts/bin/clang++}"
+CLANG="${CLANG:-$(dirname "$CLANGXX")/clang}"
+SYSROOT="${SYSROOT:-$ROOT/vendor/webrtc/build/linux/debian_bullseye_amd64-sysroot}"
+CXX_TOOLCHAIN="${FROTH_TDLIB_CNODE_CXX_TOOLCHAIN:-chromium}"
+BUILD_TYPE="${BUILD_TYPE:-Release}"
+
+need_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    return 1
+  fi
+}
+
+need_cmd cmake
+need_cmd cc
+need_cmd erl
+need_cmd gperf
+
+if ! echo '#include <zlib.h>' | cc -E - >/dev/null 2>&1; then
+  echo "Missing zlib headers (e.g. zlib development package)" >&2
+  exit 1
+fi
+
+GENERATOR_ARGS=()
+if command -v ninja >/dev/null 2>&1; then
+  GENERATOR_ARGS+=(-G Ninja)
+fi
+
+prepare_overlay() {
+  local overlay_dir="$1"
+  mkdir -p "$overlay_dir/third_party"
+  ln -sfn "$ROOT/vendor/chromium-base" "$overlay_dir/base"
+  ln -sfn "$ROOT/vendor/chromium-build" "$overlay_dir/build"
+  ln -sfn "$ROOT/vendor/abseil-cpp" "$overlay_dir/third_party/abseil-cpp"
+  ln -sfn "$ROOT/vendor/libyuv" "$overlay_dir/third_party/libyuv"
+  ln -sfn "$ROOT/vendor/ffmpeg" "$overlay_dir/third_party/ffmpeg"
+  ln -sfn "$ROOT/vendor/rnnoise" "$overlay_dir/third_party/rnnoise"
+}
+
+configure_build() {
+  local build_dir="$1"
+  shift
+
+  cmake -S "$SRC_DIR" -B "$build_dir" "${GENERATOR_ARGS[@]}" \
+    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+    "$@"
+}
+
+find_tdjson_lib() {
+  local build_dir="$1"
+  find "$build_dir" -maxdepth 4 -type f \
+    \( -name "libtdjson.so*" -o -name "libtdjson.dylib" -o -name "tdjson.dll" \) \
+    | head -n 1 || true
+}
+
+copy_outputs() {
+  local build_dir="$1"
+  local tdjson_from="${2:-}"
+  local built_exe="$build_dir/froth_tdlib_cnode"
+
+  if [[ ! -f "$built_exe" ]]; then
+    echo "Build produced no executable at $built_exe" >&2
+    exit 1
+  fi
+
+  mkdir -p "$OUT_DIR"
+
+  # Avoid "Text file busy" when swapping executable while old one is running.
+  local tmp_exe="$OUT_DIR/tdlib_cnode.new.$$"
+  cp "$built_exe" "$tmp_exe"
+  chmod +x "$tmp_exe"
+  mv -f "$tmp_exe" "$OUT_DIR/tdlib_cnode"
+
+  local tdjson_lib="$tdjson_from"
+  if [[ -z "$tdjson_lib" ]]; then
+    tdjson_lib="$(find_tdjson_lib "$build_dir")"
+  fi
+  if [[ -n "$tdjson_lib" ]]; then
+    local tdjson_name
+    tdjson_name="$(basename "$tdjson_lib")"
+    local tdjson_dest="$OUT_DIR/$tdjson_name"
+    local tdjson_tmp="$tdjson_dest.new.$$"
+    cp "$tdjson_lib" "$tdjson_tmp"
+    chmod +x "$tdjson_tmp" || true
+    mv -f "$tdjson_tmp" "$tdjson_dest"
+  fi
+}
+
+build_dir="$SRC_DIR/build/$CXX_TOOLCHAIN"
+
+case "$CXX_TOOLCHAIN" in
+  chromium)
+    if [[ ! -f "$CLANGXX" ]]; then
+      echo "Missing Chromium clang++ at $CLANGXX" >&2
+      exit 1
+    fi
+    if [[ ! -f "$CLANG" ]]; then
+      echo "Missing Chromium clang at $CLANG" >&2
+      exit 1
+    fi
+    if [[ ! -d "$SYSROOT" ]]; then
+      echo "Missing Chromium sysroot at $SYSROOT" >&2
+      exit 1
+    fi
+    if [[ ! -f "$WEBRTC_OUT/obj/libwebrtc.a" ]]; then
+      echo "Missing WebRTC static archive at $WEBRTC_OUT/obj/libwebrtc.a" >&2
+      exit 1
+    fi
+
+    overlay_dir="$ROOT/tmp/tgcalls_include_overlay"
+    prepare_overlay "$overlay_dir"
+
+    tdjson_build_dir="$SRC_DIR/build/tdjson-system"
+    configure_build "$tdjson_build_dir" \
+      -DFROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN=OFF
+
+    cmake --build "$tdjson_build_dir" --target tdjson -j
+
+    tdjson_lib="$(find_tdjson_lib "$tdjson_build_dir")"
+    if [[ -z "$tdjson_lib" ]]; then
+      echo "Could not locate libtdjson in $tdjson_build_dir after tdjson build" >&2
+      exit 1
+    fi
+    tdjson_include_dir="$tdjson_build_dir/tdlib"
+    if [[ ! -f "$tdjson_include_dir/td/telegram/tdjson_export.h" ]]; then
+      echo "Could not locate generated tdjson_export.h under $tdjson_include_dir" >&2
+      exit 1
+    fi
+
+    libstdcpp_path="$(g++ -print-file-name=libstdc++.so)"
+    if [[ -z "$libstdcpp_path" || "$libstdcpp_path" == "libstdc++.so" ]]; then
+      echo "Could not resolve libstdc++.so path from g++" >&2
+      exit 1
+    fi
+    libstdcpp_dir="$(dirname "$libstdcpp_path")"
+
+    configure_build "$build_dir" \
+      -DCMAKE_C_COMPILER="$CLANG" \
+      -DCMAKE_CXX_COMPILER="$CLANGXX" \
+      -DCMAKE_EXE_LINKER_FLAGS="-L${libstdcpp_dir}" \
+      -DCMAKE_SHARED_LINKER_FLAGS="-L${libstdcpp_dir}" \
+      -DFROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN=ON \
+      -DFROTH_WEBRTC_OUT="$WEBRTC_OUT" \
+      -DFROTH_SYSROOT="$SYSROOT" \
+      -DFROTH_OVERLAY_DIR="$overlay_dir" \
+      -DFROTH_TDJSON_LIBRARY="$tdjson_lib" \
+      -DFROTH_TDJSON_INCLUDE_DIR="$tdjson_include_dir"
+
+    cmake --build "$build_dir" --target froth_tdlib_cnode -j
+    ;;
+  system)
+    configure_build "$build_dir" \
+      -DFROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN=OFF
+
+    cmake --build "$build_dir" --target froth_tdlib_cnode -j
+    ;;
+  *)
+    echo "Unknown FROTH_TDLIB_CNODE_CXX_TOOLCHAIN=$CXX_TOOLCHAIN (expected: chromium|system)" >&2
+    exit 1
+    ;;
+esac
+
+copy_outputs "$build_dir" "${tdjson_lib:-}"
+
+echo "Built $OUT_DIR/tdlib_cnode (toolchain: $CXX_TOOLCHAIN)"

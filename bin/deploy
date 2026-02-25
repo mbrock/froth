@@ -1,0 +1,23 @@
+#!/bin/bash
+# Compile locally, then hot-reload changed modules on the running node.
+# Usage: bin/deploy
+set -e
+
+echo "Compiling..."
+mix compile
+
+echo "Reloading on live node..."
+cat <<'EOF' | bin/rpc
+mods = :code.modified_modules()
+case mods do
+  [] ->
+    IO.puts("No modules changed.")
+  _ ->
+    Enum.each(mods, fn mod ->
+      :code.purge(mod)
+      :code.load_file(mod)
+      IO.puts("  reloaded #{mod}")
+    end)
+    IO.puts("Done. #{length(mods)} module(s) reloaded.")
+end
+EOF

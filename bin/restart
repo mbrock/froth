@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Restart froth via systemd user service.
+set -euo pipefail
+
+systemctl --user restart froth
+echo "Restarted. Logs: journalctl --user -u froth -f"

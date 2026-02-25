@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT_DIR="$ROOT/priv/native/tdlib_cnode"
+BUILD_DIR="$ROOT/tmp/tgcalls_plugin_build"
+WEBRTC_OUT="${WEBRTC_OUT:-$ROOT/vendor/webrtc/out/froth_headless}"
+WEBRTC_OBJ_DIR="$WEBRTC_OUT/obj"
+CLANGXX="${CLANGXX:-$ROOT/vendor/webrtc/third_party/llvm-build/Release+Asserts/bin/clang++}"
+SYSROOT="${SYSROOT:-$ROOT/vendor/webrtc/build/linux/debian_bullseye_amd64-sysroot}"
+PLUGIN_STDLIB="${PLUGIN_STDLIB:-libc++}"
+
+need_file() {
+  if [[ ! -f "$1" ]]; then
+    echo "Missing required file: $1" >&2
+    exit 1
+  fi
+}
+
+need_dir() {
+  if [[ ! -d "$1" ]]; then
+    echo "Missing required directory: $1" >&2
+    exit 1
+  fi
+}
+
+need_file "$CLANGXX"
+need_dir "$WEBRTC_OBJ_DIR"
+need_file "$WEBRTC_OBJ_DIR/libwebrtc.a"
+need_file "$ROOT/cnode/tdlib_cnode/src/tgcalls_register_plugin.cpp"
+need_file "$ROOT/cnode/tdlib_cnode/src/tgcalls_compat_shim.cpp"
+
+if [[ "$PLUGIN_STDLIB" == "libc++" ]]; then
+  need_dir "$SYSROOT"
+fi
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+  echo "build_tgcalls_register_plugin currently supports Linux only." >&2
+  exit 1
+fi
+
+case "$(uname -m)" in
+  x86_64 | amd64)
+    ffmpeg_arch="x64"
+    ;;
+  aarch64 | arm64)
+    ffmpeg_arch="arm64"
+    ;;
+  *)
+    ffmpeg_arch="x64"
+    ;;
+esac
+
+ffmpeg_config_dir="$ROOT/vendor/ffmpeg/chromium/config/Chrome/linux/$ffmpeg_arch"
+if [[ ! -d "$ffmpeg_config_dir" ]]; then
+  ffmpeg_config_dir="$ROOT/vendor/ffmpeg/chromium/config/Chrome/linux/x64"
+fi
+
+overlay_dir="$ROOT/tmp/tgcalls_include_overlay"
+mkdir -p "$overlay_dir/third_party"
+ln -sfn "$ROOT/vendor/chromium-base" "$overlay_dir/base"
+ln -sfn "$ROOT/vendor/chromium-build" "$overlay_dir/build"
+ln -sfn "$ROOT/vendor/abseil-cpp" "$overlay_dir/third_party/abseil-cpp"
+ln -sfn "$ROOT/vendor/libyuv" "$overlay_dir/third_party/libyuv"
+ln -sfn "$ROOT/vendor/ffmpeg" "$overlay_dir/third_party/ffmpeg"
+ln -sfn "$ROOT/vendor/rnnoise" "$overlay_dir/third_party/rnnoise"
+
+mkdir -p "$BUILD_DIR/obj" "$OUT_DIR"
+rm -f "$BUILD_DIR"/obj/*.o
+
+includes=(
+  "-I$ROOT/vendor/webrtc"
+  "-I$WEBRTC_OUT/gen"
+  "-I$ROOT/vendor/webrtc/buildtools/third_party/libc++"
+  "-I$ROOT/vendor/abseil-cpp"
+  "-I$ROOT/vendor/libyuv/include"
+  "-I$ffmpeg_config_dir"
+  "-I$ROOT/vendor/ffmpeg"
+  "-I$ROOT/vendor/rnnoise/include"
+  "-I$ROOT/vendor/tgcalls"
+  "-I$ROOT/vendor/tgcalls/tgcalls"
+  "-I$overlay_dir"
+)
+
+defines=(
+  "-DUSE_UDEV"
+  "-D__STDC_CONSTANT_MACROS"
+  "-D__STDC_FORMAT_MACROS"
+  "-D_FORTIFY_SOURCE=2"
+  "-D_FILE_OFFSET_BITS=64"
+  "-D_LARGEFILE_SOURCE"
+  "-D_LARGEFILE64_SOURCE"
+  "-D_GNU_SOURCE"
+  "-DCR_CLANG_REVISION=\"llvmorg-18-init-17730-gf670112a-4\""
+  "-DNDEBUG"
+  "-DNVALGRIND"
+  "-DDYNAMIC_ANNOTATIONS_ENABLED=0"
+  "-DWEBRTC_ENABLE_PROTOBUF=0"
+  "-DWEBRTC_STRICT_FIELD_TRIALS=0"
+  "-DRTC_ENABLE_VP9"
+  "-DWEBRTC_HAVE_SCTP"
+  "-DWEBRTC_ENABLE_LIBEVENT"
+  "-DWEBRTC_LIBRARY_IMPL"
+  "-DWEBRTC_ENABLE_AVX2"
+  "-DWEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS=0"
+  "-DWEBRTC_POSIX"
+  "-DWEBRTC_LINUX"
+  "-DABSL_ALLOCATOR_NOTHROW=1"
+  "-DHAVE_NETINET_IN_H"
+  "-DHAVE_SCTP"
+  "-DNO_MAIN_THREAD_WRAPPING"
+  "-DRTC_DISABLE_TRACE_EVENTS"
+  "-DWEBRTC_APM_DEBUG_DUMP=0"
+  "-DWEBRTC_HAVE_DCSCTP"
+  "-DWEBRTC_OPUS_SUPPORT_120MS_PTIME=1"
+  "-DWEBRTC_OPUS_VARIABLE_COMPLEXITY=0"
+)
+
+common_cflags=(
+  "-std=c++20"
+  "-fPIC"
+  "-pthread"
+  "-fno-delete-null-pointer-checks"
+  "-fno-ident"
+  "-fno-strict-aliasing"
+  "-fstack-protector"
+  "-funwind-tables"
+  "-fcolor-diagnostics"
+  "-fmerge-all-constants"
+  "-ffp-contract=off"
+  "-m64"
+  "-msse3"
+  "-ftrivial-auto-var-init=pattern"
+  "-O2"
+  "-fdata-sections"
+  "-ffunction-sections"
+  "-fno-unique-section-names"
+  "-fno-math-errno"
+  "-fno-omit-frame-pointer"
+  "-g0"
+  "-fvisibility=hidden"
+  "-fvisibility-inlines-hidden"
+  "-fno-exceptions"
+  "-fno-rtti"
+  "-Wall"
+  "-Wextra"
+  "-Wno-unused-parameter"
+  "-Wno-deprecated-this-capture"
+  "-Wno-invalid-offsetof"
+  "-Wno-vla-extension"
+  "-Wno-thread-safety-reference-return"
+  "-Wshadow"
+  "-Wno-shadow"
+)
+
+libstdcpp_lib_dir=""
+
+if [[ "$PLUGIN_STDLIB" == "libc++" ]]; then
+  defines+=(
+    "-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE"
+    "-D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS"
+    "-D_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS"
+    "-DCR_LIBCXX_REVISION=9d119c1f4a097b7d27210874f4eba3fc91a83a4e"
+    "-DCR_SYSROOT_KEY=20230611T210420Z-2"
+  )
+
+  common_cflags+=(
+    "--sysroot=$SYSROOT"
+    "-nostdinc++"
+    "-isystem$ROOT/vendor/webrtc/third_party/libc++/src/include"
+    "-isystem$ROOT/vendor/webrtc/third_party/libc++abi/src/include"
+    "-fcomplete-member-pointers"
+  )
+else
+  libstdcpp_version="$(ls -1 /usr/include/c++ 2>/dev/null | sort -V | tail -n 1 || true)"
+  if [[ -z "$libstdcpp_version" ]]; then
+    echo "Could not locate libstdc++ headers under /usr/include/c++" >&2
+    exit 1
+  fi
+
+  if ! command -v g++ >/dev/null 2>&1; then
+    echo "g++ is required for libstdc++ mode" >&2
+    exit 1
+  fi
+
+  libstdcpp_so="$(g++ -print-file-name=libstdc++.so)"
+  if [[ -z "$libstdcpp_so" || "$libstdcpp_so" == "libstdc++.so" ]]; then
+    echo "Could not locate libstdc++.so via g++" >&2
+    exit 1
+  fi
+  libstdcpp_lib_dir="$(dirname "$libstdcpp_so")"
+
+  common_cflags+=(
+    "-stdlib=libstdc++"
+    "-isystem/usr/include/c++/$libstdcpp_version"
+    "-isystem/usr/include/x86_64-linux-gnu/c++/$libstdcpp_version"
+    "-isystem/usr/include/c++/$libstdcpp_version/backward"
+  )
+fi
+
+sources=(
+  "$ROOT/cnode/tdlib_cnode/src/tgcalls_register_plugin.cpp"
+  "$ROOT/cnode/tdlib_cnode/src/tgcalls_compat_shim.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/InstanceImpl.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/Manager.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/MediaManager.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/Message.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/EncryptedConnection.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/NetworkManager.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/ThreadLocalObject.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/StaticThreads.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/FieldTrialsConfig.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/ChannelManager.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/CodecSelectHelper.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/CryptoHelper.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/SctpDataChannelProviderInterfaceImpl.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/LogSinkImpl.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/TurnCustomizerImpl.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/AudioDeviceHelper.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/VideoCaptureInterface.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/VideoCaptureInterfaceImpl.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/FakeVideoTrackSource.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/FakeAudioDeviceModule.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/third-party/json11.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/utils/gzip.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/InstanceV2Impl.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/ContentNegotiation.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/DirectNetworkingImpl.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/ExternalSignalingConnection.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/NativeNetworkingImpl.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/RawTcpSocket.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/ReflectorPort.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/ReflectorRelayPortFactory.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/Signaling.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/SignalingConnection.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/SignalingEncryption.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/SignalingSctpConnection.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2_4_0_0/Signaling_4_0_0.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/platform/fake/FakeInterface.cpp"
+)
+
+for source in "${sources[@]}"; do
+  need_file "$source"
+  rel_source="${source#$ROOT/}"
+  object_name="${rel_source//\//__}.o"
+  object_path="$BUILD_DIR/obj/$object_name"
+
+  cflags=("${common_cflags[@]}")
+  if [[ "$source" == *"/tgcalls_register_plugin.cpp" ]]; then
+    cflags=("${cflags[@]/-fvisibility=hidden/-fvisibility=default}")
+  fi
+
+  echo "[tgcalls-plugin] compile ${rel_source}"
+  "$CLANGXX" "${cflags[@]}" "${includes[@]}" "${defines[@]}" -c "$source" -o "$object_path"
+done
+
+mapfile -t webrtc_libs < <(find "$WEBRTC_OBJ_DIR" -type f -name "*.a" | sort)
+
+libcxx_objs=()
+libcxxabi_objs=()
+if [[ "$PLUGIN_STDLIB" == "libc++" ]]; then
+  mapfile -t libcxx_objs < <(find "$WEBRTC_OBJ_DIR/buildtools/third_party/libc++/libc++" -type f -name "*.o" | sort)
+  mapfile -t libcxxabi_objs < <(find "$WEBRTC_OBJ_DIR/buildtools/third_party/libc++abi/libc++abi" -type f -name "*.o" | sort)
+fi
+
+if [[ "${#webrtc_libs[@]}" -eq 0 ]]; then
+  echo "No WebRTC static libraries found under $WEBRTC_OBJ_DIR" >&2
+  exit 1
+fi
+
+target_so="$OUT_DIR/libfroth_tgcalls_register.so"
+tmp_so="$target_so.new.$$"
+
+echo "[tgcalls-plugin] link ${target_so#$ROOT/}"
+link_args=(
+  -shared
+  -o "$tmp_so"
+  "$BUILD_DIR"/obj/*.o
+  -Wl,--start-group "${webrtc_libs[@]}" -Wl,--end-group
+)
+
+if [[ "$PLUGIN_STDLIB" == "libc++" ]]; then
+  link_args+=(
+    -nostdlib++
+    "${libcxx_objs[@]}" "${libcxxabi_objs[@]}"
+    -Wl,--start-group -lpthread -ldl -lz -lm -lc -lgcc_s -lgcc -Wl,--end-group
+  )
+else
+  link_args+=(
+    -stdlib=libstdc++
+    "-L$libstdcpp_lib_dir"
+    -Wl,--start-group -lstdc++ -lpthread -ldl -lz -lm -lc -lgcc_s -lgcc -Wl,--end-group
+  )
+fi
+
+"$CLANGXX" "${link_args[@]}"
+
+nm -D "$tmp_so" | rg -q " T froth_tgcalls_register$" || {
+  echo "froth_tgcalls_register symbol missing from plugin" >&2
+  exit 1
+}
+
+if ! nm -u "$tmp_so" | rg -q "_ZN7tgcalls4Meta11RegisterOne"; then
+  echo "warning: unresolved tgcalls::Meta::RegisterOne symbol was not found" >&2
+fi
+
+chmod +x "$tmp_so"
+mv -f "$tmp_so" "$target_so"
+
+echo "[tgcalls-plugin] built $target_so"
+echo "[tgcalls-plugin] export FROTH_TGCALLS_PLUGIN=$target_so"

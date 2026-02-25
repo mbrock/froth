@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+need_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+need_cmd c++
+
+required_dirs=(
+  "vendor/tgcalls"
+  "vendor/webrtc"
+  "vendor/abseil-cpp"
+  "vendor/libyuv"
+  "vendor/chromium-base"
+  "vendor/chromium-build"
+  "vendor/ffmpeg"
+  "vendor/rnnoise"
+)
+
+for dir in "${required_dirs[@]}"; do
+  if [[ ! -d "$ROOT/$dir" ]]; then
+    echo "Missing dependency directory: $dir" >&2
+    echo "Run: git submodule update --init --recursive" >&2
+    exit 1
+  fi
+done
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+  echo "build_tgcalls_smoke currently supports Linux only." >&2
+  exit 1
+fi
+
+case "$(uname -m)" in
+  x86_64 | amd64)
+    ffmpeg_arch="x64"
+    ;;
+  aarch64 | arm64)
+    ffmpeg_arch="arm64"
+    ;;
+  *)
+    ffmpeg_arch="x64"
+    ;;
+esac
+
+ffmpeg_config_dir="$ROOT/vendor/ffmpeg/chromium/config/Chrome/linux/$ffmpeg_arch"
+if [[ ! -d "$ffmpeg_config_dir" ]]; then
+  ffmpeg_config_dir="$ROOT/vendor/ffmpeg/chromium/config/Chrome/linux/x64"
+fi
+
+overlay_dir="$ROOT/tmp/tgcalls_include_overlay"
+mkdir -p "$overlay_dir/third_party"
+ln -sfn "$ROOT/vendor/chromium-base" "$overlay_dir/base"
+ln -sfn "$ROOT/vendor/chromium-build" "$overlay_dir/build"
+ln -sfn "$ROOT/vendor/abseil-cpp" "$overlay_dir/third_party/abseil-cpp"
+ln -sfn "$ROOT/vendor/libyuv" "$overlay_dir/third_party/libyuv"
+ln -sfn "$ROOT/vendor/ffmpeg" "$overlay_dir/third_party/ffmpeg"
+ln -sfn "$ROOT/vendor/rnnoise" "$overlay_dir/third_party/rnnoise"
+
+include_dirs=(
+  "$ROOT/vendor/tgcalls"
+  "$ROOT/vendor/tgcalls/tgcalls"
+  "$ROOT/vendor/webrtc"
+  "$overlay_dir"
+  "$ROOT/vendor/abseil-cpp"
+  "$ROOT/vendor/libyuv/include"
+  "$ffmpeg_config_dir"
+  "$ROOT/vendor/ffmpeg"
+  "$ROOT/vendor/rnnoise/include"
+)
+
+defines=(
+  "WEBRTC_POSIX=1"
+  "WEBRTC_LINUX=1"
+  "NDEBUG=1"
+  "RTC_ENABLE_VP9=1"
+  "WEBRTC_USE_BUILTIN_ISAC_FLOAT"
+  "ABSL_ALLOCATOR_NOTHROW=1"
+  "BWE_TEST_LOGGING_COMPILE_TIME_ENABLE=0"
+  "HAVE_NETINET_IN_H"
+  "HAVE_SCTP"
+  "HAVE_WEBRTC_VIDEO"
+  "NO_MAIN_THREAD_WRAPPING"
+  "RTC_DISABLE_TRACE_EVENTS"
+  "WEBRTC_APM_DEBUG_DUMP=0"
+  "WEBRTC_ENABLE_PROTOBUF=0"
+  "WEBRTC_HAVE_DCSCTP"
+  "WEBRTC_HAVE_SCTP"
+  "WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE"
+  "WEBRTC_LIBRARY_IMPL"
+  "WEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS=1"
+  "WEBRTC_OPUS_SUPPORT_120MS_PTIME=1"
+  "WEBRTC_OPUS_VARIABLE_COMPLEXITY=0"
+  "WEBRTC_USE_H264"
+)
+
+sources=(
+  "$ROOT/vendor/tgcalls/tgcalls/InstanceImpl.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/v2/InstanceV2Impl.cpp"
+  "$ROOT/vendor/tgcalls/tgcalls/group/GroupInstanceCustomImpl.cpp"
+)
+
+compile_flags=("-std=c++20" "-fsyntax-only")
+for include_dir in "${include_dirs[@]}"; do
+  compile_flags+=("-I${include_dir}")
+done
+for define in "${defines[@]}"; do
+  compile_flags+=("-D${define}")
+done
+
+for source in "${sources[@]}"; do
+  relative_source="${source#$ROOT/}"
+  echo "[tgcalls-smoke] checking $relative_source"
+  c++ "${compile_flags[@]}" "$source"
+done
+
+echo "[tgcalls-smoke] smoke compile succeeded"

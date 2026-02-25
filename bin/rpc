@@ -1,0 +1,30 @@
+#!/bin/bash
+# Run Elixir code on the running froth@igloo node.
+# Usage: bin/rpc 'IO.puts("hello")'
+#    or: echo 'IO.puts("hello")' | bin/rpc
+set -e
+COOKIE="${ERLANG_COOKIE:-$(cat ~/.erlang.cookie 2>/dev/null)}"
+NODE="${RPC_NODE:-froth@igloo}"
+
+if [ $# -gt 0 ]; then
+  CODE="$1"
+else
+  CODE="$(cat)"
+fi
+
+CODEFILE=$(mktemp /tmp/rpc_code_XXXXXX)
+RUNNER=$(mktemp /tmp/rpc_run_XXXXXX.exs)
+cleanup() { rm -f "$CODEFILE" "$RUNNER"; }
+trap cleanup EXIT
+
+printf '%s' "$CODE" > "$CODEFILE"
+
+cat > "$RUNNER" <<ENDSCRIPT
+Node.connect(:"${NODE}")
+code = File.read!("${CODEFILE}")
+gl = Process.group_leader()
+result = :rpc.call(:"${NODE}", Froth.RPC, :eval, [gl, code])
+IO.inspect(result, limit: :infinity, printable_limit: :infinity)
+ENDSCRIPT
+
+exec elixir --sname "rpc_$$" --cookie "$COOKIE" "$RUNNER"

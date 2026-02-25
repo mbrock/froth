@@ -1,0 +1,22 @@
+[Unit]
+Description=Froth dev server
+After=network.target postgresql.service
+
+[Service]
+Type=notify
+WorkingDirectory=/srv/froth
+ExecStart=/srv/froth/bin/serve
+Restart=always
+RestartSec=3
+SyslogIdentifier=froth
+
+# Give beam time to shut down gracefully
+TimeoutStopSec=15
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Increase file descriptor limit for TDLib
+LimitNOFILE=65536
+
+[Install]
+WantedBy=default.target

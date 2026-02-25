@@ -1,0 +1,82 @@
+# The directory Mix will write compiled artifacts to.
+/_build/
+
+# If you run "mix test --cover", coverage assets end up here.
+/cover/
+
+# The directory Mix downloads your dependencies sources to.
+/deps/
+
+# Where 3rd-party dependencies like ExDoc output generated docs.
+/doc/
+
+# Ignore .fetch files in case you like to edit your project deps locally.
+/.fetch
+
+# If the VM crashes, it generates a dump, let's ignore it too.
+erl_crash.dump
+
+# Also ignore archive artifacts (built via "mix archive.build").
+*.ez
+
+# Temporary files, for example, from tests.
+/tmp/
+
+# Ignore package tarball (built via "mix hex.build").
+froth-*.tar
+
+# Ignore assets that are produced by build tools.
+/priv/static/assets/
+
+# Ignore digested assets cache.
+/priv/static/cache_manifest.json
+
+# In case you use Node.js/npm, you want to ignore these.
+npm-debug.log
+/assets/node_modules/
+
+.env
+
+# TDLib C node build outputs
+/cnode/tdlib_cnode/build/
+/cnode/build.ninja
+/cnode/CMakeCache.txt
+/cnode/CMakeFiles/
+/cnode/cmake_install.cmake
+/cnode/compile_commands.json
+/cnode/froth_tdlib_cnode
+/cnode/tdlib/
+/priv/native/tdlib_cnode/
+
+# TDLib runtime data dirs (local)
+/tdlib-db/
+/tdlib-files/
+
+# Log files
+/log/
+
+# Large data files
+/priv/data/
+
+# Database backups
+/backups/
+
+# WebRTC / gclient vendor build artifacts
+/vendor/.cipd/
+/vendor/.gclient
+/vendor/.gclient_entries
+/vendor/.gclient_previous_custom_vars
+/vendor/.gclient_previous_sync_commits
+/vendor/depot_tools/
+/vendor/src/
+
+# Sounds (generated/large)
+/sounds/
+
+# Backup files
+*.bak
+*.bak2
+*.bak3
+
+# Compiled NIFs (rebuild with `make nif`)
+/priv/*.so

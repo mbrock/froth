@@ -1,0 +1,220 @@
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Cormorant+SC:wght@400;500;600;700&display=swap');
+
+:root {
+  --text: #1a1a1a;
+  --bg: #f5f0e8;
+  --accent: #8b0000;
+  --border: #c4b5a0;
+  --link: #4a2c2a;
+  --link-hover: #8b0000;
+  --aside-bg: #ede7da;
+  --drop-cap: #8b0000;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html {
+  font-size: 18px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family: 'EB Garamond', Georgia, 'Times New Roman', serif;
+  line-height: 1.7;
+  max-width: 42em;
+  margin: 0 auto;
+  padding: 2em 1.5em 4em;
+}
+
+/* HEADER */
+header {
+  text-align: center;
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 1.5em;
+  margin-bottom: 2.5em;
+}
+
+header h1 {
+  font-family: 'Cormorant SC', Georgia, serif;
+  font-weight: 700;
+  font-size: 2.4rem;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  margin-bottom: 0.1em;
+}
+
+header .subtitle {
+  font-family: 'Cormorant SC', Georgia, serif;
+  font-weight: 400;
+  font-size: 0.9rem;
+  letter-spacing: 0.25em;
+  color: #6b5b4f;
+  text-transform: lowercase;
+  font-variant: small-caps;
+}
+
+/* NAVIGATION */
+nav {
+  text-align: center;
+  margin-bottom: 2em;
+  font-size: 0.85rem;
+  font-family: 'Cormorant SC', Georgia, serif;
+  letter-spacing: 0.08em;
+}
+
+nav a {
+  color: var(--link);
+  text-decoration: none;
+  margin: 0 0.5em;
+}
+
+nav a:hover {
+  color: var(--link-hover);
+  text-decoration: underline;
+}
+
+/* ENTRIES */
+article {
+  margin-bottom: 3em;
+}
+
+article h2 {
+  font-family: 'Cormorant SC', Georgia, serif;
+  font-weight: 600;
+  font-size: 1.5rem;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+  margin-bottom: 1em;
+}
+
+article h2 .entry-num {
+  font-weight: 400;
+  font-size: 0.8em;
+  color: #8a7b6b;
+}
+
+article p {
+  text-align: justify;
+  margin-bottom: 1em;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+
+article p.first::first-letter {
+  font-family: 'Cormorant SC', Georgia, serif;
+  float: left;
+  font-size: 3.5em;
+  line-height: 0.8;
+  padding-right: 0.08em;
+  padding-top: 0.05em;
+  color: var(--drop-cap);
+  font-weight: 700;
+}
+
+/* CROSS REFERENCES */
+a.xref {
+  color: var(--link);
+  text-decoration: none;
+  font-variant: small-caps;
+  font-family: 'Cormorant SC', Georgia, serif;
+  font-size: 0.92em;
+  letter-spacing: 0.03em;
+}
+
+a.xref:hover {
+  color: var(--link-hover);
+  text-decoration: underline;
+}
+
+/* MATHEME */
+.matheme {
+  text-align: center;
+  font-size: 1.4rem;
+  margin: 1.5em 0;
+  color: var(--accent);
+  font-style: italic;
+  letter-spacing: 0.05em;
+}
+
+/* ASIDE / NOTA BENE */
+aside {
+  background: var(--aside-bg);
+  border-left: 3px solid var(--accent);
+  padding: 1em 1.2em;
+  margin: 1.5em 0;
+  font-size: 0.92rem;
+}
+
+aside .label {
+  font-family: 'Cormorant SC', Georgia, serif;
+  font-weight: 600;
+  font-size: 0.85rem;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  display: block;
+  margin-bottom: 0.3em;
+}
+
+/* SEPARATOR */
+.sep {
+  text-align: center;
+  margin: 2em 0;
+  color: var(--border);
+  font-size: 1.2rem;
+  letter-spacing: 0.5em;
+}
+
+/* FOOTER */
+footer {
+  text-align: center;
+  margin-top: 3em;
+  padding-top: 1.5em;
+  border-top: 2px solid var(--accent);
+  font-family: 'Cormorant SC', Georgia, serif;
+  font-size: 0.8rem;
+  color: #8a7b6b;
+  letter-spacing: 0.15em;
+}
+
+/* INDEX PAGE */
+.index-grid {
+  columns: 2;
+  column-gap: 2em;
+  margin: 1.5em 0;
+}
+
+.index-grid a {
+  display: block;
+  padding: 0.25em 0;
+  color: var(--link);
+  text-decoration: none;
+  font-size: 1rem;
+  break-inside: avoid;
+}
+
+.index-grid a:hover {
+  color: var(--link-hover);
+}
+
+.index-grid a .num {
+  font-size: 0.8em;
+  color: #8a7b6b;
+  margin-right: 0.3em;
+}
+
+.index-grid a .title {
+  font-family: 'Cormorant SC', Georgia, serif;
+  font-variant: small-caps;
+  letter-spacing: 0.05em;
+}
+
+/* RESPONSIVE */
+@media (max-width: 600px) {
+  html { font-size: 16px; }
+  body { padding: 1em; }
+  .index-grid { columns: 1; }
+  article p.first::first-letter { font-size: 2.8em; }
+}

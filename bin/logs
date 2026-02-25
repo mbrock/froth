@@ -1,0 +1,5 @@
+#!/bin/bash
+# Tail froth logs. Pass extra journalctl args if you want.
+# Usage: bin/logs        (follow)
+#        bin/logs -n 100  (last 100 lines)
+exec journalctl --user -u froth -o cat --no-hostname "$@"

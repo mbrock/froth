@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="csrf-token" content={get_csrf_token()} />
+    <link phx-track-static rel="stylesheet" href="/froth/assets/css/app.css" />
+    <script src="https://telegram.org/js/telegram-web-app.js">
+    </script>
+    <script>
+      // Forward console output to server for debugging
+      (function() {
+        var buf = [];
+        var timer = null;
+        function flush() {
+          if (buf.length === 0) return;
+          var batch = buf.splice(0, buf.length);
+          try {
+            fetch("/froth/mini/debug", {
+              method: "POST",
+              headers: {"content-type": "application/json"},
+              body: JSON.stringify({logs: batch})
+            });
+          } catch(e) {}
+        }
+        function log(level, args) {
+          buf.push({level: level, msg: Array.from(args).map(String).join(" "), t: Date.now()});
+          if (!timer) timer = setTimeout(function() { timer = null; flush(); }, 500);
+        }
+        var origLog = console.log, origWarn = console.warn, origError = console.error;
+        console.log = function() { origLog.apply(console, arguments); log("log", arguments); };
+        console.warn = function() { origWarn.apply(console, arguments); log("warn", arguments); };
+        console.error = function() { origError.apply(console, arguments); log("error", arguments); };
+        window.addEventListener("error", function(e) {
+          log("uncaught", [e.message, e.filename + ":" + e.lineno + ":" + e.colno]);
+        });
+        window.addEventListener("unhandledrejection", function(e) {
+          log("rejection", [String(e.reason)]);
+        });
+      })();
+
+      document.addEventListener("DOMContentLoaded", () => {
+        if (window.Telegram && window.Telegram.WebApp) {
+          Telegram.WebApp.ready();
+          Telegram.WebApp.expand();
+        }
+      });
+    </script>
+    <script defer phx-track-static type="text/javascript" src="/froth/assets/js/app.js">
+    </script>
+  </head>
+  <body style="margin:0; background:#000;">
+    {@inner_content}
+  </body>
+</html>
