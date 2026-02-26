@@ -38,11 +38,14 @@ defmodule Froth.Telegram.UpdateRouter do
 
     sender = get_in(msg, ["sender_id", "user_id"])
 
+    is_reply_to_bot = replied_to_bot?(msg, bot_user_id)
+
     cond do
       sender == bot_user_id ->
         :ignore
 
-      BotAdapter.mentioned?(msg, bot_username, bot_user_id, Keyword.get(opts, :name_triggers, [])) and
+      (BotAdapter.mentioned?(msg, bot_username, bot_user_id, Keyword.get(opts, :name_triggers, [])) or
+         is_reply_to_bot) and
           BotAdapter.allowed_chat?(msg["chat_id"], owner_user_id, session_id) ->
         {:start_inference_session, msg}
 
@@ -53,7 +56,29 @@ defmodule Froth.Telegram.UpdateRouter do
 
   defp route_new_message(_, _), do: :ignore
 
-  defp route_callback_query(query) do
+  defp replied_to_bot?(msg, bot_user_id) when is_map(msg) and is_integer(bot_user_id) do
+    case msg do
+      %{"reply_to" => %{"@type" => "messageReplyToMessage", "message_id" => reply_msg_id, "chat_id" => chat_id}}
+          when is_integer(reply_msg_id) and is_integer(chat_id) ->
+        # Look up whether the replied-to message was sent by this bot
+        import Ecto.Query, only: [from: 2]
+
+        case Froth.Repo.one(
+               from(m in "telegram_messages",
+                 where: m.chat_id == ^chat_id and m.message_id == ^reply_msg_id,
+                 select: m.sender_id
+               )
+             ) do
+          ^bot_user_id -> true
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
+  end
+
+    defp route_callback_query(query) do
     case parse_callback_payload(query) do
       {:ok, action, arg} ->
         query_id = query["id"]

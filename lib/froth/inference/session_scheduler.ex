@@ -43,13 +43,27 @@ defmodule Froth.Inference.SessionScheduler do
        active_session_id: nil,
        active_pid: nil,
        active_ref: nil,
-       pending_mentions: []
+       pending_mentions: [],
+       debounce_ref: nil
      }}
   end
 
   @impl true
   def handle_cast({:enqueue_mention, msg}, state) do
-    {:noreply, enqueue_or_start_mention(msg, state)}
+    # Always add to pending, then (re)start a debounce timer.
+    # This ensures a burst of messages (e.g. Telegram splitting a long
+    # message across multiple parts) gets batched into one inference pass.
+    state = %{state | pending_mentions: state.pending_mentions ++ [msg]}
+
+    # Cancel any existing debounce timer
+    if state.debounce_ref, do: Process.cancel_timer(state.debounce_ref)
+
+    # Group chats get a longer debounce (5s) than DMs (1s)
+    chat_id = msg["chat_id"] || 0
+    delay = if chat_id < 0, do: 5_000, else: 1_000
+
+    ref = Process.send_after(self(), :debounce_fire, delay)
+    {:noreply, %{state | debounce_ref: ref}}
   end
 
   def handle_cast({:dispatch, inference_session_id, message}, state)
@@ -95,6 +109,17 @@ defmodule Froth.Inference.SessionScheduler do
         end
 
       {:noreply, maybe_start_next_queued(state)}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info(:debounce_fire, state) do
+    state = %{state | debounce_ref: nil}
+
+    if state.pending_mentions != [] and not active?(state) do
+      {batch, rest} = pop_next_chat_batch(state.pending_mentions)
+      {:noreply, start_new_mentions(batch, %{state | pending_mentions: rest})}
     else
       {:noreply, state}
     end
