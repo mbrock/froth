@@ -71,18 +71,17 @@ defmodule Froth.Telegram.UpdateRouter do
         }
       }
       when is_integer(reply_msg_id) and is_integer(chat_id) ->
-        # Look up whether the replied-to message was sent by this bot
+        # Multiple sessions can store the same chat/message pair, so this must be
+        # existence-based instead of assuming one row.
         import Ecto.Query, only: [from: 2]
 
-        case Froth.Repo.one(
-               from(m in "telegram_messages",
-                 where: m.chat_id == ^chat_id and m.message_id == ^reply_msg_id,
-                 select: m.sender_id
-               )
-             ) do
-          ^bot_user_id -> true
-          _ -> false
-        end
+        Froth.Repo.exists?(
+          from(m in "telegram_messages",
+            where:
+              m.chat_id == ^chat_id and m.message_id == ^reply_msg_id and
+                m.sender_id == ^bot_user_id
+          )
+        )
 
       _ ->
         false

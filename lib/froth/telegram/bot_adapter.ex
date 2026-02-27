@@ -114,7 +114,9 @@ defmodule Froth.Telegram.BotAdapter do
         _ -> payload
       end
 
-    Froth.Telegram.call(session_id, payload)
+    session_id
+    |> Froth.Telegram.call(payload)
+    |> normalize_tdlib_result()
   end
 
   def edit_message_text(session_id, chat_id, message_id, text, opts \\ [])
@@ -148,7 +150,9 @@ defmodule Froth.Telegram.BotAdapter do
         _ -> payload
       end
 
-    Froth.Telegram.call(session_id, payload)
+    session_id
+    |> Froth.Telegram.call(payload)
+    |> normalize_tdlib_result()
   end
 
   def edit_message_italic(session_id, chat_id, message_id, text)
@@ -219,4 +223,15 @@ defmodule Froth.Telegram.BotAdapter do
   defp reply_to_msg(message_id) when is_integer(message_id) do
     %{"@type" => "inputMessageReplyToMessage", "message_id" => message_id}
   end
+
+  defp normalize_tdlib_result({:ok, %{"@type" => "error", "message" => message}})
+       when is_binary(message) do
+    {:error, message}
+  end
+
+  defp normalize_tdlib_result({:ok, %{"@type" => "error"} = error}) do
+    {:error, inspect(error)}
+  end
+
+  defp normalize_tdlib_result(result), do: result
 end

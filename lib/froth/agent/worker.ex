@@ -7,6 +7,7 @@ defmodule Froth.Agent.Worker do
   """
 
   use GenServer
+  require Logger
 
   alias Froth.Agent
   alias Froth.Agent.{Config, Cycle, Message, ToolUse, ToolResult}
@@ -23,10 +24,13 @@ defmodule Froth.Agent.Worker do
           config: Config.t(),
           phase: phase(),
           cycle: Cycle.t(),
-          head_id: String.t() | nil
+          head_id: String.t() | nil,
+          empty_reply_retries: non_neg_integer()
         }
 
-  defstruct [:config, :cycle, :head_id, phase: :initial]
+  defstruct [:config, :cycle, :head_id, phase: :initial, empty_reply_retries: 0]
+
+  @max_empty_reply_retries 2
 
   def child_spec(args) do
     %{
@@ -59,11 +63,23 @@ defmodule Froth.Agent.Worker do
   @impl true
   def handle_info({ref, {:ok, response}}, %{phase: {:thinking, %{ref: ref}}} = worker) do
     Process.demonitor(ref, [:flush])
-    worker = persist_message(worker, :agent, response.content)
 
     case parse_tool_uses(response.content) do
-      [] -> {:stop, :normal, %{worker | phase: :done}}
-      tool_uses -> maybe_tools_done(start_tools(worker, tool_uses))
+      [] ->
+        if has_visible_response?(response.content) do
+          worker = persist_message(worker, :agent, response.content)
+          {:stop, :normal, %{worker | phase: :done, empty_reply_retries: 0}}
+        else
+          maybe_retry_empty_response(worker)
+        end
+
+      tool_uses ->
+        worker =
+          worker
+          |> persist_message(:agent, response.content)
+          |> Map.put(:empty_reply_retries, 0)
+
+        maybe_tools_done(start_tools(worker, tool_uses))
     end
   end
 
@@ -80,6 +96,37 @@ defmodule Froth.Agent.Worker do
     Process.demonitor(ref, [:flush])
     maybe_tools_done(collect_tool_result(worker, tool_use_id, result))
   end
+
+  def handle_info(
+        {:DOWN, ref, :process, _pid, :normal},
+        %{phase: {:thinking, %{ref: ref}}} = worker
+      ) do
+    {:noreply, worker}
+  end
+
+  def handle_info(
+        {:DOWN, ref, :process, _pid, reason},
+        %{phase: {:thinking, %{ref: ref}}} = worker
+      ) do
+    {:stop, {:error, reason}, worker}
+  end
+
+  def handle_info({:DOWN, _ref, :process, _pid, :normal}, %{phase: {:working, _, _}} = worker) do
+    {:noreply, worker}
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{phase: {:working, _, _}} = worker) do
+    case find_invocation(worker.phase, ref) do
+      {^ref, %ToolUse{id: tool_use_id}} ->
+        error = "tool task failed: #{Exception.format_exit(reason)}"
+        maybe_tools_done(collect_tool_result(worker, tool_use_id, {:error, error}))
+
+      nil ->
+        {:noreply, worker}
+    end
+  end
+
+  def handle_info(_message, worker), do: {:noreply, worker}
 
   defp persist_message(worker, role, content) do
     {_msg, head_id} = Agent.append_message(worker.cycle, worker.head_id, role, content)
@@ -105,7 +152,7 @@ defmodule Froth.Agent.Worker do
       |> Enum.reject(fn {_k, v} -> is_nil(v) end)
 
     task =
-      Task.Supervisor.async(Froth.Agent.TaskSupervisor, fn ->
+      Task.Supervisor.async_nolink(Froth.Agent.TaskSupervisor, fn ->
         Froth.Anthropic.stream_single(
           api_messages,
           fn event -> Froth.broadcast("cycle:#{cycle_id}", {:stream, event}) end,
@@ -132,7 +179,7 @@ defmodule Froth.Agent.Worker do
     invocations =
       Enum.map(tool_uses, fn %ToolUse{id: id} = tool_use ->
         task =
-          Task.Supervisor.async(Froth.Agent.TaskSupervisor, fn ->
+          Task.Supervisor.async_nolink(Froth.Agent.TaskSupervisor, fn ->
             result = GenServer.call(worker.config.tool_executor, {:execute, tool_use, context})
             {:tool_result, id, result}
           end)
@@ -175,4 +222,51 @@ defmodule Froth.Agent.Worker do
   end
 
   defp maybe_tools_done(worker), do: {:noreply, worker}
+
+  defp find_invocation({:working, invocations, _results}, ref) do
+    List.keyfind(invocations, ref, 0)
+  end
+
+  defp find_invocation(_, _), do: nil
+
+  defp has_visible_response?(content) when is_binary(content) do
+    String.trim(content) != ""
+  end
+
+  defp has_visible_response?(content) when is_list(content) do
+    Enum.any?(content, fn
+      %{"type" => "text", "text" => text} when is_binary(text) ->
+        String.trim(text) != ""
+
+      %{"type" => "tool_use"} ->
+        true
+
+      %{"type" => "tool_result"} ->
+        true
+
+      _ ->
+        false
+    end)
+  end
+
+  defp has_visible_response?(content) when is_map(content) do
+    case content["text"] do
+      text when is_binary(text) -> String.trim(text) != ""
+      _ -> false
+    end
+  end
+
+  defp has_visible_response?(_), do: false
+
+  defp maybe_retry_empty_response(worker) do
+    retry = worker.empty_reply_retries + 1
+
+    if retry <= @max_empty_reply_retries do
+      Logger.warning(event: :agent_empty_response_retry, cycle_id: worker.cycle.id, retry: retry)
+
+      {:noreply, %{worker | phase: :continuing, empty_reply_retries: retry}, {:continue, :think}}
+    else
+      {:stop, :normal, %{worker | phase: :done}}
+    end
+  end
 end

@@ -13,6 +13,8 @@ defmodule Froth.Telegram.Bot do
 
   alias Froth.Agent
   alias Froth.Agent.{Config, Cycle, Message, ToolUse, Worker}
+  alias Froth.Inference.InferenceSession
+  alias Froth.Inference.Prompt
   alias Froth.Inference.Tools
   alias Froth.Repo
   alias Froth.Telegram.BotAdapter
@@ -24,9 +26,21 @@ defmodule Froth.Telegram.Bot do
     :worker_ref,
     :chat_id,
     :reply_to,
+    :cycle_started_ms,
+    :last_tool_error,
+    :last_sent_message_id,
+    :last_sent_message_text,
+    cycle_usage_total: %{},
+    cycle_cost_usd: 0.0,
+    stream_usage_current: %{},
     active_tasks: %{},
-    control_prompt_cycles: MapSet.new()
+    control_prompt_cycles: MapSet.new(),
+    cycle_replied?: false
   ]
+
+  @recap_sessions_limit 10
+  @recap_max_tokens_approx 20_000
+  @telegram_text_limit 4096
 
   def child_spec(opts) when is_map(opts), do: child_spec(Map.to_list(opts))
 
@@ -81,8 +95,8 @@ defmodule Froth.Telegram.Bot do
   @impl true
   def handle_info({:telegram_update, update}, state) do
     case route_update(update, state.bot_config) do
-      {:mention, chat_id, reply_to, text} ->
-        {:noreply, start_cycle(state, chat_id, reply_to, text)}
+      {:mention, msg} ->
+        {:noreply, start_cycle_from_message(state, msg)}
 
       {:callback_stop_cycle, query_id, cycle_id} ->
         BotAdapter.answer_callback(state.bot_config.session_id, query_id)
@@ -105,11 +119,51 @@ defmodule Froth.Telegram.Bot do
   end
 
   def handle_info({:event, _event, %Message{role: :agent, content: content}}, state) do
-    send_agent_response(state, content)
-    {:noreply, state}
+    state = normalize_state(state)
+    state = commit_stream_usage(state)
+    {:noreply, send_agent_response(state, content)}
+  end
+
+  def handle_info({:event, _event, %Message{role: :user, content: content}}, state) do
+    state = normalize_state(state)
+    {:noreply, maybe_capture_tool_error(state, content)}
   end
 
   def handle_info({:event, _event, %Message{}}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info({:stream, {:usage, usage_event}}, state) when is_map(usage_event) do
+    state = normalize_state(state)
+
+    usage =
+      cond do
+        is_map(usage_event["accumulated_usage"]) ->
+          usage_event["accumulated_usage"]
+
+        is_map(usage_event["usage"]) ->
+          merge_usage_maps(state.stream_usage_current, usage_event["usage"])
+
+        true ->
+          state.stream_usage_current
+      end
+
+    {:noreply, %{state | stream_usage_current: usage}}
+  end
+
+  def handle_info({:stream, _event}, state), do: {:noreply, state}
+
+  def handle_info({:eval_done_detail, %{status: status, result: result}}, state)
+      when status in [:error, "error"] and is_binary(result) do
+    {:noreply, put_last_tool_error(state, result)}
+  end
+
+  def handle_info({:eval_done_detail, %{status: status, io_output: io_output}}, state)
+      when status in [:error, "error"] and is_binary(io_output) do
+    {:noreply, put_last_tool_error(state, io_output)}
+  end
+
+  def handle_info({:eval_done_detail, _}, state) do
     {:noreply, state}
   end
 
@@ -125,6 +179,8 @@ defmodule Froth.Telegram.Bot do
         {:DOWN, ref, :process, pid, reason},
         %{worker_ref: ref, worker_pid: pid} = state
       ) do
+    state = normalize_state(state)
+
     if reason != :normal do
       Logger.error(
         event: :cycle_crashed,
@@ -135,8 +191,29 @@ defmodule Froth.Telegram.Bot do
 
     Logger.info(event: :cycle_finished, cycle_id: state.cycle && state.cycle.id)
 
+    state =
+      state
+      |> commit_stream_usage()
+      |> maybe_append_cycle_footer()
+      |> maybe_send_silent_cycle_fallback()
+
     {:noreply,
-     %{state | cycle: nil, worker_pid: nil, worker_ref: nil, chat_id: nil, reply_to: nil}}
+     %{
+       state
+       | cycle: nil,
+         worker_pid: nil,
+         worker_ref: nil,
+         chat_id: nil,
+         reply_to: nil,
+         cycle_started_ms: nil,
+         cycle_replied?: false,
+         last_tool_error: nil,
+         last_sent_message_id: nil,
+         last_sent_message_text: nil,
+         cycle_usage_total: %{},
+         cycle_cost_usd: 0.0,
+         stream_usage_current: %{}
+     }}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -177,7 +254,6 @@ defmodule Froth.Telegram.Bot do
        when is_map(msg) do
     sender = get_in(msg, ["sender_id", "user_id"])
     chat_id = msg["chat_id"]
-    text = get_in(msg, ["content", "text", "text"]) || ""
 
     is_reply_to_bot = replied_to_bot?(msg, bot_config.bot_user_id)
 
@@ -192,7 +268,7 @@ defmodule Froth.Telegram.Bot do
          bot_config.name_triggers
        ) or is_reply_to_bot) and
           BotAdapter.allowed_chat?(chat_id, bot_config.owner_user_id, bot_config.session_id) ->
-        {:mention, chat_id, msg["id"], text}
+        {:mention, msg}
 
       true ->
         :ignore
@@ -244,15 +320,13 @@ defmodule Froth.Telegram.Bot do
         }
       }
       when is_integer(reply_msg_id) and is_integer(chat_id) ->
-        case Repo.one(
-               from(m in "telegram_messages",
-                 where: m.chat_id == ^chat_id and m.message_id == ^reply_msg_id,
-                 select: m.sender_id
-               )
-             ) do
-          ^bot_user_id -> true
-          _ -> false
-        end
+        Repo.exists?(
+          from(m in "telegram_messages",
+            where:
+              m.chat_id == ^chat_id and m.message_id == ^reply_msg_id and
+                m.sender_id == ^bot_user_id
+          )
+        )
 
       _ ->
         false
@@ -269,11 +343,14 @@ defmodule Froth.Telegram.Bot do
       get_in(msg, ["content", "text", "text"]) ||
         get_in(msg, ["content", "caption", "text"]) || ""
 
-    start_cycle(state, chat_id, reply_to, text)
+    user_content = build_initial_user_content(msg, state.bot_config)
+
+    start_cycle(state, chat_id, reply_to, text, user_content)
   end
 
-  defp start_cycle(state, chat_id, reply_to, text)
+  defp start_cycle(state, chat_id, reply_to, text, user_content)
        when is_integer(chat_id) and is_integer(reply_to) and is_binary(text) do
+    state = normalize_state(state)
     bc = state.bot_config
 
     if state.worker_pid do
@@ -283,7 +360,14 @@ defmodule Froth.Telegram.Bot do
     else
       BotAdapter.send_typing(bc.session_id, chat_id)
 
-      message = Repo.insert!(%Message{role: :user, content: Message.wrap(text)})
+      initial_content =
+        if is_nil(user_content) do
+          text
+        else
+          user_content
+        end
+
+      message = Repo.insert!(%Message{role: :user, content: Message.wrap(initial_content)})
       cycle = Repo.insert!(%Cycle{})
       Repo.insert!(%Agent.Event{cycle_id: cycle.id, head_id: message.id, seq: 0})
 
@@ -315,14 +399,23 @@ defmodule Froth.Telegram.Bot do
           worker_pid: pid,
           worker_ref: ref,
           chat_id: chat_id,
-          reply_to: reply_to
+          reply_to: reply_to,
+          cycle_started_ms: System.monotonic_time(:millisecond),
+          cycle_replied?: false,
+          last_tool_error: nil,
+          last_sent_message_id: nil,
+          last_sent_message_text: nil,
+          cycle_usage_total: %{},
+          cycle_cost_usd: 0.0,
+          stream_usage_current: %{}
       }
     end
   end
 
-  defp start_cycle(state, _chat_id, _reply_to, _text), do: state
+  defp start_cycle(state, _chat_id, _reply_to, _text, _user_content), do: state
 
   defp stop_cycle(state, cycle_id, opts) when is_binary(cycle_id) do
+    state = normalize_state(state)
     notify? = Keyword.get(opts, :notify?, false)
 
     state =
@@ -349,7 +442,15 @@ defmodule Froth.Telegram.Bot do
             worker_pid: nil,
             worker_ref: nil,
             chat_id: nil,
-            reply_to: nil
+            reply_to: nil,
+            cycle_started_ms: nil,
+            cycle_replied?: false,
+            last_tool_error: nil,
+            last_sent_message_id: nil,
+            last_sent_message_text: nil,
+            cycle_usage_total: %{},
+            cycle_cost_usd: 0.0,
+            stream_usage_current: %{}
         }
       else
         state
@@ -383,10 +484,14 @@ defmodule Froth.Telegram.Bot do
           "send_message" ->
             text = input["text"] || ""
 
-            result =
+            {result, state} =
               case BotAdapter.send_message(bc.session_id, chat_id, text, reply_to: reply_to) do
-                {:ok, _sent} -> {:ok, "sent"}
-                {:error, reason} -> {:error, inspect(reason)}
+                {:ok, sent} ->
+                  {{:ok, "sent"}, track_sent_message(state, sent, text)}
+
+                {:error, reason} ->
+                  error = inspect(reason)
+                  {{:error, error}, put_last_tool_error(state, error)}
               end
 
             {result, state}
@@ -424,7 +529,11 @@ defmodule Froth.Telegram.Bot do
             {Tools.execute(name, input, chat_id, bot_id: bc.id, session_id: bc.session_id), state}
         end
 
-      state = maybe_track_task_from_result(state, cycle_id, result)
+      state =
+        state
+        |> maybe_track_task_from_result(cycle_id, result)
+        |> maybe_track_tool_error(result)
+
       {result, state}
     end
   end
@@ -548,16 +657,551 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp send_agent_response(%{chat_id: chat_id, reply_to: reply_to, bot_config: bc}, content)
+  defp build_initial_user_content(%{"chat_id" => chat_id} = msg, bot_config)
+       when is_integer(chat_id) and is_map(bot_config) do
+    context_opts =
+      case message_unix(msg) do
+        unix when is_integer(unix) ->
+          [before_unix: unix, telegram_session_id: bot_config.session_id]
+
+        _ ->
+          [telegram_session_id: bot_config.session_id]
+      end
+
+    context_blocks = Froth.Summarizer.context_blocks(chat_id, context_opts)
+
+    task_overview = Froth.Tasks.context_summary(bot_config.id, chat_id)
+    new_messages_section = format_new_messages([msg])
+
+    new_messages_section =
+      if task_overview != "" do
+        task_overview <> "\n\n" <> new_messages_section
+      else
+        new_messages_section
+      end
+
+    session_recap = previous_session_recap(bot_config.id, chat_id)
+
+    new_messages_section =
+      if session_recap != "" do
+        session_recap <> "\n\n" <> new_messages_section
+      else
+        new_messages_section
+      end
+
+    Prompt.initial_user_content(context_blocks, "", new_messages_section)
+  end
+
+  defp build_initial_user_content(_msg, _bot_config), do: nil
+
+  defp message_unix(%{"date" => value}) when is_integer(value), do: value
+
+  defp message_unix(%{"date" => value}) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {n, ""} -> n
+      _ -> nil
+    end
+  end
+
+  defp message_unix(_), do: nil
+
+  defp format_new_messages(messages) when is_list(messages) do
+    messages
+    |> sort_messages()
+    |> Enum.map_join("\n\n", fn msg ->
+      sender = get_in(msg, ["sender_id", "user_id"]) || "unknown"
+      message_id = msg["id"] || "unknown"
+
+      text =
+        get_in(msg, ["content", "text", "text"]) ||
+          get_in(msg, ["content", "caption", "text"]) || ""
+
+      """
+      <message id=\"#{message_id}\" from=\"#{sender}\">
+      #{text}
+      </message>
+      """
+      |> String.trim()
+    end)
+  end
+
+  defp sort_messages(messages) when is_list(messages) do
+    Enum.sort_by(messages, &to_int_or_fallback(&1["id"]))
+  end
+
+  defp to_int_or_fallback(value) when is_integer(value), do: value
+
+  defp to_int_or_fallback(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} -> n
+      _ -> 0
+    end
+  end
+
+  defp to_int_or_fallback(_), do: 0
+
+  defp previous_session_recap(bot_id, chat_id) when is_binary(bot_id) and is_integer(chat_id) do
+    sessions =
+      Repo.all(
+        from(s in InferenceSession,
+          where: s.bot_id == ^bot_id and s.chat_id == ^chat_id and s.status == "done",
+          order_by: [desc: s.inserted_at],
+          limit: 20,
+          select: %{id: s.id, inserted_at: s.inserted_at, api_messages: s.api_messages}
+        ),
+        log: false
+      )
+
+    interesting =
+      sessions
+      |> Enum.filter(&has_real_tools?(&1.api_messages))
+      |> Enum.take(@recap_sessions_limit)
+
+    if interesting == [] do
+      ""
+    else
+      sections = Enum.map(interesting, &format_session_recap/1)
+      total = Enum.join(sections, "\n\n")
+
+      if String.length(total) > @recap_max_tokens_approx * 4 do
+        truncate_recap(interesting, @recap_max_tokens_approx * 4)
+      else
+        total
+      end
+    end
+  end
+
+  defp has_real_tools?(nil), do: false
+
+  defp has_real_tools?(messages) when is_list(messages) do
+    Enum.any?(messages, fn
+      %{"role" => "assistant", "content" => content} when is_list(content) ->
+        Enum.any?(content, fn block ->
+          block["type"] == "tool_use" and block["name"] not in ["send_message"]
+        end)
+
+      _ ->
+        false
+    end)
+  end
+
+  defp has_real_tools?(_), do: false
+
+  defp truncate_recap(sessions, max_chars) do
+    {sections, _remaining} =
+      Enum.reduce(sessions, {[], max_chars}, fn session, {acc, budget} ->
+        section = format_session_recap(session)
+        len = String.length(section)
+
+        if budget - len > 0 do
+          {[section | acc], budget - len}
+        else
+          {acc, 0}
+        end
+      end)
+
+    sections
+    |> Enum.reverse()
+    |> Enum.join("\n\n")
+  end
+
+  defp format_session_recap(session) do
+    entries =
+      (session.api_messages || [])
+      |> Enum.flat_map(fn
+        %{"role" => "assistant", "content" => content} when is_list(content) ->
+          Enum.flat_map(content, fn
+            %{"type" => "tool_use", "name" => "send_message"} ->
+              []
+
+            %{"type" => "tool_use", "name" => name, "input" => input} ->
+              [{:call, name, recap_tool_snippet(name, input)}]
+
+            _ ->
+              []
+          end)
+
+        %{"role" => "user", "content" => content} when is_list(content) ->
+          Enum.flat_map(content, fn
+            %{"type" => "tool_result", "content" => result_content, "tool_use_id" => _id} ->
+              result_text = tool_result_recap_text(result_content)
+
+              if String.trim(result_text) == "sent" do
+                []
+              else
+                [{:result, String.slice(result_text, 0, 500)}]
+              end
+
+            _ ->
+              []
+          end)
+
+        _ ->
+          []
+      end)
+
+    if entries == [] do
+      ""
+    else
+      lines =
+        Enum.map(entries, fn
+          {:call, name, snippet} -> "-> " <> name <> ": " <> snippet
+          {:result, text} -> "   <- " <> String.slice(text, 0, 500)
+        end)
+
+      ago = NaiveDateTime.diff(NaiveDateTime.utc_now(), session.inserted_at, :minute)
+
+      "<previous_session id=\"" <>
+        Integer.to_string(session.id) <>
+        "\" minutes_ago=\"" <>
+        Integer.to_string(ago) <>
+        "\">\n" <>
+        Enum.join(lines, "\n") <>
+        "\n</previous_session>"
+    end
+  end
+
+  defp recap_tool_snippet(name, input) when is_map(input) do
+    case name do
+      "read_log" ->
+        from = inspect(input["from_date"] || "")
+        to = inspect(input["to_date"] || "")
+        "from=#{from} to=#{to}"
+
+      "search" ->
+        terms = input["query"] || []
+        "query=" <> inspect(Enum.take(terms, 5))
+
+      "view_analysis" ->
+        ids = input["ids"] || []
+        "ids=" <> inspect(Enum.take(ids, 10))
+
+      "look" ->
+        "msg=" <> inspect(input["message_id"])
+
+      "read_tool_transcript" ->
+        sid = input["inference_session_id"]
+        lim = input["limit"]
+        "session=#{inspect(sid)} limit=#{inspect(lim)}"
+
+      other ->
+        keys =
+          input
+          |> Map.keys()
+          |> Enum.map(&to_string/1)
+          |> Enum.take(6)
+
+        "#{other} keys=" <> inspect(keys)
+    end
+  end
+
+  defp recap_tool_snippet(name, _), do: "#{name}"
+
+  defp tool_result_recap_text(content) when is_binary(content), do: content
+
+  defp tool_result_recap_text(content) when is_list(content) do
+    Enum.map_join(content, "\n", &tool_result_block_text/1)
+  end
+
+  defp tool_result_recap_text(content),
+    do: inspect(content, limit: 50, printable_limit: 2000)
+
+  defp tool_result_block_text(%{"type" => "text", "text" => text}) when is_binary(text), do: text
+  defp tool_result_block_text(%{"text" => text}) when is_binary(text), do: text
+  defp tool_result_block_text(%{"type" => type}) when is_binary(type), do: "[#{type}]"
+  defp tool_result_block_text(other), do: inspect(other, limit: 20, printable_limit: 300)
+
+  defp send_agent_response(
+         %{chat_id: chat_id, reply_to: reply_to, bot_config: bc} = state,
+         content
+       )
        when is_integer(chat_id) do
     text = extract_text(content)
 
     if text != "" do
-      BotAdapter.send_message(bc.session_id, chat_id, text, reply_to: reply_to)
+      case BotAdapter.send_message(bc.session_id, chat_id, text, reply_to: reply_to) do
+        {:ok, sent} ->
+          track_sent_message(state, sent, text)
+
+        {:error, reason} ->
+          put_last_tool_error(state, inspect(reason))
+      end
+    else
+      state
     end
   end
 
-  defp send_agent_response(_, _), do: :ok
+  defp send_agent_response(state, _), do: state
+
+  defp track_sent_message(state, sent, text) when is_map(state) and is_binary(text) do
+    base = %{state | cycle_replied?: true, last_sent_message_text: text}
+
+    case sent_message_id(sent) do
+      id when is_integer(id) ->
+        %{base | last_sent_message_id: id}
+
+      _ ->
+        base
+    end
+  end
+
+  defp sent_message_id(%{"id" => id}) when is_integer(id), do: id
+
+  defp sent_message_id(%{"id" => id}) when is_binary(id) do
+    case Integer.parse(id) do
+      {n, ""} -> n
+      _ -> nil
+    end
+  end
+
+  defp sent_message_id(_), do: nil
+
+  defp commit_stream_usage(%{stream_usage_current: usage} = state)
+       when is_map(usage) and map_size(usage) > 0 do
+    turn_cost = estimate_usage_cost_usd(usage, state.bot_config && state.bot_config.model) || 0.0
+
+    %{
+      state
+      | cycle_usage_total: merge_usage_maps(state.cycle_usage_total, usage),
+        cycle_cost_usd: state.cycle_cost_usd + turn_cost,
+        stream_usage_current: %{}
+    }
+  end
+
+  defp commit_stream_usage(state), do: state
+
+  defp merge_usage_maps(left, right) when is_map(left) and is_map(right) do
+    Map.merge(left, right, fn _key, left_value, right_value ->
+      cond do
+        is_map(left_value) and is_map(right_value) ->
+          merge_usage_maps(left_value, right_value)
+
+        is_integer(left_value) and is_integer(right_value) ->
+          left_value + right_value
+
+        true ->
+          right_value
+      end
+    end)
+  end
+
+  defp merge_usage_maps(_left, right) when is_map(right), do: right
+  defp merge_usage_maps(left, _right) when is_map(left), do: left
+  defp merge_usage_maps(_left, _right), do: %{}
+
+  defp maybe_append_cycle_footer(
+         %{cycle_replied?: true, chat_id: chat_id, bot_config: bc} = state
+       )
+       when is_integer(chat_id) do
+    case build_cycle_cost_footer(state) do
+      nil ->
+        state
+
+      footer ->
+        maybe_apply_cycle_footer(state, bc.session_id, chat_id, footer)
+    end
+  end
+
+  defp maybe_append_cycle_footer(state), do: state
+
+  defp maybe_apply_cycle_footer(
+         %{last_sent_message_id: msg_id, last_sent_message_text: text} = state,
+         session_id,
+         chat_id,
+         footer
+       )
+       when is_integer(msg_id) and is_binary(text) and is_binary(footer) do
+    full_text = append_footer(text, footer)
+
+    if String.length(full_text) <= @telegram_text_limit do
+      case BotAdapter.edit_message_text(session_id, chat_id, msg_id, full_text) do
+        {:ok, _} ->
+          state
+
+        {:error, _reason} ->
+          _ = BotAdapter.send_message(session_id, chat_id, footer, reply_to: state.reply_to)
+          state
+      end
+    else
+      _ = BotAdapter.send_message(session_id, chat_id, footer, reply_to: state.reply_to)
+      state
+    end
+  end
+
+  defp maybe_apply_cycle_footer(state, session_id, chat_id, footer) do
+    _ = BotAdapter.send_message(session_id, chat_id, footer, reply_to: state.reply_to)
+    state
+  end
+
+  defp append_footer(text, footer) when is_binary(text) and is_binary(footer) do
+    trimmed = String.trim_trailing(text)
+    if String.ends_with?(trimmed, footer), do: trimmed, else: trimmed <> "\n\n" <> footer
+  end
+
+  defp build_cycle_cost_footer(state) do
+    usage = state.cycle_usage_total || %{}
+    total_in = total_input_tokens(usage)
+    total_out = usage_int(usage["output_tokens"])
+
+    if total_in <= 0 and total_out <= 0 do
+      nil
+    else
+      elapsed_seconds = cycle_elapsed_seconds(state.cycle_started_ms)
+      duration = format_seconds(elapsed_seconds)
+      in_part = format_tokens_k(total_in)
+      out_part = format_tokens_k(total_out)
+
+      usd =
+        if state.cycle_cost_usd > 0 do
+          state.cycle_cost_usd
+        else
+          estimate_usage_cost_usd(usage, state.bot_config && state.bot_config.model) || 0.0
+        end
+
+      cost = "$" <> :erlang.float_to_binary(usd, decimals: 3)
+      "[#{duration} | #{in_part} in | #{out_part} out | #{cost}]"
+    end
+  end
+
+  defp cycle_elapsed_seconds(started_ms) when is_integer(started_ms) do
+    elapsed_ms = System.monotonic_time(:millisecond) - started_ms
+    max(elapsed_ms, 0) / 1000
+  end
+
+  defp cycle_elapsed_seconds(_), do: 0.0
+
+  defp format_seconds(seconds) when is_number(seconds) do
+    value = if seconds < 0, do: 0.0, else: seconds * 1.0
+    :erlang.float_to_binary(value, decimals: 1) <> "s"
+  end
+
+  defp format_tokens_k(tokens) when is_integer(tokens) and tokens >= 0 do
+    cond do
+      tokens == 0 ->
+        "0k"
+
+      rem(tokens, 1000) == 0 ->
+        "#{div(tokens, 1000)}k"
+
+      true ->
+        k = tokens / 1000
+        format_decimal(k, 1) <> "k"
+    end
+  end
+
+  defp format_tokens_k(_tokens), do: "0k"
+
+  defp format_decimal(number, decimals) when is_number(number) and is_integer(decimals) do
+    number
+    |> :erlang.float_to_binary(decimals: decimals)
+    |> String.trim_trailing("0")
+    |> String.trim_trailing(".")
+  end
+
+  defp total_input_tokens(usage) when is_map(usage) do
+    usage_int(usage["input_tokens"]) +
+      usage_int(usage["cache_creation_input_tokens"]) +
+      usage_int(usage["cache_read_input_tokens"])
+  end
+
+  defp total_input_tokens(_usage), do: 0
+
+  defp usage_int(value) when is_integer(value) and value >= 0, do: value
+
+  defp usage_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} when n >= 0 -> n
+      _ -> 0
+    end
+  end
+
+  defp usage_int(_value), do: 0
+
+  defp estimate_usage_cost_usd(usage, model) when is_map(usage) do
+    case model_pricing_rates(model, prompt_over_200k?(usage)) do
+      nil ->
+        nil
+
+      rates ->
+        input_tokens = usage_int(usage["input_tokens"])
+        output_tokens = usage_int(usage["output_tokens"])
+        cache_creation_tokens = usage_int(usage["cache_creation_input_tokens"])
+        cache_read_tokens = usage_int(usage["cache_read_input_tokens"])
+
+        (input_tokens * rates.input +
+           output_tokens * rates.output +
+           cache_creation_tokens * rates.cache_write +
+           cache_read_tokens * rates.cache_read) / 1_000_000
+    end
+  end
+
+  defp estimate_usage_cost_usd(_usage, _model), do: nil
+
+  defp prompt_over_200k?(usage) when is_map(usage) do
+    total_input_tokens(usage) > 200_000
+  end
+
+  defp prompt_over_200k?(_usage), do: false
+
+  # Source-of-truth rates (USD / MTok) from https://claude.com/pricing,
+  # synced on 2026-02-27.
+  defp model_pricing_rates(model, over_200k?) when is_binary(model) do
+    downcased = String.downcase(model)
+
+    cond do
+      String.contains?(downcased, "opus-4-6") ->
+        if over_200k? do
+          %{input: 10.0, output: 37.5, cache_write: 12.5, cache_read: 1.0}
+        else
+          %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
+        end
+
+      String.contains?(downcased, "sonnet-4-6") ->
+        if over_200k? do
+          %{input: 6.0, output: 22.5, cache_write: 7.5, cache_read: 0.6}
+        else
+          %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
+        end
+
+      String.contains?(downcased, "haiku-4-5") ->
+        %{input: 1.0, output: 5.0, cache_write: 1.25, cache_read: 0.1}
+
+      String.contains?(downcased, "opus-4-5") ->
+        %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
+
+      String.contains?(downcased, "sonnet-4-5") ->
+        %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
+
+      String.contains?(downcased, "opus-4-1") ->
+        %{input: 15.0, output: 75.0, cache_write: 18.75, cache_read: 1.5}
+
+      String.contains?(downcased, "sonnet-4") ->
+        %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
+
+      String.contains?(downcased, "opus-4") ->
+        %{input: 15.0, output: 75.0, cache_write: 18.75, cache_read: 1.5}
+
+      String.contains?(downcased, "sonnet-3-7") ->
+        %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
+
+      String.contains?(downcased, "sonnet-3-5") ->
+        %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
+
+      String.contains?(downcased, "haiku-3-5") ->
+        %{input: 0.8, output: 4.0, cache_write: 1.0, cache_read: 0.08}
+
+      String.contains?(downcased, "opus-3") ->
+        %{input: 15.0, output: 75.0, cache_write: 18.75, cache_read: 1.5}
+
+      String.contains?(downcased, "haiku-3") ->
+        %{input: 0.25, output: 1.25, cache_write: 0.30, cache_read: 0.03}
+
+      true ->
+        nil
+    end
+  end
+
+  defp model_pricing_rates(_model, _over_200k?), do: nil
 
   defp extract_text(%{"_wrapped" => value}) when is_binary(value), do: value
 
@@ -575,4 +1219,112 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp extract_text(_), do: ""
+
+  defp maybe_track_tool_error(state, {:error, reason}) when is_binary(reason) do
+    put_last_tool_error(state, reason)
+  end
+
+  defp maybe_track_tool_error(state, {:error, reason}) do
+    put_last_tool_error(state, inspect(reason))
+  end
+
+  defp maybe_track_tool_error(state, _), do: state
+
+  defp maybe_capture_tool_error(state, content) do
+    case extract_tool_error(content) do
+      nil -> state
+      error -> put_last_tool_error(state, error)
+    end
+  end
+
+  defp extract_tool_error(%{"_wrapped" => blocks}) when is_list(blocks) do
+    blocks
+    |> Enum.reverse()
+    |> Enum.find_value(fn
+      %{"type" => "tool_result", "is_error" => true, "content" => content}
+      when is_binary(content) ->
+        content
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp extract_tool_error(_), do: nil
+
+  defp put_last_tool_error(state, error) when is_binary(error) do
+    error =
+      error
+      |> String.trim()
+      |> String.slice(0, 1200)
+
+    if error == "" do
+      state
+    else
+      %{state | last_tool_error: error}
+    end
+  end
+
+  defp put_last_tool_error(state, _), do: state
+
+  defp maybe_send_silent_cycle_fallback(%{cycle_replied?: true} = state), do: state
+
+  defp maybe_send_silent_cycle_fallback(%{chat_id: chat_id, bot_config: bc} = state)
+       when is_integer(chat_id) do
+    _ =
+      BotAdapter.send_message(
+        bc.session_id,
+        chat_id,
+        fallback_cycle_message(state.last_tool_error),
+        reply_to: state.reply_to
+      )
+
+    state
+  end
+
+  defp maybe_send_silent_cycle_fallback(state), do: state
+
+  defp fallback_cycle_message(nil) do
+    "I ran into an internal error and stopped before replying. Please ask me again."
+  end
+
+  defp fallback_cycle_message(error) when is_binary(error) do
+    line =
+      error
+      |> String.split("\n")
+      |> List.first()
+      |> to_string()
+      |> String.trim()
+      |> String.slice(0, 400)
+
+    if line == "" do
+      fallback_cycle_message(nil)
+    else
+      "I hit a tool error and stopped before replying.\n\n#{line}"
+    end
+  end
+
+  # Handles hot code reload where in-memory struct instances may predate new fields.
+  defp normalize_state(%__MODULE__{} = state) do
+    state_keys = state_keys()
+
+    state
+    |> Map.from_struct()
+    |> Map.take(state_keys)
+    |> then(&struct(__MODULE__, &1))
+  end
+
+  defp normalize_state(state) when is_map(state) do
+    state_keys = state_keys()
+
+    state
+    |> Map.take(state_keys)
+    |> then(&struct(__MODULE__, &1))
+  end
+
+  defp state_keys do
+    __MODULE__.__struct__()
+    |> Map.keys()
+    |> Enum.reject(&(&1 == :__struct__))
+  end
 end

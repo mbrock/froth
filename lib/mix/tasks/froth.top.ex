@@ -22,7 +22,7 @@ defmodule Mix.Tasks.Froth.Top do
         val -> val
       end
 
-    Node.start(:"top_#{System.pid()}", :shortnames)
+    Node.start(:"top_#{System.pid()}", name_domain: :shortnames)
     Node.set_cookie(String.to_atom(cookie))
 
     unless Node.connect(node) do
