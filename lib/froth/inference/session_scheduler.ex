@@ -8,7 +8,6 @@ defmodule Froth.Inference.SessionScheduler do
 
   alias Froth.Inference.InferenceSession
   alias Froth.Inference.SessionServer
-  alias Froth.Inference.StepLog
   alias Froth.Repo
 
   def start_link(opts \\ [])
@@ -155,18 +154,6 @@ defmodule Froth.Inference.SessionScheduler do
     end
   end
 
-  defp enqueue_or_start_mention(msg, state) when is_map(msg) do
-    if active?(state) do
-      if capture_as_active_steering_message(state, msg) do
-        state
-      else
-        %{state | pending_mentions: state.pending_mentions ++ [msg]}
-      end
-    else
-      start_new_mentions([msg], state)
-    end
-  end
-
   defp maybe_start_next_queued(state) do
     if active?(state) or state.pending_mentions == [] do
       state
@@ -236,43 +223,6 @@ defmodule Froth.Inference.SessionScheduler do
   end
 
   defp inference_session_status(_), do: nil
-
-  defp capture_as_active_steering_message(
-         %{active_session_id: inference_session_id, config: %{id: bot_id}},
-         msg
-       )
-       when is_integer(inference_session_id) and is_binary(bot_id) and is_map(msg) do
-    chat_id = msg["chat_id"]
-
-    case Repo.get(InferenceSession, inference_session_id) do
-      %InferenceSession{
-        id: ^inference_session_id,
-        bot_id: ^bot_id,
-        status: "awaiting_tools",
-        chat_id: ^chat_id
-      } = inference_session ->
-        queued_messages = (inference_session.queued_messages || []) ++ [msg]
-
-        inference_session
-        |> InferenceSession.changeset(%{queued_messages: queued_messages})
-        |> Repo.update!()
-
-        StepLog.append(inference_session_id, "message_queued_for_active_inference_session", %{
-          "chat_id" => chat_id,
-          "message_id" => msg["id"],
-          "sender_id" => get_in(msg, ["sender_id", "user_id"]),
-          "queued_count" => length(queued_messages)
-        })
-
-        StepLog.broadcast_loop(inference_session_id)
-        true
-
-      _ ->
-        false
-    end
-  end
-
-  defp capture_as_active_steering_message(_, _), do: false
 
   defp drain_queued_messages_from_session(state, inference_session_id)
        when is_map(state) and is_integer(inference_session_id) do

@@ -321,7 +321,18 @@ defmodule Froth.Inference.Tools do
         {:ok, read_tool_transcript(chat_id, bot_id, input)}
 
       "elixir_eval" ->
-        topic = if opts[:ref], do: "tool:#{opts[:ref]}"
+        topic =
+          cond do
+            is_binary(opts[:topic]) and opts[:topic] != "" ->
+              opts[:topic]
+
+            opts[:ref] ->
+              "tool:#{opts[:ref]}"
+
+            true ->
+              nil
+          end
+
         requested_eval_session_id = eval_session_id(input)
 
         eval_opts = [session_id: requested_eval_session_id]

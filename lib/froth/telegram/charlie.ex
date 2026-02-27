@@ -1,12 +1,11 @@
 defmodule Froth.Telegram.Charlie do
   @moduledoc """
-  Charlie bot profile (identity + system prompt) backed by the generic
-  `Froth.Telegram.BotRuntime` + `Froth.Inference.Orchestrator` runtime.
+  Charlie bot profile (identity + prompt config) backed by `Froth.Telegram.Bot`.
   """
 
-  alias Froth.Inference.Orchestrator
-  alias Froth.Inference.RuntimeConfig
-  alias Froth.Telegram.BotRuntime
+  alias Froth.Inference.ToolSteps
+  alias Froth.Inference.Tools
+  alias Froth.Telegram.Bot
   alias Froth.Telegram.Profiles.CharliePrompt
 
   @default_bot_id "charlie"
@@ -25,7 +24,8 @@ defmodule Froth.Telegram.Charlie do
       session_id: @default_session_id,
       model: @default_model,
       system_prompt_fun: &CharliePrompt.system_prompt/2,
-      name_triggers: ["charlie"]
+      name_triggers: ["charlie"],
+      tools: Tools.specs_for_api()
     }
   end
 
@@ -36,7 +36,7 @@ defmodule Froth.Telegram.Charlie do
   end
 
   @spec tool_steps_for_chat(integer(), integer() | keyword()) :: [map()]
-  defdelegate tool_steps_for_chat(chat_id, limit_or_opts \\ 20), to: Orchestrator
+  defdelegate tool_steps_for_chat(chat_id, limit_or_opts \\ 20), to: ToolSteps
 
   def child_spec(opts) do
     %{
@@ -55,11 +55,29 @@ defmodule Froth.Telegram.Charlie do
   def start_link(opts) when is_list(opts) do
     config = build_config(opts)
     name = Keyword.get(opts, :name, __MODULE__)
-    BotRuntime.start_link(Map.put(config, :name, name))
+    Bot.start_link(Map.put(config, :name, name))
   end
 
   defp build_config(opts) when is_list(opts) do
     defaults = default_config()
-    RuntimeConfig.build(Keyword.merge(Map.to_list(defaults), opts))
+    merged = defaults |> Map.merge(Map.new(opts))
+
+    merged
+    |> Map.update!(:id, &to_string/1)
+    |> Map.update!(:session_id, &to_string/1)
+    |> Map.update!(:bot_username, &to_string/1)
+    |> Map.update!(:bot_user_id, &to_int/1)
+    |> Map.update!(:owner_user_id, &to_int/1)
   end
+
+  defp to_int(v) when is_integer(v), do: v
+
+  defp to_int(v) when is_binary(v) do
+    case Integer.parse(v) do
+      {n, ""} -> n
+      _ -> 0
+    end
+  end
+
+  defp to_int(_), do: 0
 end

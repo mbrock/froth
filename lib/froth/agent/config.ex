@@ -4,9 +4,10 @@ defmodule Froth.Agent.Config do
           model: String.t() | nil,
           tools: [map()],
           tool_executor: GenServer.server(),
+          context: map() | nil,
           thinking: map() | nil,
           effort: String.t() | nil
         }
 
-  defstruct [:system, :model, :tool_executor, :thinking, :effort, tools: []]
+  defstruct [:system, :model, :tool_executor, :context, :thinking, :effort, tools: []]
 end

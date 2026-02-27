@@ -3,6 +3,10 @@ defmodule FrothWeb.ToolLive do
 
   import Ecto.Query
 
+  alias Froth.Agent
+  alias Froth.Agent.Cycle
+  alias Froth.Agent.Event
+  alias Froth.Agent.Message, as: AgentMessage
   alias Froth.Inference.InferenceSession
 
   @elixir_keywords ~w(
@@ -27,13 +31,16 @@ defmodule FrothWeb.ToolLive do
     socket =
       socket
       |> assign(:loop_key, nil)
+      |> assign(:loop_mode, :legacy)
       |> assign(:inference_session_id, nil)
+      |> assign(:cycle_id, nil)
       |> assign(:bot_id, "charlie")
       |> assign(:loop_topic, nil)
       |> assign(:raw_status, nil)
       |> assign(:loop_status, :loading)
       |> assign(:tool_steps, [])
       |> assign(:pending_tools, [])
+      |> assign(:agent_events, [])
       |> assign(:next_pending_tool, nil)
       |> assign(:active_tool_ref, nil)
       |> assign(:subscribed_tool_refs, MapSet.new())
@@ -54,7 +61,12 @@ defmodule FrothWeb.ToolLive do
     token = params["tgWebAppStartParam"] || params["ref"]
 
     if token && socket.assigns.loop_key != token do
-      {:noreply, socket |> setup_loop(token) |> maybe_yolo_approve()}
+      socket = setup_loop(socket, token)
+
+      socket =
+        if socket.assigns.loop_mode == :legacy, do: maybe_yolo_approve(socket), else: socket
+
+      {:noreply, socket}
     else
       {:noreply, socket}
     end
@@ -88,8 +100,15 @@ defmodule FrothWeb.ToolLive do
   end
 
   def handle_event("stop", _, socket) do
-    if is_integer(socket.assigns.inference_session_id) do
-      cast_bot(socket, {:stop_loop, socket.assigns.inference_session_id})
+    cond do
+      socket.assigns.loop_mode == :agent_cycle and is_binary(socket.assigns.cycle_id) ->
+        cast_bot(socket, {:stop_cycle, socket.assigns.cycle_id})
+
+      is_integer(socket.assigns.inference_session_id) ->
+        cast_bot(socket, {:stop_loop, socket.assigns.inference_session_id})
+
+      true ->
+        :ok
     end
 
     {:noreply, socket}
@@ -112,6 +131,37 @@ defmodule FrothWeb.ToolLive do
     steps = socket.assigns.tool_steps || []
     {:noreply, assign(socket, :tool_steps, steps ++ [step])}
   end
+
+  def handle_info(
+        {:event, _event, %AgentMessage{} = msg},
+        %{assigns: %{loop_mode: :agent_cycle}} = socket
+      ) do
+    events = socket.assigns.agent_events ++ [agent_event_from_message(msg)]
+
+    socket =
+      if msg.role == :agent do
+        socket |> assign(:live_thinking, "") |> assign(:live_text, "")
+      else
+        socket
+      end
+
+    {:noreply, assign(socket, :agent_events, events)}
+  end
+
+  def handle_info({:stream, {:thinking_start, _}}, socket) do
+    {:noreply, assign(socket, :live_thinking, "")}
+  end
+
+  def handle_info({:stream, {:thinking_delta, %{"delta" => delta}}}, socket)
+      when is_binary(delta) do
+    {:noreply, assign(socket, :live_thinking, socket.assigns.live_thinking <> delta)}
+  end
+
+  def handle_info({:stream, {:text_delta, delta}}, socket) when is_binary(delta) do
+    {:noreply, assign(socket, :live_text, socket.assigns.live_text <> delta)}
+  end
+
+  def handle_info({:stream, _}, socket), do: {:noreply, socket}
 
   def handle_info({:stream_event, {:thinking_start, _}}, socket) do
     {:noreply, assign(socket, :live_thinking, "")}
@@ -155,162 +205,239 @@ defmodule FrothWeb.ToolLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} variant={:plain}>
-      <div
-        id="tool-loop-viewer"
-        phx-hook="ToolScroll"
-        data-follow-mode={follow_mode(@yolo, @loop_status, @pending_tools)}
-        class="min-h-screen bg-black text-zinc-100 text-[14px] font-mono flex flex-col"
-      >
-        <div id="tool-feed" class="flex-1 px-3 py-3">
-          <%= for {item, idx} <- Enum.with_index(timeline_items(assigns)) do %>
-            <div class={[idx > 0 && "mt-3 pt-3 border-t border-zinc-900/80"]}>
-              <%= cond do %>
-                <% item.kind == :thinking -> %>
-                  <div class="pl-1 whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-400/80 italic">
-                    {item.body}
-                  </div>
-                <% item.kind == :assistant_text -> %>
-                  <div class="max-w-[94%] whitespace-pre-wrap leading-relaxed text-zinc-100">
-                    {item.body}
-                  </div>
-                <% item.kind == :sent_message -> %>
-                  <div class="ml-auto max-w-[94%] whitespace-pre-wrap leading-relaxed text-right text-emerald-200/95">
-                    {item.body}
-                  </div>
-                <% item.kind == :delivery_status -> %>
-                  <div class={[
-                    "text-[12px] pl-1",
-                    if(item.is_error, do: "text-red-300/80", else: "text-zinc-400/70")
-                  ]}>
-                    {item.result}
-                  </div>
-                <% item.kind == :queue_tool -> %>
-                  <div class={[
-                    "pl-3 space-y-2 border-l transition-opacity",
-                    item.active && "border-zinc-500/80",
-                    item.future && "border-zinc-700/40 opacity-45",
-                    !item.active && !item.future && "border-zinc-700/60"
-                  ]}>
-                    <div class="flex items-center justify-between gap-2">
-                      <span class="text-[12px] text-zinc-300/90">
-                        {queue_action_title(item.name)}
-                      </span>
-                      <span class={[
-                        "text-[10px] uppercase tracking-wide",
-                        tool_status_color(item.status, item.is_error)
-                      ]}>
-                        {queue_status_text(item.status)}
-                      </span>
-                    </div>
-
-                    <pre
-                      :if={item.code}
-                      class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-100"
-                    ><%= highlight_elixir(item.code) %></pre>
-                    <pre
-                      :if={is_nil(item.code) and is_binary(item.preview) and item.preview != ""}
-                      class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-300/90"
-                    >{item.preview}</pre>
-
-                    <%= if item.io_output != "" or item.result != "" do %>
-                      <pre
-                        :if={item.io_output != ""}
-                        class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-400/85"
-                      >{item.io_output}</pre>
-                      <.result_value result={item.result || ""} is_error={item.is_error} />
-                    <% end %>
-                  </div>
-              <% end %>
-            </div>
-          <% end %>
-
-          <div :if={@loop_status == :not_found} class="py-8 text-center text-zinc-500">
-            tool loop not found
-          </div>
-          <div :if={@loop_status == :loading} class="py-8 text-center text-zinc-500">...</div>
-          <div id="tool-feed-end"></div>
-        </div>
-
+      <%= if @loop_mode == :agent_cycle do %>
         <div
-          id="loop-now-dock"
-          class={[
-            "border-t border-zinc-800/80",
-            if(@yolo,
-              do:
-                "bg-gradient-to-r from-black via-zinc-950 to-black shadow-[0_-6px_24px_rgba(16,185,129,0.16)]",
-              else: "bg-black/98"
-            )
-          ]}
+          id="agent-cycle-viewer"
+          phx-hook="ToolScroll"
+          data-follow-mode="always"
+          class="min-h-screen bg-black text-zinc-100 text-[14px] font-mono flex flex-col"
         >
-          <% runnable_ref = next_runnable_ref(@pending_tools) %>
-          <% runnable_name = next_runnable_name(@pending_tools) %>
-          <div class="px-3 py-2 flex flex-wrap items-center gap-2">
-            <div class="flex items-center gap-2 min-w-0 grow">
-              <span
-                :if={show_dock_spinner?(@loop_status, @yolo, @pending_tools)}
-                class="inline-block size-2.5 rounded-full border border-zinc-500 border-t-zinc-100 animate-spin"
-              >
-              </span>
-              <span
-                :if={@yolo}
-                class="text-[10px] tracking-[0.2em] uppercase text-emerald-300/90 animate-pulse"
-              >
-                yolo
-              </span>
-              <span class="text-[11px] text-zinc-300 truncate">
-                {dock_text(@loop_status, @next_pending_tool, @pending_tools, @yolo)}
-              </span>
+          <div id="agent-cycle-feed" class="flex-1 px-3 py-3">
+            <div :for={item <- @agent_events} class="py-2 border-b border-zinc-900/70">
+              <div class={[
+                "text-[10px] uppercase tracking-wide mb-1",
+                if(item.role == :agent, do: "text-emerald-300/80", else: "text-zinc-500")
+              ]}>
+                {if(item.role == :agent, do: "assistant", else: "user")}
+              </div>
+              <pre class="whitespace-pre-wrap leading-relaxed text-zinc-100">{item.text}</pre>
             </div>
 
-            <.form
-              for={@yolo_form}
-              id="loop-yolo-form"
-              phx-change="set_yolo"
-              class="[&_div.fieldset]:mb-0 [&_span.label]:inline-flex [&_span.label]:items-center [&_span.label]:gap-1.5 [&_span.label]:text-[11px] [&_span.label]:text-zinc-300 [&_label]:cursor-pointer"
-            >
-              <.input
-                field={@yolo_form[:yolo]}
-                type="checkbox"
-                label="YOLO"
-                class="size-3.5 rounded-sm border-zinc-500 bg-transparent"
-              />
-            </.form>
+            <div :if={@live_thinking != ""} class="py-2 border-b border-zinc-900/70">
+              <div class="text-[10px] uppercase tracking-wide mb-1 text-zinc-500">thinking</div>
+              <pre class="whitespace-pre-wrap leading-relaxed text-zinc-400/85 italic">{@live_thinking}</pre>
+            </div>
 
-            <button
-              :if={is_binary(runnable_ref)}
-              phx-click="approve_tool"
-              phx-value-ref={runnable_ref}
-              title={if is_binary(runnable_name), do: tool_label(runnable_name), else: "Run"}
-              class="min-h-9 px-3 text-[12px] text-zinc-100 border border-zinc-600 rounded-sm hover:border-zinc-400 transition-colors"
-            >
-              Run
-            </button>
-            <button
-              :if={can_stop?(@raw_status)}
-              id="loop-stop"
-              phx-click="stop"
-              class="min-h-9 px-3 text-[12px] text-red-200/90 border border-red-500/35 rounded-sm hover:bg-red-500/10 transition-colors"
-            >
-              Stop
-            </button>
-            <button
-              id="loop-refresh"
-              phx-click="refresh"
-              class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
-            >
-              Refresh
-            </button>
-            <button
-              :if={@loop_status in [:done, :stopped, :error, :not_found]}
-              id="loop-close"
-              phx-click="close"
-              class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
-            >
-              Close
-            </button>
+            <div :if={@live_text != ""} class="py-2 border-b border-zinc-900/70">
+              <div class="text-[10px] uppercase tracking-wide mb-1 text-emerald-300/80">
+                assistant (streaming)
+              </div>
+              <pre class="whitespace-pre-wrap leading-relaxed text-zinc-100">{@live_text}</pre>
+            </div>
+
+            <div :if={@live_io != ""} class="py-2 border-b border-zinc-900/70">
+              <div class="text-[10px] uppercase tracking-wide mb-1 text-zinc-500">io output</div>
+              <pre class="whitespace-pre-wrap leading-relaxed text-zinc-300/90">{@live_io}</pre>
+            </div>
+
+            <div :if={is_binary(@live_result)} class="py-2">
+              <div class={[
+                "text-[10px] uppercase tracking-wide mb-1",
+                if(@live_result_error, do: "text-red-300/80", else: "text-zinc-500")
+              ]}>
+                result
+              </div>
+              <.result_value result={@live_result || ""} is_error={@live_result_error} />
+            </div>
+          </div>
+
+          <div class="border-t border-zinc-800/80 bg-black/98">
+            <div class="px-3 py-2 flex flex-wrap items-center gap-2">
+              <span class="text-[11px] text-zinc-300 truncate">
+                cycle {@cycle_id}
+              </span>
+              <button
+                id="loop-stop"
+                phx-click="stop"
+                class="min-h-9 px-3 text-[12px] text-red-200/90 border border-red-500/35 rounded-sm hover:bg-red-500/10 transition-colors"
+              >
+                Stop
+              </button>
+              <button
+                id="loop-refresh"
+                phx-click="refresh"
+                class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
+              >
+                Refresh
+              </button>
+              <button
+                id="loop-close"
+                phx-click="close"
+                class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      <% else %>
+        <div
+          id="tool-loop-viewer"
+          phx-hook="ToolScroll"
+          data-follow-mode={follow_mode(@yolo, @loop_status, @pending_tools)}
+          class="min-h-screen bg-black text-zinc-100 text-[14px] font-mono flex flex-col"
+        >
+          <div id="tool-feed" class="flex-1 px-3 py-3">
+            <%= for {item, idx} <- Enum.with_index(timeline_items(assigns)) do %>
+              <div class={[idx > 0 && "mt-3 pt-3 border-t border-zinc-900/80"]}>
+                <%= cond do %>
+                  <% item.kind == :thinking -> %>
+                    <div class="pl-1 whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-400/80 italic">
+                      {item.body}
+                    </div>
+                  <% item.kind == :assistant_text -> %>
+                    <div class="max-w-[94%] whitespace-pre-wrap leading-relaxed text-zinc-100">
+                      {item.body}
+                    </div>
+                  <% item.kind == :sent_message -> %>
+                    <div class="ml-auto max-w-[94%] whitespace-pre-wrap leading-relaxed text-right text-emerald-200/95">
+                      {item.body}
+                    </div>
+                  <% item.kind == :delivery_status -> %>
+                    <div class={[
+                      "text-[12px] pl-1",
+                      if(item.is_error, do: "text-red-300/80", else: "text-zinc-400/70")
+                    ]}>
+                      {item.result}
+                    </div>
+                  <% item.kind == :queue_tool -> %>
+                    <div class={[
+                      "pl-3 space-y-2 border-l transition-opacity",
+                      item.active && "border-zinc-500/80",
+                      item.future && "border-zinc-700/40 opacity-45",
+                      !item.active && !item.future && "border-zinc-700/60"
+                    ]}>
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-[12px] text-zinc-300/90">
+                          {queue_action_title(item.name)}
+                        </span>
+                        <span class={[
+                          "text-[10px] uppercase tracking-wide",
+                          tool_status_color(item.status, item.is_error)
+                        ]}>
+                          {queue_status_text(item.status)}
+                        </span>
+                      </div>
+
+                      <pre
+                        :if={item.code}
+                        class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-100"
+                      ><%= highlight_elixir(item.code) %></pre>
+                      <pre
+                        :if={is_nil(item.code) and is_binary(item.preview) and item.preview != ""}
+                        class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-300/90"
+                      >{item.preview}</pre>
+
+                      <%= if item.io_output != "" or item.result != "" do %>
+                        <pre
+                          :if={item.io_output != ""}
+                          class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-400/85"
+                        >{item.io_output}</pre>
+                        <.result_value result={item.result || ""} is_error={item.is_error} />
+                      <% end %>
+                    </div>
+                <% end %>
+              </div>
+            <% end %>
+
+            <div :if={@loop_status == :not_found} class="py-8 text-center text-zinc-500">
+              tool loop not found
+            </div>
+            <div :if={@loop_status == :loading} class="py-8 text-center text-zinc-500">...</div>
+            <div id="tool-feed-end"></div>
+          </div>
+
+          <div
+            id="loop-now-dock"
+            class={[
+              "border-t border-zinc-800/80",
+              if(@yolo,
+                do:
+                  "bg-gradient-to-r from-black via-zinc-950 to-black shadow-[0_-6px_24px_rgba(16,185,129,0.16)]",
+                else: "bg-black/98"
+              )
+            ]}
+          >
+            <% runnable_ref = next_runnable_ref(@pending_tools) %>
+            <% runnable_name = next_runnable_name(@pending_tools) %>
+            <div class="px-3 py-2 flex flex-wrap items-center gap-2">
+              <div class="flex items-center gap-2 min-w-0 grow">
+                <span
+                  :if={show_dock_spinner?(@loop_status, @yolo, @pending_tools)}
+                  class="inline-block size-2.5 rounded-full border border-zinc-500 border-t-zinc-100 animate-spin"
+                >
+                </span>
+                <span
+                  :if={@yolo}
+                  class="text-[10px] tracking-[0.2em] uppercase text-emerald-300/90 animate-pulse"
+                >
+                  yolo
+                </span>
+                <span class="text-[11px] text-zinc-300 truncate">
+                  {dock_text(@loop_status, @next_pending_tool, @pending_tools, @yolo)}
+                </span>
+              </div>
+
+              <.form
+                for={@yolo_form}
+                id="loop-yolo-form"
+                phx-change="set_yolo"
+                class="[&_div.fieldset]:mb-0 [&_span.label]:inline-flex [&_span.label]:items-center [&_span.label]:gap-1.5 [&_span.label]:text-[11px] [&_span.label]:text-zinc-300 [&_label]:cursor-pointer"
+              >
+                <.input
+                  field={@yolo_form[:yolo]}
+                  type="checkbox"
+                  label="YOLO"
+                  class="size-3.5 rounded-sm border-zinc-500 bg-transparent"
+                />
+              </.form>
+
+              <button
+                :if={is_binary(runnable_ref)}
+                phx-click="approve_tool"
+                phx-value-ref={runnable_ref}
+                title={if is_binary(runnable_name), do: tool_label(runnable_name), else: "Run"}
+                class="min-h-9 px-3 text-[12px] text-zinc-100 border border-zinc-600 rounded-sm hover:border-zinc-400 transition-colors"
+              >
+                Run
+              </button>
+              <button
+                :if={can_stop?(@raw_status)}
+                id="loop-stop"
+                phx-click="stop"
+                class="min-h-9 px-3 text-[12px] text-red-200/90 border border-red-500/35 rounded-sm hover:bg-red-500/10 transition-colors"
+              >
+                Stop
+              </button>
+              <button
+                id="loop-refresh"
+                phx-click="refresh"
+                class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
+              >
+                Refresh
+              </button>
+              <button
+                :if={@loop_status in [:done, :stopped, :error, :not_found]}
+                id="loop-close"
+                phx-click="close"
+                class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      <% end %>
     </Layouts.app>
     """
   end
@@ -785,24 +912,36 @@ defmodule FrothWeb.ToolLive do
   defp setup_loop(socket, token) when is_binary(token) and token != "" do
     socket = assign(socket, :loop_key, token)
 
-    case lookup_inference_session(token) do
-      nil ->
-        socket
-        |> assign(:inference_session_id, nil)
-        |> assign(:bot_id, "charlie")
-        |> assign(:loop_topic, nil)
-        |> assign(:raw_status, nil)
-        |> assign(:loop_status, :not_found)
-        |> assign(:tool_steps, [])
-        |> assign(:pending_tools, [])
-        |> assign(:next_pending_tool, nil)
-        |> assign(:active_tool_ref, nil)
+    case parse_agent_cycle_token(token) do
+      {:ok, bot_id, cycle_id} ->
+        setup_agent_cycle(socket, bot_id, cycle_id)
 
-      inference_session ->
-        socket
-        |> maybe_subscribe_loop(inference_session.id)
-        |> assign_from_inference_session(inference_session)
-        |> maybe_subscribe_active_tool()
+      :error ->
+        case lookup_inference_session(token) do
+          nil ->
+            socket
+            |> assign(:loop_mode, :legacy)
+            |> assign(:cycle_id, nil)
+            |> assign(:agent_events, [])
+            |> assign(:inference_session_id, nil)
+            |> assign(:bot_id, "charlie")
+            |> assign(:loop_topic, nil)
+            |> assign(:raw_status, nil)
+            |> assign(:loop_status, :not_found)
+            |> assign(:tool_steps, [])
+            |> assign(:pending_tools, [])
+            |> assign(:next_pending_tool, nil)
+            |> assign(:active_tool_ref, nil)
+
+          inference_session ->
+            socket
+            |> assign(:loop_mode, :legacy)
+            |> assign(:cycle_id, nil)
+            |> assign(:agent_events, [])
+            |> maybe_subscribe_loop(inference_session.id)
+            |> assign_from_inference_session(inference_session)
+            |> maybe_subscribe_active_tool()
+        end
     end
   end
 
@@ -811,9 +950,15 @@ defmodule FrothWeb.ToolLive do
   defp refresh_loop(%{assigns: %{loop_key: nil}} = socket), do: socket
 
   defp refresh_loop(socket) do
-    socket
-    |> setup_loop(socket.assigns.loop_key)
-    |> maybe_yolo_approve()
+    socket =
+      if socket.assigns.loop_mode == :agent_cycle and is_binary(socket.assigns.cycle_id) do
+        events = load_agent_cycle_events(socket.assigns.cycle_id)
+        assign(socket, :agent_events, events)
+      else
+        setup_loop(socket, socket.assigns.loop_key)
+      end
+
+    if socket.assigns.loop_mode == :legacy, do: maybe_yolo_approve(socket), else: socket
   end
 
   defp maybe_subscribe_loop(socket, inference_session_id) when is_integer(inference_session_id) do
@@ -838,6 +983,29 @@ defmodule FrothWeb.ToolLive do
   end
 
   defp maybe_subscribe_loop(socket, _), do: socket
+
+  defp maybe_subscribe_cycle(socket, cycle_id) when is_binary(cycle_id) do
+    topic = "cycle:#{cycle_id}"
+
+    socket =
+      if connected?(socket) do
+        if socket.assigns.loop_topic && socket.assigns.loop_topic != topic do
+          Phoenix.PubSub.unsubscribe(Froth.PubSub, socket.assigns.loop_topic)
+        end
+
+        if socket.assigns.loop_topic != topic do
+          Phoenix.PubSub.subscribe(Froth.PubSub, topic)
+        end
+
+        socket
+      else
+        socket
+      end
+
+    assign(socket, :loop_topic, topic)
+  end
+
+  defp maybe_subscribe_cycle(socket, _), do: socket
 
   defp maybe_subscribe_active_tool(socket) do
     ref = socket.assigns.active_tool_ref
@@ -902,6 +1070,55 @@ defmodule FrothWeb.ToolLive do
     end
   end
 
+  defp setup_agent_cycle(socket, bot_id, cycle_id)
+       when is_binary(bot_id) and is_binary(cycle_id) do
+    case Froth.Repo.get(Cycle, cycle_id) do
+      nil ->
+        socket
+        |> assign(:loop_mode, :agent_cycle)
+        |> assign(:cycle_id, cycle_id)
+        |> assign(:bot_id, bot_id)
+        |> assign(:loop_status, :not_found)
+        |> assign(:agent_events, [])
+        |> assign(:inference_session_id, nil)
+
+      _cycle ->
+        events = load_agent_cycle_events(cycle_id)
+
+        socket
+        |> assign(:loop_mode, :agent_cycle)
+        |> assign(:cycle_id, cycle_id)
+        |> assign(:bot_id, bot_id)
+        |> assign(:loop_status, :running)
+        |> assign(:agent_events, events)
+        |> assign(:inference_session_id, nil)
+        |> assign(:pending_tools, [])
+        |> assign(:tool_steps, [])
+        |> assign(:next_pending_tool, nil)
+        |> assign(:active_tool_ref, nil)
+        |> maybe_subscribe_cycle(cycle_id)
+    end
+  end
+
+  defp load_agent_cycle_events(cycle_id) when is_binary(cycle_id) do
+    head_id =
+      Froth.Repo.one(
+        from(e in Event,
+          where: e.cycle_id == ^cycle_id,
+          order_by: [desc: e.seq],
+          limit: 1,
+          select: e.head_id
+        ),
+        log: false
+      )
+
+    head_id
+    |> Agent.load_messages()
+    |> Enum.map(&agent_event_from_message/1)
+  end
+
+  defp load_agent_cycle_events(_), do: []
+
   defp lookup_inference_session(token) do
     case parse_loop_token(token) do
       {:inference_session_id, inference_session_id} ->
@@ -942,9 +1159,44 @@ defmodule FrothWeb.ToolLive do
 
   defp parse_loop_token(_), do: :invalid
 
+  defp parse_agent_cycle_token(token) when is_binary(token) do
+    case Regex.run(~r/^cycle_([^_]+)_(.+)$/, token, capture: :all_but_first) do
+      [bot_id, cycle_id] -> {:ok, bot_id, cycle_id}
+      _ -> :error
+    end
+  end
+
+  defp parse_agent_cycle_token(_), do: :error
+
   defp cast_bot(socket, message) do
     Froth.Telegram.Bots.cast(socket.assigns.bot_id || "charlie", message)
   end
+
+  defp agent_event_from_message(%AgentMessage{id: id, role: role, content: content}) do
+    %{
+      id: id || Ecto.ULID.generate(),
+      role: role,
+      text: agent_event_text(content)
+    }
+  end
+
+  defp agent_event_from_message(_), do: %{id: Ecto.ULID.generate(), role: :user, text: ""}
+
+  defp agent_event_text(%{"_wrapped" => value}) when is_binary(value), do: value
+
+  defp agent_event_text(%{"_wrapped" => blocks}) when is_list(blocks) do
+    blocks
+    |> Enum.map(fn
+      %{"type" => "text", "text" => text} when is_binary(text) -> text
+      %{"type" => "thinking", "thinking" => text} when is_binary(text) -> text
+      %{"type" => "tool_result", "content" => content} when is_binary(content) -> content
+      other -> inspect(other, limit: 20, printable_limit: 500)
+    end)
+    |> Enum.join("\n")
+  end
+
+  defp agent_event_text(content) when is_binary(content), do: content
+  defp agent_event_text(content), do: inspect(content, limit: 20, printable_limit: 500)
 
   defp split_tool_result(content) when is_binary(content) do
     if String.starts_with?(content, "IO output:\n") do

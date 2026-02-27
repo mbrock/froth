@@ -75,7 +75,9 @@ defmodule Froth.Podcast do
   @yt_env [{"PATH", "#{Path.expand("~/.deno/bin")}:#{System.get_env("PATH")}"}]
 
   defp docroot, do: Application.get_env(:froth, __MODULE__, [])[:docroot] || "/tmp/podcast"
-  defp public_base, do: Application.get_env(:froth, __MODULE__, [])[:public_base] || "https://example.com"
+
+  defp public_base,
+    do: Application.get_env(:froth, __MODULE__, [])[:public_base] || "https://example.com"
 
   # --- Podcast discovery ---
 

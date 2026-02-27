@@ -90,18 +90,15 @@ config :froth, Froth.Anthropic,
          %{"type" => "enabled", "budget_tokens" => budget}
      end)
 
-config :froth, Froth.Analyzer,
-  tdlib_session: System.get_env("ANALYZER_TDLIB_SESSION")
+config :froth, Froth.Analyzer, tdlib_session: System.get_env("ANALYZER_TDLIB_SESSION")
 
 config :froth, Froth.Podcast,
   docroot: System.get_env("PODCAST_DOCROOT"),
   public_base: System.get_env("PODCAST_PUBLIC_BASE")
 
 config :froth, Froth.Telegram.Charlie,
-  bot_user_id:
-    String.to_integer(System.get_env("CHARLIE_BOT_USER_ID", "0")),
-  owner_user_id:
-    String.to_integer(System.get_env("CHARLIE_OWNER_USER_ID", "0"))
+  bot_user_id: String.to_integer(System.get_env("CHARLIE_BOT_USER_ID", "0")),
+  owner_user_id: String.to_integer(System.get_env("CHARLIE_OWNER_USER_ID", "0"))
 
 bertil_bot_user_id = String.to_integer(System.get_env("BERTIL_BOT_USER_ID", "0"))
 bertil_owner_user_id = String.to_integer(System.get_env("BERTIL_OWNER_USER_ID", "0"))

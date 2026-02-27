@@ -125,7 +125,9 @@ defmodule Froth.Agent.Worker do
   defp parse_tool_uses(_), do: []
 
   defp start_tools(worker, tool_uses) do
-    context = %{cycle_id: worker.cycle.id, head_id: worker.head_id}
+    context =
+      %{cycle_id: worker.cycle.id, head_id: worker.head_id}
+      |> Map.merge(worker.config.context || %{})
 
     invocations =
       Enum.map(tool_uses, fn %ToolUse{id: id} = tool_use ->
@@ -146,7 +148,19 @@ defmodule Froth.Agent.Worker do
          tool_use_id,
          result
        ) do
-    %{worker | phase: {:working, invocations, [ToolResult.new(tool_use_id, result) | results]}}
+    tool_result =
+      case result do
+        {:ok, content} ->
+          ToolResult.new(tool_use_id, content)
+
+        {:error, content} ->
+          ToolResult.new(tool_use_id, content, is_error: true)
+
+        content ->
+          ToolResult.new(tool_use_id, content)
+      end
+
+    %{worker | phase: {:working, invocations, [tool_result | results]}}
   end
 
   defp find_invocation!(invocations, ref) do
