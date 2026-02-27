@@ -14,7 +14,6 @@ defmodule Froth.Telegram.Bertil do
   Soporna blir till nya sopor.
   """
 
-  alias Froth.Inference.ToolSteps
   alias Froth.Inference.Tools
   alias Froth.Telegram.Bot
   alias Froth.Telegram.Profiles.BertilPrompt
@@ -45,9 +44,6 @@ defmodule Froth.Telegram.Bertil do
   def system_prompt(chat_id, config) when is_map(config) do
     BertilPrompt.system_prompt(chat_id, config)
   end
-
-  @spec tool_steps_for_chat(integer(), integer() | keyword()) :: [map()]
-  defdelegate tool_steps_for_chat(chat_id, limit_or_opts \\ 20), to: ToolSteps
 
   def child_spec(opts) do
     %{

@@ -24,8 +24,6 @@ defmodule Froth.Application do
           {Froth.Telegram.Bot, bot_opts}
         end) ++
         [
-          {Registry, keys: :unique, name: Froth.Inference.SessionRegistry},
-          {DynamicSupervisor, name: Froth.Inference.SessionSupervisor, strategy: :one_for_one},
           {Registry, keys: :unique, name: Froth.Codex.SessionRegistry},
           {DynamicSupervisor, name: Froth.Codex.SessionSupervisor, strategy: :one_for_one},
           {Registry, keys: :unique, name: Froth.Tasks.Registry},

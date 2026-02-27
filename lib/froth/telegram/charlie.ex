@@ -3,7 +3,6 @@ defmodule Froth.Telegram.Charlie do
   Charlie bot profile (identity + prompt config) backed by `Froth.Telegram.Bot`.
   """
 
-  alias Froth.Inference.ToolSteps
   alias Froth.Inference.Tools
   alias Froth.Telegram.Bot
   alias Froth.Telegram.Profiles.CharliePrompt
@@ -34,9 +33,6 @@ defmodule Froth.Telegram.Charlie do
   def system_prompt(chat_id, config) when is_map(config) do
     CharliePrompt.system_prompt(chat_id, config)
   end
-
-  @spec tool_steps_for_chat(integer(), integer() | keyword()) :: [map()]
-  defdelegate tool_steps_for_chat(chat_id, limit_or_opts \\ 20), to: ToolSteps
 
   def child_spec(opts) do
     %{
