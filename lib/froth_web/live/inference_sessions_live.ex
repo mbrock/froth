@@ -3,30 +3,13 @@ defmodule FrothWeb.InferenceSessionsLive do
 
   import Ecto.Query
 
-  alias Froth.Inference.InferenceSession
+  alias Froth.Agent
+  alias Froth.Agent.{Cycle, Message}
+  alias Froth.Telegram.CycleLink
   alias Froth.Repo
 
   @default_limit 120
   @max_limit 500
-  @max_json_chars 200_000
-
-  @status_values ~w(all pending streaming awaiting_tools done error stopped)
-
-  @status_options [
-    {"all", "all"},
-    {"pending", "pending"},
-    {"streaming", "streaming"},
-    {"awaiting_tools", "awaiting_tools"},
-    {"done", "done"},
-    {"error", "error"},
-    {"stopped", "stopped"}
-  ]
-
-  @sections [
-    %{key: :pending_tools, title: "Pending Tools"},
-    %{key: :queued_messages, title: "Queued Messages"},
-    %{key: :tool_steps, title: "Tool Steps"}
-  ]
 
   @impl true
   def mount(_params, _session, socket) do
@@ -37,59 +20,56 @@ defmodule FrothWeb.InferenceSessionsLive do
      |> assign(:filters, filters)
      |> assign(:filter_query, %{})
      |> assign(:max_limit, @max_limit)
-     |> assign(:max_json_chars, @max_json_chars)
      |> assign(:filter_form, to_form(filter_form_values(filters), as: :filters))
-     |> assign(:session_summaries, [])
+     |> assign(:cycle_summaries, [])
      |> assign(:matching_count, 0)
-     |> assign(:selected_session, nil)
-     |> assign(:selected_session_id, nil)
-     |> assign(:selected_sections, empty_sections())
-     |> assign(:status_options, @status_options)
-     |> assign(:sections, @sections)}
+     |> assign(:selected_cycle, nil)
+     |> assign(:selected_cycle_id, nil)
+     |> assign(:selected_messages, [])}
   end
 
   @impl true
   def handle_params(params, _uri, socket) do
     filters = normalize_filters(params)
-    requested_session_id = parse_optional_integer(params["id"])
+    requested_id = params["id"]
 
-    {:noreply, load_page(socket, filters, requested_session_id)}
+    {:noreply, load_page(socket, filters, requested_id)}
   end
 
   @impl true
   def handle_event("apply_filters", %{"filters" => params}, socket) do
     filters = normalize_filters(params)
-    {:noreply, push_patch(socket, to: sessions_path(nil, filter_query_params(filters)))}
+    {:noreply, push_patch(socket, to: cycles_path(nil, filter_query_params(filters)))}
   end
 
   def handle_event("clear_filters", _params, socket) do
     filters = default_filters()
-    {:noreply, push_patch(socket, to: sessions_path(nil, filter_query_params(filters)))}
+    {:noreply, push_patch(socket, to: cycles_path(nil, filter_query_params(filters)))}
   end
 
   def handle_event("refresh", _params, socket) do
     filters = socket.assigns.filters
-    selected_session_id = socket.assigns.selected_session_id
-    {:noreply, load_page(socket, filters, selected_session_id)}
+    selected_id = socket.assigns.selected_cycle_id
+    {:noreply, load_page(socket, filters, selected_id)}
   end
 
   @impl true
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} variant={:plain}>
-      <div id="inference-sessions-page" class="min-h-screen bg-black text-zinc-100 text-[13px]">
+      <div id="cycles-page" class="min-h-screen bg-black text-zinc-100 text-[13px]">
         <header class="sticky top-0 z-30 border-b border-white/10 bg-black/95 backdrop-blur">
           <div class="mx-auto flex max-w-[1500px] items-center justify-between gap-3 px-3 py-2">
             <div class="min-w-0">
-              <h1 class="text-[14px] font-semibold text-white">Inference Sessions</h1>
+              <h1 class="text-[14px] font-semibold text-white">Agent Cycles</h1>
               <p class="text-[11px] text-zinc-400">
-                {@matching_count} matching sessions
+                {@matching_count} matching cycles
               </p>
             </div>
 
             <div class="flex items-center gap-2">
               <button
-                id="inference-sessions-refresh"
+                id="cycles-refresh"
                 phx-click="refresh"
                 class="rounded border border-white/20 px-2 py-1 text-[11px] text-zinc-200 transition-colors hover:border-white/45"
               >
@@ -109,7 +89,7 @@ defmodule FrothWeb.InferenceSessionsLive do
           <section class="overflow-hidden rounded border border-white/10 bg-white/[0.03]">
             <.form
               for={@filter_form}
-              id="inference-sessions-filter-form"
+              id="cycles-filter-form"
               phx-submit="apply_filters"
               class="space-y-2 border-b border-white/10 px-3 py-3"
             >
@@ -135,14 +115,6 @@ defmodule FrothWeb.InferenceSessionsLive do
 
               <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <.input
-                  field={@filter_form[:status]}
-                  type="select"
-                  label="Status"
-                  options={@status_options}
-                  class="w-full rounded border border-white/20 bg-black px-2 py-1.5 text-[12px] text-white focus:border-white/45 focus:outline-none"
-                />
-
-                <.input
                   field={@filter_form[:limit]}
                   type="number"
                   label="Rows"
@@ -155,14 +127,14 @@ defmodule FrothWeb.InferenceSessionsLive do
 
               <div class="flex items-center gap-2 pt-1">
                 <button
-                  id="inference-sessions-apply-filters"
+                  id="cycles-apply-filters"
                   type="submit"
                   class="rounded border border-white/35 px-2.5 py-1 text-[11px] text-white transition-colors hover:border-white/55"
                 >
                   Apply
                 </button>
                 <button
-                  id="inference-sessions-clear-filters"
+                  id="cycles-clear-filters"
                   type="button"
                   phx-click="clear_filters"
                   class="rounded border border-white/20 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:border-white/40"
@@ -170,42 +142,37 @@ defmodule FrothWeb.InferenceSessionsLive do
                   Clear
                 </button>
                 <span class="ml-auto text-[11px] text-zinc-400">
-                  showing {length(@session_summaries)}
+                  showing {length(@cycle_summaries)}
                 </span>
               </div>
             </.form>
 
-            <div id="inference-session-list" class="max-h-[calc(100vh-300px)] overflow-y-auto">
+            <div id="cycle-list" class="max-h-[calc(100vh-300px)] overflow-y-auto">
               <.link
-                :for={summary <- @session_summaries}
-                patch={sessions_path(summary.id, @filter_query)}
-                id={"inference-session-#{summary.id}"}
+                :for={summary <- @cycle_summaries}
+                patch={cycles_path(summary.cycle_id, @filter_query)}
+                id={"cycle-#{summary.cycle_id}"}
                 class={[
                   "block border-t border-white/5 px-3 py-2 transition-colors first:border-t-0",
-                  if(@selected_session_id == summary.id,
+                  if(@selected_cycle_id == summary.cycle_id,
                     do: "bg-white/10",
                     else: "hover:bg-white/[0.06]"
                   )
                 ]}
               >
                 <div class="flex items-center justify-between gap-2">
-                  <span class="font-mono text-[12px] text-zinc-100">{summary.id}</span>
-                  <span class={[
-                    "rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide",
-                    status_badge_class(summary.status)
-                  ]}>
-                    {summary.status}
+                  <span class="font-mono text-[12px] text-zinc-100 truncate">
+                    {String.slice(summary.cycle_id, 0, 16)}..
+                  </span>
+                  <span class="rounded border border-zinc-500/30 bg-zinc-500/10 px-1.5 py-0.5 text-[10px] text-zinc-300">
+                    {summary.message_count} msgs
                   </span>
                 </div>
 
                 <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-400">
                   <span>bot: {summary.bot_id || "-"}</span>
                   <span>chat: {summary.chat_id}</span>
-                  <span>reply_to: {summary.reply_to || "-"}</span>
-                </div>
-
-                <div class="mt-1 text-[11px] text-zinc-500">
-                  api {summary.api_count} · pending {summary.pending_count} · queued {summary.queued_count} · steps {summary.step_count}
+                  <span :if={summary.reply_to}>reply_to: {summary.reply_to}</span>
                 </div>
 
                 <div class="mt-1 text-[10px] text-zinc-600">
@@ -213,81 +180,52 @@ defmodule FrothWeb.InferenceSessionsLive do
                 </div>
               </.link>
 
-              <div :if={@session_summaries == []} class="px-3 py-8 text-center text-zinc-500">
-                No inference sessions matched these filters.
+              <div :if={@cycle_summaries == []} class="px-3 py-8 text-center text-zinc-500">
+                No agent cycles matched these filters.
               </div>
             </div>
           </section>
 
           <section class="space-y-3">
-            <%= if @selected_session do %>
+            <%= if @selected_cycle do %>
               <div
-                id="inference-session-detail"
+                id="cycle-detail"
                 class="rounded border border-white/10 bg-white/[0.03] p-3"
               >
                 <div class="flex flex-wrap items-center gap-2">
-                  <h2 class="font-mono text-[13px] text-white">
-                    session_{@selected_session.id}
+                  <h2 class="font-mono text-[13px] text-white truncate">
+                    {@selected_cycle.cycle_id}
                   </h2>
-                  <span class={[
-                    "rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide",
-                    status_badge_class(@selected_session.status)
-                  ]}>
-                    {@selected_session.status}
-                  </span>
                 </div>
 
                 <dl class="mt-3 grid grid-cols-1 gap-2 text-[12px] text-zinc-300 md:grid-cols-2">
                   <div>
                     <dt class="text-zinc-500">bot</dt>
-                    <dd class="font-mono">{@selected_session.bot_id || "-"}</dd>
+                    <dd class="font-mono">{@selected_cycle.bot_id || "-"}</dd>
                   </div>
                   <div>
                     <dt class="text-zinc-500">chat_id</dt>
-                    <dd class="font-mono">{@selected_session.chat_id}</dd>
+                    <dd class="font-mono">{@selected_cycle.chat_id}</dd>
                   </div>
-                  <div>
+                  <div :if={@selected_cycle.reply_to}>
                     <dt class="text-zinc-500">reply_to</dt>
-                    <dd class="font-mono">{@selected_session.reply_to || "-"}</dd>
+                    <dd class="font-mono">{@selected_cycle.reply_to}</dd>
                   </div>
                   <div>
-                    <dt class="text-zinc-500">inserted_at</dt>
-                    <dd class="font-mono">{format_timestamp(@selected_session.inserted_at)}</dd>
+                    <dt class="text-zinc-500">created</dt>
+                    <dd class="font-mono">{format_timestamp(@selected_cycle.inserted_at)}</dd>
                   </div>
-                  <div>
-                    <dt class="text-zinc-500">updated_at</dt>
-                    <dd class="font-mono">{format_timestamp(@selected_session.updated_at)}</dd>
+                  <div :if={@selected_cycle.legacy_inference_session_id}>
+                    <dt class="text-zinc-500">legacy session</dt>
+                    <dd class="font-mono">{@selected_cycle.legacy_inference_session_id}</dd>
                   </div>
                 </dl>
               </div>
 
-              <.api_messages_panel messages={api_messages_for_view(@selected_session.api_messages)} />
-
-              <details
-                :for={section <- @sections}
-                id={"inference-section-#{section.key}"}
-                class="overflow-hidden rounded border border-white/10 bg-white/[0.03]"
-                open
-              >
-                <% details =
-                  Map.get(@selected_sections, section.key, %{count: 0, json: "[]", truncated: false}) %>
-                <summary class="cursor-pointer select-none px-3 py-2 text-[12px] text-zinc-200">
-                  <span class="font-medium">{section.title}</span>
-                  <span class="ml-2 text-zinc-500">({details.count})</span>
-                </summary>
-                <div class="border-t border-white/10 px-3 py-2">
-                  <p :if={details.truncated} class="mb-2 text-[11px] text-amber-300/90">
-                    Preview truncated at {@max_json_chars} characters.
-                  </p>
-                  <pre
-                    id={"inference-#{section.key}-json"}
-                    class="max-h-[34rem] overflow-auto whitespace-pre-wrap rounded border border-white/10 bg-black/45 p-3 font-mono text-[11px] leading-relaxed text-zinc-200"
-                  >{details.json}</pre>
-                </div>
-              </details>
+              <.api_messages_panel messages={@selected_messages} />
             <% else %>
               <div class="rounded border border-white/10 bg-white/[0.03] px-3 py-12 text-center text-zinc-500">
-                No inference sessions available yet.
+                No agent cycles available yet.
               </div>
             <% end %>
           </section>
@@ -297,141 +235,92 @@ defmodule FrothWeb.InferenceSessionsLive do
     """
   end
 
-  defp load_page(socket, filters, requested_session_id) do
-    session_summaries = list_session_summaries(filters)
-    matching_count = count_matching_sessions(filters)
-    selected_session = select_session(requested_session_id, session_summaries)
-    selected_session_id = selected_session && selected_session.id
+  defp load_page(socket, filters, requested_id) do
+    cycle_summaries = list_cycle_summaries(filters)
+    matching_count = count_matching_cycles(filters)
+    selected = select_cycle(requested_id, cycle_summaries)
+    selected_id = selected && selected.cycle_id
+
+    messages =
+      if selected do
+        head_id = Agent.latest_head_id(%Cycle{id: selected_id})
+
+        head_id
+        |> Agent.load_messages()
+        |> Enum.map(&Message.to_api/1)
+        |> api_messages_for_view()
+      else
+        []
+      end
 
     socket
     |> assign(:filters, filters)
     |> assign(:filter_query, filter_query_params(filters))
     |> assign(:filter_form, to_form(filter_form_values(filters), as: :filters))
-    |> assign(:session_summaries, session_summaries)
+    |> assign(:cycle_summaries, cycle_summaries)
     |> assign(:matching_count, matching_count)
-    |> assign(:selected_session, selected_session)
-    |> assign(:selected_session_id, selected_session_id)
-    |> assign(:selected_sections, section_payloads(selected_session))
+    |> assign(:selected_cycle, selected)
+    |> assign(:selected_cycle_id, selected_id)
+    |> assign(:selected_messages, messages)
   end
 
-  defp sessions_path(nil, params), do: ~p"/froth/inference?#{params}"
-  defp sessions_path(id, params) when is_integer(id), do: ~p"/froth/inference/#{id}?#{params}"
+  defp cycles_path(nil, params), do: ~p"/froth/inference?#{params}"
 
-  defp select_session(requested_session_id, summaries) when is_list(summaries) do
-    selected_session =
-      case requested_session_id do
-        id when is_integer(id) -> Repo.get(InferenceSession, id)
-        _ -> nil
+  defp cycles_path(id, params) when is_binary(id),
+    do: ~p"/froth/inference/#{id}?#{params}"
+
+  defp select_cycle(requested_id, summaries) when is_list(summaries) do
+    found =
+      if is_binary(requested_id) and requested_id != "" do
+        Enum.find(summaries, &(&1.cycle_id == requested_id))
       end
 
-    case selected_session do
-      %InferenceSession{} = inference_session ->
-        inference_session
-
-      _ ->
-        case summaries do
-          [%{id: id} | _] -> Repo.get(InferenceSession, id)
-          _ -> nil
-        end
-    end
+    found || List.first(summaries)
   end
 
-  defp list_session_summaries(filters) do
-    sessions_base_query(filters)
-    |> order_by([s], desc: s.inserted_at, desc: s.id)
+  defp list_cycle_summaries(filters) do
+    cycles_base_query(filters)
+    |> order_by([_l, c], desc: c.inserted_at)
     |> limit(^filters.limit)
-    |> select([s], %{
-      id: s.id,
-      bot_id: s.bot_id,
-      chat_id: s.chat_id,
-      reply_to: s.reply_to,
-      status: s.status,
-      inserted_at: s.inserted_at,
-      updated_at: s.updated_at,
-      api_count: fragment("jsonb_array_length(COALESCE(?, '[]'::jsonb))", s.api_messages),
-      pending_count: fragment("jsonb_array_length(COALESCE(?, '[]'::jsonb))", s.pending_tools),
-      queued_count: fragment("jsonb_array_length(COALESCE(?, '[]'::jsonb))", s.queued_messages),
-      step_count: fragment("jsonb_array_length(COALESCE(?, '[]'::jsonb))", s.tool_steps)
+    |> select([l, c], %{
+      cycle_id: l.cycle_id,
+      bot_id: l.bot_id,
+      chat_id: l.chat_id,
+      reply_to: l.reply_to,
+      legacy_inference_session_id: l.legacy_inference_session_id,
+      inserted_at: c.inserted_at,
+      message_count:
+        fragment(
+          "(SELECT COUNT(*) FROM agent_events WHERE cycle_id = ?)",
+          l.cycle_id
+        )
     })
     |> Repo.all(log: false)
   end
 
-  defp count_matching_sessions(filters) do
-    sessions_base_query(filters)
-    |> select([s], count(s.id))
-    |> Repo.one(log: false)
-    |> case do
-      nil -> 0
-      count -> count
-    end
+  defp count_matching_cycles(filters) do
+    cycles_base_query(filters)
+    |> select([l, _c], count(l.cycle_id))
+    |> Repo.one(log: false) || 0
   end
 
-  defp sessions_base_query(filters) do
-    InferenceSession
+  defp cycles_base_query(filters) do
+    from(l in CycleLink, join: c in Cycle, on: c.id == l.cycle_id)
     |> maybe_filter_bot(filters.bot_id)
     |> maybe_filter_chat(filters.chat_id)
-    |> maybe_filter_status(filters.status)
   end
 
   defp maybe_filter_bot(query, nil), do: query
-  defp maybe_filter_bot(query, bot_id), do: from(s in query, where: s.bot_id == ^bot_id)
+  defp maybe_filter_bot(query, bot_id), do: from([l, c] in query, where: l.bot_id == ^bot_id)
 
   defp maybe_filter_chat(query, nil), do: query
-  defp maybe_filter_chat(query, chat_id), do: from(s in query, where: s.chat_id == ^chat_id)
-
-  defp maybe_filter_status(query, "all"), do: query
-  defp maybe_filter_status(query, status), do: from(s in query, where: s.status == ^status)
-
-  defp section_payloads(nil), do: empty_sections()
-
-  defp section_payloads(%InferenceSession{} = inference_session) do
-    %{
-      pending_tools: build_section(inference_session.pending_tools),
-      queued_messages: build_section(inference_session.queued_messages),
-      tool_steps: build_section(inference_session.tool_steps)
-    }
-  end
-
-  defp empty_sections do
-    Enum.into(@sections, %{}, fn %{key: key} ->
-      {key, %{count: 0, json: "[]", truncated: false}}
-    end)
-  end
-
-  defp build_section(value) when is_list(value) do
-    {json, truncated} = encode_json(value)
-    %{count: length(value), json: json, truncated: truncated}
-  end
-
-  defp build_section(value) do
-    {json, truncated} = encode_json(value)
-    %{count: 0, json: json, truncated: truncated}
-  end
-
-  defp encode_json(value) do
-    json =
-      case Jason.encode(value, pretty: true) do
-        {:ok, encoded} -> encoded
-        _ -> inspect(value, pretty: true, limit: :infinity, printable_limit: 500_000)
-      end
-
-    if String.length(json) > @max_json_chars do
-      {
-        String.slice(json, 0, @max_json_chars) <>
-          "\n... [truncated, use psql or iex for full value]",
-        true
-      }
-    else
-      {json, false}
-    end
-  end
+  defp maybe_filter_chat(query, chat_id), do: from([l, c] in query, where: l.chat_id == ^chat_id)
 
   defp filter_form_values(filters) do
     %{
       "bot_id" => filters.bot_id || "",
       "chat_id" =>
         if(is_integer(filters.chat_id), do: Integer.to_string(filters.chat_id), else: ""),
-      "status" => filters.status,
       "limit" => Integer.to_string(filters.limit)
     }
   end
@@ -443,7 +332,6 @@ defmodule FrothWeb.InferenceSessionsLive do
       "chat_id",
       if(is_integer(filters.chat_id), do: Integer.to_string(filters.chat_id), else: nil)
     )
-    |> maybe_put_query("status", if(filters.status == "all", do: nil, else: filters.status))
     |> maybe_put_query(
       "limit",
       if(filters.limit == @default_limit, do: nil, else: Integer.to_string(filters.limit))
@@ -454,7 +342,7 @@ defmodule FrothWeb.InferenceSessionsLive do
   defp maybe_put_query(query, key, value), do: Map.put(query, key, value)
 
   defp default_filters do
-    %{bot_id: nil, chat_id: nil, status: "all", limit: @default_limit}
+    %{bot_id: nil, chat_id: nil, limit: @default_limit}
   end
 
   defp normalize_filters(params) when is_map(params) do
@@ -463,19 +351,11 @@ defmodule FrothWeb.InferenceSessionsLive do
     %{
       bot_id: normalize_text(params["bot_id"]),
       chat_id: parse_optional_integer(params["chat_id"]),
-      status: normalize_status(params["status"]),
       limit: parse_limit(params["limit"])
     }
   end
 
   defp normalize_filters(_), do: default_filters()
-
-  defp normalize_status(status) when is_binary(status) do
-    status = String.trim(status)
-    if status in @status_values, do: status, else: "all"
-  end
-
-  defp normalize_status(_), do: "all"
 
   defp parse_limit(value) do
     case parse_optional_integer(value) do
@@ -530,12 +410,12 @@ defmodule FrothWeb.InferenceSessionsLive do
   defp api_messages_panel(assigns) do
     ~H"""
     <details
-      id="inference-section-api-messages"
+      id="cycle-messages"
       class="overflow-hidden rounded border border-white/10 bg-white/[0.03]"
       open
     >
       <summary class="cursor-pointer select-none px-3 py-2 text-[12px] text-zinc-200">
-        <span class="font-medium">API Messages</span>
+        <span class="font-medium">Messages</span>
         <span class="ml-2 text-zinc-500">({length(@messages)})</span>
         <span class="ml-2 text-zinc-600">oldest first</span>
       </summary>
@@ -544,13 +424,13 @@ defmodule FrothWeb.InferenceSessionsLive do
           :if={@messages == []}
           class="rounded bg-black/35 px-3 py-8 text-center text-zinc-500"
         >
-          No API messages persisted for this session.
+          No messages in this cycle.
         </div>
 
         <div :if={@messages != []} class="max-h-[46rem] space-y-1 overflow-y-auto pr-1">
           <article
             :for={message <- @messages}
-            id={"inference-api-message-#{message.index}"}
+            id={"cycle-msg-#{message.index}"}
             class="rounded bg-white/[0.03] px-2.5 py-2"
           >
             <div class="mb-2 flex items-center justify-between gap-2">
@@ -707,17 +587,6 @@ defmodule FrothWeb.InferenceSessionsLive do
       _ -> inspect(value, pretty: true, limit: :infinity, printable_limit: 500_000)
     end
   end
-
-  defp status_badge_class("done"), do: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-  defp status_badge_class("error"), do: "border-red-500/30 bg-red-500/10 text-red-300"
-
-  defp status_badge_class("awaiting_tools"),
-    do: "border-amber-500/35 bg-amber-500/10 text-amber-300"
-
-  defp status_badge_class("streaming"), do: "border-sky-500/35 bg-sky-500/10 text-sky-300"
-  defp status_badge_class("pending"), do: "border-violet-500/35 bg-violet-500/10 text-violet-300"
-  defp status_badge_class("stopped"), do: "border-zinc-500/35 bg-zinc-500/10 text-zinc-300"
-  defp status_badge_class(_), do: "border-white/20 bg-white/5 text-zinc-300"
 
   defp api_role_class("user"), do: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
   defp api_role_class("assistant"), do: "border-sky-500/30 bg-sky-500/10 text-sky-300"

@@ -13,11 +13,11 @@ defmodule Froth.Telegram.Bot do
 
   alias Froth.Agent
   alias Froth.Agent.{Config, Cycle, Message, ToolUse, Worker}
-  alias Froth.Inference.InferenceSession
   alias Froth.Inference.Prompt
   alias Froth.Inference.Tools
   alias Froth.Repo
   alias Froth.Telegram.BotAdapter
+  alias Froth.Telegram.CycleLink
 
   defstruct [
     :bot_config,
@@ -370,6 +370,13 @@ defmodule Froth.Telegram.Bot do
       message = Repo.insert!(%Message{role: :user, content: Message.wrap(initial_content)})
       cycle = Repo.insert!(%Cycle{})
       Repo.insert!(%Agent.Event{cycle_id: cycle.id, head_id: message.id, seq: 0})
+
+      Repo.insert!(%CycleLink{
+        cycle_id: cycle.id,
+        bot_id: bc.id,
+        chat_id: chat_id,
+        reply_to: reply_to
+      })
 
       config = %Config{
         system: resolve_system_prompt(chat_id, bc),
@@ -741,19 +748,25 @@ defmodule Froth.Telegram.Bot do
   defp to_int_or_fallback(_), do: 0
 
   defp previous_session_recap(bot_id, chat_id) when is_binary(bot_id) and is_integer(chat_id) do
-    sessions =
+    links =
       Repo.all(
-        from(s in InferenceSession,
-          where: s.bot_id == ^bot_id and s.chat_id == ^chat_id and s.status == "done",
-          order_by: [desc: s.inserted_at],
+        from(l in CycleLink,
+          join: c in Cycle,
+          on: c.id == l.cycle_id,
+          where: l.bot_id == ^bot_id and l.chat_id == ^chat_id,
+          order_by: [desc: c.inserted_at],
           limit: 20,
-          select: %{id: s.id, inserted_at: s.inserted_at, api_messages: s.api_messages}
+          select: %{cycle_id: l.cycle_id, inserted_at: c.inserted_at}
         ),
         log: false
       )
 
     interesting =
-      sessions
+      links
+      |> Enum.map(fn link ->
+        api_messages = load_cycle_api_messages(link.cycle_id)
+        %{cycle_id: link.cycle_id, inserted_at: link.inserted_at, api_messages: api_messages}
+      end)
       |> Enum.filter(&has_real_tools?(&1.api_messages))
       |> Enum.take(@recap_sessions_limit)
 
@@ -771,7 +784,13 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp has_real_tools?(nil), do: false
+  defp load_cycle_api_messages(cycle_id) do
+    head_id = Agent.latest_head_id(%Cycle{id: cycle_id})
+
+    head_id
+    |> Agent.load_messages()
+    |> Enum.map(&Message.to_api/1)
+  end
 
   defp has_real_tools?(messages) when is_list(messages) do
     Enum.any?(messages, fn
@@ -851,13 +870,13 @@ defmodule Froth.Telegram.Bot do
 
       ago = NaiveDateTime.diff(NaiveDateTime.utc_now(), session.inserted_at, :minute)
 
-      "<previous_session id=\"" <>
-        Integer.to_string(session.id) <>
+      "<previous_cycle id=\"" <>
+        session.cycle_id <>
         "\" minutes_ago=\"" <>
         Integer.to_string(ago) <>
         "\">\n" <>
         Enum.join(lines, "\n") <>
-        "\n</previous_session>"
+        "\n</previous_cycle>"
     end
   end
 
@@ -878,11 +897,6 @@ defmodule Froth.Telegram.Bot do
 
       "look" ->
         "msg=" <> inspect(input["message_id"])
-
-      "read_tool_transcript" ->
-        sid = input["inference_session_id"]
-        lim = input["limit"]
-        "session=#{inspect(sid)} limit=#{inspect(lim)}"
 
       other ->
         keys =
