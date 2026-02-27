@@ -7,7 +7,6 @@ defmodule FrothWeb.ToolLive do
   alias Froth.Agent.Cycle
   alias Froth.Agent.Event
   alias Froth.Agent.Message, as: AgentMessage
-  alias Froth.Inference.InferenceSession
 
   @elixir_keywords ~w(
     alias after case catch cond def defmodule defp do else end fn for if import in nil quote
@@ -18,7 +17,6 @@ defmodule FrothWeb.ToolLive do
   def mount(params, _session, socket) do
     token = params["ref"] || params["tgWebAppStartParam"]
 
-    # Route codex sessions to CodexLive through the same mini app entry point
     if is_binary(token) and String.starts_with?(token, "codex_") do
       {:ok, push_navigate(socket, to: "/froth/mini/codex/#{token}"),
        layout: {FrothWeb.Layouts, :mini}}
@@ -31,27 +29,16 @@ defmodule FrothWeb.ToolLive do
     socket =
       socket
       |> assign(:loop_key, nil)
-      |> assign(:loop_mode, :legacy)
-      |> assign(:inference_session_id, nil)
       |> assign(:cycle_id, nil)
       |> assign(:bot_id, "charlie")
       |> assign(:loop_topic, nil)
-      |> assign(:raw_status, nil)
       |> assign(:loop_status, :loading)
-      |> assign(:tool_steps, [])
-      |> assign(:pending_tools, [])
       |> assign(:agent_events, [])
-      |> assign(:next_pending_tool, nil)
-      |> assign(:active_tool_ref, nil)
-      |> assign(:subscribed_tool_refs, MapSet.new())
       |> assign(:live_thinking, "")
       |> assign(:live_text, "")
       |> assign(:live_io, "")
       |> assign(:live_result, nil)
       |> assign(:live_result_error, false)
-      |> assign(:yolo, false)
-      |> assign(:yolo_last_ref, nil)
-      |> assign(:yolo_form, to_form(%{"yolo" => "false"}, as: :loop))
 
     {:ok, setup_loop(socket, token), layout: {FrothWeb.Layouts, :mini}}
   end
@@ -61,57 +48,23 @@ defmodule FrothWeb.ToolLive do
     token = params["tgWebAppStartParam"] || params["ref"]
 
     if token && socket.assigns.loop_key != token do
-      socket = setup_loop(socket, token)
-
-      socket =
-        if socket.assigns.loop_mode == :legacy, do: maybe_yolo_approve(socket), else: socket
-
-      {:noreply, socket}
+      {:noreply, setup_loop(socket, token)}
     else
       {:noreply, socket}
     end
   end
 
   @impl true
-  def handle_event("continue", _, socket) do
-    if is_integer(socket.assigns.inference_session_id) do
-      cast_bot(socket, {:continue_loop, socket.assigns.inference_session_id})
-    end
-
-    {:noreply, socket}
-  end
-
-  def handle_event("approve_tool", %{"ref" => ref}, socket) when is_binary(ref) do
-    cast_bot(socket, {:auto_approve, ref})
-    {:noreply, socket}
-  end
-
-  def handle_event("set_yolo", %{"loop" => params}, socket) when is_map(params) do
-    yolo = checkbox_checked?(params["yolo"])
-
-    socket =
-      socket
-      |> assign(:yolo, yolo)
-      |> assign(:yolo_last_ref, if(yolo, do: socket.assigns.yolo_last_ref, else: nil))
-      |> assign(:yolo_form, to_form(%{"yolo" => if(yolo, do: "true", else: "false")}, as: :loop))
-      |> maybe_yolo_approve()
-
-    {:noreply, socket}
-  end
-
   def handle_event("stop", _, socket) do
-    cond do
-      socket.assigns.loop_mode == :agent_cycle and is_binary(socket.assigns.cycle_id) ->
-        cast_bot(socket, {:stop_cycle, socket.assigns.cycle_id})
-
-      is_integer(socket.assigns.inference_session_id) ->
-        cast_bot(socket, {:stop_loop, socket.assigns.inference_session_id})
-
-      true ->
-        :ok
+    if is_binary(socket.assigns.cycle_id) do
+      cast_bot(socket, {:stop_cycle, socket.assigns.cycle_id})
     end
 
-    {:noreply, socket}
+    {:noreply,
+     socket
+     |> assign(:loop_status, :stopped)
+     |> assign(:live_thinking, "")
+     |> assign(:live_text, "")}
   end
 
   def handle_event("refresh", _, socket) do
@@ -123,61 +76,70 @@ defmodule FrothWeb.ToolLive do
   end
 
   @impl true
-  def handle_info({:tool_loop, :updated}, socket) do
-    {:noreply, refresh_loop(socket)}
-  end
-
-  def handle_info({:tool_step, step}, socket) when is_map(step) do
-    steps = socket.assigns.tool_steps || []
-    {:noreply, assign(socket, :tool_steps, steps ++ [step])}
-  end
-
-  def handle_info(
-        {:event, _event, %AgentMessage{} = msg},
-        %{assigns: %{loop_mode: :agent_cycle}} = socket
-      ) do
+  def handle_info({:event, _event, %AgentMessage{} = msg}, socket) do
     events = socket.assigns.agent_events ++ [agent_event_from_message(msg)]
 
     socket =
       if msg.role == :agent do
-        socket |> assign(:live_thinking, "") |> assign(:live_text, "")
+        socket
+        |> assign(:live_thinking, "")
+        |> assign(:live_text, "")
       else
         socket
       end
 
-    {:noreply, assign(socket, :agent_events, events)}
+    {:noreply,
+     socket
+     |> assign(:agent_events, events)
+     |> assign(
+       :loop_status,
+       derive_cycle_status(events, socket.assigns.live_thinking, socket.assigns.live_text)
+     )}
   end
 
   def handle_info({:stream, {:thinking_start, _}}, socket) do
-    {:noreply, assign(socket, :live_thinking, "")}
+    {:noreply, socket |> assign(:live_thinking, "") |> assign(:loop_status, :thinking)}
   end
 
   def handle_info({:stream, {:thinking_delta, %{"delta" => delta}}}, socket)
       when is_binary(delta) do
-    {:noreply, assign(socket, :live_thinking, socket.assigns.live_thinking <> delta)}
+    {:noreply,
+     socket
+     |> assign(:live_thinking, socket.assigns.live_thinking <> delta)
+     |> assign(:loop_status, :thinking)}
   end
 
   def handle_info({:stream, {:text_delta, delta}}, socket) when is_binary(delta) do
-    {:noreply, assign(socket, :live_text, socket.assigns.live_text <> delta)}
+    {:noreply,
+     socket
+     |> assign(:live_text, socket.assigns.live_text <> delta)
+     |> assign(:loop_status, :thinking)}
   end
 
   def handle_info({:stream, _}, socket), do: {:noreply, socket}
 
   def handle_info({:stream_event, {:thinking_start, _}}, socket) do
-    {:noreply, assign(socket, :live_thinking, "")}
+    {:noreply, socket |> assign(:live_thinking, "") |> assign(:loop_status, :thinking)}
   end
 
   def handle_info({:stream_event, {:thinking_delta, %{"delta" => delta}}}, socket)
       when is_binary(delta) do
-    {:noreply, assign(socket, :live_thinking, socket.assigns.live_thinking <> delta)}
+    {:noreply,
+     socket
+     |> assign(:live_thinking, socket.assigns.live_thinking <> delta)
+     |> assign(:loop_status, :thinking)}
   end
 
   def handle_info({:stream_event, {:text_delta, delta}}, socket) when is_binary(delta) do
-    {:noreply, assign(socket, :live_text, socket.assigns.live_text <> delta)}
+    {:noreply,
+     socket
+     |> assign(:live_text, socket.assigns.live_text <> delta)
+     |> assign(:loop_status, :thinking)}
   end
 
   def handle_info({:io_chunk, text}, socket) when is_binary(text) do
-    {:noreply, assign(socket, :live_io, socket.assigns.live_io <> text)}
+    {:noreply,
+     socket |> assign(:live_io, socket.assigns.live_io <> text) |> assign(:loop_status, :running)}
   end
 
   def handle_info(
@@ -189,14 +151,16 @@ defmodule FrothWeb.ToolLive do
      socket
      |> assign(:live_io, io_output || "")
      |> assign(:live_result, result)
-     |> assign(:live_result_error, status == :error)}
+     |> assign(:live_result_error, status == :error)
+     |> assign(:loop_status, :running)}
   end
 
   def handle_info({:tool_aborted, _ref}, socket) do
     {:noreply,
      socket
      |> assign(:live_result, "Aborted by user.")
-     |> assign(:live_result_error, true)}
+     |> assign(:live_result_error, true)
+     |> assign(:loop_status, :running)}
   end
 
   def handle_info(_, socket), do: {:noreply, socket}
@@ -205,368 +169,147 @@ defmodule FrothWeb.ToolLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} variant={:plain}>
-      <%= if @loop_mode == :agent_cycle do %>
-        <div
-          id="agent-cycle-viewer"
-          phx-hook="ToolScroll"
-          data-follow-mode="always"
-          class="min-h-screen bg-black text-zinc-100 text-[14px] font-mono flex flex-col"
-        >
-          <div id="agent-cycle-feed" class="flex-1 px-3 py-3">
-            <div :for={item <- @agent_events} class="py-2 border-b border-zinc-900/70">
-              <div class={[
-                "text-[10px] uppercase tracking-wide mb-1",
-                if(item.role == :agent, do: "text-emerald-300/80", else: "text-zinc-500")
-              ]}>
-                {if(item.role == :agent, do: "assistant", else: "user")}
-              </div>
-              <pre class="whitespace-pre-wrap leading-relaxed text-zinc-100">{item.text}</pre>
-            </div>
+      <div
+        id="tool-loop-viewer"
+        phx-hook="ToolScroll"
+        data-follow-mode={follow_mode(@loop_status)}
+        class="min-h-screen bg-black text-zinc-100 text-[14px] font-mono flex flex-col"
+      >
+        <div id="tool-feed" class="flex-1 px-3 py-3">
+          <%= for {item, idx} <- Enum.with_index(timeline_items(assigns)) do %>
+            <div class={[idx > 0 && "mt-3 pt-3 border-t border-zinc-900/80"]}>
+              <%= cond do %>
+                <% item.kind == :thinking -> %>
+                  <div class="pl-1 whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-400/80 italic">
+                    {item.body}
+                  </div>
+                <% item.kind == :assistant_text -> %>
+                  <div class="max-w-[94%] whitespace-pre-wrap leading-relaxed text-zinc-100">
+                    {item.body}
+                  </div>
+                <% item.kind == :user_text -> %>
+                  <div class="max-w-[94%] whitespace-pre-wrap leading-relaxed text-zinc-500/90">
+                    {item.body}
+                  </div>
+                <% item.kind == :sent_message -> %>
+                  <div class="ml-auto max-w-[94%] whitespace-pre-wrap leading-relaxed text-right text-emerald-200/95">
+                    {item.body}
+                  </div>
+                <% item.kind == :delivery_status -> %>
+                  <pre class={[
+                    "whitespace-pre-wrap text-[12px] pl-1 leading-snug",
+                    if(item.is_error, do: "text-red-300/80", else: "text-zinc-400/70")
+                  ]}>{item.result}</pre>
+                <% item.kind == :queue_tool -> %>
+                  <div class={[
+                    "pl-3 space-y-2 border-l transition-opacity",
+                    item.active && "border-zinc-500/80",
+                    item.future && "border-zinc-700/40 opacity-45",
+                    !item.active && !item.future && "border-zinc-700/60"
+                  ]}>
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="text-[12px] text-zinc-300/90">
+                        {queue_action_title(item.name)}
+                      </span>
+                      <span class={[
+                        "text-[10px] uppercase tracking-wide",
+                        tool_status_color(item.status, item.is_error)
+                      ]}>
+                        {queue_status_text(item.status)}
+                      </span>
+                    </div>
 
-            <div :if={@live_thinking != ""} class="py-2 border-b border-zinc-900/70">
-              <div class="text-[10px] uppercase tracking-wide mb-1 text-zinc-500">thinking</div>
-              <pre class="whitespace-pre-wrap leading-relaxed text-zinc-400/85 italic">{@live_thinking}</pre>
-            </div>
+                    <pre
+                      :if={item.code}
+                      class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-100"
+                    ><%= highlight_elixir(item.code) %></pre>
+                    <pre
+                      :if={is_nil(item.code) and is_binary(item.preview) and item.preview != ""}
+                      class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-300/90"
+                    >{item.preview}</pre>
 
-            <div :if={@live_text != ""} class="py-2 border-b border-zinc-900/70">
-              <div class="text-[10px] uppercase tracking-wide mb-1 text-emerald-300/80">
-                assistant (streaming)
-              </div>
-              <pre class="whitespace-pre-wrap leading-relaxed text-zinc-100">{@live_text}</pre>
+                    <%= if item.io_output != "" or item.result != "" do %>
+                      <pre
+                        :if={item.io_output != ""}
+                        class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-400/85"
+                      >{item.io_output}</pre>
+                      <.result_value result={item.result || ""} is_error={item.is_error} />
+                    <% end %>
+                  </div>
+              <% end %>
             </div>
+          <% end %>
 
-            <div :if={@live_io != ""} class="py-2 border-b border-zinc-900/70">
-              <div class="text-[10px] uppercase tracking-wide mb-1 text-zinc-500">io output</div>
-              <pre class="whitespace-pre-wrap leading-relaxed text-zinc-300/90">{@live_io}</pre>
-            </div>
-
-            <div :if={is_binary(@live_result)} class="py-2">
-              <div class={[
-                "text-[10px] uppercase tracking-wide mb-1",
-                if(@live_result_error, do: "text-red-300/80", else: "text-zinc-500")
-              ]}>
-                result
-              </div>
-              <.result_value result={@live_result || ""} is_error={@live_result_error} />
-            </div>
+          <div :if={@loop_status == :not_found} class="py-8 text-center text-zinc-500">
+            cycle not found
           </div>
+          <div :if={@loop_status == :loading} class="py-8 text-center text-zinc-500">...</div>
+          <div id="tool-feed-end"></div>
+        </div>
 
-          <div class="border-t border-zinc-800/80 bg-black/98">
-            <div class="px-3 py-2 flex flex-wrap items-center gap-2">
-              <span class="text-[11px] text-zinc-300 truncate">
-                cycle {@cycle_id}
+        <div id="loop-now-dock" class="border-t border-zinc-800/80 bg-black/98">
+          <div class="px-3 py-2 flex flex-wrap items-center gap-2">
+            <div class="flex items-center gap-2 min-w-0 grow">
+              <span
+                :if={show_dock_spinner?(@loop_status)}
+                class="inline-block size-2.5 rounded-full border border-zinc-500 border-t-zinc-100 animate-spin"
+              >
               </span>
-              <button
-                id="loop-stop"
-                phx-click="stop"
-                class="min-h-9 px-3 text-[12px] text-red-200/90 border border-red-500/35 rounded-sm hover:bg-red-500/10 transition-colors"
-              >
-                Stop
-              </button>
-              <button
-                id="loop-refresh"
-                phx-click="refresh"
-                class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
-              >
-                Refresh
-              </button>
-              <button
-                id="loop-close"
-                phx-click="close"
-                class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
-              >
-                Close
-              </button>
+              <span class="text-[11px] text-zinc-300 truncate">
+                {dock_text(@loop_status, @cycle_id)}
+              </span>
             </div>
+
+            <button
+              :if={can_stop?(@loop_status)}
+              id="loop-stop"
+              phx-click="stop"
+              class="min-h-9 px-3 text-[12px] text-red-200/90 border border-red-500/35 rounded-sm hover:bg-red-500/10 transition-colors"
+            >
+              Stop
+            </button>
+            <button
+              id="loop-refresh"
+              phx-click="refresh"
+              class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
+            >
+              Refresh
+            </button>
+            <button
+              :if={@loop_status in [:done, :stopped, :error, :not_found]}
+              id="loop-close"
+              phx-click="close"
+              class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
+            >
+              Close
+            </button>
           </div>
         </div>
-      <% else %>
-        <div
-          id="tool-loop-viewer"
-          phx-hook="ToolScroll"
-          data-follow-mode={follow_mode(@yolo, @loop_status, @pending_tools)}
-          class="min-h-screen bg-black text-zinc-100 text-[14px] font-mono flex flex-col"
-        >
-          <div id="tool-feed" class="flex-1 px-3 py-3">
-            <%= for {item, idx} <- Enum.with_index(timeline_items(assigns)) do %>
-              <div class={[idx > 0 && "mt-3 pt-3 border-t border-zinc-900/80"]}>
-                <%= cond do %>
-                  <% item.kind == :thinking -> %>
-                    <div class="pl-1 whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-400/80 italic">
-                      {item.body}
-                    </div>
-                  <% item.kind == :assistant_text -> %>
-                    <div class="max-w-[94%] whitespace-pre-wrap leading-relaxed text-zinc-100">
-                      {item.body}
-                    </div>
-                  <% item.kind == :sent_message -> %>
-                    <div class="ml-auto max-w-[94%] whitespace-pre-wrap leading-relaxed text-right text-emerald-200/95">
-                      {item.body}
-                    </div>
-                  <% item.kind == :delivery_status -> %>
-                    <div class={[
-                      "text-[12px] pl-1",
-                      if(item.is_error, do: "text-red-300/80", else: "text-zinc-400/70")
-                    ]}>
-                      {item.result}
-                    </div>
-                  <% item.kind == :queue_tool -> %>
-                    <div class={[
-                      "pl-3 space-y-2 border-l transition-opacity",
-                      item.active && "border-zinc-500/80",
-                      item.future && "border-zinc-700/40 opacity-45",
-                      !item.active && !item.future && "border-zinc-700/60"
-                    ]}>
-                      <div class="flex items-center justify-between gap-2">
-                        <span class="text-[12px] text-zinc-300/90">
-                          {queue_action_title(item.name)}
-                        </span>
-                        <span class={[
-                          "text-[10px] uppercase tracking-wide",
-                          tool_status_color(item.status, item.is_error)
-                        ]}>
-                          {queue_status_text(item.status)}
-                        </span>
-                      </div>
-
-                      <pre
-                        :if={item.code}
-                        class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-100"
-                      ><%= highlight_elixir(item.code) %></pre>
-                      <pre
-                        :if={is_nil(item.code) and is_binary(item.preview) and item.preview != ""}
-                        class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-300/90"
-                      >{item.preview}</pre>
-
-                      <%= if item.io_output != "" or item.result != "" do %>
-                        <pre
-                          :if={item.io_output != ""}
-                          class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-400/85"
-                        >{item.io_output}</pre>
-                        <.result_value result={item.result || ""} is_error={item.is_error} />
-                      <% end %>
-                    </div>
-                <% end %>
-              </div>
-            <% end %>
-
-            <div :if={@loop_status == :not_found} class="py-8 text-center text-zinc-500">
-              tool loop not found
-            </div>
-            <div :if={@loop_status == :loading} class="py-8 text-center text-zinc-500">...</div>
-            <div id="tool-feed-end"></div>
-          </div>
-
-          <div
-            id="loop-now-dock"
-            class={[
-              "border-t border-zinc-800/80",
-              if(@yolo,
-                do:
-                  "bg-gradient-to-r from-black via-zinc-950 to-black shadow-[0_-6px_24px_rgba(16,185,129,0.16)]",
-                else: "bg-black/98"
-              )
-            ]}
-          >
-            <% runnable_ref = next_runnable_ref(@pending_tools) %>
-            <% runnable_name = next_runnable_name(@pending_tools) %>
-            <div class="px-3 py-2 flex flex-wrap items-center gap-2">
-              <div class="flex items-center gap-2 min-w-0 grow">
-                <span
-                  :if={show_dock_spinner?(@loop_status, @yolo, @pending_tools)}
-                  class="inline-block size-2.5 rounded-full border border-zinc-500 border-t-zinc-100 animate-spin"
-                >
-                </span>
-                <span
-                  :if={@yolo}
-                  class="text-[10px] tracking-[0.2em] uppercase text-emerald-300/90 animate-pulse"
-                >
-                  yolo
-                </span>
-                <span class="text-[11px] text-zinc-300 truncate">
-                  {dock_text(@loop_status, @next_pending_tool, @pending_tools, @yolo)}
-                </span>
-              </div>
-
-              <.form
-                for={@yolo_form}
-                id="loop-yolo-form"
-                phx-change="set_yolo"
-                class="[&_div.fieldset]:mb-0 [&_span.label]:inline-flex [&_span.label]:items-center [&_span.label]:gap-1.5 [&_span.label]:text-[11px] [&_span.label]:text-zinc-300 [&_label]:cursor-pointer"
-              >
-                <.input
-                  field={@yolo_form[:yolo]}
-                  type="checkbox"
-                  label="YOLO"
-                  class="size-3.5 rounded-sm border-zinc-500 bg-transparent"
-                />
-              </.form>
-
-              <button
-                :if={is_binary(runnable_ref)}
-                phx-click="approve_tool"
-                phx-value-ref={runnable_ref}
-                title={if is_binary(runnable_name), do: tool_label(runnable_name), else: "Run"}
-                class="min-h-9 px-3 text-[12px] text-zinc-100 border border-zinc-600 rounded-sm hover:border-zinc-400 transition-colors"
-              >
-                Run
-              </button>
-              <button
-                :if={can_stop?(@raw_status)}
-                id="loop-stop"
-                phx-click="stop"
-                class="min-h-9 px-3 text-[12px] text-red-200/90 border border-red-500/35 rounded-sm hover:bg-red-500/10 transition-colors"
-              >
-                Stop
-              </button>
-              <button
-                id="loop-refresh"
-                phx-click="refresh"
-                class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
-              >
-                Refresh
-              </button>
-              <button
-                :if={@loop_status in [:done, :stopped, :error, :not_found]}
-                id="loop-close"
-                phx-click="close"
-                class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      <% end %>
+      </div>
     </Layouts.app>
     """
   end
 
   defp timeline_items(assigns) do
-    step_timeline_items(assigns)
+    cycle_timeline_items(assigns)
     |> maybe_append_live_thinking(assigns.live_thinking)
     |> maybe_append_live_text(assigns.live_text)
   end
 
-  defp step_timeline_items(assigns) do
-    steps = assigns.tool_steps || []
-
+  defp cycle_timeline_items(assigns) do
     state =
-      steps
-      |> Enum.with_index()
+      (assigns.agent_events || [])
       |> Enum.reduce(
-        %{entries: [], entry_keys: MapSet.new(), cards: %{}, tool_order: []},
-        fn {step, idx}, acc -> apply_step_to_timeline(step, idx, acc) end
+        %{
+          entries: [],
+          entry_keys: MapSet.new(),
+          cards: %{},
+          tool_order: [],
+          immediate_tool_ids: MapSet.new()
+        },
+        &apply_agent_event_to_timeline/2
       )
-
-    pending_tools = assigns.pending_tools || []
-
-    state =
-      pending_tools
-      |> Enum.reduce(state, fn tool, acc ->
-        key = tool_identity(tool)
-
-        if key == :none do
-          acc
-        else
-          acc
-          |> upsert_timeline_card(key, %{
-            ref: tool["ref"],
-            tool_use_id: tool["tool_use_id"],
-            name: tool["name"] || "tool",
-            code: get_in(tool, ["input", "code"]),
-            preview: safe_input_preview(tool["input"]),
-            status: tool["status"] || "pending"
-          })
-          |> ensure_tool_entry(key)
-        end
-      end)
-
-    pending_by_key =
-      pending_tools
-      |> Enum.with_index(1)
-      |> Map.new(fn {tool, idx} -> {tool_identity(tool), {tool, idx}} end)
-
-    queue_total = length(pending_tools)
-
-    cards =
-      Enum.reduce(state.tool_order, state.cards, fn key, acc ->
-        card = Map.get(acc, key, %{})
-        {tool, idx} = Map.get(pending_by_key, key, {%{}, nil})
-        parsed = split_tool_result(tool["result"] || card.result || "")
-        status = tool["status"] || card.status || "pending"
-        ref = tool["ref"] || card.ref
-        name = tool["name"] || card.name
-        code = get_in(tool, ["input", "code"]) || card.code
-        preview = card.preview || safe_input_preview(tool["input"])
-
-        io_output =
-          if status == "executing" and name == "elixir_eval" and assigns.live_io != "" do
-            assigns.live_io
-          else
-            parsed.io_output || card.io_output || ""
-          end
-
-        result =
-          cond do
-            status == "executing" and name == "elixir_eval" and is_binary(assigns.live_result) ->
-              assigns.live_result
-
-            parsed.result != "" ->
-              parsed.result
-
-            true ->
-              card.result || ""
-          end
-
-        is_error =
-          cond do
-            status == "executing" and name == "elixir_eval" and is_binary(assigns.live_result) ->
-              assigns.live_result_error
-
-            true ->
-              tool["is_error"] == true or card.is_error == true
-          end
-
-        Map.put(acc, key, %{
-          id: card.id || "q-step-#{key}",
-          kind: :queue_tool,
-          ref: ref,
-          tool_use_id: card.tool_use_id || tool["tool_use_id"],
-          name: name || "tool",
-          status: status,
-          code: code,
-          preview: preview,
-          queue_idx: idx || card.queue_idx,
-          queue_total: if(idx, do: queue_total, else: card.queue_total),
-          active: false,
-          future: false,
-          io_output: io_output || "",
-          result: result || "",
-          is_error: is_error
-        })
-      end)
-
-    active_key =
-      Enum.find(state.tool_order, fn key ->
-        match?(%{status: "executing"}, Map.get(cards, key))
-      end) ||
-        Enum.find(state.tool_order, fn key ->
-          match?(%{status: "pending"}, Map.get(cards, key))
-        end)
-
-    cards =
-      Enum.reduce(state.tool_order, cards, fn key, acc ->
-        case Map.get(acc, key) do
-          %{status: status} = card ->
-            active = key == active_key
-            future = status == "pending" and not active
-            Map.put(acc, key, %{card | active: active, future: future})
-
-          _ ->
-            acc
-        end
-      end)
+      |> finalize_tool_cards(assigns)
 
     missing_tool_entries =
       state.tool_order
@@ -577,7 +320,7 @@ defmodule FrothWeb.ToolLive do
 
     Enum.reduce(entries, [], fn
       {:tool, key}, acc ->
-        case Map.get(cards, key) do
+        case Map.get(state.cards, key) do
           %{kind: :queue_tool} = card -> acc ++ [card]
           _ -> acc
         end
@@ -587,151 +330,170 @@ defmodule FrothWeb.ToolLive do
     end)
   end
 
-  defp apply_step_to_timeline(%{"kind" => kind, "data" => data}, idx, state)
-       when is_binary(kind) and is_map(data) do
-    case kind do
-      "assistant_thinking" ->
-        case normalize_message_text(data["text"]) do
-          nil ->
-            state
+  defp apply_agent_event_to_timeline(%{id: event_id, role: role, blocks: blocks}, state)
+       when role in [:agent, :user] and is_list(blocks) do
+    blocks
+    |> Enum.with_index()
+    |> Enum.reduce(state, fn {block, idx}, acc ->
+      apply_agent_block(role, event_id, block, idx, acc)
+    end)
+  end
 
-          text ->
-            append_timeline_entry(state, %{id: "step-think-#{idx}", kind: :thinking, body: text})
-        end
+  defp apply_agent_event_to_timeline(_, state), do: state
 
-      "assistant_text" ->
-        case normalize_message_text(data["text"]) do
+  defp apply_agent_block(role, event_id, %{"type" => "thinking", "thinking" => text}, idx, state)
+       when role == :agent do
+    append_timeline_text(state, :thinking, text, event_id, idx)
+  end
+
+  defp apply_agent_block(role, event_id, %{"type" => "text", "text" => text}, idx, state)
+       when role == :agent do
+    append_timeline_text(state, :assistant_text, text, event_id, idx)
+  end
+
+  defp apply_agent_block(role, event_id, %{"type" => "text", "text" => text}, idx, state)
+       when role == :user do
+    append_timeline_text(state, :user_text, text, event_id, idx)
+  end
+
+  defp apply_agent_block(role, event_id, %{"type" => "tool_use"} = block, idx, state)
+       when role == :agent do
+    apply_tool_use(state, event_id, idx, block)
+  end
+
+  defp apply_agent_block(_role, event_id, %{"type" => "tool_result"} = block, idx, state) do
+    apply_tool_result(state, event_id, idx, block)
+  end
+
+  defp apply_agent_block(_role, _event_id, _block, _idx, state), do: state
+
+  defp apply_tool_use(state, event_id, idx, block) when is_map(block) do
+    tool_use_id = block["id"] || "#{event_id}-tool-#{idx}"
+    name = block["name"] || "tool"
+
+    if name == "send_message" do
+      state =
+        case normalize_message_text(get_in(block, ["input", "text"])) do
           nil ->
             state
 
           text ->
             append_timeline_entry(state, %{
-              id: "step-text-#{idx}",
-              kind: :assistant_text,
+              id: "#{event_id}-sent-#{idx}",
+              kind: :sent_message,
               body: text
             })
         end
 
-      "tool_immediate" ->
-        case immediate_message_text(data) do
-          nil ->
-            state
-
-          text ->
-            append_timeline_entry(state, %{id: "step-msg-#{idx}", kind: :sent_message, body: text})
-        end
-
-      "tool_queued" ->
-        key = step_key(data)
-
-        state
-        |> upsert_timeline_card(key, %{
-          ref: data["ref"],
-          tool_use_id: data["tool_use_id"],
-          name: data["name"] || "tool",
-          status: "pending",
-          code: data["code"],
-          preview: data["input_preview"]
-        })
-        |> ensure_tool_entry(key)
-
-      "tool_started" ->
-        key = step_key(data)
-
-        state
-        |> upsert_timeline_card(key, %{
-          ref: data["ref"],
-          tool_use_id: data["tool_use_id"],
-          name: data["name"] || "tool",
-          status: "executing"
-        })
-        |> ensure_tool_entry(key)
-
-      "tool_skipped" ->
-        key = step_key(data)
-
-        state
-        |> upsert_timeline_card(key, %{
-          ref: data["ref"],
-          tool_use_id: data["tool_use_id"],
-          name: data["name"] || "tool",
-          status: "resolved",
-          result: "User skipped this tool call.",
-          is_error: false
-        })
-        |> ensure_tool_entry(key)
-
-      "tool_aborted" ->
-        key = step_key(data)
-
-        state
-        |> upsert_timeline_card(key, %{
-          ref: data["ref"],
-          tool_use_id: data["tool_use_id"],
-          name: data["name"] || "tool",
-          status: "resolved",
-          result: "Aborted by user.",
-          is_error: true
-        })
-        |> ensure_tool_entry(key)
-
-      "tool_crashed" ->
-        key = step_key(data)
-
-        state
-        |> upsert_timeline_card(key, %{
-          ref: data["ref"],
-          tool_use_id: data["tool_use_id"],
-          name: data["name"] || "tool",
-          status: "resolved",
-          result: data["reason"] || "Tool crashed.",
-          is_error: true
-        })
-        |> ensure_tool_entry(key)
-
-      "tool_resolved" ->
-        key = step_key(data)
-
-        state
-        |> upsert_timeline_card(key, %{
-          ref: data["ref"],
-          tool_use_id: data["tool_use_id"],
-          name: data["name"] || "tool",
-          status: "resolved",
-          result: data["result"] || data["result_preview"] || "",
-          is_error: data["is_error"] == true
-        })
-        |> ensure_tool_entry(key)
-
-      "stream_error" ->
-        append_step_error(state, idx, data["error"])
-
-      "stream_crashed" ->
-        append_step_error(state, idx, data["reason"])
-
-      _ ->
-        state
+      %{state | immediate_tool_ids: MapSet.put(state.immediate_tool_ids, tool_use_id)}
+    else
+      state
+      |> upsert_timeline_card(tool_use_id, %{
+        ref: tool_use_id,
+        tool_use_id: tool_use_id,
+        name: name,
+        status: "executing",
+        code: get_in(block, ["input", "code"]),
+        preview: safe_input_preview(block["input"])
+      })
+      |> ensure_tool_entry(tool_use_id)
     end
   end
 
-  defp apply_step_to_timeline(_step, _idx, state), do: state
+  defp apply_tool_result(state, event_id, idx, block) when is_map(block) do
+    key = block["tool_use_id"] || "#{event_id}-tool-result-#{idx}"
+    parsed = split_tool_result(block["content"])
+    is_error = block["is_error"] == true
 
-  defp append_step_error(state, idx, value) do
-    text =
-      case value do
-        v when is_binary(v) -> String.trim(v)
-        _ -> nil
+    if MapSet.member?(state.immediate_tool_ids, key) do
+      result_text =
+        cond do
+          is_binary(parsed.result) and String.trim(parsed.result) != "" -> parsed.result
+          is_binary(parsed.io_output) and String.trim(parsed.io_output) != "" -> parsed.io_output
+          true -> nil
+        end
+
+      if is_error or
+           (is_binary(result_text) and String.downcase(String.trim(result_text)) != "sent") do
+        append_timeline_entry(state, %{
+          id: "#{event_id}-delivery-#{idx}",
+          kind: :delivery_status,
+          result: result_text || "tool result",
+          is_error: is_error
+        })
+      else
+        state
       end
-
-    if is_binary(text) and text != "" do
-      append_timeline_entry(state, %{
-        id: "step-error-#{idx}",
-        kind: :delivery_status,
-        result: text,
-        is_error: true
-      })
     else
       state
+      |> upsert_timeline_card(key, %{
+        ref: key,
+        tool_use_id: key,
+        status: "resolved",
+        result: parsed.result || "",
+        io_output: parsed.io_output || "",
+        is_error: is_error
+      })
+      |> ensure_tool_entry(key)
+    end
+  end
+
+  defp finalize_tool_cards(state, assigns) do
+    active_key =
+      Enum.find(state.tool_order, fn key ->
+        match?(%{status: "executing"}, Map.get(state.cards, key))
+      end)
+
+    cards =
+      Enum.reduce(state.tool_order, state.cards, fn key, acc ->
+        card = Map.get(acc, key, %{})
+        active = key == active_key
+
+        io_output =
+          if active and card.name == "elixir_eval" and assigns.live_io != "" do
+            assigns.live_io
+          else
+            card.io_output || ""
+          end
+
+        result =
+          cond do
+            active and card.name == "elixir_eval" and is_binary(assigns.live_result) ->
+              assigns.live_result
+
+            true ->
+              card.result || ""
+          end
+
+        is_error =
+          cond do
+            active and card.name == "elixir_eval" and is_binary(assigns.live_result) ->
+              assigns.live_result_error
+
+            true ->
+              card.is_error == true
+          end
+
+        Map.put(acc, key, %{
+          card
+          | active: active,
+            future: false,
+            io_output: io_output,
+            result: result,
+            is_error: is_error
+        })
+      end)
+
+    %{state | cards: cards}
+  end
+
+  defp append_timeline_text(state, kind, text, event_id, idx) do
+    case normalize_message_text(text) do
+      nil ->
+        state
+
+      body ->
+        append_timeline_entry(state, %{id: "#{event_id}-#{kind}-#{idx}", kind: kind, body: body})
     end
   end
 
@@ -783,31 +545,9 @@ defmodule FrothWeb.ToolLive do
     end
   end
 
-  defp immediate_message_text(%{"name" => "send_message"} = data) do
-    normalize_message_text(data["text"]) ||
-      with preview when is_binary(preview) <- data["input_preview"],
-           {:ok, %{"text" => text}} <- Jason.decode(preview) do
-        normalize_message_text(text)
-      else
-        _ -> nil
-      end
-  end
-
-  defp immediate_message_text(_), do: nil
-
-  defp step_key(data) do
-    data["tool_use_id"] || data["ref"] || "unknown"
-  end
-
   defp ensure_order(order, key) do
     if key in order, do: order, else: order ++ [key]
   end
-
-  defp tool_identity(tool) when is_map(tool) do
-    tool["tool_use_id"] || tool["ref"] || :none
-  end
-
-  defp tool_identity(_), do: :none
 
   defp safe_input_preview(nil), do: nil
 
@@ -875,40 +615,6 @@ defmodule FrothWeb.ToolLive do
     end
   end
 
-  defp checkbox_checked?(value) when value in [true, "true", "on", "1", 1], do: true
-  defp checkbox_checked?(_), do: false
-
-  defp maybe_yolo_approve(%{assigns: %{yolo: false}} = socket) do
-    assign(socket, :yolo_last_ref, nil)
-  end
-
-  defp maybe_yolo_approve(socket) do
-    pending_tools = socket.assigns.pending_tools || []
-    has_executing = Enum.any?(pending_tools, &(&1["status"] == "executing"))
-
-    cond do
-      socket.assigns.raw_status != "awaiting_tools" ->
-        socket
-
-      has_executing ->
-        socket
-
-      true ->
-        case Enum.find(pending_tools, &(&1["status"] == "pending")) do
-          %{"ref" => ref} when is_binary(ref) ->
-            if socket.assigns.yolo_last_ref == ref do
-              socket
-            else
-              cast_bot(socket, {:auto_approve, ref})
-              assign(socket, :yolo_last_ref, ref)
-            end
-
-          _ ->
-            assign(socket, :yolo_last_ref, nil)
-        end
-    end
-  end
-
   defp setup_loop(socket, token) when is_binary(token) and token != "" do
     socket = assign(socket, :loop_key, token)
 
@@ -917,72 +623,45 @@ defmodule FrothWeb.ToolLive do
         setup_agent_cycle(socket, bot_id, cycle_id)
 
       :error ->
-        case lookup_inference_session(token) do
-          nil ->
-            socket
-            |> assign(:loop_mode, :legacy)
-            |> assign(:cycle_id, nil)
-            |> assign(:agent_events, [])
-            |> assign(:inference_session_id, nil)
-            |> assign(:bot_id, "charlie")
-            |> assign(:loop_topic, nil)
-            |> assign(:raw_status, nil)
-            |> assign(:loop_status, :not_found)
-            |> assign(:tool_steps, [])
-            |> assign(:pending_tools, [])
-            |> assign(:next_pending_tool, nil)
-            |> assign(:active_tool_ref, nil)
-
-          inference_session ->
-            socket
-            |> assign(:loop_mode, :legacy)
-            |> assign(:cycle_id, nil)
-            |> assign(:agent_events, [])
-            |> maybe_subscribe_loop(inference_session.id)
-            |> assign_from_inference_session(inference_session)
-            |> maybe_subscribe_active_tool()
-        end
+        clear_cycle(socket, :not_found)
     end
   end
 
-  defp setup_loop(socket, _token), do: socket
+  defp setup_loop(socket, _token), do: clear_cycle(socket, :not_found)
 
-  defp refresh_loop(%{assigns: %{loop_key: nil}} = socket), do: socket
+  defp refresh_loop(%{assigns: %{cycle_id: cycle_id}} = socket) when is_binary(cycle_id) do
+    case Froth.Repo.get(Cycle, cycle_id) do
+      nil ->
+        clear_cycle(socket, :not_found)
 
-  defp refresh_loop(socket) do
-    socket =
-      if socket.assigns.loop_mode == :agent_cycle and is_binary(socket.assigns.cycle_id) do
-        events = load_agent_cycle_events(socket.assigns.cycle_id)
-        assign(socket, :agent_events, events)
-      else
-        setup_loop(socket, socket.assigns.loop_key)
-      end
-
-    if socket.assigns.loop_mode == :legacy, do: maybe_yolo_approve(socket), else: socket
-  end
-
-  defp maybe_subscribe_loop(socket, inference_session_id) when is_integer(inference_session_id) do
-    topic = "tool_loop:#{inference_session_id}"
-
-    socket =
-      if connected?(socket) do
-        if socket.assigns.loop_topic && socket.assigns.loop_topic != topic do
-          Phoenix.PubSub.unsubscribe(Froth.PubSub, socket.assigns.loop_topic)
-        end
-
-        if socket.assigns.loop_topic != topic do
-          Phoenix.PubSub.subscribe(Froth.PubSub, topic)
-        end
+      _cycle ->
+        events = load_agent_cycle_events(cycle_id)
 
         socket
-      else
-        socket
-      end
-
-    assign(socket, :loop_topic, topic)
+        |> assign(:agent_events, events)
+        |> assign(
+          :loop_status,
+          derive_cycle_status(events, socket.assigns.live_thinking, socket.assigns.live_text)
+        )
+    end
   end
 
-  defp maybe_subscribe_loop(socket, _), do: socket
+  defp refresh_loop(socket), do: socket
+
+  defp clear_cycle(socket, status) do
+    socket = maybe_unsubscribe_loop_topic(socket)
+
+    socket
+    |> assign(:cycle_id, nil)
+    |> assign(:bot_id, "charlie")
+    |> assign(:loop_status, status)
+    |> assign(:agent_events, [])
+    |> assign(:live_thinking, "")
+    |> assign(:live_text, "")
+    |> assign(:live_io, "")
+    |> assign(:live_result, nil)
+    |> assign(:live_result_error, false)
+  end
 
   defp maybe_subscribe_cycle(socket, cycle_id) when is_binary(cycle_id) do
     topic = "cycle:#{cycle_id}"
@@ -1007,67 +686,12 @@ defmodule FrothWeb.ToolLive do
 
   defp maybe_subscribe_cycle(socket, _), do: socket
 
-  defp maybe_subscribe_active_tool(socket) do
-    ref = socket.assigns.active_tool_ref
-
-    cond do
-      not connected?(socket) ->
-        socket
-
-      not is_binary(ref) ->
-        socket
-
-      MapSet.member?(socket.assigns.subscribed_tool_refs, ref) ->
-        socket
-
-      true ->
-        topic = "tool:#{ref}"
-        Phoenix.PubSub.subscribe(Froth.PubSub, topic)
-
-        assign(
-          socket,
-          :subscribed_tool_refs,
-          MapSet.put(socket.assigns.subscribed_tool_refs, ref)
-        )
+  defp maybe_unsubscribe_loop_topic(socket) do
+    if connected?(socket) and is_binary(socket.assigns.loop_topic) do
+      Phoenix.PubSub.unsubscribe(Froth.PubSub, socket.assigns.loop_topic)
     end
-  end
 
-  defp assign_from_inference_session(socket, inference_session) do
-    pending_tools = inference_session.pending_tools || []
-    next_pending_tool = Enum.find(pending_tools, &(&1["status"] == "pending"))
-
-    active_eval_tool =
-      Enum.find(pending_tools, &(&1["name"] == "elixir_eval" and &1["status"] == "executing"))
-
-    socket =
-      socket
-      |> assign(:inference_session_id, inference_session.id)
-      |> assign(:bot_id, inference_session.bot_id || "charlie")
-      |> assign(:raw_status, inference_session.status)
-      |> assign(
-        :loop_status,
-        loop_status(inference_session.status, next_pending_tool, active_eval_tool)
-      )
-      |> assign(:tool_steps, inference_session.tool_steps || [])
-      |> assign(:pending_tools, pending_tools)
-      |> assign(:next_pending_tool, next_pending_tool)
-      |> assign(:active_tool_ref, active_eval_tool && active_eval_tool["ref"])
-
-    socket =
-      if inference_session.status == "streaming" do
-        socket
-      else
-        socket |> assign(:live_thinking, "") |> assign(:live_text, "")
-      end
-
-    if active_eval_tool do
-      socket
-    else
-      socket
-      |> assign(:live_io, "")
-      |> assign(:live_result, nil)
-      |> assign(:live_result_error, false)
-    end
+    assign(socket, :loop_topic, nil)
   end
 
   defp setup_agent_cycle(socket, bot_id, cycle_id)
@@ -1075,27 +699,22 @@ defmodule FrothWeb.ToolLive do
     case Froth.Repo.get(Cycle, cycle_id) do
       nil ->
         socket
-        |> assign(:loop_mode, :agent_cycle)
-        |> assign(:cycle_id, cycle_id)
+        |> clear_cycle(:not_found)
         |> assign(:bot_id, bot_id)
-        |> assign(:loop_status, :not_found)
-        |> assign(:agent_events, [])
-        |> assign(:inference_session_id, nil)
 
       _cycle ->
         events = load_agent_cycle_events(cycle_id)
 
         socket
-        |> assign(:loop_mode, :agent_cycle)
         |> assign(:cycle_id, cycle_id)
         |> assign(:bot_id, bot_id)
-        |> assign(:loop_status, :running)
         |> assign(:agent_events, events)
-        |> assign(:inference_session_id, nil)
-        |> assign(:pending_tools, [])
-        |> assign(:tool_steps, [])
-        |> assign(:next_pending_tool, nil)
-        |> assign(:active_tool_ref, nil)
+        |> assign(:live_thinking, "")
+        |> assign(:live_text, "")
+        |> assign(:live_io, "")
+        |> assign(:live_result, nil)
+        |> assign(:live_result_error, false)
+        |> assign(:loop_status, derive_cycle_status(events))
         |> maybe_subscribe_cycle(cycle_id)
     end
   end
@@ -1119,46 +738,6 @@ defmodule FrothWeb.ToolLive do
 
   defp load_agent_cycle_events(_), do: []
 
-  defp lookup_inference_session(token) do
-    case parse_loop_token(token) do
-      {:inference_session_id, inference_session_id} ->
-        Froth.Repo.get(InferenceSession, inference_session_id)
-
-      {:tool_ref, ref} ->
-        Froth.Repo.one(
-          from(c in InferenceSession,
-            where:
-              fragment(
-                "EXISTS (SELECT 1 FROM jsonb_array_elements(?) elem WHERE elem->>'ref' = ?)",
-                c.pending_tools,
-                ^ref
-              ),
-            order_by: [desc: c.id],
-            limit: 1
-          ),
-          log: false
-        )
-
-      :invalid ->
-        nil
-    end
-  end
-
-  defp parse_loop_token(token) when is_binary(token) do
-    cond do
-      String.starts_with?(token, "session_") ->
-        case Integer.parse(String.replace_prefix(token, "session_", "")) do
-          {id, ""} -> {:inference_session_id, id}
-          _ -> :invalid
-        end
-
-      true ->
-        {:tool_ref, token}
-    end
-  end
-
-  defp parse_loop_token(_), do: :invalid
-
   defp parse_agent_cycle_token(token) when is_binary(token) do
     case Regex.run(~r/^cycle_([^_]+)_(.+)$/, token, capture: :all_but_first) do
       [bot_id, cycle_id] -> {:ok, bot_id, cycle_id}
@@ -1176,27 +755,67 @@ defmodule FrothWeb.ToolLive do
     %{
       id: id || Ecto.ULID.generate(),
       role: role,
-      text: agent_event_text(content)
+      blocks: agent_event_blocks(content)
     }
   end
 
-  defp agent_event_from_message(_), do: %{id: Ecto.ULID.generate(), role: :user, text: ""}
+  defp agent_event_from_message(_), do: %{id: Ecto.ULID.generate(), role: :user, blocks: []}
 
-  defp agent_event_text(%{"_wrapped" => value}) when is_binary(value), do: value
-
-  defp agent_event_text(%{"_wrapped" => blocks}) when is_list(blocks) do
-    blocks
-    |> Enum.map(fn
-      %{"type" => "text", "text" => text} when is_binary(text) -> text
-      %{"type" => "thinking", "thinking" => text} when is_binary(text) -> text
-      %{"type" => "tool_result", "content" => content} when is_binary(content) -> content
-      other -> inspect(other, limit: 20, printable_limit: 500)
-    end)
-    |> Enum.join("\n")
+  defp agent_event_blocks(%{"_wrapped" => value}) when is_binary(value) do
+    [%{"type" => "text", "text" => value}]
   end
 
-  defp agent_event_text(content) when is_binary(content), do: content
-  defp agent_event_text(content), do: inspect(content, limit: 20, printable_limit: 500)
+  defp agent_event_blocks(%{"_wrapped" => blocks}) when is_list(blocks), do: blocks
+
+  defp agent_event_blocks(content) when is_binary(content) do
+    [%{"type" => "text", "text" => content}]
+  end
+
+  defp agent_event_blocks(_), do: []
+
+  defp derive_cycle_status(events), do: derive_cycle_status(events, "", "")
+
+  defp derive_cycle_status(events, live_thinking, live_text) do
+    cond do
+      live_thinking != "" or live_text != "" ->
+        :thinking
+
+      unresolved_tool_calls(events) > 0 ->
+        :running
+
+      events == [] ->
+        :running
+
+      true ->
+        :done
+    end
+  end
+
+  defp unresolved_tool_calls(events) when is_list(events) do
+    pending =
+      Enum.reduce(events, MapSet.new(), fn event, acc ->
+        blocks = event[:blocks] || []
+
+        Enum.reduce(blocks, acc, fn
+          %{"type" => "tool_use", "id" => id, "name" => name}, pending
+          when is_binary(id) and is_binary(name) ->
+            if name == "send_message", do: pending, else: MapSet.put(pending, id)
+
+          %{"type" => "tool_use", "id" => id}, pending when is_binary(id) ->
+            MapSet.put(pending, id)
+
+          %{"type" => "tool_result", "tool_use_id" => id}, pending when is_binary(id) ->
+            MapSet.delete(pending, id)
+
+          _, pending ->
+            pending
+        end)
+      end)
+
+    MapSet.size(pending)
+  end
+
+  defp unresolved_tool_calls(_), do: 0
 
   defp split_tool_result(content) when is_binary(content) do
     if String.starts_with?(content, "IO output:\n") do
@@ -1284,84 +903,26 @@ defmodule FrothWeb.ToolLive do
     |> Enum.reject(&(&1 == ""))
   end
 
-  defp can_stop?(status) when status in ["awaiting_tools", "streaming"], do: true
+  defp can_stop?(status) when status in [:running, :thinking], do: true
   defp can_stop?(_), do: false
 
-  defp next_runnable_ref(pending_tools) when is_list(pending_tools) do
-    if Enum.any?(pending_tools, &(&1["status"] == "executing")) do
-      nil
-    else
-      case Enum.find(pending_tools, &(&1["status"] == "pending")) do
-        %{"ref" => ref} when is_binary(ref) -> ref
-        _ -> nil
-      end
-    end
-  end
+  defp show_dock_spinner?(loop_status), do: loop_status in [:running, :thinking, :loading]
 
-  defp next_runnable_ref(_), do: nil
+  defp follow_mode(loop_status),
+    do: if(loop_status in [:running, :thinking], do: "always", else: "smart")
 
-  defp next_runnable_name(pending_tools) when is_list(pending_tools) do
-    if Enum.any?(pending_tools, &(&1["status"] == "executing")) do
-      nil
-    else
-      case Enum.find(pending_tools, &(&1["status"] == "pending")) do
-        %{"name" => name} when is_binary(name) -> name
-        _ -> nil
-      end
-    end
-  end
+  defp dock_text(:loading, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} loading..."
+  defp dock_text(:running, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} running..."
 
-  defp next_runnable_name(_), do: nil
+  defp dock_text(:thinking, cycle_id) when is_binary(cycle_id),
+    do: "cycle #{cycle_id} thinking..."
 
-  defp show_dock_spinner?(loop_status, yolo, pending_tools) do
-    loop_status in [:running, :thinking] or
-      (yolo and is_list(pending_tools) and Enum.any?(pending_tools, &(&1["status"] == "pending")))
-  end
-
-  defp follow_mode(yolo, loop_status, pending_tools) do
-    if yolo and show_dock_spinner?(loop_status, true, pending_tools), do: "always", else: "smart"
-  end
-
-  defp dock_text(_loop_status, _next_pending_tool, pending_tools, true)
-       when is_list(pending_tools) do
-    cond do
-      Enum.any?(pending_tools, &(&1["status"] == "executing")) ->
-        "running..."
-
-      match?(%{"name" => _}, Enum.find(pending_tools, &(&1["status"] == "pending"))) ->
-        "yolo armed"
-
-      true ->
-        "yolo armed"
-    end
-  end
-
-  defp dock_text(:thinking, _next_pending_tool, _pending_tools, _yolo), do: "thinking..."
-  defp dock_text(:running, _next_pending_tool, _pending_tools, _yolo), do: "running..."
-  defp dock_text(:done, _next_pending_tool, _pending_tools, _yolo), do: "loop complete"
-  defp dock_text(:stopped, _next_pending_tool, _pending_tools, _yolo), do: "stopped"
-  defp dock_text(:error, _next_pending_tool, _pending_tools, _yolo), do: "loop failed"
-  defp dock_text(:not_found, _next_pending_tool, _pending_tools, _yolo), do: "loop not found"
-
-  defp dock_text(:paused, pending_tool, _pending_tools, _yolo) when is_map(pending_tool) do
-    "ready: #{tool_label(pending_tool["name"])}"
-  end
-
-  defp dock_text(_, _next_pending_tool, _pending_tools, _yolo), do: "waiting"
-
-  defp loop_status("awaiting_tools", pending_tool, active_eval_tool) do
-    cond do
-      is_map(active_eval_tool) -> :running
-      is_map(pending_tool) -> :paused
-      true -> :loading
-    end
-  end
-
-  defp loop_status("streaming", _pending_tool, _active_eval_tool), do: :thinking
-  defp loop_status("done", _pending_tool, _active_eval_tool), do: :done
-  defp loop_status("stopped", _pending_tool, _active_eval_tool), do: :stopped
-  defp loop_status("error", _pending_tool, _active_eval_tool), do: :error
-  defp loop_status(_, _pending_tool, _active_eval_tool), do: :loading
+  defp dock_text(:done, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} complete"
+  defp dock_text(:stopped, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} stopped"
+  defp dock_text(:error, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} failed"
+  defp dock_text(:not_found, _cycle_id), do: "cycle not found"
+  defp dock_text(_, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id}"
+  defp dock_text(_, _), do: "waiting"
 
   defp tool_status_color("executing", _), do: "text-yellow-300/80"
   defp tool_status_color("pending", _), do: "text-amber-300/80"
@@ -1463,7 +1024,7 @@ defmodule FrothWeb.ToolLive do
     if Atom.to_string(ident) in @elixir_keywords, do: "text-fuchsia-300", else: nil
   end
 
-  defp token_class({:kw_identifier, _pos, ident}) when is_atom(ident), do: "text-fuchsia-300"
+  defp token_class({:kw_identifier, _pos, _ident}), do: "text-fuchsia-300"
   defp token_class({type, _pos}) when type in [:do, :end], do: "text-fuchsia-300"
   defp token_class(_), do: nil
 
@@ -1510,7 +1071,6 @@ defmodule FrothWeb.ToolLive do
     end
   end
 
-  # Interpolated string parts can include tokenizer metadata tuples; skip highlighting those strings.
   defp bin_string_part_len(_), do: :error
 
   defp render_highlighted(chars, ranges) do
