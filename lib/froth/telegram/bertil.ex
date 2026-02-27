@@ -35,7 +35,7 @@ defmodule Froth.Telegram.Bertil do
       session_id: @default_session_id,
       model: @default_model,
       system_prompt_fun: &BertilPrompt.system_prompt/2,
-      name_triggers: ["bertil"]
+      name_triggers: ["lennart"]
     }
   end
 

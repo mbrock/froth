@@ -119,6 +119,7 @@ barble_bots =
         bot_opts
         |> Keyword.put_new(:bot_user_id, bertil_bot_user_id)
         |> Keyword.put_new(:owner_user_id, bertil_owner_user_id)
+        |> Keyword.put_new(:name_triggers, ["lennart"])
 
       _ ->
         bot_opts

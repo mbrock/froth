@@ -38,7 +38,8 @@ defmodule Froth.Telegram.Bot do
       bot_user_id: Keyword.fetch!(opts, :bot_user_id),
       owner_user_id: Keyword.fetch!(opts, :owner_user_id),
       model: Keyword.get(opts, :model, "claude-opus-4-6"),
-      system_prompt: Keyword.get(opts, :system_prompt, "You are a helpful assistant on Telegram.")
+      system_prompt: Keyword.get(opts, :system_prompt, "You are a helpful assistant on Telegram."),
+      name_triggers: Keyword.get(opts, :name_triggers, [])
     }
 
     :ok = BotAdapter.subscribe(bot_config.session_id)
@@ -101,7 +102,7 @@ defmodule Froth.Telegram.Bot do
       sender == bot_config.bot_user_id ->
         :ignore
 
-      BotAdapter.mentioned?(msg, bot_config.bot_username, bot_config.bot_user_id) and
+      BotAdapter.mentioned?(msg, bot_config.bot_username, bot_config.bot_user_id, bot_config.name_triggers) and
           BotAdapter.allowed_chat?(chat_id, bot_config.owner_user_id, bot_config.session_id) ->
         {:mention, chat_id, msg["id"], text}
 
