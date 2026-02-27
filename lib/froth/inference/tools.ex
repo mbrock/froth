@@ -116,31 +116,27 @@ defmodule Froth.Inference.Tools do
     %{
       "name" => "read_tool_transcript",
       "description" =>
-        "Read transcripts from previous tool loops in this chat, including assistant tool calls, tool results, and linked eval/shell task output.",
+        "Read transcripts from previous agent cycles in this chat, including assistant tool calls, tool results, and linked eval/shell task output.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
-          "inference_session_id" => %{
-            "type" => "integer",
-            "description" => "Optional specific inference session ID."
+          "cycle_id" => %{
+            "type" => "string",
+            "description" => "Optional specific cycle ID (ULID)."
           },
           "limit" => %{
             "type" => "integer",
-            "description" => "How many recent inference sessions to include. Default 3."
+            "description" => "How many recent cycles to include. Default 3."
           },
-          "include_api_messages" => %{
+          "include_messages" => %{
             "type" => "boolean",
             "description" =>
-              "Include assistant/user API-message transcript blocks. Default false (noisy)."
-          },
-          "include_tool_steps" => %{
-            "type" => "boolean",
-            "description" => "Include persisted loop step events. Default false (noisy)."
+              "Include assistant/user message transcript blocks. Default false (noisy)."
           },
           "include_task_output" => %{
             "type" => "boolean",
             "description" =>
-              "Include linked eval/shell task output near each loop window. Default true."
+              "Include linked eval/shell task output near each cycle. Default true."
           },
           "task_output_lines" => %{
             "type" => "integer",
@@ -1002,50 +998,69 @@ defmodule Froth.Inference.Tools do
 
   defp read_tool_transcript(chat_id, bot_id, input)
        when is_integer(chat_id) and is_binary(bot_id) and is_map(input) do
-    requested_inference_session_id = parse_positive_integer(input["inference_session_id"])
-    inference_session_limit = bounded_integer(input["limit"], 3, 1, 20)
-    include_api_messages = parse_boolean(input["include_api_messages"], false)
-    include_tool_steps = parse_boolean(input["include_tool_steps"], false)
+    requested_cycle_id = input["cycle_id"]
+    cycle_limit = bounded_integer(input["limit"], 3, 1, 20)
+    include_messages = parse_boolean(input["include_messages"], false)
     include_task_output = parse_boolean(input["include_task_output"], true)
     task_output_lines = bounded_integer(input["task_output_lines"], 120, 10, 2_000)
 
-    sessions_query =
-      from(s in Froth.Inference.InferenceSession,
-        where: s.chat_id == ^chat_id and s.bot_id == ^bot_id,
-        order_by: [desc: s.inserted_at]
+    alias Froth.Agent
+    alias Froth.Agent.{Cycle, Message}
+    alias Froth.Telegram.CycleLink
+
+    cycles_query =
+      from(l in CycleLink,
+        join: c in Cycle,
+        on: c.id == l.cycle_id,
+        where: l.bot_id == ^bot_id and l.chat_id == ^chat_id,
+        order_by: [desc: c.inserted_at]
       )
 
-    sessions_query =
-      if is_integer(requested_inference_session_id) do
-        from(s in sessions_query, where: s.id == ^requested_inference_session_id, limit: 1)
+    cycles_query =
+      if is_binary(requested_cycle_id) and requested_cycle_id != "" do
+        from([l, c] in cycles_query, where: l.cycle_id == ^requested_cycle_id, limit: 1)
       else
-        from(s in sessions_query, limit: ^inference_session_limit)
+        from([l, c] in cycles_query, limit: ^cycle_limit)
       end
 
-    sessions = Repo.all(sessions_query, log: false)
+    links =
+      Repo.all(
+        from([l, c] in cycles_query,
+          select: %{
+            cycle_id: l.cycle_id,
+            reply_to: l.reply_to,
+            inserted_at: c.inserted_at,
+            updated_at: c.updated_at
+          }
+        ),
+        log: false
+      )
 
-    if sessions == [] do
-      if is_integer(requested_inference_session_id) do
-        "No inference session found for id=#{requested_inference_session_id} in this chat."
+    if links == [] do
+      if is_binary(requested_cycle_id) and requested_cycle_id != "" do
+        "No cycle found for id=#{requested_cycle_id} in this chat."
       else
-        "No prior tool-loop sessions found for this chat."
+        "No prior agent cycles found for this chat."
       end
     else
       sections =
-        Enum.map(sessions, fn session ->
-          format_inference_session_transcript(
-            session,
+        Enum.map(links, fn link ->
+          head_id = Agent.latest_head_id(%Cycle{id: link.cycle_id})
+          api_messages = Agent.load_messages(head_id) |> Enum.map(&Message.to_api/1)
+
+          format_cycle_transcript(
+            link,
+            api_messages,
             chat_id,
             bot_id,
-            include_api_messages: include_api_messages,
-            include_tool_steps: include_tool_steps,
+            include_messages: include_messages,
             include_task_output: include_task_output,
             task_output_lines: task_output_lines
           )
         end)
 
       """
-      Tool loop transcript history for chat #{chat_id} (bot #{bot_id}):
+      Agent cycle transcript history for chat #{chat_id} (bot #{bot_id}):
 
       #{Enum.join(sections, "\n\n---\n\n")}
       """
@@ -1057,48 +1072,34 @@ defmodule Froth.Inference.Tools do
     "Could not read tool transcript for the given input."
   end
 
-  defp format_inference_session_transcript(session, chat_id, bot_id, opts)
-       when is_map(session) and is_integer(chat_id) and is_binary(bot_id) and is_list(opts) do
-    include_api_messages = Keyword.get(opts, :include_api_messages, true)
-    include_tool_steps = Keyword.get(opts, :include_tool_steps, true)
+  defp format_cycle_transcript(link, api_messages, chat_id, bot_id, opts)
+       when is_map(link) and is_list(api_messages) and is_integer(chat_id) and is_binary(bot_id) do
+    include_messages = Keyword.get(opts, :include_messages, true)
     include_task_output = Keyword.get(opts, :include_task_output, true)
     task_output_lines = Keyword.get(opts, :task_output_lines, 120)
 
     header = """
-    inference_session ##{session.id}
-    status: #{session.status || "unknown"}
-    inserted_at: #{format_datetime(session.inserted_at)}
-    updated_at: #{format_datetime(session.updated_at)}
-    reply_to: #{session.reply_to || "n/a"}
+    cycle #{link.cycle_id}
+    created: #{format_datetime(link.inserted_at)}
+    reply_to: #{link.reply_to || "n/a"}
+    messages: #{length(api_messages)}
     """
 
-    api_messages_section =
-      if include_api_messages do
+    messages_section =
+      if include_messages do
         """
-        API messages:
-        #{format_api_messages_transcript(session.api_messages || [])}
-        """
-      else
-        ""
-      end
-
-    tool_steps_section =
-      if include_tool_steps do
-        """
-        Tool steps:
-        #{format_tool_steps_transcript(session.tool_steps || [])}
+        Messages:
+        #{format_api_messages_transcript(api_messages)}
         """
       else
         ""
       end
 
     tasks =
-      tasks_for_inference_session_window(
-        session,
+      tasks_for_cycle_window(
+        link,
         chat_id,
-        bot_id,
-        include_task_output,
-        task_output_lines
+        bot_id
       )
 
     tasks_section = """
@@ -1106,7 +1107,7 @@ defmodule Froth.Inference.Tools do
     #{format_task_transcript(tasks, include_task_output, task_output_lines)}
     """
 
-    [header, api_messages_section, tool_steps_section, tasks_section]
+    [header, messages_section, tasks_section]
     |> Enum.reject(&(String.trim(&1) == ""))
     |> Enum.join("\n\n")
     |> String.trim()
@@ -1217,83 +1218,10 @@ defmodule Froth.Inference.Tools do
 
   defp format_role_block(_role, other), do: preview_text(inspect(other, limit: 50), 700)
 
-  defp format_tool_steps_transcript(steps) when is_list(steps) do
-    lines =
-      steps
-      |> Enum.take(-120)
-      |> Enum.map(fn step ->
-        kind = step["kind"] || "step"
-        at = step["at"] || "unknown-time"
-        data_preview = tool_step_data_preview(step["data"])
-        "[#{at}] #{kind}#{if(data_preview != "", do: " #{data_preview}", else: "")}"
-      end)
-
-    if lines == [] do
-      "  (none)"
-    else
-      Enum.map_join(lines, "\n", &("  " <> &1))
-    end
-  end
-
-  defp format_tool_steps_transcript(_), do: "  (none)"
-
-  defp tool_step_data_preview(data) when is_map(data) do
-    summary =
-      []
-      |> maybe_append_field(data, "name")
-      |> maybe_append_field(data, "ref")
-      |> maybe_append_field(data, "tool_use_id")
-      |> maybe_append_field(data, "status")
-      |> maybe_append_field(data, "message_id")
-      |> maybe_append_field(data, "action")
-      |> maybe_append_field(data, "mode")
-
-    result_preview =
-      cond do
-        is_binary(data["result_preview"]) and data["result_preview"] != "" ->
-          " result_preview=#{inspect(String.slice(data["result_preview"], 0, 240))}"
-
-        is_binary(data["result"]) and data["result"] != "" ->
-          " result=#{inspect(String.slice(data["result"], 0, 240))}"
-
-        is_binary(data["text"]) and data["text"] != "" ->
-          " text=#{inspect(String.slice(data["text"], 0, 240))}"
-
-        true ->
-          ""
-      end
-
-    if summary == [] and result_preview == "" do
-      preview_json(data, 350)
-    else
-      Enum.join(summary, " ") <> result_preview
-    end
-  end
-
-  defp tool_step_data_preview(_), do: ""
-
-  defp maybe_append_field(parts, data, key) when is_list(parts) and is_map(data) do
-    case data[key] do
-      value when is_binary(value) and value != "" ->
-        parts ++ ["#{key}=#{value}"]
-
-      value when is_integer(value) ->
-        parts ++ ["#{key}=#{value}"]
-
-      _ ->
-        parts
-    end
-  end
-
-  defp tasks_for_inference_session_window(
-         %{
-           inserted_at: inserted_at,
-           updated_at: updated_at
-         },
+  defp tasks_for_cycle_window(
+         %{inserted_at: inserted_at, updated_at: updated_at},
          chat_id,
-         bot_id,
-         _include_task_output,
-         _task_output_lines
+         bot_id
        )
        when is_integer(chat_id) and is_binary(bot_id) do
     {window_from, window_to} = task_window(inserted_at, updated_at)
@@ -1312,8 +1240,7 @@ defmodule Froth.Inference.Tools do
     )
   end
 
-  defp tasks_for_inference_session_window(_, _chat_id, _bot_id, _include_task_output, _limit),
-    do: []
+  defp tasks_for_cycle_window(_, _chat_id, _bot_id), do: []
 
   defp format_task_transcript(tasks, include_task_output, task_output_lines)
        when is_list(tasks) and is_boolean(include_task_output) and is_integer(task_output_lines) do

@@ -38,9 +38,9 @@ defmodule Froth.Telegram.Profiles.CharliePrompt do
     note, etc.
     - look: open a Telegram media message directly by msg:ID and inspect native image/PDF \
     content blocks in context (instead of relying only on text analyses).
-    - read_tool_transcript: read previous tool-loop transcripts for this chat, including \
+    - read_tool_transcript: read previous agent cycle transcripts for this chat, including \
     assistant tool calls, tool results, and linked eval/shell task output. Use this when you \
-    need to recover what happened in earlier loops or previous code evaluations.
+    need to recover what happened in earlier cycles or previous code evaluations.
 
     Messages include msg:ID identifiers. Media messages show analysis snippets when available. \
     Photos, voice notes, videos, YouTube links, X/Twitter posts, and PDFs are all analyzed \
