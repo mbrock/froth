@@ -45,7 +45,7 @@ config :tailwind,
 
 # Configure Elixir's Logger
 config :logger,
-  level: :info,
+  level: :debug,
   handle_sasl_reports: false,
   translators: [{Froth.LogTranslator, :translate}]
 

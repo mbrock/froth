@@ -17,8 +17,7 @@ config :froth, FrothWeb.Endpoint,
     hosts: ["localhost", "127.0.0.1"]
   ]
 
-# Do not print debug messages in production
-config :logger, level: :info
+config :logger, level: :debug
 
 # Runtime production configuration, including reading
 # of environment variables, is done on config/runtime.exs.
