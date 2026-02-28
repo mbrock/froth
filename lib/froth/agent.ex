@@ -69,13 +69,14 @@ defmodule Froth.Agent do
   end
 
   @doc "Append a message to the cycle, record an event, broadcast, return {message, updated_head_id}."
-  @spec append_message(Cycle.t(), String.t() | nil, :user | :agent, term()) ::
+  @spec append_message(Cycle.t(), String.t() | nil, :user | :agent, term(), map() | nil) ::
           {Message.t(), String.t()}
-  def append_message(%Cycle{id: cycle_id}, head_id, role, content) do
+  def append_message(%Cycle{id: cycle_id}, head_id, role, content, metadata \\ nil) do
     saved =
       Repo.insert!(%Message{
         role: role,
         content: Message.wrap(content),
+        metadata: metadata,
         parent_id: head_id
       })
 

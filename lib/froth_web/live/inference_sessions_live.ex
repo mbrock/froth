@@ -25,7 +25,8 @@ defmodule FrothWeb.InferenceSessionsLive do
      |> assign(:matching_count, 0)
      |> assign(:selected_cycle, nil)
      |> assign(:selected_cycle_id, nil)
-     |> assign(:selected_messages, [])}
+     |> assign(:selected_messages, [])
+     |> assign(:aggregate_usage, nil)}
   end
 
   @impl true
@@ -164,15 +165,23 @@ defmodule FrothWeb.InferenceSessionsLive do
                   <span class="font-mono text-[12px] text-zinc-100 truncate">
                     {String.slice(summary.cycle_id, 0, 16)}..
                   </span>
-                  <span class="rounded border border-zinc-500/30 bg-zinc-500/10 px-1.5 py-0.5 text-[10px] text-zinc-300">
-                    {summary.message_count} msgs
-                  </span>
+                  <div class="flex items-center gap-1.5">
+                    <span :if={summary.input_tokens && summary.input_tokens > 0} class="text-[10px] text-zinc-400">
+                      {format_number(summary.input_tokens)}in {format_number(summary.output_tokens)}out
+                    </span>
+                    <span class="rounded border border-zinc-500/30 bg-zinc-500/10 px-1.5 py-0.5 text-[10px] text-zinc-300">
+                      {summary.message_count} msgs
+                    </span>
+                  </div>
                 </div>
 
                 <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-400">
                   <span>bot: {summary.bot_id || "-"}</span>
                   <span>chat: {summary.chat_id}</span>
                   <span :if={summary.reply_to}>reply_to: {summary.reply_to}</span>
+                  <span :if={summary.cache_read_input_tokens && summary.cache_read_input_tokens > 0}>
+                    {format_number(summary.cache_read_input_tokens)}cache
+                  </span>
                 </div>
 
                 <div class="mt-1 text-[10px] text-zinc-600">
@@ -220,6 +229,8 @@ defmodule FrothWeb.InferenceSessionsLive do
                     <dd class="font-mono">{@selected_cycle.legacy_inference_session_id}</dd>
                   </div>
                 </dl>
+
+                <.usage_panel :if={@aggregate_usage} usage={@aggregate_usage} />
               </div>
 
               <.api_messages_panel messages={@selected_messages} />
@@ -241,16 +252,14 @@ defmodule FrothWeb.InferenceSessionsLive do
     selected = select_cycle(requested_id, cycle_summaries)
     selected_id = selected && selected.cycle_id
 
-    messages =
+    {messages, aggregate_usage} =
       if selected do
         head_id = Agent.latest_head_id(%Cycle{id: selected_id})
-
-        head_id
-        |> Agent.load_messages()
-        |> Enum.map(&Message.to_api/1)
-        |> api_messages_for_view()
+        raw = Agent.load_messages(head_id)
+        usage = load_cycle_usage(selected_id)
+        {api_messages_for_view(raw), usage}
       else
-        []
+        {[], nil}
       end
 
     socket
@@ -262,6 +271,7 @@ defmodule FrothWeb.InferenceSessionsLive do
     |> assign(:selected_cycle, selected)
     |> assign(:selected_cycle_id, selected_id)
     |> assign(:selected_messages, messages)
+    |> assign(:aggregate_usage, aggregate_usage)
   end
 
   defp cycles_path(nil, params), do: ~p"/froth/inference?#{params}"
@@ -280,15 +290,20 @@ defmodule FrothWeb.InferenceSessionsLive do
 
   defp list_cycle_summaries(filters) do
     cycles_base_query(filters)
+    |> join(:left, [l, c], u in fragment("cycle_usage"), on: u.cycle_id == l.cycle_id)
     |> order_by([_l, c], desc: c.inserted_at)
     |> limit(^filters.limit)
-    |> select([l, c], %{
+    |> select([l, c, u], %{
       cycle_id: l.cycle_id,
       bot_id: l.bot_id,
       chat_id: l.chat_id,
       reply_to: l.reply_to,
       legacy_inference_session_id: l.legacy_inference_session_id,
       inserted_at: c.inserted_at,
+      input_tokens: u.input_tokens,
+      output_tokens: u.output_tokens,
+      cache_read_input_tokens: u.cache_read_input_tokens,
+      turn_count: u.turn_count,
       message_count:
         fragment(
           "(SELECT COUNT(*) FROM agent_events WHERE cycle_id = ?)",
@@ -447,6 +462,7 @@ defmodule FrothWeb.InferenceSessionsLive do
             </div>
 
             <.api_message_content content={message.content} />
+            <.message_metadata :if={message.metadata} metadata={message.metadata} />
           </article>
         </div>
       </div>
@@ -493,32 +509,35 @@ defmodule FrothWeb.InferenceSessionsLive do
   defp api_messages_for_view(messages) when is_list(messages) do
     messages
     |> Enum.with_index(1)
-    |> Enum.map(fn {message, index} ->
+    |> Enum.map(fn {msg, index} ->
+      api = Message.to_api(msg)
+
       %{
         index: index,
-        role: api_message_role(message),
-        content: api_message_content_value(message)
+        role: to_string(Map.get(api, "role", "unknown")),
+        content: Map.get(api, "content"),
+        metadata: msg.metadata
       }
     end)
   end
 
   defp api_messages_for_view(_), do: []
 
-  defp api_message_role(message) when is_map(message) do
-    role =
-      Map.get(message, "role") ||
-        Map.get(message, :role)
-
-    if is_binary(role) and role != "", do: role, else: "unknown"
+  defp load_cycle_usage(cycle_id) do
+    Repo.one(
+      from(u in fragment("cycle_usage"),
+        where: u.cycle_id == type(^cycle_id, Ecto.ULID),
+        select: %{
+          "input_tokens" => u.input_tokens,
+          "output_tokens" => u.output_tokens,
+          "cache_read_input_tokens" => u.cache_read_input_tokens,
+          "cache_creation_input_tokens" => u.cache_creation_input_tokens,
+          "turn_count" => u.turn_count
+        }
+      ),
+      log: false
+    )
   end
-
-  defp api_message_role(_), do: "unknown"
-
-  defp api_message_content_value(message) when is_map(message) do
-    Map.get(message, "content") || Map.get(message, :content)
-  end
-
-  defp api_message_content_value(_), do: nil
 
   defp api_content_kind_label(content) when is_binary(content), do: "string"
   defp api_content_kind_label(content) when is_list(content), do: "#{length(content)} blocks"
@@ -580,6 +599,97 @@ defmodule FrothWeb.InferenceSessionsLive do
   end
 
   defp api_block_json(_), do: nil
+
+  attr :usage, :map, required: true
+
+  defp usage_panel(assigns) do
+    ~H"""
+    <details class="mt-3 rounded border border-white/10 bg-black/30">
+      <summary class="cursor-pointer select-none px-3 py-1.5 text-[11px] font-medium text-zinc-300">
+        Usage · {format_token_summary(@usage)}
+      </summary>
+      <div class="border-t border-white/10 px-3 py-2">
+        <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] sm:grid-cols-3">
+          <.usage_item label="Input tokens" value={@usage["input_tokens"]} />
+          <.usage_item label="Output tokens" value={@usage["output_tokens"]} />
+          <.usage_item label="Cache read" value={@usage["cache_read_input_tokens"]} />
+          <.usage_item label="Cache created" value={@usage["cache_creation_input_tokens"]} />
+          <.usage_item
+            :if={@usage["cache_creation"]}
+            label="Ephemeral 5m"
+            value={get_in(@usage, ["cache_creation", "ephemeral_5m_input_tokens"])}
+          />
+          <.usage_item
+            :if={@usage["cache_creation"]}
+            label="Ephemeral 1h"
+            value={get_in(@usage, ["cache_creation", "ephemeral_1h_input_tokens"])}
+          />
+          <.usage_item :if={@usage["service_tier"]} label="Tier" value={@usage["service_tier"]} />
+        </dl>
+      </div>
+    </details>
+    """
+  end
+
+  attr :label, :string, required: true
+  attr :value, :any, required: true
+
+  defp usage_item(assigns) do
+    ~H"""
+    <div :if={@value} class="flex items-baseline justify-between gap-2">
+      <dt class="text-zinc-500">{@label}</dt>
+      <dd class="font-mono text-zinc-200">{format_usage_value(@value)}</dd>
+    </div>
+    """
+  end
+
+  attr :metadata, :map, required: true
+
+  defp message_metadata(assigns) do
+    ~H"""
+    <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-white/5 pt-1.5 text-[10px] text-zinc-500">
+      <span :if={@metadata["model"]} class="font-mono">{@metadata["model"]}</span>
+      <span :if={@metadata["stop_reason"]}>{@metadata["stop_reason"]}</span>
+      <span :if={@metadata["usage"]}>
+        {format_token_summary(@metadata["usage"])}
+      </span>
+      <span :if={@metadata["message_id"]} class="font-mono text-zinc-600 truncate max-w-[14ch]">
+        {String.slice(to_string(@metadata["message_id"]), 0, 14)}
+      </span>
+    </div>
+    """
+  end
+
+  defp format_token_summary(usage) when is_map(usage) do
+    input = usage["input_tokens"]
+    output = usage["output_tokens"]
+    cache_read = usage["cache_read_input_tokens"]
+
+    parts =
+      [
+        if(input, do: "#{format_number(input)}in"),
+        if(output, do: "#{format_number(output)}out"),
+        if(cache_read && cache_read > 0, do: "#{format_number(cache_read)}cache")
+      ]
+      |> Enum.reject(&is_nil/1)
+
+    Enum.join(parts, " ")
+  end
+
+  defp format_token_summary(_), do: ""
+
+  defp format_number(n) when is_integer(n) and n >= 1_000_000,
+    do: "#{Float.round(n / 1_000_000, 1)}M "
+
+  defp format_number(n) when is_integer(n) and n >= 1_000,
+    do: "#{Float.round(n / 1000, 1)}k "
+
+  defp format_number(n) when is_integer(n), do: "#{n} "
+  defp format_number(n), do: "#{n} "
+
+  defp format_usage_value(v) when is_integer(v), do: Integer.to_string(v)
+  defp format_usage_value(v) when is_binary(v), do: v
+  defp format_usage_value(v), do: inspect(v)
 
   defp pretty_json(value) do
     case Jason.encode(value, pretty: true) do

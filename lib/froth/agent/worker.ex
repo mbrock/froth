@@ -64,10 +64,15 @@ defmodule Froth.Agent.Worker do
   def handle_info({ref, {:ok, response}}, %{phase: {:thinking, %{ref: ref}}} = worker) do
     Process.demonitor(ref, [:flush])
 
+    response_metadata =
+      response
+      |> Map.drop([:content, :text])
+      |> Map.new(fn {k, v} -> {to_string(k), v} end)
+
     case parse_tool_uses(response.content) do
       [] ->
         if has_visible_response?(response.content) do
-          worker = persist_message(worker, :agent, response.content)
+          worker = persist_agent_message(worker, response.content, response_metadata)
           {:stop, :normal, %{worker | phase: :done, empty_reply_retries: 0}}
         else
           maybe_retry_empty_response(worker)
@@ -76,7 +81,7 @@ defmodule Froth.Agent.Worker do
       tool_uses ->
         worker =
           worker
-          |> persist_message(:agent, response.content)
+          |> persist_agent_message(response.content, response_metadata)
           |> Map.put(:empty_reply_retries, 0)
 
         maybe_tools_done(start_tools(worker, tool_uses))
@@ -130,6 +135,11 @@ defmodule Froth.Agent.Worker do
 
   defp persist_message(worker, role, content) do
     {_msg, head_id} = Agent.append_message(worker.cycle, worker.head_id, role, content)
+    %{worker | head_id: head_id}
+  end
+
+  defp persist_agent_message(worker, content, metadata) do
+    {_msg, head_id} = Agent.append_message(worker.cycle, worker.head_id, :agent, content, metadata)
     %{worker | head_id: head_id}
   end
 

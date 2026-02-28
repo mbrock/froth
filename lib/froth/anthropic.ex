@@ -800,7 +800,9 @@ defmodule Froth.Anthropic do
            text: st.text,
            content: SSE.blocks_to_content(st.blocks),
            stop_reason: st.stop_reason,
-           usage: st.usage
+           usage: st.usage,
+           model: st.model,
+           message_id: st.message_id
          }}
 
       {:ok, %{status: status, err_buf: err_body}} when is_integer(status) ->
