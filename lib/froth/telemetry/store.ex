@@ -38,6 +38,8 @@ defmodule Froth.Telemetry.Store do
   def handle_cast({:event, event_name, measurements, metadata}, state) do
     entry = %{
       event: Enum.join(event_name, "."),
+      span_id: to_string_or_nil(metadata[:span_id]),
+      parent_id: to_string_or_nil(metadata[:parent_id]),
       measurements: safe_json(measurements),
       metadata: safe_json(metadata),
       inserted_at: DateTime.utc_now()
@@ -85,4 +87,7 @@ defmodule Froth.Telemetry.Store do
   defp safe_value(v) when is_list(v), do: Enum.map(v, &safe_value/1)
   defp safe_value(%{} = v), do: safe_json(v)
   defp safe_value(v), do: inspect(v)
+
+  defp to_string_or_nil(nil), do: nil
+  defp to_string_or_nil(v), do: to_string(v)
 end

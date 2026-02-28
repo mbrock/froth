@@ -10,6 +10,7 @@ defmodule Froth.Agent.Worker do
 
   alias Froth.Agent
   alias Froth.Agent.{Config, Cycle, Message, ToolUse, ToolResult}
+  alias Froth.Telemetry.Span
 
   @type invocation :: {reference(), ToolUse.t()}
   @type phase ::
@@ -25,7 +26,9 @@ defmodule Froth.Agent.Worker do
           cycle: Cycle.t(),
           head_id: String.t() | nil,
           empty_reply_retries: non_neg_integer(),
-          telemetry_start: integer() | nil,
+          cycle_span_id: String.t() | nil,
+          cycle_start: integer() | nil,
+          think_span_id: String.t() | nil,
           think_start: integer() | nil
         }
 
@@ -33,7 +36,9 @@ defmodule Froth.Agent.Worker do
     :config,
     :cycle,
     :head_id,
-    :telemetry_start,
+    :cycle_span_id,
+    :cycle_start,
+    :think_span_id,
     :think_start,
     phase: :initial,
     empty_reply_retries: 0
@@ -56,18 +61,14 @@ defmodule Froth.Agent.Worker do
   @impl true
   def init({cycle, config}) do
     now = System.monotonic_time()
-
-    :telemetry.execute(
-      [:froth, :agent, :cycle, :start],
-      %{system_time: System.system_time()},
-      %{cycle_id: cycle.id, model: config.model}
-    )
+    span_id = Span.start_span([:froth, :agent, :cycle], nil, %{cycle_id: cycle.id, model: config.model})
 
     worker = %__MODULE__{
       config: config,
       cycle: cycle,
       head_id: Agent.latest_head_id(cycle),
-      telemetry_start: now
+      cycle_span_id: span_id,
+      cycle_start: now
     }
 
     {:ok, worker, {:continue, :think}}
@@ -156,10 +157,11 @@ defmodule Froth.Agent.Worker do
 
   @impl true
   def terminate(reason, worker) do
-    :telemetry.execute(
-      [:froth, :agent, :cycle, :stop],
-      %{duration: System.monotonic_time() - worker.telemetry_start},
-      %{cycle_id: worker.cycle.id, reason: normalize_reason(reason), phase: worker.phase}
+    Span.stop_span(
+      [:froth, :agent, :cycle],
+      worker.cycle_span_id,
+      worker.cycle_start,
+      %{reason: normalize_reason(reason), phase: worker.phase}
     )
   end
 
@@ -175,12 +177,7 @@ defmodule Froth.Agent.Worker do
 
   defp start_thinking(worker) do
     now = System.monotonic_time()
-
-    :telemetry.execute(
-      [:froth, :agent, :think, :start],
-      %{system_time: System.system_time()},
-      %{cycle_id: worker.cycle.id}
-    )
+    think_span_id = Span.start_span([:froth, :agent, :think], worker.cycle_span_id, %{})
 
     api_messages =
       worker.head_id
@@ -196,7 +193,7 @@ defmodule Froth.Agent.Worker do
         tools: worker.config.tools,
         thinking: worker.config.thinking,
         effort: worker.config.effort,
-        cycle_id: cycle_id
+        parent_id: think_span_id
       ]
       |> Enum.reject(fn {_k, v} -> is_nil(v) end)
 
@@ -209,19 +206,15 @@ defmodule Froth.Agent.Worker do
         )
       end)
 
-    %{worker | phase: {:thinking, task}, think_start: now}
+    %{worker | phase: {:thinking, task}, think_span_id: think_span_id, think_start: now}
   end
 
   defp emit_think_stop(worker, extra_meta \\ %{}) do
     if worker.think_start do
-      :telemetry.execute(
-        [:froth, :agent, :think, :stop],
-        %{duration: System.monotonic_time() - worker.think_start},
-        Map.merge(%{cycle_id: worker.cycle.id}, extra_meta)
-      )
+      Span.stop_span([:froth, :agent, :think], worker.think_span_id, worker.think_start, extra_meta)
     end
 
-    %{worker | think_start: nil}
+    %{worker | think_start: nil, think_span_id: nil}
   end
 
   defp parse_tool_uses(content) when is_list(content) do
@@ -323,12 +316,7 @@ defmodule Froth.Agent.Worker do
     retry = worker.empty_reply_retries + 1
 
     if retry <= @max_empty_reply_retries do
-      :telemetry.execute(
-        [:froth, :agent, :empty_retry],
-        %{retry: retry},
-        %{cycle_id: worker.cycle.id}
-      )
-
+      Span.execute([:froth, :agent, :empty_retry], worker.cycle_span_id, %{retry: retry})
       {:noreply, %{worker | phase: :continuing, empty_reply_retries: retry}, {:continue, :think}}
     else
       {:stop, :normal, %{worker | phase: :done}}

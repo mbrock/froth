@@ -2,6 +2,7 @@ defmodule Froth.Anthropic do
   @moduledoc false
 
   alias Froth.Anthropic.SSE
+  alias Froth.Telemetry.Span
 
   @api_url "https://api.anthropic.com/v1/messages"
   @anthropic_version "2023-06-01"
@@ -56,22 +57,19 @@ defmodule Froth.Anthropic do
   @spec reply([chat_message()], keyword()) :: {:ok, String.t()} | {:error, term()}
   def reply(history, opts \\ []) when is_list(history) do
     with {:ok, config} <- build_config(opts) do
-      request_id = new_request_id()
-      cycle_id = Keyword.get(opts, :cycle_id)
+      parent_id = Keyword.get(opts, :parent_id)
 
       meta = %{
-        request_id: request_id,
-        cycle_id: cycle_id,
         mode: :reply,
         model: config.model,
         message_count: length(history),
         tool_count: 0
       }
 
-      :telemetry.span([:froth, :anthropic, :request], meta, fn ->
+      Span.span([:froth, :anthropic, :request], parent_id, meta, fn span_id ->
         body = build_request_body(config, Enum.map(history, &to_api_message/1))
 
-        case finch_post_json(@api_url, config.api_key, body) do
+        case finch_post_json(@api_url, config.api_key, body, span_id) do
           {:ok, text} = result ->
             {result, %{ok: true, text_len: String.length(text)}}
 
@@ -82,34 +80,21 @@ defmodule Froth.Anthropic do
     end
   end
 
-  @doc """
-  Make a single streaming API call without tool-looping.
-  Returns
-  `{:ok, %{text: text, content: content, stop_reason: stop_reason, usage: usage}}`
-  or `{:error, reason}`.
-  """
   def stream_single(api_messages, on_event, opts \\ [])
       when is_list(api_messages) and is_function(on_event, 1) do
     with {:ok, config} <- build_config(opts) do
-      request_id = new_request_id()
-      cycle_id = Keyword.get(opts, :cycle_id)
+      parent_id = Keyword.get(opts, :parent_id)
       body = build_request_body(config, api_messages, stream: true, tools: true)
 
       meta = %{
-        request_id: request_id,
-        cycle_id: cycle_id,
         mode: :stream_single,
         model: config.model,
         message_count: length(api_messages),
         tool_count: length(config.tools)
       }
 
-      :telemetry.span([:froth, :anthropic, :request], meta, fn ->
-        case finch_stream_sse_events(@api_url, config.headers, body, on_event,
-               request_id: request_id,
-               cycle_id: cycle_id,
-               mode: :stream_single
-             ) do
+      Span.span([:froth, :anthropic, :request], parent_id, meta, fn span_id ->
+        case finch_stream_sse_events(@api_url, config.headers, body, on_event, span_id) do
           {:ok, result} ->
             stop_meta = %{
               ok: true,
@@ -137,43 +122,22 @@ defmodule Froth.Anthropic do
     on_tool = Keyword.get(opts, :on_tool, fn _name, _input -> {:error, "no tools configured"} end)
 
     with {:ok, config} <- build_config(opts) do
-      request_id = new_request_id()
-      cycle_id = Keyword.get(opts, :cycle_id)
+      parent_id = Keyword.get(opts, :parent_id)
       api_messages = Enum.map(history, &ensure_api_message/1)
 
       on_persist.(api_messages)
 
       meta = %{
-        request_id: request_id,
-        cycle_id: cycle_id,
         mode: :tool_loop,
         model: config.model,
         message_count: length(api_messages),
         tool_count: length(config.tools)
       }
 
-      :telemetry.span([:froth, :anthropic, :request], meta, fn ->
-        case tool_loop(
-               config,
-               api_messages,
-               on_event,
-               on_persist,
-               on_tool,
-               "",
-               0,
-               %{},
-               request_id,
-               cycle_id
-             ) do
+      Span.span([:froth, :anthropic, :request], parent_id, meta, fn span_id ->
+        case tool_loop(config, api_messages, on_event, on_persist, on_tool, "", 0, %{}, span_id) do
           {:ok, %{text: text, api_messages: msgs, usage: usage}} = result ->
-            stop_meta = %{
-              ok: true,
-              text_len: String.length(text),
-              api_message_count: length(msgs),
-              usage: usage
-            }
-
-            {result, stop_meta}
+            {result, %{ok: true, text_len: String.length(text), api_message_count: length(msgs), usage: usage}}
 
           {:error, reason} = error ->
             {error, %{ok: false, error: reason}}
@@ -260,37 +224,19 @@ defmodule Froth.Anthropic do
 
   # -- Tool loop --
 
-  defp tool_loop(
-         config,
-         api_messages,
-         on_event,
-         on_persist,
-         on_tool,
-         acc_text,
-         iter,
-         acc_usage,
-         request_id,
-         cycle_id
-       ) do
+  defp tool_loop(config, api_messages, on_event, on_persist, on_tool, acc_text, iter, acc_usage, parent_id) do
     turn = iter + 1
     body = build_request_body(config, api_messages, stream: true, tools: true)
 
     turn_meta = %{
-      request_id: request_id,
-      cycle_id: cycle_id,
       turn: turn,
       message_count: length(api_messages),
       tool_count: length(config.tools)
     }
 
-    :telemetry.span([:froth, :anthropic, :turn], turn_meta, fn ->
+    Span.span([:froth, :anthropic, :turn], parent_id, turn_meta, fn turn_span_id ->
       with {:ok, %{text: text, content: content, stop_reason: stop_reason} = stream_reply} <-
-             finch_stream_sse_events(@api_url, config.headers, body, on_event,
-               request_id: request_id,
-               cycle_id: cycle_id,
-               mode: :tool_loop,
-               turn: turn
-             ) do
+             finch_stream_sse_events(@api_url, config.headers, body, on_event, turn_span_id) do
         usage = Map.get(stream_reply, :usage, %{})
         acc_usage = merge_usage_totals(acc_usage, usage)
         acc_text = join_text(acc_text, text)
@@ -304,7 +250,7 @@ defmodule Froth.Anthropic do
         }
 
         if stop_reason == "tool_use" and tool_uses != [] do
-          tool_results = run_tools(tool_uses, on_event, on_tool, request_id, cycle_id, turn)
+          tool_results = run_tools(tool_uses, on_event, on_tool, turn_span_id)
 
           api_messages =
             api_messages ++
@@ -315,20 +261,7 @@ defmodule Froth.Anthropic do
 
           on_persist.(api_messages)
 
-          result =
-            tool_loop(
-              config,
-              api_messages,
-              on_event,
-              on_persist,
-              on_tool,
-              acc_text,
-              turn,
-              acc_usage,
-              request_id,
-              cycle_id
-            )
-
+          result = tool_loop(config, api_messages, on_event, on_persist, on_tool, acc_text, turn, acc_usage, parent_id)
           {result, turn_stop_meta}
         else
           final_messages = api_messages ++ [%{"role" => "assistant", "content" => content}]
@@ -340,18 +273,11 @@ defmodule Froth.Anthropic do
     end)
   end
 
-  defp run_tools(tool_uses, on_event, on_tool, request_id, cycle_id, turn) do
+  defp run_tools(tool_uses, on_event, on_tool, parent_id) do
     Enum.map(tool_uses, fn %{"id" => id, "name" => name, "input" => input} ->
-      tool_meta = %{
-        request_id: request_id,
-        cycle_id: cycle_id,
-        turn: turn,
-        tool_use_id: id,
-        tool_name: name,
-        input: input
-      }
+      tool_meta = %{tool_use_id: id, tool_name: name, input: input}
 
-      :telemetry.span([:froth, :anthropic, :tool_exec], tool_meta, fn ->
+      Span.span([:froth, :anthropic, :tool_exec], parent_id, tool_meta, fn _span_id ->
         {is_error, content} =
           case on_tool.(name, input) do
             {:ok, out} -> {false, out}
@@ -386,10 +312,6 @@ defmodule Froth.Anthropic do
     String.trim_trailing(acc) <> "\n\n" <> String.trim_leading(text)
   end
 
-  defp new_request_id do
-    "anth-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
-  end
-
   defp merge_usage_totals(acc, usage) when is_map(usage) do
     Map.merge(acc, usage, fn _key, left, right ->
       cond do
@@ -409,27 +331,20 @@ defmodule Froth.Anthropic do
 
   # -- SSE event telemetry --
 
-  defp wrap_on_event_with_telemetry(on_event, opts) when is_function(on_event, 1) do
-    base_meta = %{
-      request_id: opts[:request_id],
-      cycle_id: opts[:cycle_id],
-      mode: opts[:mode],
-      turn: opts[:turn]
-    }
-
+  defp wrap_on_event_with_telemetry(on_event, parent_id) when is_function(on_event, 1) do
     fn event ->
-      emit_sse_event(event, base_meta)
+      emit_sse_event(event, parent_id)
       on_event.(event)
     end
   end
 
   @silent_sse_events [:text_delta, :thinking_delta, :tool_use_delta]
 
-  defp emit_sse_event({type, data}, meta) when type not in @silent_sse_events do
-    :telemetry.execute([:froth, :http, :sse, type], %{}, Map.merge(meta, %{data: data}))
+  defp emit_sse_event({type, data}, parent_id) when type not in @silent_sse_events do
+    Span.execute([:froth, :http, :sse, type], parent_id, %{data: data})
   end
 
-  defp emit_sse_event(_event, _meta), do: :ok
+  defp emit_sse_event(_event, _parent_id), do: :ok
 
   # -- Helpers --
 
@@ -530,8 +445,8 @@ defmodule Froth.Anthropic do
     if system == "", do: default_system_prompt(), else: system
   end
 
-  defp finch_post_json(url, api_key, body) do
-    case finch_post_json_decoded(url, api_key, body) do
+  defp finch_post_json(url, api_key, body, parent_id) do
+    case finch_post_json_decoded(url, api_key, body, parent_id) do
       {:ok, %{"content" => content}} ->
         {:ok, content_to_text(content)}
 
@@ -543,23 +458,23 @@ defmodule Froth.Anthropic do
     end
   end
 
-  defp finch_post_json_decoded(url, api_key, body) do
+  defp finch_post_json_decoded(url, api_key, body, parent_id) do
     case Application.get_env(:froth, :post_json_fun) do
       fun when is_function(fun, 3) ->
         fun.(url, api_key, body)
 
       _ ->
-        do_finch_post_json_decoded(url, api_key, body)
+        do_finch_post_json_decoded(url, api_key, body, parent_id)
     end
   end
 
-  defp do_finch_post_json_decoded(url, api_key, body) do
+  defp do_finch_post_json_decoded(url, api_key, body, parent_id) do
     headers = base_headers(api_key) ++ [{"content-type", "application/json"}]
     encoded_body = Jason.encode!(body)
 
     http_meta = %{method: :post, url: url, headers: headers, body: body}
 
-    :telemetry.span([:froth, :http, :request], http_meta, fn ->
+    Span.span([:froth, :http, :request], parent_id, http_meta, fn _span_id ->
       req = Finch.build(:post, url, headers, encoded_body)
 
       case Finch.request(req, Froth.Finch, receive_timeout: 60_000) do
@@ -590,25 +505,25 @@ defmodule Froth.Anthropic do
     end)
   end
 
-  defp finch_stream_sse_events(url, headers, body, on_event, opts) do
-    wrapped_on_event = wrap_on_event_with_telemetry(on_event, opts)
+  defp finch_stream_sse_events(url, headers, body, on_event, parent_id) do
+    wrapped_on_event = wrap_on_event_with_telemetry(on_event, parent_id)
 
     case Application.get_env(:froth, :sse_stream_fun) do
       fun when is_function(fun, 4) ->
         fun.(url, headers, body, wrapped_on_event)
 
       _ ->
-        do_finch_stream_sse_events(url, headers, body, wrapped_on_event, opts)
+        do_finch_stream_sse_events(url, headers, body, wrapped_on_event, parent_id)
     end
   end
 
-  defp do_finch_stream_sse_events(url, headers, body, on_event, _opts) do
+  defp do_finch_stream_sse_events(url, headers, body, on_event, parent_id) do
     all_headers = headers ++ [{"content-type", "application/json"}]
     encoded_body = Jason.encode!(body)
 
     http_meta = %{method: :post, url: url, headers: all_headers, body: body, stream: true}
 
-    :telemetry.span([:froth, :http, :request], http_meta, fn ->
+    Span.span([:froth, :http, :request], parent_id, http_meta, fn _span_id ->
       req = Finch.build(:post, url, all_headers, encoded_body)
       state = SSE.initial_state()
 
@@ -641,12 +556,7 @@ defmodule Froth.Anthropic do
                message_id: st.message_id
              }}
 
-          stop_meta = %{
-            status: 200,
-            response_headers: Map.get(st, :response_headers)
-          }
-
-          {result, stop_meta}
+          {result, %{status: 200, response_headers: Map.get(st, :response_headers)}}
 
         {:ok, %{status: status, err_buf: err_body} = st} when is_integer(status) ->
           decoded =
@@ -656,14 +566,7 @@ defmodule Froth.Anthropic do
             end
 
           result = {:error, {:http_error, status, decoded}}
-
-          stop_meta = %{
-            status: status,
-            response_headers: Map.get(st, :response_headers),
-            response_body: decoded
-          }
-
-          {result, stop_meta}
+          {result, %{status: status, response_headers: Map.get(st, :response_headers), response_body: decoded}}
 
         {:error, err} ->
           result = {:error, {:finch_error, err}}
