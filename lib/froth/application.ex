@@ -11,6 +11,7 @@ defmodule Froth.Application do
       [
         FrothWeb.Telemetry,
         Froth.Repo,
+        Froth.Telemetry.Store,
         {Oban, Application.fetch_env!(:froth, Oban)},
         {Finch, name: Froth.Finch},
         Froth.Dataset,
@@ -43,6 +44,7 @@ defmodule Froth.Application do
 
     case Supervisor.start_link(children, opts) do
       {:ok, _pid} = ok ->
+        Froth.Telemetry.attach_handlers()
         sd_notify_ready()
         ok
 

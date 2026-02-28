@@ -1,8 +1,6 @@
 defmodule Froth.Anthropic do
   @moduledoc false
 
-  require Logger
-
   alias Froth.Anthropic.SSE
 
   @api_url "https://api.anthropic.com/v1/messages"
@@ -75,20 +73,18 @@ defmodule Froth.Anthropic do
       body = build_request_body(config, api_messages, stream: true, tools: true)
       request_id = new_request_id()
 
-      log_anthropic_stream_start(:stream_single, request_id, body, %{
-        message_count: length(api_messages)
-      })
+      emit_stream_start(:stream_single, request_id, body)
 
       case finch_stream_sse_events(@api_url, config.headers, body, on_event,
              request_id: request_id,
              mode: :stream_single
            ) do
         {:ok, result} ->
-          log_anthropic_stream_finish(:stream_single, request_id, result)
+          emit_stream_stop(:stream_single, request_id, result)
           {:ok, result}
 
         {:error, reason} = error ->
-          log_anthropic_stream_error(:stream_single, request_id, reason)
+          emit_stream_error(:stream_single, request_id, reason)
           error
       end
     end
@@ -108,7 +104,7 @@ defmodule Froth.Anthropic do
 
       on_persist.(api_messages)
 
-      log_anthropic_stream_start(:tool_loop, request_id, %{
+      emit_stream_start(:tool_loop, request_id, %{
         "model" => config.model,
         "messages" => api_messages,
         "thinking" => config.thinking,
@@ -127,28 +123,25 @@ defmodule Froth.Anthropic do
 
       case result do
         {:ok, %{text: text, api_messages: api_messages, usage: usage}} ->
-          Logger.info(
-            event: :anthropic_tool_loop_complete,
-            request_id: request_id,
-            text_len: String.length(text),
-            api_messages: length(api_messages),
-            usage: inspect(usage)
+          :telemetry.execute(
+            [:froth, :anthropic, :tool_loop, :stop],
+            %{text_len: String.length(text), api_message_count: length(api_messages), usage: usage},
+            %{request_id: request_id}
           )
 
           result
 
         {:ok, %{text: text, api_messages: api_messages}} ->
-          Logger.info(
-            event: :anthropic_tool_loop_complete,
-            request_id: request_id,
-            text_len: String.length(text),
-            api_messages: length(api_messages)
+          :telemetry.execute(
+            [:froth, :anthropic, :tool_loop, :stop],
+            %{text_len: String.length(text), api_message_count: length(api_messages)},
+            %{request_id: request_id}
           )
 
           result
 
         {:error, reason} = error ->
-          log_anthropic_stream_error(:tool_loop, request_id, reason)
+          emit_stream_error(:tool_loop, request_id, reason)
           error
       end
     end
@@ -245,7 +238,7 @@ defmodule Froth.Anthropic do
        ) do
     turn = iter + 1
     body = build_request_body(config, api_messages, stream: true, tools: true)
-    log_anthropic_turn_start(request_id, turn, body)
+    emit_turn_start(request_id, turn, body)
 
     with {:ok, %{text: text, content: content, stop_reason: stop_reason} = stream_reply} <-
            finch_stream_sse_events(@api_url, config.headers, body, on_event,
@@ -257,7 +250,7 @@ defmodule Froth.Anthropic do
       acc_usage = merge_usage_totals(acc_usage, usage)
       acc_text = join_text(acc_text, text)
       tool_uses = Enum.filter(content, &match?(%{"type" => "tool_use"}, &1))
-      log_anthropic_turn_result(request_id, turn, stop_reason, text, usage, length(tool_uses))
+      emit_turn_stop(request_id, turn, stop_reason, text, usage, length(tool_uses))
 
       if stop_reason == "tool_use" and tool_uses != [] do
         tool_results = run_tools(tool_uses, on_event, on_tool, request_id, turn)
@@ -292,14 +285,14 @@ defmodule Froth.Anthropic do
 
   defp run_tools(tool_uses, on_event, on_tool, request_id, turn) do
     Enum.map(tool_uses, fn %{"id" => id, "name" => name, "input" => input} ->
-      Logger.info(
-        event: :anthropic_tool_exec_start,
+      tool_meta = %{
         request_id: request_id,
         turn: turn,
         tool_use_id: id,
-        tool_name: name,
-        input_preview: preview(input)
-      )
+        tool_name: name
+      }
+
+      :telemetry.execute([:froth, :anthropic, :tool, :start], %{}, tool_meta)
 
       {is_error, content} =
         case on_tool.(name, input) do
@@ -317,14 +310,10 @@ defmodule Froth.Anthropic do
          }}
       )
 
-      Logger.info(
-        event: :anthropic_tool_exec_finish,
-        request_id: request_id,
-        turn: turn,
-        tool_use_id: id,
-        tool_name: name,
-        is_error: is_error,
-        result_preview: preview(content)
+      :telemetry.execute(
+        [:froth, :anthropic, :tool, :stop],
+        %{},
+        Map.put(tool_meta, :is_error, is_error)
       )
 
       %{
@@ -346,20 +335,18 @@ defmodule Froth.Anthropic do
     "anth-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
   end
 
-  defp log_anthropic_stream_start(mode, request_id, body, extra \\ %{}) when is_map(body) do
-    system = Map.get(body, "system", "")
-
-    Logger.info(
-      event: :anthropic_stream_start,
-      mode: mode,
-      request_id: request_id,
-      model: Map.get(body, "model"),
-      message_count: length(Map.get(body, "messages", [])),
-      tool_count: length(Map.get(body, "tools", [])),
-      stream: Map.get(body, "stream", false),
-      thinking: inspect(Map.get(body, "thinking")),
-      system_len: String.length(system),
-      extra: inspect(extra)
+  defp emit_stream_start(mode, request_id, body) when is_map(body) do
+    :telemetry.execute(
+      [:froth, :anthropic, :stream, :start],
+      %{
+        message_count: length(Map.get(body, "messages", [])),
+        tool_count: length(Map.get(body, "tools", []))
+      },
+      %{
+        request_id: request_id,
+        mode: mode,
+        model: Map.get(body, "model")
+      }
     )
 
     Froth.broadcast(
@@ -368,17 +355,22 @@ defmodule Froth.Anthropic do
     )
   end
 
-  defp log_anthropic_stream_finish(mode, request_id, result) when is_map(result) do
+  defp emit_stream_stop(mode, request_id, result) when is_map(result) do
     usage = Map.get(result, :usage, %{})
 
-    Logger.info(
-      event: :anthropic_stream_finish,
-      mode: mode,
-      request_id: request_id,
-      stop_reason: Map.get(result, :stop_reason),
-      text_len: Map.get(result, :text, "") |> to_string() |> String.length(),
-      content_blocks: length(Map.get(result, :content, [])),
-      usage: inspect(usage)
+    :telemetry.execute(
+      [:froth, :anthropic, :stream, :stop],
+      %{
+        text_len: Map.get(result, :text, "") |> to_string() |> String.length(),
+        content_blocks: length(Map.get(result, :content, [])),
+        duration: nil
+      },
+      %{
+        request_id: request_id,
+        mode: mode,
+        stop_reason: Map.get(result, :stop_reason),
+        usage: usage
+      }
     )
 
     Froth.broadcast(
@@ -387,36 +379,36 @@ defmodule Froth.Anthropic do
     )
   end
 
-  defp log_anthropic_stream_error(mode, request_id, reason) do
-    Logger.error(
-      event: :anthropic_stream_error,
-      mode: mode,
-      request_id: request_id,
-      reason: inspect(reason)
+  defp emit_stream_error(mode, request_id, reason) do
+    :telemetry.execute(
+      [:froth, :anthropic, :stream, :error],
+      %{},
+      %{request_id: request_id, mode: mode, reason: reason}
     )
 
     Froth.broadcast("anthropic:#{request_id}", {mode, :stream_error, reason})
   end
 
-  defp log_anthropic_turn_start(request_id, turn, body) do
-    Logger.info(
-      event: :anthropic_tool_loop_turn_start,
-      request_id: request_id,
-      turn: turn,
-      message_count: length(Map.get(body, "messages", [])),
-      tool_count: length(Map.get(body, "tools", []))
+  defp emit_turn_start(request_id, turn, body) do
+    :telemetry.execute(
+      [:froth, :anthropic, :turn, :start],
+      %{
+        message_count: length(Map.get(body, "messages", [])),
+        tool_count: length(Map.get(body, "tools", []))
+      },
+      %{request_id: request_id, turn: turn}
     )
   end
 
-  defp log_anthropic_turn_result(request_id, turn, stop_reason, text, usage, tool_use_count) do
-    Logger.info(
-      event: :anthropic_tool_loop_turn_result,
-      request_id: request_id,
-      turn: turn,
-      stop_reason: stop_reason,
-      text_len: String.length(to_string(text || "")),
-      tool_use_count: tool_use_count,
-      usage: inspect(usage)
+  defp emit_turn_stop(request_id, turn, stop_reason, text, usage, tool_use_count) do
+    :telemetry.execute(
+      [:froth, :anthropic, :turn, :stop],
+      %{
+        text_len: String.length(to_string(text || "")),
+        tool_use_count: tool_use_count,
+        usage: usage
+      },
+      %{request_id: request_id, turn: turn, stop_reason: stop_reason}
     )
   end
 
@@ -437,105 +429,80 @@ defmodule Froth.Anthropic do
 
   defp merge_usage_totals(acc, _usage), do: acc
 
-  defp preview(value) when is_binary(value), do: String.slice(value, 0, 250)
-
-  defp preview(value) do
-    case Jason.encode(value) do
-      {:ok, encoded} -> String.slice(encoded, 0, 250)
-      _ -> inspect(value, limit: 100, printable_limit: 250)
-    end
-  end
-
-  defp wrap_on_event_with_logging(on_event, opts) when is_function(on_event, 1) do
+  defp wrap_on_event_with_telemetry(on_event, opts) when is_function(on_event, 1) do
     fn event ->
-      log_stream_event(event, opts)
+      emit_sse_event(event, opts)
       Froth.broadcast("anthropic:#{opts[:request_id]}", {opts[:mode], event})
       on_event.(event)
     end
   end
 
-  defp log_stream_event({:thinking_start, %{"index" => idx}}, opts) do
-    Logger.info(base_log_metadata(opts) ++ [event: :anthropic_thinking_start, index: idx])
-  end
-
-  defp log_stream_event({:thinking_stop, %{"index" => idx, "thinking" => thinking}}, opts) do
-    Logger.info(
-      base_log_metadata(opts) ++
-        [event: :anthropic_thinking_stop, index: idx, thinking_len: String.length(thinking || "")]
+  defp emit_sse_event({:message_start, %{"id" => id, "model" => model}}, opts) do
+    :telemetry.execute(
+      [:froth, :anthropic, :sse, :message_start],
+      %{},
+      %{request_id: opts[:request_id], response_id: id, model: model}
     )
   end
 
-  defp log_stream_event({:tool_use_start, %{"id" => id, "name" => name, "input" => input}}, opts) do
-    Logger.info(
-      base_log_metadata(opts) ++
-        [
-          event: :anthropic_tool_use_start,
-          tool_use_id: id,
-          tool_name: name,
-          input_preview: preview(input)
-        ]
+  defp emit_sse_event({:thinking_start, %{"index" => idx}}, opts) do
+    :telemetry.execute(
+      [:froth, :anthropic, :sse, :thinking_start],
+      %{},
+      %{request_id: opts[:request_id], index: idx}
     )
   end
 
-  defp log_stream_event({:tool_use_stop, %{"id" => id, "name" => name, "input" => input}}, opts) do
-    Logger.info(
-      base_log_metadata(opts) ++
-        [
-          event: :anthropic_tool_use_stop,
-          tool_use_id: id,
-          tool_name: name,
-          input_preview: preview(input)
-        ]
+  defp emit_sse_event({:thinking_stop, %{"index" => idx, "thinking" => thinking}}, opts) do
+    :telemetry.execute(
+      [:froth, :anthropic, :sse, :thinking_stop],
+      %{},
+      %{request_id: opts[:request_id], index: idx, thinking_len: String.length(thinking || "")}
     )
   end
 
-  defp log_stream_event(
-         {:tool_result,
-          %{"tool_use_id" => id, "name" => name, "is_error" => is_error, "content" => content}},
+  defp emit_sse_event({:tool_use_start, %{"id" => id, "name" => name}}, opts) do
+    :telemetry.execute(
+      [:froth, :anthropic, :sse, :tool_use_start],
+      %{},
+      %{request_id: opts[:request_id], tool_use_id: id, tool_name: name}
+    )
+  end
+
+  defp emit_sse_event({:tool_use_stop, %{"id" => id, "name" => name}}, opts) do
+    :telemetry.execute(
+      [:froth, :anthropic, :sse, :tool_use_stop],
+      %{},
+      %{request_id: opts[:request_id], tool_use_id: id, tool_name: name}
+    )
+  end
+
+  defp emit_sse_event(
+         {:tool_result, %{"tool_use_id" => id, "name" => name, "is_error" => is_error}},
          opts
        ) do
-    Logger.info(
-      base_log_metadata(opts) ++
-        [
-          event: :anthropic_tool_result,
-          tool_use_id: id,
-          tool_name: name,
-          is_error: is_error,
-          result_preview: preview(content)
-        ]
+    :telemetry.execute(
+      [:froth, :anthropic, :sse, :tool_result],
+      %{},
+      %{request_id: opts[:request_id], tool_use_id: id, tool_name: name, is_error: is_error}
     )
   end
 
-  defp log_stream_event(
-         {:usage, %{"phase" => phase, "usage" => usage, "accumulated_usage" => accumulated}},
+  defp emit_sse_event(
+         {:usage, %{"phase" => phase, "usage" => usage}},
          opts
        ) do
-    Logger.info(
-      base_log_metadata(opts) ++
-        [
-          event: :anthropic_usage,
-          phase: phase,
-          usage: inspect(usage),
-          accumulated_usage: inspect(accumulated)
-        ]
+    :telemetry.execute(
+      [:froth, :anthropic, :sse, :usage],
+      %{},
+      %{request_id: opts[:request_id], phase: phase, usage: usage}
     )
   end
 
-  defp log_stream_event({:message_start, %{"id" => id, "model" => model}}, opts) do
-    Logger.info(
-      base_log_metadata(opts) ++ [event: :anthropic_message_start, response_id: id, model: model]
-    )
-  end
-
-  defp log_stream_event({:text_delta, _}, _opts), do: :ok
-  defp log_stream_event({:thinking_delta, _}, _opts), do: :ok
-  defp log_stream_event({:tool_use_delta, _}, _opts), do: :ok
-  defp log_stream_event(_event, _opts), do: :ok
-
-  defp base_log_metadata(opts) do
-    [request_id: opts[:request_id], mode: opts[:mode], turn: opts[:turn]]
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-  end
+  defp emit_sse_event({:text_delta, _}, _opts), do: :ok
+  defp emit_sse_event({:thinking_delta, _}, _opts), do: :ok
+  defp emit_sse_event({:tool_use_delta, _}, _opts), do: :ok
+  defp emit_sse_event(_event, _opts), do: :ok
 
   # -- Telemetry --
 
@@ -658,30 +625,6 @@ defmodule Froth.Anthropic do
   defp content_to_text(text) when is_binary(text), do: text
   defp content_to_text(_), do: ""
 
-  defp debug_enabled?, do: System.get_env("FROTH_DEBUG_ANTHROPIC") in ["1", "true", "yes"]
-
-  defp debug_log_request(body) when is_map(body) do
-    if debug_enabled?() do
-      system = Map.get(body, "system", "")
-
-      Logger.info(
-        event: :request,
-        model: Map.get(body, "model"),
-        stream: Map.get(body, "stream", false),
-        messages: length(Map.get(body, "messages", [])),
-        system: system != "",
-        system_len: String.length(system)
-      )
-    end
-
-    :ok
-  end
-
-  defp debug_log_response(status) when is_integer(status) do
-    if debug_enabled?(), do: Logger.info(event: :response, status: status)
-    :ok
-  end
-
   defp system_prompt(system) when is_binary(system) do
     system = String.trim(system)
     if system == "", do: default_system_prompt(), else: system
@@ -711,24 +654,18 @@ defmodule Froth.Anthropic do
   end
 
   defp do_finch_post_json_decoded(url, api_key, body) do
-    debug_log_request(body)
-
     headers = base_headers(api_key) ++ [{"content-type", "application/json"}]
 
     req = Finch.build(:post, url, headers, Jason.encode!(body))
 
     case Finch.request(req, Froth.Finch, receive_timeout: 60_000) do
       {:ok, %Finch.Response{status: 200, body: resp_body}} ->
-        debug_log_response(200)
-
         case Jason.decode(resp_body) do
           {:ok, json} -> {:ok, json}
           {:error, err} -> {:error, {:decode_error, err}}
         end
 
       {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        debug_log_response(status)
-
         decoded =
           case Jason.decode(resp_body) do
             {:ok, json} -> json
@@ -743,7 +680,7 @@ defmodule Froth.Anthropic do
   end
 
   defp finch_stream_sse_events(url, headers, body, on_event, opts) do
-    wrapped_on_event = wrap_on_event_with_logging(on_event, opts)
+    wrapped_on_event = wrap_on_event_with_telemetry(on_event, opts)
 
     case Application.get_env(:froth, :sse_stream_fun) do
       fun when is_function(fun, 4) ->
@@ -755,8 +692,6 @@ defmodule Froth.Anthropic do
   end
 
   defp do_finch_stream_sse_events(url, headers, body, on_event, opts) do
-    debug_log_request(body)
-
     req =
       Finch.build(
         :post,
@@ -769,12 +704,10 @@ defmodule Froth.Anthropic do
 
     fun = fn
       {:status, status}, st ->
-        Logger.info(
-          event: :anthropic_stream_http_status,
-          request_id: opts[:request_id],
-          mode: opts[:mode],
-          turn: opts[:turn],
-          status: status
+        :telemetry.execute(
+          [:froth, :anthropic, :sse, :http_status],
+          %{},
+          %{request_id: opts[:request_id], mode: opts[:mode], status: status}
         )
 
         {:cont, %{st | status: status}}
@@ -793,8 +726,6 @@ defmodule Froth.Anthropic do
 
     case Finch.stream_while(req, Froth.Finch, state, fun, receive_timeout: 60_000) do
       {:ok, %{status: 200} = st} ->
-        debug_log_response(200)
-
         {:ok,
          %{
            text: st.text,
@@ -806,8 +737,6 @@ defmodule Froth.Anthropic do
          }}
 
       {:ok, %{status: status, err_buf: err_body}} when is_integer(status) ->
-        debug_log_response(status)
-
         decoded =
           case Jason.decode(err_body) do
             {:ok, json} -> json

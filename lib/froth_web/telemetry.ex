@@ -58,9 +58,13 @@ defmodule FrothWeb.Telemetry do
       summary("vm.total_run_queue_lengths.cpu"),
       summary("vm.total_run_queue_lengths.io"),
 
-      # AI (Anthropic) Metrics
+      # Anthropic Metrics
       counter("froth.anthropic.request.count", tags: [:ok?]),
-      summary("froth.anthropic.request.duration", unit: {:native, :millisecond}, tags: [:ok?])
+      summary("froth.anthropic.request.duration", unit: {:native, :millisecond}, tags: [:ok?]),
+      counter("froth.anthropic.stream.start.message_count", tags: [:mode]),
+      counter("froth.anthropic.stream.error.count", tags: [:mode]),
+      counter("froth.anthropic.tool.start.count", tags: [:tool_name]),
+      counter("froth.anthropic.tool.stop.count", tags: [:tool_name, :is_error])
     ]
   end
 
