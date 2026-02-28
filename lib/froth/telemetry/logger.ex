@@ -141,64 +141,12 @@ defmodule Froth.Telemetry.Logger do
 
   # -- SSE-level events (debug) --
 
-  def handle_event([:froth, :anthropic, :sse, :http_status], _m, meta, _config) do
-    Logger.debug("sse http #{meta[:status]}",
+  def handle_event([:froth, :anthropic, :sse, type], _m, meta, _config) do
+    Logger.debug("sse #{type}",
       request_id: meta[:request_id],
-      status: meta[:status]
-    )
-  end
-
-  def handle_event([:froth, :anthropic, :sse, :message_start], _m, meta, _config) do
-    Logger.debug("sse message_start #{meta[:model]}",
-      request_id: meta[:request_id],
-      response_id: meta[:response_id],
-      model: meta[:model]
-    )
-  end
-
-  def handle_event([:froth, :anthropic, :sse, :thinking_start], _m, meta, _config) do
-    Logger.debug("sse thinking_start",
-      request_id: meta[:request_id],
-      index: meta[:index]
-    )
-  end
-
-  def handle_event([:froth, :anthropic, :sse, :thinking_stop], _m, meta, _config) do
-    Logger.debug("sse thinking_stop #{meta[:thinking_len]}ch",
-      request_id: meta[:request_id],
-      thinking_len: meta[:thinking_len]
-    )
-  end
-
-  def handle_event([:froth, :anthropic, :sse, :tool_use_start], _m, meta, _config) do
-    Logger.debug("sse tool_use_start #{meta[:tool_name]}",
-      request_id: meta[:request_id],
-      tool_use_id: meta[:tool_use_id],
-      tool_name: meta[:tool_name]
-    )
-  end
-
-  def handle_event([:froth, :anthropic, :sse, :tool_use_stop], _m, meta, _config) do
-    Logger.debug("sse tool_use_stop #{meta[:tool_name]}",
-      request_id: meta[:request_id],
-      tool_use_id: meta[:tool_use_id],
-      tool_name: meta[:tool_name]
-    )
-  end
-
-  def handle_event([:froth, :anthropic, :sse, :tool_result], _m, meta, _config) do
-    Logger.debug("sse tool_result #{meta[:tool_name]}#{if meta[:is_error], do: " ERROR"}",
-      request_id: meta[:request_id],
-      tool_use_id: meta[:tool_use_id],
-      tool_name: meta[:tool_name],
-      is_error: meta[:is_error]
-    )
-  end
-
-  def handle_event([:froth, :anthropic, :sse, :usage], _m, meta, _config) do
-    Logger.debug("sse usage #{meta[:phase]}",
-      request_id: meta[:request_id],
-      phase: meta[:phase]
+      cycle_id: meta[:cycle_id],
+      sse_type: type,
+      data: meta[:data]
     )
   end
 

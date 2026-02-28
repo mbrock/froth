@@ -423,71 +423,12 @@ defmodule Froth.Anthropic do
     end
   end
 
-  defp emit_sse_event({:message_start, %{"id" => id, "model" => model} = data}, meta) do
-    :telemetry.execute(
-      [:froth, :anthropic, :sse, :message_start],
-      %{},
-      Map.merge(meta, %{response_id: id, model: model, data: data})
-    )
+  @silent_sse_events [:text_delta, :thinking_delta, :tool_use_delta]
+
+  defp emit_sse_event({type, data}, meta) when type not in @silent_sse_events do
+    :telemetry.execute([:froth, :anthropic, :sse, type], %{}, Map.merge(meta, %{data: data}))
   end
 
-  defp emit_sse_event({:thinking_start, %{"index" => idx}}, meta) do
-    :telemetry.execute(
-      [:froth, :anthropic, :sse, :thinking_start],
-      %{},
-      Map.merge(meta, %{index: idx})
-    )
-  end
-
-  defp emit_sse_event({:thinking_stop, %{"index" => idx, "thinking" => thinking}}, meta) do
-    :telemetry.execute(
-      [:froth, :anthropic, :sse, :thinking_stop],
-      %{},
-      Map.merge(meta, %{index: idx, thinking: thinking, thinking_len: String.length(thinking || "")})
-    )
-  end
-
-  defp emit_sse_event({:tool_use_start, %{"id" => id, "name" => name, "input" => input}}, meta) do
-    :telemetry.execute(
-      [:froth, :anthropic, :sse, :tool_use_start],
-      %{},
-      Map.merge(meta, %{tool_use_id: id, tool_name: name, input: input})
-    )
-  end
-
-  defp emit_sse_event({:tool_use_stop, %{"id" => id, "name" => name, "input" => input}}, meta) do
-    :telemetry.execute(
-      [:froth, :anthropic, :sse, :tool_use_stop],
-      %{},
-      Map.merge(meta, %{tool_use_id: id, tool_name: name, input: input})
-    )
-  end
-
-  defp emit_sse_event(
-         {:tool_result, %{"tool_use_id" => id, "name" => name, "is_error" => is_error, "content" => content}},
-         meta
-       ) do
-    :telemetry.execute(
-      [:froth, :anthropic, :sse, :tool_result],
-      %{},
-      Map.merge(meta, %{tool_use_id: id, tool_name: name, is_error: is_error, content: content})
-    )
-  end
-
-  defp emit_sse_event(
-         {:usage, %{"phase" => phase, "usage" => usage} = data},
-         meta
-       ) do
-    :telemetry.execute(
-      [:froth, :anthropic, :sse, :usage],
-      %{},
-      Map.merge(meta, %{phase: phase, usage: usage, data: data})
-    )
-  end
-
-  defp emit_sse_event({:text_delta, _}, _meta), do: :ok
-  defp emit_sse_event({:thinking_delta, _}, _meta), do: :ok
-  defp emit_sse_event({:tool_use_delta, _}, _meta), do: :ok
   defp emit_sse_event(_event, _meta), do: :ok
 
   # -- Helpers --

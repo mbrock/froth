@@ -26,7 +26,8 @@ defmodule Froth.Telemetry do
     [:froth, :anthropic, :sse, :tool_use_start],
     [:froth, :anthropic, :sse, :tool_use_stop],
     [:froth, :anthropic, :sse, :tool_result],
-    [:froth, :anthropic, :sse, :usage]
+    [:froth, :anthropic, :sse, :usage],
+    [:froth, :anthropic, :sse, :message_stop]
   ]
 
   @agent_events [
