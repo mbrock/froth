@@ -27,7 +27,7 @@ defmodule Froth.Telemetry.Broadcaster do
     broadcast(meta, {:request_exception, %{kind: meta[:kind], reason: meta[:reason]}})
   end
 
-  def handle_event([:froth, :anthropic, :sse | _rest] = event, _measurements, meta, _config) do
+  def handle_event([:froth, :http, :sse | _rest] = event, _measurements, meta, _config) do
     sse_type = List.last(event)
     broadcast(meta, {:sse, sse_type, meta})
   end

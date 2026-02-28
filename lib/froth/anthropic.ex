@@ -426,7 +426,7 @@ defmodule Froth.Anthropic do
   @silent_sse_events [:text_delta, :thinking_delta, :tool_use_delta]
 
   defp emit_sse_event({type, data}, meta) when type not in @silent_sse_events do
-    :telemetry.execute([:froth, :anthropic, :sse, type], %{}, Map.merge(meta, %{data: data}))
+    :telemetry.execute([:froth, :http, :sse, type], %{}, Map.merge(meta, %{data: data}))
   end
 
   defp emit_sse_event(_event, _meta), do: :ok
@@ -555,28 +555,39 @@ defmodule Froth.Anthropic do
 
   defp do_finch_post_json_decoded(url, api_key, body) do
     headers = base_headers(api_key) ++ [{"content-type", "application/json"}]
+    encoded_body = Jason.encode!(body)
 
-    req = Finch.build(:post, url, headers, Jason.encode!(body))
+    http_meta = %{method: :post, url: url, headers: headers, body: body}
 
-    case Finch.request(req, Froth.Finch, receive_timeout: 60_000) do
-      {:ok, %Finch.Response{status: 200, body: resp_body}} ->
-        case Jason.decode(resp_body) do
-          {:ok, json} -> {:ok, json}
-          {:error, err} -> {:error, {:decode_error, err}}
-        end
+    :telemetry.span([:froth, :http, :request], http_meta, fn ->
+      req = Finch.build(:post, url, headers, encoded_body)
 
-      {:ok, %Finch.Response{status: status, body: resp_body}} ->
-        decoded =
+      case Finch.request(req, Froth.Finch, receive_timeout: 60_000) do
+        {:ok, %Finch.Response{status: 200, body: resp_body} = resp} ->
           case Jason.decode(resp_body) do
-            {:ok, json} -> json
-            _ -> resp_body
+            {:ok, json} ->
+              {{:ok, json}, %{status: 200, response_headers: resp.headers, response_body: json}}
+
+            {:error, err} ->
+              result = {:error, {:decode_error, err}}
+              {result, %{status: 200, response_headers: resp.headers, response_body: resp_body, error: err}}
           end
 
-        {:error, {:http_error, status, decoded}}
+        {:ok, %Finch.Response{status: status, body: resp_body} = resp} ->
+          decoded =
+            case Jason.decode(resp_body) do
+              {:ok, json} -> json
+              _ -> resp_body
+            end
 
-      {:error, err} ->
-        {:error, {:finch_error, err}}
-    end
+          result = {:error, {:http_error, status, decoded}}
+          {result, %{status: status, response_headers: resp.headers, response_body: decoded}}
+
+        {:error, err} ->
+          result = {:error, {:finch_error, err}}
+          {result, %{error: err}}
+      end
+    end)
   end
 
   defp finch_stream_sse_events(url, headers, body, on_event, opts) do
@@ -591,62 +602,73 @@ defmodule Froth.Anthropic do
     end
   end
 
-  defp do_finch_stream_sse_events(url, headers, body, on_event, opts) do
-    req =
-      Finch.build(
-        :post,
-        url,
-        headers ++ [{"content-type", "application/json"}],
-        Jason.encode!(body)
-      )
+  defp do_finch_stream_sse_events(url, headers, body, on_event, _opts) do
+    all_headers = headers ++ [{"content-type", "application/json"}]
+    encoded_body = Jason.encode!(body)
 
-    state = SSE.initial_state()
+    http_meta = %{method: :post, url: url, headers: all_headers, body: body, stream: true}
 
-    fun = fn
-      {:status, status}, st ->
-        :telemetry.execute(
-          [:froth, :anthropic, :sse, :http_status],
-          %{},
-          %{request_id: opts[:request_id], cycle_id: opts[:cycle_id], status: status}
-        )
+    :telemetry.span([:froth, :http, :request], http_meta, fn ->
+      req = Finch.build(:post, url, all_headers, encoded_body)
+      state = SSE.initial_state()
 
-        {:cont, %{st | status: status}}
+      fun = fn
+        {:status, status}, st ->
+          {:cont, %{st | status: status}}
 
-      {:headers, _headers}, st ->
-        {:cont, st}
+        {:headers, resp_headers}, st ->
+          {:cont, Map.put(st, :response_headers, resp_headers)}
 
-      {:data, chunk}, %{status: 200} = st when is_binary(chunk) ->
-        {st, events, done?} = SSE.consume_events(st, chunk)
-        Enum.each(events, on_event)
-        if done?, do: {:halt, st}, else: {:cont, st}
+        {:data, chunk}, %{status: 200} = st when is_binary(chunk) ->
+          {st, events, done?} = SSE.consume_events(st, chunk)
+          Enum.each(events, on_event)
+          if done?, do: {:halt, st}, else: {:cont, st}
 
-      {:data, chunk}, st when is_binary(chunk) ->
-        {:cont, %{st | err_buf: st.err_buf <> chunk}}
-    end
+        {:data, chunk}, st when is_binary(chunk) ->
+          {:cont, %{st | err_buf: st.err_buf <> chunk}}
+      end
 
-    case Finch.stream_while(req, Froth.Finch, state, fun, receive_timeout: 60_000) do
-      {:ok, %{status: 200} = st} ->
-        {:ok,
-         %{
-           text: st.text,
-           content: SSE.blocks_to_content(st.blocks),
-           stop_reason: st.stop_reason,
-           usage: st.usage,
-           model: st.model,
-           message_id: st.message_id
-         }}
+      case Finch.stream_while(req, Froth.Finch, state, fun, receive_timeout: 60_000) do
+        {:ok, %{status: 200} = st} ->
+          result =
+            {:ok,
+             %{
+               text: st.text,
+               content: SSE.blocks_to_content(st.blocks),
+               stop_reason: st.stop_reason,
+               usage: st.usage,
+               model: st.model,
+               message_id: st.message_id
+             }}
 
-      {:ok, %{status: status, err_buf: err_body}} when is_integer(status) ->
-        decoded =
-          case Jason.decode(err_body) do
-            {:ok, json} -> json
-            _ -> err_body
-          end
+          stop_meta = %{
+            status: 200,
+            response_headers: Map.get(st, :response_headers)
+          }
 
-        {:error, {:http_error, status, decoded}}
+          {result, stop_meta}
 
-      {:error, err} ->
-        {:error, {:finch_error, err}}
-    end
+        {:ok, %{status: status, err_buf: err_body} = st} when is_integer(status) ->
+          decoded =
+            case Jason.decode(err_body) do
+              {:ok, json} -> json
+              _ -> err_body
+            end
+
+          result = {:error, {:http_error, status, decoded}}
+
+          stop_meta = %{
+            status: status,
+            response_headers: Map.get(st, :response_headers),
+            response_body: decoded
+          }
+
+          {result, stop_meta}
+
+        {:error, err} ->
+          result = {:error, {:finch_error, err}}
+          {result, %{error: err}}
+      end
+    end)
   end
 end
