@@ -2,9 +2,8 @@ defmodule Froth.Replicate.ReadmeWorker do
   @moduledoc "Oban worker that fetches a README from GitHub and stores it on the replicate model."
   use Oban.Worker, queue: :github, max_attempts: 5
 
-  require Logger
-
   alias Froth.Repo
+  alias Froth.Telemetry.Span
   alias Froth.Replicate.Model
 
   import Ecto.Query
@@ -20,18 +19,28 @@ defmodule Froth.Replicate.ReadmeWorker do
           set: [readme: content, updated_at: DateTime.utc_now() |> DateTime.truncate(:second)]
         )
 
-        Logger.info(event: :readme_fetched, owner: owner, name: name, bytes: byte_size(content))
+        Span.execute([:froth, :replicate, :readme_fetched], nil, %{
+          owner: owner,
+          name: name,
+          bytes: byte_size(content)
+        })
+
         :ok
 
       {:error, :not_found} ->
-        Logger.info(event: :readme_not_found, gh_repo: gh_repo, path: path)
+        Span.execute([:froth, :replicate, :readme_not_found], nil, %{gh_repo: gh_repo, path: path})
+
         {:discard, "no README found"}
 
       {:error, :rate_limited} ->
         {:snooze, 60}
 
       {:error, reason} ->
-        Logger.error(event: :readme_fetch_failed, gh_repo: gh_repo, reason: inspect(reason))
+        Span.execute([:froth, :replicate, :readme_fetch_failed], nil, %{
+          gh_repo: gh_repo,
+          reason: inspect(reason)
+        })
+
         {:error, inspect(reason)}
     end
   end
@@ -60,7 +69,11 @@ defmodule Froth.Replicate.ReadmeWorker do
       {:ok, %Finch.Response{status: 301, body: body}} ->
         case Jason.decode(body) do
           {:ok, %{"url" => redirect_url}} ->
-            Logger.info(event: :github_redirect, repo: repo, url: redirect_url)
+            Span.execute([:froth, :replicate, :github_redirect], nil, %{
+              repo: repo,
+              url: redirect_url
+            })
+
             redirect_req = Finch.build(:get, redirect_url, headers)
 
             case Finch.request(redirect_req, Froth.Finch, receive_timeout: 15_000) do
@@ -85,7 +98,10 @@ defmodule Froth.Replicate.ReadmeWorker do
         {:error, :not_found}
 
       {:ok, %Finch.Response{status: 403, body: body}} ->
-        Logger.warning(event: :github_rate_limited, body: String.slice(body, 0, 200))
+        Span.execute([:froth, :replicate, :github_rate_limited], nil, %{
+          body: String.slice(body, 0, 200)
+        })
+
         {:error, :rate_limited}
 
       {:ok, %Finch.Response{status: status, body: body}} ->

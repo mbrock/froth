@@ -6,8 +6,6 @@ defmodule Froth.Telegram.BotAdapter do
   and message send/edit helpers.
   """
 
-  require Logger
-
   def subscribe(session_id) when is_binary(session_id) do
     Phoenix.PubSub.subscribe(Froth.PubSub, Froth.Telegram.Session.topic(session_id))
   end
@@ -76,7 +74,13 @@ defmodule Froth.Telegram.BotAdapter do
           end
 
         Process.put(cache_key, allowed)
-        Logger.info(event: :chat_access_check, chat_id: chat_id, allowed: allowed)
+
+        Froth.Telemetry.Span.execute(
+          [:froth, :telegram, :bot_adapter, :chat_access_check],
+          nil,
+          %{chat_id: chat_id, allowed: allowed}
+        )
+
         allowed
 
       allowed ->

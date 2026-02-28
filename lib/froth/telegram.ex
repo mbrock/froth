@@ -23,9 +23,8 @@ defmodule Froth.Telegram do
   import Kernel, except: [send: 2]
   import Ecto.Query
 
-  require Logger
-
   alias Froth.Telegram.SessionConfig
+  alias Froth.Telemetry.Span
 
   def start_link(_opts) do
     result = Supervisor.start_link(__MODULE__, [], name: __MODULE__)
@@ -272,7 +271,7 @@ defmodule Froth.Telegram do
     |> Froth.Repo.all()
     |> Enum.each(fn sc ->
       config = SessionConfig.to_session_config(sc)
-      Logger.info(event: :auto_start, session: sc.id)
+      Span.execute([:froth, :telegram, :auto_start], nil, %{session: sc.id})
       start_session(config)
       start_sync(sc.id)
     end)

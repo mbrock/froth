@@ -19,7 +19,7 @@ defmodule Froth.Codex do
   """
 
   use GenServer
-  require Logger
+  alias Froth.Telemetry.Span
 
   @type server :: GenServer.server()
   @type method :: String.t()
@@ -95,7 +95,7 @@ defmodule Froth.Codex do
   def subscribe(server \\ __MODULE__, opts \\ []) when is_list(opts) do
     with {:ok, {pubsub, topic}} <- resolve_pubsub_topic(server, opts),
          :ok <- Phoenix.PubSub.subscribe(pubsub, topic) do
-      Logger.info(event: :codex_pubsub_subscribe, pubsub: inspect(pubsub), topic: topic)
+      Span.execute([:froth, :codex, :pubsub_subscribe], nil, %{pubsub: pubsub, topic: topic})
       :ok
     end
   end
@@ -110,7 +110,7 @@ defmodule Froth.Codex do
   def unsubscribe(server \\ __MODULE__, opts \\ []) when is_list(opts) do
     with {:ok, {pubsub, topic}} <- resolve_pubsub_topic(server, opts),
          :ok <- Phoenix.PubSub.unsubscribe(pubsub, topic) do
-      Logger.info(event: :codex_pubsub_unsubscribe, pubsub: inspect(pubsub), topic: topic)
+      Span.execute([:froth, :codex, :pubsub_unsubscribe], nil, %{pubsub: pubsub, topic: topic})
       :ok
     end
   end
@@ -238,15 +238,14 @@ defmodule Froth.Codex do
     try do
       port = Port.open({:spawn_executable, executable}, port_opts)
 
-      Logger.info(
-        event: :codex_started,
+      Span.execute([:froth, :codex, :started], nil, %{
         executable: executable,
         args: args,
         cwd: cwd,
         request_timeout_ms: request_timeout,
-        pubsub: inspect(pubsub),
+        pubsub: pubsub,
         topic: topic
-      )
+      })
 
       {:ok,
        %{
@@ -262,12 +261,11 @@ defmodule Froth.Codex do
        }}
     rescue
       e ->
-        Logger.error(
-          event: :codex_start_failed,
+        Span.execute([:froth, :codex, :start_failed], nil, %{
           executable: executable,
           args: args,
           error: Exception.message(e)
-        )
+        })
 
         {:stop, {:port_open_failed, Exception.message(e)}}
     end
@@ -281,19 +279,18 @@ defmodule Froth.Codex do
   def handle_call({:notify, method, params}, _from, state) do
     msg = %{"method" => method, "params" => deep_stringify_keys(params)}
 
-    Logger.info(
-      event: :codex_notify_send,
+    Span.execute([:froth, :codex, :notify_send], nil, %{
       method: method,
       params_preview: preview(params)
-    )
+    })
 
     case send_message(state.port, msg) do
       :ok ->
-        Logger.debug(event: :codex_notify_sent, method: method)
+        Span.execute([:froth, :codex, :notify_sent], nil, %{method: method})
         {:reply, :ok, state}
 
       {:error, reason} = error ->
-        Logger.warning(event: :codex_notify_failed, method: method, reason: inspect(reason))
+        Span.execute([:froth, :codex, :notify_failed], nil, %{method: method, reason: reason})
         {:reply, error, state}
     end
   end
@@ -308,14 +305,13 @@ defmodule Froth.Codex do
       "params" => deep_stringify_keys(params)
     }
 
-    Logger.info(
-      event: :codex_request_send,
+    Span.execute([:froth, :codex, :request_send], nil, %{
       id: id,
       method: method,
       timeout_ms: timeout_ms,
       pending_count: map_size(state.pending),
       params_preview: preview(params)
-    )
+    })
 
     case send_message(state.port, msg) do
       :ok ->
@@ -328,22 +324,20 @@ defmodule Froth.Codex do
             method: method
           })
 
-        Logger.debug(
-          event: :codex_request_queued,
+        Span.execute([:froth, :codex, :request_queued], nil, %{
           id: id,
           method: method,
           pending_count: map_size(pending)
-        )
+        })
 
         {:noreply, %{state | next_id: id + 1, pending: pending}}
 
       {:error, reason} = error ->
-        Logger.warning(
-          event: :codex_request_failed_to_send,
+        Span.execute([:froth, :codex, :request_failed_to_send], nil, %{
           id: id,
           method: method,
-          reason: inspect(reason)
-        )
+          reason: reason
+        })
 
         {:reply, error, state}
     end
@@ -354,12 +348,11 @@ defmodule Froth.Codex do
     buffer = state.buffer <> data
     {lines, rest} = split_complete_lines(buffer)
 
-    Logger.debug(
-      event: :codex_data_chunk,
+    Span.execute([:froth, :codex, :data_chunk], nil, %{
       bytes: byte_size(data),
       complete_lines: length(lines),
       buffered_bytes: byte_size(rest)
-    )
+    })
 
     state = %{state | buffer: rest}
     state = Enum.reduce(lines, state, &handle_line/2)
@@ -367,11 +360,10 @@ defmodule Froth.Codex do
   end
 
   def handle_info({port, {:exit_status, status}}, %{port: port} = state) do
-    Logger.warning(
-      event: :codex_server_exited,
+    Span.execute([:froth, :codex, :server_exited], nil, %{
       status: status,
       pending_count: map_size(state.pending)
-    )
+    })
 
     state = fail_all_pending(state, {:server_exited, status})
     broadcast_protocol_error(state, {:server_exited, status})
@@ -384,12 +376,11 @@ defmodule Froth.Codex do
         {:noreply, state}
 
       {%{from: from, method: method}, pending} ->
-        Logger.warning(
-          event: :codex_request_timeout,
+        Span.execute([:froth, :codex, :request_timeout], nil, %{
           id: id,
           method: method,
           pending_count: map_size(pending)
-        )
+        })
 
         GenServer.reply(from, {:error, :timeout})
         {:noreply, %{state | pending: pending}}
@@ -400,12 +391,11 @@ defmodule Froth.Codex do
 
   @impl true
   def terminate(_reason, state) do
-    Logger.warning(
-      event: :codex_terminate,
+    Span.execute([:froth, :codex, :terminate], nil, %{
       pending_count: map_size(state.pending),
-      pubsub: inspect(state.pubsub),
+      pubsub: state.pubsub,
       topic: state.topic
-    )
+    })
 
     fail_all_pending(state, :terminated)
     :ok
@@ -419,38 +409,35 @@ defmodule Froth.Codex do
     else
       case Jason.decode(line) do
         {:ok, %{"id" => id} = msg} ->
-          Logger.debug(
-            event: :codex_response_received,
-            id: inspect(id),
+          Span.execute([:froth, :codex, :response_received], nil, %{
+            id: id,
             raw_preview: preview(msg)
-          )
+          })
 
           handle_response(id, msg, state)
 
         {:ok, %{"method" => method} = msg} when is_binary(method) ->
           params = Map.get(msg, "params", %{})
 
-          Logger.info(
-            event: :codex_notification_received,
+          Span.execute([:froth, :codex, :notification_received], nil, %{
             method: method,
             topic: state.topic,
             params_preview: preview(params)
-          )
+          })
 
           broadcast_notification(state, method, params, msg, line)
           state
 
         {:ok, msg} ->
-          Logger.warning(event: :codex_unknown_message, message_preview: preview(msg))
+          Span.execute([:froth, :codex, :unknown_message], nil, %{message_preview: preview(msg)})
           broadcast_protocol_error(state, {:unknown_message, msg})
           state
 
         {:error, reason} ->
-          Logger.warning(
-            event: :codex_invalid_json,
+          Span.execute([:froth, :codex, :invalid_json], nil, %{
             line_preview: String.slice(line, 0, 500),
-            reason: inspect(reason)
-          )
+            reason: reason
+          })
 
           broadcast_protocol_error(state, {:invalid_json, line, inspect(reason)})
           state
@@ -463,11 +450,10 @@ defmodule Froth.Codex do
 
     case Map.pop(state.pending, id) do
       {nil, pending} ->
-        Logger.warning(
-          event: :codex_unexpected_response,
-          id: inspect(id),
+        Span.execute([:froth, :codex, :unexpected_response], nil, %{
+          id: id,
           response_preview: preview(msg)
-        )
+        })
 
         broadcast_protocol_error(state, {:unexpected_response, msg})
         %{state | pending: pending}
@@ -476,13 +462,12 @@ defmodule Froth.Codex do
         Process.cancel_timer(timer)
 
         if Map.has_key?(msg, "error") do
-          Logger.warning(
-            event: :codex_request_error_response,
-            id: inspect(id),
+          Span.execute([:froth, :codex, :request_error_response], nil, %{
+            id: id,
             error_preview: preview(msg["error"])
-          )
+          })
         else
-          Logger.info(event: :codex_request_ok_response, id: inspect(id))
+          Span.execute([:froth, :codex, :request_ok_response], nil, %{id: id})
         end
 
         GenServer.reply(from, decode_response(msg))
@@ -511,23 +496,22 @@ defmodule Froth.Codex do
   defp send_message(port, msg) when is_port(port) and is_map(msg) do
     data = Jason.encode!(msg) <> "\n"
 
-    Logger.debug(
-      event: :codex_send_raw,
+    Span.execute([:froth, :codex, :send_raw], nil, %{
       bytes: byte_size(data),
       message_preview: String.slice(data, 0, 500)
-    )
+    })
 
     case Port.command(port, data) do
       true ->
         :ok
 
       _ ->
-        Logger.warning(event: :codex_send_failed, reason: :port_closed)
+        Span.execute([:froth, :codex, :send_failed], nil, %{reason: :port_closed})
         {:error, :port_closed}
     end
   rescue
     ArgumentError ->
-      Logger.warning(event: :codex_send_failed, reason: :port_closed)
+      Span.execute([:froth, :codex, :send_failed], nil, %{reason: :port_closed})
       {:error, :port_closed}
   end
 
@@ -550,11 +534,10 @@ defmodule Froth.Codex do
 
   defp fail_all_pending(state, reason) do
     if map_size(state.pending) > 0 do
-      Logger.warning(
-        event: :codex_fail_pending,
+      Span.execute([:froth, :codex, :fail_pending], nil, %{
         count: map_size(state.pending),
-        reason: inspect(reason)
-      )
+        reason: reason
+      })
     end
 
     Enum.each(state.pending, fn {_id, %{from: from, timer: timer}} ->

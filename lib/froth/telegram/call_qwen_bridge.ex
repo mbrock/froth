@@ -4,7 +4,7 @@ defmodule Froth.Telegram.CallQwenBridge do
 
   Features:
   - Subscribes to call audio and streams it to Qwen ASR.
-  - Logs partial/final transcripts with `Logger`.
+  - Emits partial/final transcripts via Telemetry.
   - Streams Qwen TTS audio back into the call.
 
   This module is designed for quick call testing and demo flows.
@@ -29,9 +29,8 @@ defmodule Froth.Telegram.CallQwenBridge do
 
   use GenServer
 
-  require Logger
-
   alias Froth.Qwen
+  alias Froth.Telemetry.Span
   alias Froth.SpeexResample
   alias Froth.Telegram.Calls
 
@@ -116,14 +115,17 @@ defmodule Froth.Telegram.CallQwenBridge do
         send(self(), {:say_now, initial_text})
       end
 
-      Logger.info(
-        event: :call_qwen_bridge_started,
-        session_id: session_id,
-        call_id: call_id,
-        language: language,
-        voice: voice,
-        log_partials: log_partials,
-        log_speech_events: log_speech_events
+      Span.execute(
+        [:froth, :telegram, :call_qwen, :bridge_started],
+        nil,
+        %{
+          session_id: session_id,
+          call_id: call_id,
+          language: language,
+          voice: voice,
+          log_partials: log_partials,
+          log_speech_events: log_speech_events
+        }
       )
 
       publish_event(state, :bridge_started, %{
@@ -168,14 +170,22 @@ defmodule Froth.Telegram.CallQwenBridge do
   end
 
   def handle_info({:call_media_event, call_id, event}, %{call_id: call_id} = state) do
-    Logger.info(event: :call_qwen_media_event, call_id: call_id, media_event: event)
+    Span.execute([:froth, :telegram, :call_qwen, :media_event], nil, %{
+      call_id: call_id,
+      media_event: event
+    })
+
     publish_event(state, :media_event, %{media_event: event})
     maybe_notify(state.subscriber, {:call_qwen_media_event, call_id, event})
     {:noreply, state}
   end
 
   def handle_info({:call_media_error, call_id, reason}, %{call_id: call_id} = state) do
-    Logger.warning(event: :call_qwen_media_error, call_id: call_id, reason: reason)
+    Span.execute([:froth, :telegram, :call_qwen, :media_error], nil, %{
+      call_id: call_id,
+      reason: reason
+    })
+
     publish_event(state, :media_error, %{reason: inspect(reason)})
     maybe_notify(state.subscriber, {:call_qwen_media_error, call_id, reason})
     {:noreply, state}
@@ -189,7 +199,11 @@ defmodule Froth.Telegram.CallQwenBridge do
           :ok
 
         {:error, reason} ->
-          Logger.warning(event: :call_qwen_feed_failed, call_id: state.call_id, reason: reason)
+          Span.execute([:froth, :telegram, :call_qwen, :feed_failed], nil, %{
+            call_id: state.call_id,
+            reason: reason
+          })
+
           publish_event(state, :feed_failed, %{reason: inspect(reason)})
       end
     end
@@ -198,7 +212,7 @@ defmodule Froth.Telegram.CallQwenBridge do
   end
 
   def handle_info(event, state) when event in [:tts_response_done, :qwen_tts_response_done] do
-    Logger.info(event: :call_qwen_tts_done, call_id: state.call_id)
+    Span.execute([:froth, :telegram, :call_qwen, :tts_done], nil, %{call_id: state.call_id})
     publish_event(state, :tts_done)
     {:noreply, state}
   end
@@ -212,11 +226,10 @@ defmodule Froth.Telegram.CallQwenBridge do
     state =
       if partial != "" and partial != state.last_partial do
         if state.log_partials do
-          Logger.info(
-            event: :call_qwen_asr_partial,
-            call_id: state.call_id,
-            text: text,
-            stash: stash
+          Span.execute(
+            [:froth, :telegram, :call_qwen, :asr_partial],
+            nil,
+            %{call_id: state.call_id, text: text, stash: stash}
           )
         end
 
@@ -243,7 +256,11 @@ defmodule Froth.Telegram.CallQwenBridge do
       |> String.trim()
 
     if transcript != "" do
-      Logger.info(event: :call_qwen_asr_final, call_id: state.call_id, transcript: transcript)
+      Span.execute([:froth, :telegram, :call_qwen, :asr_final], nil, %{
+        call_id: state.call_id,
+        transcript: transcript
+      })
+
       maybe_notify(state.subscriber, {:call_qwen_transcript_final, state.call_id, transcript})
       publish_event(state, :asr_final, %{transcript: transcript})
     end
@@ -254,7 +271,11 @@ defmodule Froth.Telegram.CallQwenBridge do
   def handle_info({event, ms}, state)
       when event in [:asr_speech_started, :qwen_asr_speech_started] do
     if state.log_speech_events do
-      Logger.info(event: :call_qwen_asr_speech_started, call_id: state.call_id, ms: ms)
+      Span.execute([:froth, :telegram, :call_qwen, :asr_speech_started], nil, %{
+        call_id: state.call_id,
+        ms: ms
+      })
+
       publish_event(state, :asr_speech_started, %{ms: ms})
     end
 
@@ -264,7 +285,11 @@ defmodule Froth.Telegram.CallQwenBridge do
   def handle_info({event, ms}, state)
       when event in [:asr_speech_stopped, :qwen_asr_speech_stopped] do
     if state.log_speech_events do
-      Logger.info(event: :call_qwen_asr_speech_stopped, call_id: state.call_id, ms: ms)
+      Span.execute([:froth, :telegram, :call_qwen, :asr_speech_stopped], nil, %{
+        call_id: state.call_id,
+        ms: ms
+      })
+
       publish_event(state, :asr_speech_stopped, %{ms: ms})
     end
 
@@ -272,25 +297,37 @@ defmodule Froth.Telegram.CallQwenBridge do
   end
 
   def handle_info({:qwen_ws_error, reason}, state) do
-    Logger.warning(event: :call_qwen_ws_error, call_id: state.call_id, reason: reason)
+    Span.execute([:froth, :telegram, :call_qwen, :ws_error], nil, %{
+      call_id: state.call_id,
+      reason: reason
+    })
+
     publish_event(state, :ws_error, %{reason: inspect(reason)})
     {:noreply, state}
   end
 
   def handle_info(:qwen_ws_finished, state) do
-    Logger.info(event: :call_qwen_ws_finished, call_id: state.call_id)
+    Span.execute([:froth, :telegram, :call_qwen, :ws_finished], nil, %{call_id: state.call_id})
     publish_event(state, :ws_finished)
     {:noreply, state}
   end
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{asr_ref: ref} = state) do
-    Logger.warning(event: :call_qwen_asr_down, call_id: state.call_id, reason: reason)
+    Span.execute([:froth, :telegram, :call_qwen, :asr_down], nil, %{
+      call_id: state.call_id,
+      reason: reason
+    })
+
     publish_event(state, :asr_down, %{reason: inspect(reason)})
     {:stop, {:asr_down, reason}, state}
   end
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{tts_ref: ref} = state) do
-    Logger.warning(event: :call_qwen_tts_down, call_id: state.call_id, reason: reason)
+    Span.execute([:froth, :telegram, :call_qwen, :tts_down], nil, %{
+      call_id: state.call_id,
+      reason: reason
+    })
+
     publish_event(state, :tts_down, %{reason: inspect(reason)})
     {:stop, {:tts_down, reason}, state}
   end
@@ -303,7 +340,11 @@ defmodule Froth.Telegram.CallQwenBridge do
     trimmed = String.trim(text)
 
     if trimmed != "" do
-      Logger.info(event: :call_qwen_tts_say, call_id: state.call_id, text: trimmed)
+      Span.execute([:froth, :telegram, :call_qwen, :tts_say], nil, %{
+        call_id: state.call_id,
+        text: trimmed
+      })
+
       publish_event(state, :tts_say, %{text: trimmed})
       Qwen.send_event(state.tts_pid, %{type: "input_text_buffer.append", text: trimmed})
       Qwen.send_event(state.tts_pid, %{type: "input_text_buffer.commit"})

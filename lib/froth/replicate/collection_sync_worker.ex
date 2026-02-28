@@ -2,9 +2,8 @@ defmodule Froth.Replicate.CollectionSyncWorker do
   @moduledoc "Oban worker that syncs a single Replicate collection and its models."
   use Oban.Worker, queue: :replicate, max_attempts: 5
 
-  require Logger
-
   alias Froth.Repo
+  alias Froth.Telemetry.Span
   alias Froth.Replicate.{Collection, Model}
 
   @api_base "https://api.replicate.com/v1"
@@ -31,7 +30,11 @@ defmodule Froth.Replicate.CollectionSyncWorker do
 
         Enum.each(models, &upsert_model(&1, slug))
 
-        Logger.info(event: :collection_synced, slug: slug, models: length(models))
+        Span.execute([:froth, :replicate, :collection_synced], nil, %{
+          slug: slug,
+          models: length(models)
+        })
+
         :ok
 
       {:ok, %Finch.Response{status: status, body: body}} ->

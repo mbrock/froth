@@ -57,7 +57,9 @@ defmodule Froth.Agent.Worker do
   @impl true
   def init({cycle, config}) do
     now = System.monotonic_time()
-    span_id = Span.start_span([:froth, :agent, :cycle], nil, %{cycle_id: cycle.id, model: config.model})
+
+    span_id =
+      Span.start_span([:froth, :agent, :cycle], nil, %{cycle_id: cycle.id, model: config.model})
 
     worker = %__MODULE__{
       config: config,
@@ -159,7 +161,9 @@ defmodule Froth.Agent.Worker do
   end
 
   defp persist_agent_message(worker, content, metadata) do
-    {_msg, head_id} = Agent.append_message(worker.cycle, worker.head_id, :agent, content, metadata)
+    {_msg, head_id} =
+      Agent.append_message(worker.cycle, worker.head_id, :agent, content, metadata)
+
     %{worker | head_id: head_id}
   end
 
@@ -199,7 +203,12 @@ defmodule Froth.Agent.Worker do
 
   defp emit_think_stop(worker, extra_meta \\ %{}) do
     if worker.think_start do
-      Span.stop_span([:froth, :agent, :think], worker.think_span_id, worker.think_start, extra_meta)
+      Span.stop_span(
+        [:froth, :agent, :think],
+        worker.think_span_id,
+        worker.think_start,
+        extra_meta
+      )
     end
 
     %{worker | think_start: nil, think_span_id: nil}
@@ -270,7 +279,6 @@ defmodule Froth.Agent.Worker do
   end
 
   defp find_invocation(_, _), do: nil
-
 
   defp normalize_reason(:normal), do: :normal
   defp normalize_reason(:shutdown), do: :shutdown

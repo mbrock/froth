@@ -21,9 +21,8 @@ defmodule Froth.Replicate do
       {:ok, schema} = Froth.Replicate.model_schema("black-forest-labs/flux-schnell")
   """
 
-  require Logger
-
   alias Froth.Repo
+  alias Froth.Telemetry.Span
   alias Froth.Replicate.Prediction
 
   import Ecto.Query
@@ -319,11 +318,10 @@ defmodule Froth.Replicate do
   defp create_prediction_with_version(model, input) do
     case get_latest_version(model) do
       {:ok, version} ->
-        Logger.info(
-          event: :replicate_using_version,
+        Span.execute([:froth, :replicate, :using_version], nil, %{
           model: model,
           version: String.slice(version, 0, 12)
-        )
+        })
 
         url = "#{@api_base}/predictions"
         body = Jason.encode!(%{version: version, input: input})

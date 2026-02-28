@@ -12,8 +12,7 @@ defmodule Froth.Telegram.Sync do
 
   use GenServer
 
-  require Logger
-
+  alias Froth.Telemetry.Span
   alias Froth.Telegram
   alias Froth.Telegram.Message
   alias Froth.Repo
@@ -29,7 +28,7 @@ defmodule Froth.Telegram.Sync do
   def backfill(session_id, opts \\ []) do
     chat_limit = Keyword.get(opts, :chat_limit, 200)
 
-    Logger.info(event: :backfill_start, session_id: session_id)
+    Span.execute([:froth, :telegram, :sync, :backfill_start], nil, %{session_id: session_id})
 
     {:ok, chats} =
       Telegram.call(session_id, %{
@@ -39,7 +38,7 @@ defmodule Froth.Telegram.Sync do
       })
 
     chat_ids = chats["chat_ids"] || []
-    Logger.info(event: :backfill_chats, count: length(chat_ids))
+    Span.execute([:froth, :telegram, :sync, :backfill_chats], nil, %{count: length(chat_ids)})
 
     total =
       Enum.reduce(chat_ids, 0, fn chat_id, acc ->
@@ -47,7 +46,11 @@ defmodule Froth.Telegram.Sync do
         acc + count
       end)
 
-    Logger.info(event: :backfill_done, chats: length(chat_ids), messages: total)
+    Span.execute([:froth, :telegram, :sync, :backfill_done], nil, %{
+      chats: length(chat_ids),
+      messages: total
+    })
+
     {:ok, %{chats: length(chat_ids), messages: total}}
   end
 
@@ -63,11 +66,18 @@ defmodule Froth.Telegram.Sync do
     count = fetch_history(session_id, chat_id, 0, 0)
 
     if count > 0 do
-      Logger.info(event: :backfill_round, chat_id: chat_id, count: count)
+      Span.execute([:froth, :telegram, :sync, :backfill_round], nil, %{
+        chat_id: chat_id,
+        count: count
+      })
+
       backfill_chat_loop(session_id, chat_id, grand_total + count)
     else
       if grand_total > 0 do
-        Logger.info(event: :backfill_chat_done, chat_id: chat_id, total: grand_total)
+        Span.execute([:froth, :telegram, :sync, :backfill_chat_done], nil, %{
+          chat_id: chat_id,
+          total: grand_total
+        })
       end
 
       grand_total
@@ -104,11 +114,19 @@ defmodule Froth.Telegram.Sync do
         total
 
       {:ok, %{"@type" => "error", "message" => msg}} ->
-        Logger.warning(event: :backfill_error, chat_id: chat_id, error: msg)
+        Span.execute([:froth, :telegram, :sync, :backfill_error], nil, %{
+          chat_id: chat_id,
+          error: msg
+        })
+
         total
 
       other ->
-        Logger.warning(event: :backfill_error, chat_id: chat_id, response: other)
+        Span.execute([:froth, :telegram, :sync, :backfill_error], nil, %{
+          chat_id: chat_id,
+          response: other
+        })
+
         total
     end
   end
@@ -125,10 +143,14 @@ defmodule Froth.Telegram.Sync do
   end
 
   defp log_backfill(chat_id, 0),
-    do: Logger.debug(event: :backfill_empty, chat_id: chat_id)
+    do: Span.execute([:froth, :telegram, :sync, :backfill_empty], nil, %{chat_id: chat_id})
 
   defp log_backfill(chat_id, n),
-    do: Logger.info(event: :backfill_stored, chat_id: chat_id, count: n)
+    do:
+      Span.execute([:froth, :telegram, :sync, :backfill_stored], nil, %{
+        chat_id: chat_id,
+        count: n
+      })
 
   # --- Live capture GenServer ---
 
@@ -141,7 +163,7 @@ defmodule Froth.Telegram.Sync do
   @impl true
   def init(session_id) do
     :ok = Phoenix.PubSub.subscribe(Froth.PubSub, Froth.Telegram.Session.topic(session_id))
-    Logger.info(event: :listening, session_id: session_id)
+    Span.execute([:froth, :telegram, :sync, :listening], nil, %{session_id: session_id})
     {:ok, %{session_id: session_id, count: 0}}
   end
 
@@ -206,11 +228,10 @@ defmodule Froth.Telegram.Sync do
         {:ok, :inserted}
 
       {:error, cs} ->
-        Logger.error(
-          event: :store_failed,
-          chat_id: msg["chat_id"],
-          message_id: msg["id"],
-          errors: cs.errors
+        Span.execute(
+          [:froth, :telegram, :sync, :store_failed],
+          nil,
+          %{chat_id: msg["chat_id"], message_id: msg["id"], errors: cs.errors}
         )
 
         {:error, cs}

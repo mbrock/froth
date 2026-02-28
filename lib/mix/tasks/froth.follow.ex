@@ -46,7 +46,10 @@ defmodule Mix.Tasks.Froth.Follow do
     :rpc.call(node, :telemetry, :attach_many, [@handler_id, events, handler, nil])
 
     Mix.shell().info("Connected to #{node}")
-    Mix.shell().info("Following #{length(events)} telemetry events#{if prefix_filter, do: " (filter: #{prefix_filter})"}\n")
+
+    Mix.shell().info(
+      "Following #{length(events)} telemetry events#{if prefix_filter, do: " (filter: #{prefix_filter})"}\n"
+    )
 
     Process.flag(:trap_exit, true)
 
@@ -92,8 +95,13 @@ defmodule Mix.Tasks.Froth.Follow do
     level_color = level_color(event_name)
 
     IO.write([
-      @dim, ts, @reset, " ",
-      level_color, name, @reset
+      @dim,
+      ts,
+      @reset,
+      " ",
+      level_color,
+      name,
+      @reset
     ])
 
     duration = format_duration(measurements)

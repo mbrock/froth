@@ -12,7 +12,7 @@ defmodule Froth.Dataset do
 
   use GenServer
 
-  require Logger
+  alias Froth.Telemetry.Span
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -87,17 +87,29 @@ defmodule Froth.Dataset do
             merged = RDF.Dataset.add(ds, parsed)
             elapsed = System.monotonic_time(:millisecond) - t0
             count = RDF.Dataset.statement_count(parsed)
-            Logger.info(event: :auto_loaded, name: name, triples: count, elapsed_ms: elapsed)
+
+            Span.execute([:froth, :dataset, :auto_loaded], nil, %{
+              name: name,
+              triples: count,
+              elapsed_ms: elapsed
+            })
+
             merged
 
           {:error, reason} ->
-            Logger.error(event: :auto_load_failed, name: name, reason: reason)
+            Span.execute([:froth, :dataset, :auto_load_failed], nil, %{name: name, reason: reason})
+
             ds
         end
       end)
 
     total = RDF.Dataset.statement_count(dataset)
-    Logger.info(event: :auto_load_complete, datasets: length(stored), total_triples: total)
+
+    Span.execute([:froth, :dataset, :auto_load_complete], nil, %{
+      datasets: length(stored),
+      total_triples: total
+    })
+
     {:noreply, %{state | dataset: dataset}}
   end
 
@@ -110,7 +122,13 @@ defmodule Froth.Dataset do
         elapsed = System.monotonic_time(:millisecond) - t0
         count = RDF.Dataset.statement_count(dataset)
         names = RDF.Dataset.graph_names(dataset)
-        Logger.info(event: :loaded, count: count, graphs: length(names), elapsed_ms: elapsed)
+
+        Span.execute([:froth, :dataset, :loaded], nil, %{
+          count: count,
+          graphs: length(names),
+          elapsed_ms: elapsed
+        })
+
         {:reply, {:ok, %{statements: count, graphs: length(names)}}, %{state | dataset: dataset}}
 
       {:error, reason} ->

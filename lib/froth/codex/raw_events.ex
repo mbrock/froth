@@ -8,9 +8,9 @@ defmodule Froth.Codex.RawEvents do
   """
 
   import Ecto.Query
-  require Logger
 
   alias Froth.Codex.RawEvent
+  alias Froth.Telemetry.Span
   alias Froth.Repo
 
   @spec append_notification(String.t(), String.t(), map(), term(), String.t() | nil) :: :ok
@@ -45,11 +45,10 @@ defmodule Froth.Codex.RawEvents do
     |> Enum.reverse()
   rescue
     error ->
-      Logger.warning(
-        event: :codex_raw_events_list_failed,
+      Span.execute([:froth, :codex, :raw_events_list_failed], nil, %{
         session_id: session_id,
         error: Exception.message(error)
-      )
+      })
 
       []
   end
@@ -72,25 +71,23 @@ defmodule Froth.Codex.RawEvents do
         :ok
 
       {:error, changeset} ->
-        Logger.warning(
-          event: :codex_raw_events_append_failed,
+        Span.execute([:froth, :codex, :raw_events_append_failed], nil, %{
           session_id: session_id,
           kind: kind,
           method: method,
           errors: inspect(changeset.errors)
-        )
+        })
 
         :ok
     end
   rescue
     error ->
-      Logger.warning(
-        event: :codex_raw_events_append_failed,
+      Span.execute([:froth, :codex, :raw_events_append_failed], nil, %{
         session_id: session_id,
         kind: kind,
         method: method,
         error: Exception.message(error)
-      )
+      })
 
       :ok
   end

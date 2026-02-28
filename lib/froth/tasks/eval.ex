@@ -10,7 +10,7 @@ defmodule Froth.Tasks.Eval do
 
   use GenServer, restart: :temporary
 
-  require Logger
+  alias Froth.Telemetry.Span
 
   @eval_await_ms 3_000
   @idle_timeout_ms :timer.minutes(10)
@@ -110,12 +110,11 @@ defmodule Froth.Tasks.Eval do
         send(server, {:eval_done, result, io_output})
       end)
 
-    Logger.info(
-      event: :eval_started,
+    Span.execute([:froth, :tasks, :eval_started], nil, %{
       task_id: task_id,
       session_id: session_id,
       code_preview: String.slice(code, 0, 200)
-    )
+    })
 
     Froth.Tasks.start(task_id)
 
@@ -166,14 +165,13 @@ defmodule Froth.Tasks.Eval do
         {:error, _} -> {true, "failed"}
       end
 
-    Logger.info(
-      event: :eval_done,
+    Span.execute([:froth, :tasks, :eval_done], nil, %{
       task_id: state.task_id,
       session_id: state.session_id,
       status: status,
       result_preview:
         result |> format_result_parts(io_output, state.session_id) |> String.slice(0, 200)
-    )
+    })
 
     result_text = format_result_parts(result, io_output, state.session_id)
     Froth.Tasks.append(state.task_id, "stdout", result_text)
@@ -197,12 +195,11 @@ defmodule Froth.Tasks.Eval do
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{eval_ref: ref, done: false} = state) do
     error_msg = "Eval process crashed: #{inspect(reason)}"
 
-    Logger.error(
-      event: :eval_crashed,
+    Span.execute([:froth, :tasks, :eval_crashed], nil, %{
       task_id: state.task_id,
       session_id: state.session_id,
       reason: inspect(reason)
-    )
+    })
 
     Froth.Tasks.append(state.task_id, "stderr", error_msg)
     Froth.Tasks.fail(state.task_id, String.slice(error_msg, 0, 200))

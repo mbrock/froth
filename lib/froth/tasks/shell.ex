@@ -10,7 +10,7 @@ defmodule Froth.Tasks.Shell do
 
   use GenServer, restart: :temporary
 
-  require Logger
+  alias Froth.Telemetry.Span
 
   @shell_await_ms 3_000
   @idle_timeout_ms :timer.minutes(10)
@@ -109,13 +109,12 @@ defmodule Froth.Tasks.Shell do
 
     {:ok, os_pid} = Keyword.fetch(Port.info(port), :os_pid)
 
-    Logger.info(
-      event: :shell_started,
+    Span.execute([:froth, :tasks, :shell_started], nil, %{
       task_id: task_id,
       command: command,
       os_pid: os_pid,
       working_dir: working_dir
-    )
+    })
 
     Froth.Tasks.start(task_id)
 
@@ -158,12 +157,11 @@ defmodule Froth.Tasks.Shell do
   def handle_call({:send_signal, signal}, _from, state) do
     signal_str = to_string(signal)
 
-    Logger.info(
-      event: :shell_signal,
+    Span.execute([:froth, :tasks, :shell_signal], nil, %{
       task_id: state.task_id,
       signal: signal_str,
       os_pid: state.os_pid
-    )
+    })
 
     System.cmd("kill", ["-#{signal_str}", "#{state.os_pid}"])
     Froth.Tasks.append(state.task_id, "signal", signal_str)
@@ -177,12 +175,11 @@ defmodule Froth.Tasks.Shell do
   end
 
   def handle_info({port, {:exit_status, code}}, %{port: port} = state) do
-    Logger.info(
-      event: :shell_exited,
+    Span.execute([:froth, :tasks, :shell_exited], nil, %{
       task_id: state.task_id,
       exit_code: code,
       os_pid: state.os_pid
-    )
+    })
 
     Froth.Tasks.complete(state.task_id, %{exit_code: code})
     state = %{state | exit_status: code}
@@ -209,7 +206,11 @@ defmodule Froth.Tasks.Shell do
   end
 
   def handle_info(msg, state) do
-    Logger.debug("Shell #{state.task_id} unexpected message: #{inspect(msg)}")
+    Span.execute([:froth, :tasks, :shell_unexpected_message], nil, %{
+      task_id: state.task_id,
+      message: inspect(msg)
+    })
+
     {:noreply, state}
   end
 

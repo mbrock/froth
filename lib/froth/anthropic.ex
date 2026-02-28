@@ -165,10 +165,14 @@ defmodule Froth.Anthropic do
     if system == "", do: body, else: Map.put(body, "system", system)
   end
 
-  defp maybe_put_thinking(body, thinking) when is_map(thinking), do: Map.put(body, "thinking", thinking)
+  defp maybe_put_thinking(body, thinking) when is_map(thinking),
+    do: Map.put(body, "thinking", thinking)
+
   defp maybe_put_thinking(body, _thinking), do: body
 
-  defp maybe_put_output_config(body, output_config) when is_map(output_config), do: Map.put(body, "output_config", output_config)
+  defp maybe_put_output_config(body, output_config) when is_map(output_config),
+    do: Map.put(body, "output_config", output_config)
+
   defp maybe_put_output_config(body, _output_config), do: body
 
   defp merge_effort_into_output_config(output_config, effort) when is_binary(effort) do
@@ -177,10 +181,13 @@ defmodule Froth.Anthropic do
 
   defp merge_effort_into_output_config(output_config, _effort), do: output_config
 
-  defp maybe_put_tools(body, tools) when is_list(tools) and tools != [], do: Map.put(body, "tools", tools)
+  defp maybe_put_tools(body, tools) when is_list(tools) and tools != [],
+    do: Map.put(body, "tools", tools)
+
   defp maybe_put_tools(body, _tools), do: body
 
-  defp normalize_max_tokens(max_tokens, _default) when is_integer(max_tokens) and max_tokens > 0, do: max_tokens
+  defp normalize_max_tokens(max_tokens, _default) when is_integer(max_tokens) and max_tokens > 0,
+    do: max_tokens
 
   defp normalize_max_tokens(max_tokens, default) when is_binary(max_tokens) do
     case Integer.parse(max_tokens) do
@@ -191,13 +198,18 @@ defmodule Froth.Anthropic do
 
   defp normalize_max_tokens(_max_tokens, default), do: default
 
-  defp default_max_tokens(thinking_budget) when is_integer(thinking_budget), do: max(@default_max_tokens, thinking_budget + 1024)
+  defp default_max_tokens(thinking_budget) when is_integer(thinking_budget),
+    do: max(@default_max_tokens, thinking_budget + 1024)
+
   defp default_max_tokens(_), do: @default_max_tokens
 
-  defp thinking_budget(%{"type" => "enabled", "budget_tokens" => budget}) when is_integer(budget), do: budget
+  defp thinking_budget(%{"type" => "enabled", "budget_tokens" => budget}) when is_integer(budget),
+    do: budget
+
   defp thinking_budget(_), do: nil
 
-  defp ensure_max_tokens_above_thinking(max_tokens, thinking_budget) when is_integer(max_tokens) and is_integer(thinking_budget) do
+  defp ensure_max_tokens_above_thinking(max_tokens, thinking_budget)
+       when is_integer(max_tokens) and is_integer(thinking_budget) do
     if max_tokens > thinking_budget, do: max_tokens, else: thinking_budget + 1024
   end
 
@@ -291,7 +303,13 @@ defmodule Froth.Anthropic do
             end
 
           result = {:error, {:http_error, status, decoded}}
-          {result, %{status: status, response_headers: Map.get(st, :response_headers), response_body: decoded}}
+
+          {result,
+           %{
+             status: status,
+             response_headers: Map.get(st, :response_headers),
+             response_body: decoded
+           }}
 
         {:error, err} ->
           result = {:error, {:finch_error, err}}

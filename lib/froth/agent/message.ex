@@ -21,7 +21,9 @@ defmodule Froth.Agent.Message do
 
   def user(content), do: %__MODULE__{role: :user, content: wrap(content)}
   def agent(content), do: %__MODULE__{role: :agent, content: wrap(content)}
-  def agent(content, metadata), do: %__MODULE__{role: :agent, content: wrap(content), metadata: metadata}
+
+  def agent(content, metadata),
+    do: %__MODULE__{role: :agent, content: wrap(content), metadata: metadata}
 
   def to_api(%__MODULE__{role: :user, content: content}) do
     %{"role" => "user", "content" => unwrap(content)}

@@ -166,7 +166,10 @@ defmodule FrothWeb.InferenceSessionsLive do
                     {String.slice(summary.cycle_id, 0, 16)}..
                   </span>
                   <div class="flex items-center gap-1.5">
-                    <span :if={summary.input_tokens && summary.input_tokens > 0} class="text-[10px] text-zinc-400">
+                    <span
+                      :if={summary.input_tokens && summary.input_tokens > 0}
+                      class="text-[10px] text-zinc-400"
+                    >
                       {format_number(summary.input_tokens)}in {format_number(summary.output_tokens)}out
                     </span>
                     <span class="rounded border border-zinc-500/30 bg-zinc-500/10 px-1.5 py-0.5 text-[10px] text-zinc-300">

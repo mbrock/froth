@@ -6,9 +6,9 @@ defmodule Froth.Telegram.Bots do
   """
 
   use Supervisor
-  require Logger
 
   alias Froth.Telegram.Charlie
+  alias Froth.Telemetry.Span
 
   @registry Froth.Telegram.BotRegistry
   @supervisor Froth.Telegram.BotSupervisor
@@ -21,7 +21,7 @@ defmodule Froth.Telegram.Bots do
             ok
 
           {:error, reason} = error ->
-            Logger.error(event: :bot_autostart_failed, reason: inspect(reason))
+            Span.execute([:froth, :telegram, :bots, :autostart_failed], nil, %{reason: reason})
             Supervisor.stop(pid)
             error
         end
@@ -77,7 +77,12 @@ defmodule Froth.Telegram.Bots do
 
         {:error, reason} ->
           bot_id = Map.get(config, :id, "unknown")
-          Logger.error(event: :bot_start_failed, bot_id: bot_id, reason: inspect(reason))
+
+          Span.execute([:froth, :telegram, :bots, :start_failed], nil, %{
+            bot_id: bot_id,
+            reason: reason
+          })
+
           {:halt, {:error, {:bot_start_failed, bot_id, reason}}}
       end
     end)

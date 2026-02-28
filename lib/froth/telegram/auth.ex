@@ -19,8 +19,6 @@ defmodule Froth.Telegram.Auth do
   - `TELEGRAM_BOT_TOKEN` (preferred if present; avoids SMS login)
   """
 
-  require Logger
-
   @name :froth_telegram_auth
 
   @doc """
@@ -180,7 +178,7 @@ defmodule Froth.Telegram.Auth do
         loop(state)
 
       other ->
-        Logger.debug(event: :ignored, message: other)
+        Froth.Telemetry.Span.execute([:froth, :telegram, :auth, :ignored], nil, %{message: other})
         loop(state)
     after
       60_000 ->

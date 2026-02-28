@@ -7,7 +7,7 @@ defmodule Froth.Podcast.TtsWorker do
   """
   use Oban.Worker, queue: :podcast, max_attempts: 10
 
-  require Logger
+  alias Froth.Telemetry.Span
 
   @impl true
   def backoff(%Oban.Job{attempt: attempt}) do
@@ -51,13 +51,12 @@ defmodule Froth.Podcast.TtsWorker do
         {:ok, %Finch.Response{status: 200, body: audio}} ->
           File.write!(seg_path, audio)
 
-          Logger.info(
-            event: :podcast_segment_done,
+          Span.execute([:froth, :podcast, :segment_done], nil, %{
             batch_id: batch_id,
             index: idx,
             speaker: speaker,
             bytes: byte_size(audio)
-          )
+          })
 
           send_progress(args)
 

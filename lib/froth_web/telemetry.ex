@@ -59,7 +59,10 @@ defmodule FrothWeb.Telemetry do
       summary("vm.total_run_queue_lengths.io"),
 
       # Anthropic Metrics
-      summary("froth.anthropic.request.stop.duration", unit: {:native, :millisecond}, tags: [:mode]),
+      summary("froth.anthropic.request.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:mode]
+      ),
       counter("froth.anthropic.request.stop.duration", tags: [:mode, :ok]),
 
       # Agent Metrics

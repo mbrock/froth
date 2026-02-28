@@ -48,7 +48,7 @@ defmodule WsProto.Client do
 
   use GenServer
 
-  require Logger
+  alias Froth.Telemetry.Span
 
   defstruct [
     :ws,
@@ -116,14 +116,18 @@ defmodule WsProto.Client do
           []
         end
 
-    Logger.info(event: :ws_connecting, host: uri.host, port: port, transport: transport)
+    Span.execute([:froth, :ws_proto, :connecting], nil, %{
+      host: uri.host,
+      port: port,
+      transport: transport
+    })
 
     case transport.connect(host, port, connect_opts, 10_000) do
       {:ok, socket} ->
         ws = WsProto.new(uri)
         {ws, upgrade_bytes} = WsProto.upgrade(ws, headers)
         transport.send(socket, upgrade_bytes)
-        Logger.info(event: :ws_upgrade_sent, host: uri.host)
+        Span.execute([:froth, :ws_proto, :upgrade_sent], nil, %{host: uri.host})
         set_active(transport, socket)
 
         sender = spawn_sender(transport, socket)
@@ -137,7 +141,11 @@ defmodule WsProto.Client do
          }}
 
       {:error, reason} ->
-        Logger.error(event: :ws_connect_failed, host: uri.host, reason: inspect(reason))
+        Span.execute([:froth, :ws_proto, :connect_failed], nil, %{
+          host: uri.host,
+          reason: inspect(reason)
+        })
+
         {:stop, reason}
     end
   end
@@ -156,28 +164,32 @@ defmodule WsProto.Client do
     {transport, raw} = state.socket
     set_active(transport, raw)
 
-    Logger.debug(event: :ws_raw_recv, bytes: byte_size(data), ws_state: state.ws.state)
+    Span.execute([:froth, :ws_proto, :raw_recv], nil, %{
+      bytes: byte_size(data),
+      ws_state: state.ws.state
+    })
+
     {ws, events} = WsProto.receive(state.ws, data)
     state = %{state | ws: ws}
 
     state =
       Enum.reduce(events, state, fn
         :upgraded, st ->
-          Logger.info(event: :ws_connected, queue: st.send_queue_len)
+          Span.execute([:froth, :ws_proto, :connected], nil, %{queue: st.send_queue_len})
           notify(st, :connected)
           st
 
         {:error, reason}, st ->
-          Logger.error(event: :ws_upgrade_failed, reason: inspect(reason))
+          Span.execute([:froth, :ws_proto, :upgrade_failed], nil, %{reason: inspect(reason)})
           notify(st, {:error, reason})
           st
 
         {:ping, payload}, st ->
-          Logger.debug(event: :ws_ping, bytes: byte_size(payload))
+          Span.execute([:froth, :ws_proto, :ping], nil, %{bytes: byte_size(payload)})
           enqueue(st, {:pong, payload})
 
         {:close, code, reason}, st ->
-          Logger.info(event: :ws_recv_close, code: code, reason: reason)
+          Span.execute([:froth, :ws_proto, :recv_close], nil, %{code: code, reason: reason})
           notify(st, {:close, code, reason})
           enqueue(st, {:close, code, reason})
 
@@ -200,13 +212,17 @@ defmodule WsProto.Client do
   end
 
   def handle_info({closed, _sock}, state) when closed in [:ssl_closed, :tcp_closed] do
-    Logger.info(event: :ws_closed, stats: state.stats)
+    Span.execute([:froth, :ws_proto, :closed], nil, %{stats: state.stats})
     notify(state, {:error, :closed})
     {:stop, :normal, state}
   end
 
   def handle_info({error, _sock, reason}, state) when error in [:ssl_error, :tcp_error] do
-    Logger.error(event: :ws_socket_error, reason: inspect(reason), stats: state.stats)
+    Span.execute([:froth, :ws_proto, :socket_error], nil, %{
+      reason: inspect(reason),
+      stats: state.stats
+    })
+
     notify(state, {:error, reason})
     {:stop, reason, state}
   end
@@ -224,25 +240,28 @@ defmodule WsProto.Client do
     state = update_in(state.stats.send_us_total, &(&1 + send_us))
 
     if send_us > 100_000 or state.send_queue_len > 0 do
-      Logger.info(
-        event: :ws_send_done,
+      Span.execute([:froth, :ws_proto, :send_done], nil, %{
         send_ms: div(send_us, 1000),
         queue: state.send_queue_len,
         sent: state.stats.sent
-      )
+      })
     end
 
     {:noreply, maybe_flush(state)}
   end
 
   def handle_info({:send_done, ref, {:error, reason}}, %{sending?: {true, ref}} = state) do
-    Logger.error(event: :ws_send_failed, reason: inspect(reason), stats: state.stats)
+    Span.execute([:froth, :ws_proto, :send_failed], nil, %{
+      reason: inspect(reason),
+      stats: state.stats
+    })
+
     notify(state, {:error, {:send_failed, reason}})
     {:stop, reason, state}
   end
 
   def handle_info(msg, state) do
-    Logger.debug("WsProto.Client unhandled: #{inspect(msg, limit: 5)}")
+    Span.execute([:froth, :ws_proto, :unhandled], nil, %{message: inspect(msg, limit: 5)})
     {:noreply, state}
   end
 

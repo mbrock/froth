@@ -5,7 +5,7 @@ defmodule Froth.Replicate.SyncWorker do
   """
   use Oban.Worker, queue: :replicate, max_attempts: 3
 
-  require Logger
+  alias Froth.Telemetry.Span
 
   @api_base "https://api.replicate.com/v1"
 
@@ -23,7 +23,10 @@ defmodule Froth.Replicate.SyncWorker do
           |> Oban.insert!()
         end)
 
-        Logger.info(event: :replicate_sync_enqueued, collections: length(collections))
+        Span.execute([:froth, :replicate, :sync_enqueued], nil, %{
+          collections: length(collections)
+        })
+
         :ok
 
       {:ok, %Finch.Response{status: status, body: body}} ->

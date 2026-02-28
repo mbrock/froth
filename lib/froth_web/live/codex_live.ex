@@ -1,9 +1,8 @@
 defmodule FrothWeb.CodexLive do
   use FrothWeb, :live_view
 
-  require Logger
-
   alias Froth.Codex.Events, as: CodexEvents
+  alias Froth.Telemetry.Span
   alias Froth.Codex.Session, as: CodexSession
 
   @entry_kinds %{
@@ -42,11 +41,10 @@ defmodule FrothWeb.CodexLive do
 
       socket =
         if connected?(socket) do
-          Logger.info(
-            event: :codex_live_mount_connected,
+          Span.execute([:froth, :web, :mount_connected], nil, %{
             session_id: session_id,
             requested_thread_id: requested_thread_id
-          )
+          })
 
           socket
           |> connect_to_session()
@@ -97,7 +95,9 @@ defmodule FrothWeb.CodexLive do
           socket
 
         true ->
-          Logger.info(event: :codex_live_send_prompt, session_id: socket.assigns.session_id)
+          Span.execute([:froth, :web, :send_prompt], nil, %{
+            session_id: socket.assigns.session_id
+          })
 
           case CodexSession.send_prompt(socket.assigns.session_id, prompt) do
             :ok ->
@@ -114,7 +114,7 @@ defmodule FrothWeb.CodexLive do
   end
 
   def handle_event("new_thread", _, socket) do
-    Logger.info(event: :codex_live_new_thread, session_id: socket.assigns.session_id)
+    Span.execute([:froth, :web, :new_thread], nil, %{session_id: socket.assigns.session_id})
 
     case CodexSession.new_thread(socket.assigns.session_id) do
       :ok ->
@@ -129,7 +129,7 @@ defmodule FrothWeb.CodexLive do
   end
 
   def handle_event("interrupt_turn", _, socket) do
-    Logger.info(event: :codex_live_interrupt_turn, session_id: socket.assigns.session_id)
+    Span.execute([:froth, :web, :interrupt_turn], nil, %{session_id: socket.assigns.session_id})
 
     case CodexSession.interrupt_turn(socket.assigns.session_id) do
       :ok ->
@@ -399,11 +399,10 @@ defmodule FrothWeb.CodexLive do
       apply_snapshot(socket, snapshot)
     else
       {:error, reason} ->
-        Logger.error(
-          event: :codex_live_connect_failed,
+        Span.execute([:froth, :web, :connect_failed], nil, %{
           session_id: socket.assigns.session_id,
           reason: inspect(reason)
-        )
+        })
 
         socket
         |> assign(:codex_status, :error)
@@ -423,11 +422,10 @@ defmodule FrothWeb.CodexLive do
         apply_snapshot(socket, snapshot)
 
       {:error, reason} ->
-        Logger.warning(
-          event: :codex_live_snapshot_failed,
+        Span.execute([:froth, :web, :snapshot_failed], nil, %{
           session_id: socket.assigns.session_id,
           reason: inspect(reason)
-        )
+        })
 
         socket
         |> assign(:codex_status, :error)

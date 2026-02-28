@@ -16,18 +16,19 @@ defmodule FrothWeb.RoomChannel do
 
   use Phoenix.Channel
 
-  require Logger
-
   alias Froth.Qwen
+  alias Froth.Telemetry.Span
 
   @impl true
   def join("room:" <> room_id, params, socket) do
     input_id = params["input"]
     output_ids = params["outputs"] || []
 
-    Logger.info(
-      "Joining room #{room_id}, input=#{inspect(input_id)}, outputs=#{inspect(output_ids)}"
-    )
+    Span.execute([:froth, :web, :room_joined], nil, %{
+      room_id: room_id,
+      input_id: input_id,
+      output_ids: output_ids
+    })
 
     for id <- output_ids, do: Voice.Stream.subscribe(id)
 
@@ -54,11 +55,14 @@ defmodule FrothWeb.RoomChannel do
       when head != nil do
     case parse_sample_rate(sample_rate) do
       {:ok, rate} ->
-        Logger.info("Sample rate changed to #{rate} Hz")
+        Span.execute([:froth, :web, :sample_rate_changed], nil, %{rate: rate})
         {:noreply, assign(socket, head: %{head | rate: rate})}
 
       :error ->
-        Logger.warning("Invalid sample rate: #{inspect(sample_rate)}")
+        Span.execute([:froth, :web, :invalid_sample_rate], nil, %{
+          sample_rate: inspect(sample_rate)
+        })
+
         {:noreply, socket}
     end
   end
@@ -88,11 +92,11 @@ defmodule FrothWeb.RoomChannel do
       case Qwen.start_link(qwen_opts) do
         {:ok, asr} ->
           Process.monitor(asr)
-          Logger.info("ASR started for stream #{head.id}")
+          Span.execute([:froth, :web, :asr_started], nil, %{stream_id: head.id})
           {:reply, {:ok, %{status: "started"}}, assign(socket, asr: asr)}
 
         {:error, reason} ->
-          Logger.error("ASR failed to start: #{inspect(reason)}")
+          Span.execute([:froth, :web, :asr_start_failed], nil, %{reason: inspect(reason)})
           {:reply, {:error, %{reason: inspect(reason)}}, socket}
       end
     end
@@ -101,7 +105,7 @@ defmodule FrothWeb.RoomChannel do
   def handle_in("commit_audio", _payload, socket) do
     if socket.assigns.asr do
       Qwen.send_event(socket.assigns.asr, %{type: "input_audio_buffer.commit"})
-      Logger.info("ASR audio buffer committed")
+      Span.execute([:froth, :web, :asr_buffer_committed], nil, %{})
     end
 
     {:reply, {:ok, %{}}, socket}
@@ -110,14 +114,14 @@ defmodule FrothWeb.RoomChannel do
   def handle_in("stop_asr", _payload, socket) do
     if socket.assigns.asr do
       Qwen.send_event(socket.assigns.asr, %{type: "session.finish"})
-      Logger.info("ASR stopped")
+      Span.execute([:froth, :web, :asr_stopped], nil, %{})
     end
 
     {:reply, {:ok, %{}}, assign(socket, asr: nil)}
   end
 
   def handle_in(event, _payload, socket) do
-    Logger.warning("Unhandled channel event: #{inspect(event)}")
+    Span.execute([:froth, :web, :unhandled_channel_event], nil, %{event: inspect(event)})
     {:noreply, socket}
   end
 
@@ -129,7 +133,7 @@ defmodule FrothWeb.RoomChannel do
 
   def handle_info({:DOWN, _ref, :process, pid, reason}, socket) do
     if pid == socket.assigns.asr do
-      Logger.warning("ASR process died: #{inspect(reason)}")
+      Span.execute([:froth, :web, :asr_process_died], nil, %{reason: inspect(reason)})
       {:noreply, assign(socket, asr: nil)}
     else
       {:noreply, socket}

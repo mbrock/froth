@@ -42,9 +42,9 @@ defmodule Froth.Qwen do
   """
 
   use GenServer
-  require Logger
 
   alias Froth.SpeexResample
+  alias Froth.Telemetry.Span
 
   @host "dashscope-intl.aliyuncs.com"
   @resample_quality 5
@@ -120,7 +120,7 @@ defmodule Froth.Qwen do
 
   @impl true
   def handle_info({:ws, _pid, :connected}, state) do
-    Logger.info(event: :qwen_connected, kind: state.kind, topic: state.topic)
+    Span.execute([:froth, :qwen, :connected], nil, %{kind: state.kind, topic: state.topic})
     state = maybe_subscribe_audio_source(state)
 
     WsProto.Client.send(
@@ -134,8 +134,7 @@ defmodule Froth.Qwen do
   def handle_info({:ws, _pid, {:text, json}}, state) do
     case Jason.decode(json) do
       {:ok, event} ->
-        Logger.info(
-          event: :qwen_in,
+        Span.execute([:froth, :qwen, :in], nil, %{
           kind: state.kind,
           type: event["type"],
           stash: event["stash"],
@@ -143,7 +142,7 @@ defmodule Froth.Qwen do
           item_id: event["item_id"],
           audio_start_ms: event["audio_start_ms"],
           audio_end_ms: event["audio_end_ms"]
-        )
+        })
 
         handle_event(event, state)
 
@@ -160,7 +159,8 @@ defmodule Froth.Qwen do
   end
 
   def handle_info({:ws, _pid, {:close, code, reason}}, state) do
-    Logger.info(event: :qwen_ws_closed, kind: state.kind, code: code, reason: reason)
+    Span.execute([:froth, :qwen, :ws_closed], nil, %{kind: state.kind, code: code, reason: reason})
+
     {:stop, :normal, state}
   end
 
@@ -174,7 +174,11 @@ defmodule Froth.Qwen do
   # -- WsProto.Client process died --------------------------------------------
 
   def handle_info({:DOWN, _ref, :process, pid, reason}, %{ws_client: pid} = state) do
-    Logger.warning(event: :qwen_ws_client_down, kind: state.kind, reason: inspect(reason))
+    Span.execute([:froth, :qwen, :ws_client_down], nil, %{
+      kind: state.kind,
+      reason: inspect(reason)
+    })
+
     {:stop, reason, state}
   end
 
@@ -184,12 +188,11 @@ defmodule Froth.Qwen do
     count = state.pre_session_audio_frames + 1
 
     if count == 1 do
-      Logger.warning(
-        event: :qwen_audio_before_session,
+      Span.execute([:froth, :qwen, :audio_before_session], nil, %{
         kind: state.kind,
         topic: state.topic,
         bytes: byte_size(pcm)
-      )
+      })
     end
 
     {:noreply, %{state | pre_session_audio_frames: count}}
@@ -197,23 +200,21 @@ defmodule Froth.Qwen do
 
   def handle_info(%{pcm: pcm} = packet, state) when is_binary(pcm) do
     if state.pre_session_audio_frames > 0 do
-      Logger.info(
-        event: :qwen_audio_resumed,
+      Span.execute([:froth, :qwen, :audio_resumed], nil, %{
         kind: state.kind,
         topic: state.topic,
         dropped_frames: state.pre_session_audio_frames
-      )
+      })
     end
 
     input_rate = packet_sample_rate(packet)
 
     if input_rate != state.asr_input_rate do
-      Logger.info(
-        event: :qwen_audio_rate_change,
+      Span.execute([:froth, :qwen, :audio_rate_change], nil, %{
         kind: state.kind,
         input_rate: input_rate,
         target_rate: state.asr_target_rate
-      )
+      })
     end
 
     {pcm, state} = maybe_resample_input_audio(pcm, input_rate, state)
@@ -250,23 +251,21 @@ defmodule Froth.Qwen do
   end
 
   defp handle_event(%{"type" => "session.created", "session" => session}, state) do
-    Logger.info(
-      event: :qwen_session_created,
+    Span.execute([:froth, :qwen, :session_created], nil, %{
       kind: state.kind,
       session_id: session["id"],
       model: session["model"]
-    )
+    })
 
     {:noreply, state}
   end
 
   defp handle_event(%{"type" => "session.updated", "session" => session}, state) do
-    Logger.info(
-      event: :qwen_session_updated,
+    Span.execute([:froth, :qwen, :session_updated], nil, %{
       kind: state.kind,
       session_id: session["id"],
       model: session["model"]
-    )
+    })
 
     {:noreply, %{state | session_ready?: true}}
   end
@@ -314,12 +313,12 @@ defmodule Froth.Qwen do
   end
 
   defp handle_event(%{"type" => "conversation.item.created", "item" => item}, state) do
-    Logger.info(event: :qwen_item_created, kind: state.kind, item_id: item["id"])
+    Span.execute([:froth, :qwen, :item_created], nil, %{kind: state.kind, item_id: item["id"]})
     {:noreply, state}
   end
 
   defp handle_event(%{"type" => "input_audio_buffer.committed", "item_id" => item_id}, state) do
-    Logger.info(event: :qwen_audio_committed, kind: state.kind, item_id: item_id)
+    Span.execute([:froth, :qwen, :audio_committed], nil, %{kind: state.kind, item_id: item_id})
     {:noreply, state}
   end
 
@@ -337,7 +336,7 @@ defmodule Froth.Qwen do
   end
 
   defp handle_event(%{"type" => type}, state) do
-    Logger.warning(event: :qwen_unhandled_event, kind: state.kind, type: type)
+    Span.execute([:froth, :qwen, :unhandled_event], nil, %{kind: state.kind, type: type})
     {:noreply, state}
   end
 
@@ -356,7 +355,7 @@ defmodule Froth.Qwen do
   defp maybe_subscribe_audio_source(state), do: state
 
   defp emit_ws_error(state, payload) do
-    Logger.warning(event: :qwen_ws_error, kind: state.kind, payload: payload)
+    Span.execute([:froth, :qwen, :ws_error], nil, %{kind: state.kind, payload: payload})
     broadcast(state, {:qwen_ws_error, payload})
   end
 
@@ -376,9 +375,11 @@ defmodule Froth.Qwen do
       {out_pcm, state}
     else
       {:error, reason} ->
-        Logger.warning(
-          "Qwen ASR resample failed (#{input_rate} -> #{target_rate}): #{inspect(reason)}"
-        )
+        Span.execute([:froth, :qwen, :resample_failed], nil, %{
+          input_rate: input_rate,
+          target_rate: target_rate,
+          reason: inspect(reason)
+        })
 
         {pcm, state}
     end
@@ -420,7 +421,7 @@ defmodule Froth.Qwen do
 
     if type != "input_audio_buffer.append" do
       log_event = Map.delete(event, :audio)
-      Logger.info(event: :qwen_out, kind: type, payload: log_event)
+      Span.execute([:froth, :qwen, :out], nil, %{kind: type, payload: log_event})
     end
 
     Jason.encode!(event)

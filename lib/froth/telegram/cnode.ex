@@ -8,7 +8,7 @@ defmodule Froth.Telegram.Cnode do
 
   use GenServer
 
-  require Logger
+  alias Froth.Telemetry.Span
 
   @name __MODULE__
 
@@ -111,7 +111,7 @@ defmodule Froth.Telegram.Cnode do
   @impl true
   def init([]) do
     if not Node.alive?() do
-      Logger.debug(event: :no_distribution)
+      Span.execute([:froth, :telegram, :cnode, :no_distribution], nil, %{})
       :ignore
     else
       :net_kernel.monitor_nodes(true)
@@ -152,7 +152,12 @@ defmodule Froth.Telegram.Cnode do
   end
 
   def handle_call({:register_session, session_id, pid}, _from, state) do
-    Logger.info(event: :register, session: session_id, pid: pid, connected: state.connected?)
+    Span.execute([:froth, :telegram, :cnode, :register], nil, %{
+      session: session_id,
+      pid: pid,
+      connected: state.connected?
+    })
+
     state = put_session(state, session_id, pid)
 
     if state.connected? do
@@ -165,7 +170,7 @@ defmodule Froth.Telegram.Cnode do
   def handle_call({:send, session_id, json}, _from, state) do
     case Map.fetch(state.sessions, session_id) do
       :error ->
-        Logger.error(event: :unknown_session, session: session_id)
+        Span.execute([:froth, :telegram, :cnode, :unknown_session], nil, %{session: session_id})
         {:reply, {:error, :unknown_session}, state}
 
       {:ok, _session} ->
@@ -173,7 +178,7 @@ defmodule Froth.Telegram.Cnode do
           send_to_cnode(state, {:send, session_id, json})
           {:reply, :ok, state}
         else
-          Logger.error(event: :not_connected, session: session_id)
+          Span.execute([:froth, :telegram, :cnode, :not_connected], nil, %{session: session_id})
           {:reply, {:error, :not_connected}, state}
         end
     end
@@ -254,7 +259,7 @@ defmodule Froth.Telegram.Cnode do
 
   @impl true
   def handle_cast({:unregister_session, session_id, pid}, state) do
-    Logger.info(event: :unregister, session: session_id, pid: pid)
+    Span.execute([:froth, :telegram, :cnode, :unregister], nil, %{session: session_id, pid: pid})
     {state, removed?} = remove_session(state, session_id, pid)
 
     if removed? and state.connected? do
@@ -271,13 +276,13 @@ defmodule Froth.Telegram.Cnode do
 
   def handle_info(:telegram_connect, state) do
     if Node.connect(state.cnode_node) do
-      Logger.info(event: :connected, node: state.cnode_node)
+      Span.execute([:froth, :telegram, :cnode, :connected], nil, %{node: state.cnode_node})
       state = %{state | connected?: true, connect_attempts: 0}
       {:noreply, reinit_sessions(state)}
     else
       state =
         if is_nil(state.port) do
-          Logger.info(event: :launching)
+          Span.execute([:froth, :telegram, :cnode, :launching], nil, %{})
           launch_cnode(state)
         else
           state
@@ -287,7 +292,7 @@ defmodule Froth.Telegram.Cnode do
       delay = min(200 * attempt, 2_000)
 
       if rem(attempt, 10) == 0 do
-        Logger.warning(event: :connect_retry, attempt: attempt)
+        Span.execute([:froth, :telegram, :cnode, :connect_retry], nil, %{attempt: attempt})
       end
 
       Process.send_after(self(), :telegram_connect, delay)
@@ -299,21 +304,21 @@ defmodule Froth.Telegram.Cnode do
     if state.connected? do
       {:noreply, state}
     else
-      Logger.info(event: :node_up, node: node)
+      Span.execute([:froth, :telegram, :cnode, :node_up], nil, %{node: node})
       state = %{state | connected?: true, connect_attempts: 0}
       {:noreply, reinit_sessions(state)}
     end
   end
 
   def handle_info({:nodedown, node}, state) when node == state.cnode_node do
-    Logger.warning(event: :node_down, node: node)
+    Span.execute([:froth, :telegram, :cnode, :node_down], nil, %{node: node})
     state = mark_disconnected(state)
     Process.send_after(self(), :telegram_connect, 200)
     {:noreply, state}
   end
 
   def handle_info({port, {:exit_status, status}}, %{port: port} = state) do
-    Logger.error(event: :exited, status: status)
+    Span.execute([:froth, :telegram, :cnode, :exited], nil, %{status: status})
 
     state =
       state
@@ -327,7 +332,7 @@ defmodule Froth.Telegram.Cnode do
   end
 
   def handle_info({port, {:data, data}}, %{port: port} = state) when is_binary(data) do
-    Logger.debug(event: :output, data: String.trim_trailing(data))
+    Span.execute([:froth, :telegram, :cnode, :output], nil, %{data: String.trim_trailing(data)})
     {:noreply, state}
   end
 
@@ -368,7 +373,7 @@ defmodule Froth.Telegram.Cnode do
   end
 
   def handle_info(msg, state) do
-    Logger.debug(event: :unexpected, message: msg)
+    Span.execute([:froth, :telegram, :cnode, :unexpected], nil, %{message: msg})
     {:noreply, state}
   end
 
@@ -391,10 +396,14 @@ defmodule Froth.Telegram.Cnode do
   end
 
   defp reinit_sessions(state) do
-    Logger.info(event: :reinit, count: map_size(state.sessions))
+    Span.execute([:froth, :telegram, :cnode, :reinit], nil, %{count: map_size(state.sessions)})
 
     Enum.each(state.sessions, fn {session_id, %{pid: pid}} ->
-      Logger.info(event: :reinit_session, session: session_id, pid: pid)
+      Span.execute([:froth, :telegram, :cnode, :reinit_session], nil, %{
+        session: session_id,
+        pid: pid
+      })
+
       send_to_cnode(state, {:init, session_id, pid})
       Kernel.send(pid, :telegram_cnode_connected)
     end)
@@ -406,10 +415,16 @@ defmodule Froth.Telegram.Cnode do
     state = fail_pending_tgcalls_status(state, :not_connected)
 
     if state.connected? do
-      Logger.info(event: :disconnecting, count: map_size(state.sessions))
+      Span.execute([:froth, :telegram, :cnode, :disconnecting], nil, %{
+        count: map_size(state.sessions)
+      })
 
       Enum.each(state.sessions, fn {session_id, %{pid: pid}} ->
-        Logger.info(event: :disconnect_session, session: session_id, pid: pid)
+        Span.execute([:froth, :telegram, :cnode, :disconnect_session], nil, %{
+          session: session_id,
+          pid: pid
+        })
+
         Kernel.send(pid, :telegram_cnode_disconnected)
       end)
     end
@@ -470,7 +485,7 @@ defmodule Froth.Telegram.Cnode do
     exe = state.executable
 
     if not is_binary(exe) or exe == "" or not File.exists?(exe) do
-      Logger.error(event: :missing_executable, path: exe)
+      Span.execute([:froth, :telegram, :cnode, :missing_executable], nil, %{path: exe})
       state
     else
       kill_stale_cnode(state.cnode_node)
@@ -583,7 +598,11 @@ defmodule Froth.Telegram.Cnode do
         |> Enum.each(fn pid_str ->
           case Integer.parse(pid_str) do
             {pid, _} ->
-              Logger.info(event: :kill_stale, pid: pid, node: node_str)
+              Span.execute([:froth, :telegram, :cnode, :kill_stale], nil, %{
+                pid: pid,
+                node: node_str
+              })
+
               System.cmd("kill", [pid_str])
 
             :error ->

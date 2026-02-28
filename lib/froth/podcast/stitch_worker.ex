@@ -5,7 +5,7 @@ defmodule Froth.Podcast.StitchWorker do
   """
   use Oban.Worker, queue: :podcast, max_attempts: 3
 
-  require Logger
+  alias Froth.Telemetry.Span
 
   @default_pause_ms 300
 
@@ -144,13 +144,12 @@ defmodule Froth.Podcast.StitchWorker do
     File.rm(concat_path)
     Enum.each(seg_paths, &File.rm/1)
 
-    Logger.info(
-      event: :podcast_complete,
+    Span.execute([:froth, :podcast, :complete], nil, %{
       batch_id: batch_id,
       label: label,
       segments: total,
       duration: duration_str
-    )
+    })
 
     :ok
   end

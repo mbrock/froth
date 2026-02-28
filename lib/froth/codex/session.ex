@@ -9,8 +9,8 @@ defmodule Froth.Codex.Session do
 
   use GenServer
 
-  require Logger
   alias Froth.Codex.Events, as: CodexEvents
+  alias Froth.Telemetry.Span
 
   @registry Froth.Codex.SessionRegistry
   @supervisor Froth.Codex.SessionSupervisor
@@ -263,11 +263,10 @@ defmodule Froth.Codex.Session do
   end
 
   def handle_info({:EXIT, pid, reason}, %{codex_pid: pid} = state) when is_pid(pid) do
-    Logger.warning(
-      event: :codex_session_codex_exit,
+    Span.execute([:froth, :codex, :session_codex_exit], nil, %{
       session_id: state.session_id,
       reason: inspect(reason)
-    )
+    })
 
     state =
       state
@@ -629,11 +628,10 @@ defmodule Froth.Codex.Session do
     apply_notification(state, method, params)
   rescue
     error ->
-      Logger.error(
-        event: :codex_notification_failed,
+      Span.execute([:froth, :codex, :notification_failed], nil, %{
         method: method,
         error: Exception.message(error)
-      )
+      })
 
       push_entry(state, :error, "failed to process #{method}: #{Exception.message(error)}")
   end

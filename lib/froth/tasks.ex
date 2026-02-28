@@ -6,8 +6,8 @@ defmodule Froth.Tasks do
   """
 
   alias Froth.{Repo, Task, TaskEvent, TaskTelegramLink}
+  alias Froth.Telemetry.Span
   import Ecto.Query
-  require Logger
 
   @pubsub Froth.PubSub
 
@@ -18,12 +18,11 @@ defmodule Froth.Tasks do
 
     case Repo.insert(changeset) do
       {:ok, task} ->
-        Logger.info(
-          event: :task_created,
+        Span.execute([:froth, :tasks, :created], nil, %{
           task_id: task.task_id,
           type: task.type,
           label: task.label
-        )
+        })
 
         append(task.task_id, "status", "created")
         {:ok, task}
@@ -40,7 +39,7 @@ defmodule Froth.Tasks do
       from(t in Task, where: t.task_id == ^task_id)
       |> Repo.update_all(set: [status: "running", started_at: now])
 
-    Logger.info(event: :task_started, task_id: task_id)
+    Span.execute([:froth, :tasks, :started], nil, %{task_id: task_id})
     append(task_id, "status", "running")
     :ok
   end
@@ -58,7 +57,11 @@ defmodule Froth.Tasks do
       merge_metadata(task_id, metadata_updates)
     end
 
-    Logger.info(event: :task_completed, task_id: task_id, metadata: metadata_updates)
+    Span.execute([:froth, :tasks, :completed], nil, %{
+      task_id: task_id,
+      metadata: metadata_updates
+    })
+
     append(task_id, "status", "completed")
     fire_notifications(task_id)
     :ok
@@ -70,7 +73,11 @@ defmodule Froth.Tasks do
     from(t in Task, where: t.task_id == ^task_id)
     |> Repo.update_all(set: [status: "failed", finished_at: now])
 
-    Logger.warning(event: :task_failed, task_id: task_id, reason: String.slice(reason, 0, 200))
+    Span.execute([:froth, :tasks, :failed], nil, %{
+      task_id: task_id,
+      reason: String.slice(reason, 0, 200)
+    })
+
     append(task_id, "status", "failed: #{reason}")
     fire_notifications(task_id)
     :ok
@@ -82,7 +89,7 @@ defmodule Froth.Tasks do
     from(t in Task, where: t.task_id == ^task_id)
     |> Repo.update_all(set: [status: "stopped", finished_at: now])
 
-    Logger.info(event: :task_stopped, task_id: task_id)
+    Span.execute([:froth, :tasks, :stopped], nil, %{task_id: task_id})
     append(task_id, "status", "stopped")
     fire_notifications(task_id)
     :ok
@@ -291,13 +298,12 @@ defmodule Froth.Tasks do
 
     for link <- links do
       if link.chat_id do
-        Logger.info(
-          event: :task_notification_fired,
+        Span.execute([:froth, :tasks, :notification_fired], nil, %{
           task_id: task_id,
           bot_id: link.bot_id,
           chat_id: link.chat_id,
           task_status: task.status
-        )
+        })
 
         output_preview = recent_output_text(task_id, 10)
 

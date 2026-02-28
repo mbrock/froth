@@ -14,8 +14,7 @@ defmodule Froth.Codex.Task do
       )
   """
 
-  require Logger
-
+  alias Froth.Telemetry.Span
   alias Froth.Codex.Session, as: CodexSession
   alias Froth.Telegram.BotAdapter
 
@@ -52,7 +51,7 @@ defmodule Froth.Codex.Task do
     # Send the prompt to Codex
     :ok = CodexSession.send_prompt(session_id, prompt)
 
-    Logger.info(event: :codex_task_started, session_id: session_id, prompt: prompt)
+    Span.execute([:froth, :codex, :task_started], nil, %{session_id: session_id, prompt: prompt})
 
     if await do
       CodexSession.subscribe(session_id)

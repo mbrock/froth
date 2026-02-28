@@ -4,9 +4,9 @@ defmodule Froth.Codex.Events do
   """
 
   import Ecto.Query
-  require Logger
 
   alias Froth.Codex.Event
+  alias Froth.Telemetry.Span
   alias Froth.Repo
 
   @max_stored_entries 2_000
@@ -36,11 +36,10 @@ defmodule Froth.Codex.Events do
     {entries, max_sequence}
   rescue
     error ->
-      Logger.warning(
-        event: :codex_events_load_failed,
+      Span.execute([:froth, :codex, :events_load_failed], nil, %{
         session_id: session_id,
         error: Exception.message(error)
-      )
+      })
 
       {[], 0}
   end
@@ -73,7 +72,7 @@ defmodule Froth.Codex.Events do
     |> Repo.all(log: false)
   rescue
     error ->
-      Logger.warning(event: :codex_events_list_failed, error: Exception.message(error))
+      Span.execute([:froth, :codex, :events_list_failed], nil, %{error: Exception.message(error)})
       []
   end
 
@@ -117,12 +116,11 @@ defmodule Froth.Codex.Events do
     :ok
   rescue
     error ->
-      Logger.warning(
-        event: :codex_events_upsert_failed,
+      Span.execute([:froth, :codex, :events_upsert_failed], nil, %{
         session_id: session_id,
         entry_id: inspect(entry[:id] || entry["id"]),
         error: Exception.message(error)
-      )
+      })
 
       :ok
   end

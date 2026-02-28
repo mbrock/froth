@@ -66,7 +66,7 @@ defmodule Froth.Podcast do
      than letting the voice model's natural cadence carry the informality.
   """
 
-  require Logger
+  alias Froth.Telemetry.Span
 
   @default_model "minimax/speech-2.8-hd"
   @default_pause_ms 300
@@ -176,10 +176,13 @@ defmodule Froth.Podcast do
     public_url = "#{public_base()}/#{filename}"
 
     if File.exists?(local_path) do
-      Logger.info("Already downloaded: #{local_path}")
+      Span.execute([:froth, :podcast, :already_downloaded], nil, %{path: local_path})
       {:ok, %{local_path: local_path, public_url: public_url}}
     else
-      Logger.info("Downloading #{episode_url} -> #{local_path}")
+      Span.execute([:froth, :podcast, :downloading], nil, %{
+        episode_url: episode_url,
+        path: local_path
+      })
 
       {_, exit} =
         System.cmd(
@@ -389,7 +392,7 @@ defmodule Froth.Podcast do
     public_url = "#{public_base()}/#{filename}"
 
     if File.exists?(local_path) do
-      Logger.info("Already downloaded: #{local_path}")
+      Span.execute([:froth, :podcast, :already_downloaded], nil, %{path: local_path})
       {:ok, %{local_path: local_path, public_url: public_url}}
     else
       tmp_template = "/tmp/yt_#{slug}.%(ext)s"

@@ -10,5 +10,4 @@ defmodule Froth.RPC do
     {result, _bindings} = Code.eval_string(code)
     result
   end
-
 end
