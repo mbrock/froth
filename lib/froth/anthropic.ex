@@ -338,13 +338,9 @@ defmodule Froth.Anthropic do
     end
   end
 
-  @silent_sse_events [:text_delta, :thinking_delta, :tool_use_delta]
-
-  defp emit_sse_event({type, data}, parent_id) when type not in @silent_sse_events do
+  defp emit_sse_event({type, data}, parent_id) do
     Span.execute([:froth, :http, :sse, type], parent_id, %{data: data})
   end
-
-  defp emit_sse_event(_event, _parent_id), do: :ok
 
   # -- Helpers --
 
