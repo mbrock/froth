@@ -25,7 +25,6 @@ defmodule Froth.Agent.Worker do
           phase: phase(),
           cycle: Cycle.t(),
           head_id: String.t() | nil,
-          empty_reply_retries: non_neg_integer(),
           cycle_span_id: String.t() | nil,
           cycle_start: integer() | nil,
           think_span_id: String.t() | nil,
@@ -40,11 +39,8 @@ defmodule Froth.Agent.Worker do
     :cycle_start,
     :think_span_id,
     :think_start,
-    phase: :initial,
-    empty_reply_retries: 0
+    phase: :initial
   ]
-
-  @max_empty_reply_retries 2
 
   def child_spec(args) do
     %{
@@ -89,21 +85,13 @@ defmodule Froth.Agent.Worker do
       |> Map.drop([:content, :text])
       |> Map.new(fn {k, v} -> {to_string(k), v} end)
 
+    worker = persist_agent_message(worker, response.content, response_metadata)
+
     case parse_tool_uses(response.content) do
       [] ->
-        if has_visible_response?(response.content) do
-          worker = persist_agent_message(worker, response.content, response_metadata)
-          {:stop, :normal, %{worker | phase: :done, empty_reply_retries: 0}}
-        else
-          maybe_retry_empty_response(worker)
-        end
+        {:stop, :normal, %{worker | phase: :done}}
 
       tool_uses ->
-        worker =
-          worker
-          |> persist_agent_message(response.content, response_metadata)
-          |> Map.put(:empty_reply_retries, 0)
-
         maybe_tools_done(start_tools(worker, tool_uses))
     end
   end
@@ -283,45 +271,6 @@ defmodule Froth.Agent.Worker do
 
   defp find_invocation(_, _), do: nil
 
-  defp has_visible_response?(content) when is_binary(content) do
-    String.trim(content) != ""
-  end
-
-  defp has_visible_response?(content) when is_list(content) do
-    Enum.any?(content, fn
-      %{"type" => "text", "text" => text} when is_binary(text) ->
-        String.trim(text) != ""
-
-      %{"type" => "tool_use"} ->
-        true
-
-      %{"type" => "tool_result"} ->
-        true
-
-      _ ->
-        false
-    end)
-  end
-
-  defp has_visible_response?(content) when is_map(content) do
-    case content["text"] do
-      text when is_binary(text) -> String.trim(text) != ""
-      _ -> false
-    end
-  end
-
-  defp has_visible_response?(_), do: false
-
-  defp maybe_retry_empty_response(worker) do
-    retry = worker.empty_reply_retries + 1
-
-    if retry <= @max_empty_reply_retries do
-      Span.execute([:froth, :agent, :empty_retry], worker.cycle_span_id, %{retry: retry})
-      {:noreply, %{worker | phase: :continuing, empty_reply_retries: retry}, {:continue, :think}}
-    else
-      {:stop, :normal, %{worker | phase: :done}}
-    end
-  end
 
   defp normalize_reason(:normal), do: :normal
   defp normalize_reason(:shutdown), do: :shutdown

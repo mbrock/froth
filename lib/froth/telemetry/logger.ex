@@ -31,7 +31,6 @@ defmodule Froth.Telemetry.Logger do
   end
 
   defp level_for([:froth, _, _, :exception]), do: :error
-  defp level_for([:froth, :agent, :empty_retry]), do: :warning
   defp level_for([:froth, :http, :sse | _]), do: :debug
   defp level_for([:froth, _, _, :start]), do: :debug
   defp level_for(_), do: :info

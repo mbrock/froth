@@ -31,8 +31,7 @@ defmodule Froth.Telemetry do
     [:froth, :agent, :cycle, :start],
     [:froth, :agent, :cycle, :stop],
     [:froth, :agent, :think, :start],
-    [:froth, :agent, :think, :stop],
-    [:froth, :agent, :empty_retry]
+    [:froth, :agent, :think, :stop]
   ]
 
   @all_events @http_events ++ @anthropic_events ++ @agent_events
