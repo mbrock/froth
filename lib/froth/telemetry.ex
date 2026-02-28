@@ -34,7 +34,14 @@ defmodule Froth.Telemetry do
     [:froth, :agent, :think, :stop]
   ]
 
-  @all_events @http_events ++ @anthropic_events ++ @agent_events
+  @telegram_events [
+    [:froth, :telegram, :bot, :listening],
+    [:froth, :telegram, :bot, :cycle_started],
+    [:froth, :telegram, :bot, :cycle_finished],
+    [:froth, :telegram, :bot, :busy]
+  ]
+
+  @all_events @http_events ++ @anthropic_events ++ @agent_events ++ @telegram_events
 
   def events, do: @all_events
 

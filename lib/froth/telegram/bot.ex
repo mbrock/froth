@@ -7,12 +7,12 @@ defmodule Froth.Telegram.Bot do
   """
 
   use GenServer
-  require Logger
 
   import Ecto.Query
 
   alias Froth.Agent
   alias Froth.Agent.{Config, Cycle, Message, ToolUse, Worker}
+  alias Froth.Telemetry.Span
   alias Froth.Inference.Prompt
   alias Froth.Inference.Tools
   alias Froth.Repo
@@ -82,12 +82,11 @@ defmodule Froth.Telegram.Bot do
 
     :ok = BotAdapter.subscribe(bot_config.session_id)
 
-    Logger.info(
-      event: :bot_listening,
+    Span.execute([:froth, :telegram, :bot, :listening], nil, %{
       bot_id: bot_config.id,
       session_id: bot_config.session_id,
       username: bot_config.bot_username
-    )
+    })
 
     {:ok, %__MODULE__{bot_config: bot_config}}
   end
@@ -181,15 +180,11 @@ defmodule Froth.Telegram.Bot do
       ) do
     state = normalize_state(state)
 
-    if reason != :normal do
-      Logger.error(
-        event: :cycle_crashed,
-        cycle_id: state.cycle && state.cycle.id,
-        reason: inspect(reason)
-      )
-    end
-
-    Logger.info(event: :cycle_finished, cycle_id: state.cycle && state.cycle.id)
+    Span.execute([:froth, :telegram, :bot, :cycle_finished], nil, %{
+      cycle_id: state.cycle && state.cycle.id,
+      bot_id: state.bot_config.id,
+      reason: reason
+    })
 
     state =
       state
@@ -354,7 +349,7 @@ defmodule Froth.Telegram.Bot do
     bc = state.bot_config
 
     if state.worker_pid do
-      Logger.info(event: :cycle_busy, bot_id: bc.id, chat_id: chat_id)
+      Span.execute([:froth, :telegram, :bot, :busy], nil, %{bot_id: bc.id, chat_id: chat_id})
       BotAdapter.send_message(bc.session_id, chat_id, "(busy, try again in a moment)")
       state
     else
@@ -398,7 +393,11 @@ defmodule Froth.Telegram.Bot do
       {:ok, pid} = Worker.start_link({cycle, config})
       ref = Process.monitor(pid)
 
-      Logger.info(event: :cycle_started, bot_id: bc.id, cycle_id: cycle.id, chat_id: chat_id)
+      Span.execute([:froth, :telegram, :bot, :cycle_started], nil, %{
+        bot_id: bc.id,
+        cycle_id: cycle.id,
+        chat_id: chat_id
+      })
 
       %{
         state
