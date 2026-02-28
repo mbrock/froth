@@ -7,7 +7,6 @@ defmodule Froth.Agent.Worker do
   """
 
   use GenServer
-  require Logger
 
   alias Froth.Agent
   alias Froth.Agent.{Config, Cycle, Message, ToolUse, ToolResult}
@@ -25,10 +24,20 @@ defmodule Froth.Agent.Worker do
           phase: phase(),
           cycle: Cycle.t(),
           head_id: String.t() | nil,
-          empty_reply_retries: non_neg_integer()
+          empty_reply_retries: non_neg_integer(),
+          telemetry_start: integer() | nil,
+          think_start: integer() | nil
         }
 
-  defstruct [:config, :cycle, :head_id, phase: :initial, empty_reply_retries: 0]
+  defstruct [
+    :config,
+    :cycle,
+    :head_id,
+    :telemetry_start,
+    :think_start,
+    phase: :initial,
+    empty_reply_retries: 0
+  ]
 
   @max_empty_reply_retries 2
 
@@ -46,10 +55,19 @@ defmodule Froth.Agent.Worker do
 
   @impl true
   def init({cycle, config}) do
+    now = System.monotonic_time()
+
+    :telemetry.execute(
+      [:froth, :agent, :cycle, :start],
+      %{system_time: System.system_time()},
+      %{cycle_id: cycle.id, model: config.model}
+    )
+
     worker = %__MODULE__{
       config: config,
       cycle: cycle,
-      head_id: Agent.latest_head_id(cycle)
+      head_id: Agent.latest_head_id(cycle),
+      telemetry_start: now
     }
 
     {:ok, worker, {:continue, :think}}
@@ -63,6 +81,7 @@ defmodule Froth.Agent.Worker do
   @impl true
   def handle_info({ref, {:ok, response}}, %{phase: {:thinking, %{ref: ref}}} = worker) do
     Process.demonitor(ref, [:flush])
+    worker = emit_think_stop(worker)
 
     response_metadata =
       response
@@ -90,6 +109,7 @@ defmodule Froth.Agent.Worker do
 
   def handle_info({ref, {:error, reason}}, %{phase: {:thinking, %{ref: ref}}} = worker) do
     Process.demonitor(ref, [:flush])
+    worker = emit_think_stop(worker, %{error: reason})
     {:stop, {:error, reason}, worker}
   end
 
@@ -113,6 +133,7 @@ defmodule Froth.Agent.Worker do
         {:DOWN, ref, :process, _pid, reason},
         %{phase: {:thinking, %{ref: ref}}} = worker
       ) do
+    worker = emit_think_stop(worker, %{error: reason})
     {:stop, {:error, reason}, worker}
   end
 
@@ -133,6 +154,15 @@ defmodule Froth.Agent.Worker do
 
   def handle_info(_message, worker), do: {:noreply, worker}
 
+  @impl true
+  def terminate(reason, worker) do
+    :telemetry.execute(
+      [:froth, :agent, :cycle, :stop],
+      %{duration: System.monotonic_time() - worker.telemetry_start},
+      %{cycle_id: worker.cycle.id, reason: normalize_reason(reason), phase: worker.phase}
+    )
+  end
+
   defp persist_message(worker, role, content) do
     {_msg, head_id} = Agent.append_message(worker.cycle, worker.head_id, role, content)
     %{worker | head_id: head_id}
@@ -144,6 +174,14 @@ defmodule Froth.Agent.Worker do
   end
 
   defp start_thinking(worker) do
+    now = System.monotonic_time()
+
+    :telemetry.execute(
+      [:froth, :agent, :think, :start],
+      %{system_time: System.system_time()},
+      %{cycle_id: worker.cycle.id}
+    )
+
     api_messages =
       worker.head_id
       |> Agent.load_messages()
@@ -157,7 +195,8 @@ defmodule Froth.Agent.Worker do
         model: worker.config.model,
         tools: worker.config.tools,
         thinking: worker.config.thinking,
-        effort: worker.config.effort
+        effort: worker.config.effort,
+        cycle_id: cycle_id
       ]
       |> Enum.reject(fn {_k, v} -> is_nil(v) end)
 
@@ -170,7 +209,19 @@ defmodule Froth.Agent.Worker do
         )
       end)
 
-    %{worker | phase: {:thinking, task}}
+    %{worker | phase: {:thinking, task}, think_start: now}
+  end
+
+  defp emit_think_stop(worker, extra_meta \\ %{}) do
+    if worker.think_start do
+      :telemetry.execute(
+        [:froth, :agent, :think, :stop],
+        %{duration: System.monotonic_time() - worker.think_start},
+        Map.merge(%{cycle_id: worker.cycle.id}, extra_meta)
+      )
+    end
+
+    %{worker | think_start: nil}
   end
 
   defp parse_tool_uses(content) when is_list(content) do
@@ -272,11 +323,21 @@ defmodule Froth.Agent.Worker do
     retry = worker.empty_reply_retries + 1
 
     if retry <= @max_empty_reply_retries do
-      Logger.warning(event: :agent_empty_response_retry, cycle_id: worker.cycle.id, retry: retry)
+      :telemetry.execute(
+        [:froth, :agent, :empty_retry],
+        %{retry: retry},
+        %{cycle_id: worker.cycle.id}
+      )
 
       {:noreply, %{worker | phase: :continuing, empty_reply_retries: retry}, {:continue, :think}}
     else
       {:stop, :normal, %{worker | phase: :done}}
     end
   end
+
+  defp normalize_reason(:normal), do: :normal
+  defp normalize_reason(:shutdown), do: :shutdown
+  defp normalize_reason({:shutdown, _}), do: :shutdown
+  defp normalize_reason({:error, reason}), do: {:error, reason}
+  defp normalize_reason(other), do: {:error, other}
 end

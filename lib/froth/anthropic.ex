@@ -51,12 +51,33 @@ defmodule Froth.Anthropic do
 
   def default_system_prompt, do: String.trim(@default_system_prompt)
 
+  # -- Public API --
+
   @spec reply([chat_message()], keyword()) :: {:ok, String.t()} | {:error, term()}
   def reply(history, opts \\ []) when is_list(history) do
     with {:ok, config} <- build_config(opts) do
-      with_telemetry(config, history, fn ->
+      request_id = new_request_id()
+      cycle_id = Keyword.get(opts, :cycle_id)
+
+      meta = %{
+        request_id: request_id,
+        cycle_id: cycle_id,
+        mode: :reply,
+        model: config.model,
+        message_count: length(history),
+        tool_count: 0
+      }
+
+      :telemetry.span([:froth, :anthropic, :request], meta, fn ->
         body = build_request_body(config, Enum.map(history, &to_api_message/1))
-        finch_post_json(@api_url, config.api_key, body)
+
+        case finch_post_json(@api_url, config.api_key, body) do
+          {:ok, text} = result ->
+            {result, %{ok: true, text_len: String.length(text)}}
+
+          {:error, reason} = error ->
+            {error, %{ok: false, error: reason}}
+        end
       end)
     end
   end
@@ -70,23 +91,40 @@ defmodule Froth.Anthropic do
   def stream_single(api_messages, on_event, opts \\ [])
       when is_list(api_messages) and is_function(on_event, 1) do
     with {:ok, config} <- build_config(opts) do
-      body = build_request_body(config, api_messages, stream: true, tools: true)
       request_id = new_request_id()
+      cycle_id = Keyword.get(opts, :cycle_id)
+      body = build_request_body(config, api_messages, stream: true, tools: true)
 
-      emit_stream_start(:stream_single, request_id, body)
+      meta = %{
+        request_id: request_id,
+        cycle_id: cycle_id,
+        mode: :stream_single,
+        model: config.model,
+        message_count: length(api_messages),
+        tool_count: length(config.tools)
+      }
 
-      case finch_stream_sse_events(@api_url, config.headers, body, on_event,
-             request_id: request_id,
-             mode: :stream_single
-           ) do
-        {:ok, result} ->
-          emit_stream_stop(:stream_single, request_id, result)
-          {:ok, result}
+      :telemetry.span([:froth, :anthropic, :request], meta, fn ->
+        case finch_stream_sse_events(@api_url, config.headers, body, on_event,
+               request_id: request_id,
+               cycle_id: cycle_id,
+               mode: :stream_single
+             ) do
+          {:ok, result} ->
+            stop_meta = %{
+              ok: true,
+              stop_reason: result.stop_reason,
+              usage: result.usage,
+              text_len: String.length(result.text || ""),
+              content_blocks: length(result.content)
+            }
 
-        {:error, reason} = error ->
-          emit_stream_error(:stream_single, request_id, reason)
-          error
-      end
+            {{:ok, result}, stop_meta}
+
+          {:error, reason} = error ->
+            {error, %{ok: false, error: reason}}
+        end
+      end)
     end
   end
 
@@ -99,51 +137,48 @@ defmodule Froth.Anthropic do
     on_tool = Keyword.get(opts, :on_tool, fn _name, _input -> {:error, "no tools configured"} end)
 
     with {:ok, config} <- build_config(opts) do
-      api_messages = Enum.map(history, &ensure_api_message/1)
       request_id = new_request_id()
+      cycle_id = Keyword.get(opts, :cycle_id)
+      api_messages = Enum.map(history, &ensure_api_message/1)
 
       on_persist.(api_messages)
 
-      emit_stream_start(:tool_loop, request_id, %{
-        "model" => config.model,
-        "messages" => api_messages,
-        "thinking" => config.thinking,
-        "tools" => config.tools
-      })
+      meta = %{
+        request_id: request_id,
+        cycle_id: cycle_id,
+        mode: :tool_loop,
+        model: config.model,
+        message_count: length(api_messages),
+        tool_count: length(config.tools)
+      }
 
-      result =
-        with_telemetry(
-          config,
-          history,
-          fn ->
-            tool_loop(config, api_messages, on_event, on_persist, on_tool, "", 0, %{}, request_id)
-          end,
-          stream: true
-        )
+      :telemetry.span([:froth, :anthropic, :request], meta, fn ->
+        case tool_loop(
+               config,
+               api_messages,
+               on_event,
+               on_persist,
+               on_tool,
+               "",
+               0,
+               %{},
+               request_id,
+               cycle_id
+             ) do
+          {:ok, %{text: text, api_messages: msgs, usage: usage}} = result ->
+            stop_meta = %{
+              ok: true,
+              text_len: String.length(text),
+              api_message_count: length(msgs),
+              usage: usage
+            }
 
-      case result do
-        {:ok, %{text: text, api_messages: api_messages, usage: usage}} ->
-          :telemetry.execute(
-            [:froth, :anthropic, :tool_loop, :stop],
-            %{text_len: String.length(text), api_message_count: length(api_messages), usage: usage},
-            %{request_id: request_id}
-          )
+            {result, stop_meta}
 
-          result
-
-        {:ok, %{text: text, api_messages: api_messages}} ->
-          :telemetry.execute(
-            [:froth, :anthropic, :tool_loop, :stop],
-            %{text_len: String.length(text), api_message_count: length(api_messages)},
-            %{request_id: request_id}
-          )
-
-          result
-
-        {:error, reason} = error ->
-          emit_stream_error(:tool_loop, request_id, reason)
-          error
-      end
+          {:error, reason} = error ->
+            {error, %{ok: false, error: reason}}
+        end
+      end)
     end
   end
 
@@ -234,94 +269,114 @@ defmodule Froth.Anthropic do
          acc_text,
          iter,
          acc_usage,
-         request_id
+         request_id,
+         cycle_id
        ) do
     turn = iter + 1
     body = build_request_body(config, api_messages, stream: true, tools: true)
-    emit_turn_start(request_id, turn, body)
 
-    with {:ok, %{text: text, content: content, stop_reason: stop_reason} = stream_reply} <-
-           finch_stream_sse_events(@api_url, config.headers, body, on_event,
-             request_id: request_id,
-             mode: :tool_loop,
-             turn: turn
-           ) do
-      usage = Map.get(stream_reply, :usage, %{})
-      acc_usage = merge_usage_totals(acc_usage, usage)
-      acc_text = join_text(acc_text, text)
-      tool_uses = Enum.filter(content, &match?(%{"type" => "tool_use"}, &1))
-      emit_turn_stop(request_id, turn, stop_reason, text, usage, length(tool_uses))
+    turn_meta = %{
+      request_id: request_id,
+      cycle_id: cycle_id,
+      turn: turn,
+      message_count: length(api_messages),
+      tool_count: length(config.tools)
+    }
 
-      if stop_reason == "tool_use" and tool_uses != [] do
-        tool_results = run_tools(tool_uses, on_event, on_tool, request_id, turn)
+    :telemetry.span([:froth, :anthropic, :turn], turn_meta, fn ->
+      with {:ok, %{text: text, content: content, stop_reason: stop_reason} = stream_reply} <-
+             finch_stream_sse_events(@api_url, config.headers, body, on_event,
+               request_id: request_id,
+               cycle_id: cycle_id,
+               mode: :tool_loop,
+               turn: turn
+             ) do
+        usage = Map.get(stream_reply, :usage, %{})
+        acc_usage = merge_usage_totals(acc_usage, usage)
+        acc_text = join_text(acc_text, text)
+        tool_uses = Enum.filter(content, &match?(%{"type" => "tool_use"}, &1))
 
-        api_messages =
-          api_messages ++
-            [
-              %{"role" => "assistant", "content" => content},
-              %{"role" => "user", "content" => tool_results}
-            ]
+        turn_stop_meta = %{
+          stop_reason: stop_reason,
+          text_len: String.length(to_string(text || "")),
+          tool_use_count: length(tool_uses),
+          usage: usage
+        }
 
-        on_persist.(api_messages)
+        if stop_reason == "tool_use" and tool_uses != [] do
+          tool_results = run_tools(tool_uses, on_event, on_tool, request_id, cycle_id, turn)
 
-        tool_loop(
-          config,
-          api_messages,
-          on_event,
-          on_persist,
-          on_tool,
-          acc_text,
-          turn,
-          acc_usage,
-          request_id
-        )
-      else
-        final_messages = api_messages ++ [%{"role" => "assistant", "content" => content}]
-        on_persist.(final_messages)
-        {:ok, %{text: String.trim(acc_text), api_messages: final_messages, usage: acc_usage}}
+          api_messages =
+            api_messages ++
+              [
+                %{"role" => "assistant", "content" => content},
+                %{"role" => "user", "content" => tool_results}
+              ]
+
+          on_persist.(api_messages)
+
+          result =
+            tool_loop(
+              config,
+              api_messages,
+              on_event,
+              on_persist,
+              on_tool,
+              acc_text,
+              turn,
+              acc_usage,
+              request_id,
+              cycle_id
+            )
+
+          {result, turn_stop_meta}
+        else
+          final_messages = api_messages ++ [%{"role" => "assistant", "content" => content}]
+          on_persist.(final_messages)
+          result = {:ok, %{text: String.trim(acc_text), api_messages: final_messages, usage: acc_usage}}
+          {result, turn_stop_meta}
+        end
       end
-    end
+    end)
   end
 
-  defp run_tools(tool_uses, on_event, on_tool, request_id, turn) do
+  defp run_tools(tool_uses, on_event, on_tool, request_id, cycle_id, turn) do
     Enum.map(tool_uses, fn %{"id" => id, "name" => name, "input" => input} ->
       tool_meta = %{
         request_id: request_id,
+        cycle_id: cycle_id,
         turn: turn,
         tool_use_id: id,
-        tool_name: name
+        tool_name: name,
+        input: input
       }
 
-      :telemetry.execute([:froth, :anthropic, :tool, :start], %{}, tool_meta)
+      :telemetry.span([:froth, :anthropic, :tool_exec], tool_meta, fn ->
+        {is_error, content} =
+          case on_tool.(name, input) do
+            {:ok, out} -> {false, out}
+            {:error, msg} -> {true, msg}
+          end
 
-      {is_error, content} =
-        case on_tool.(name, input) do
-          {:ok, out} -> {false, out}
-          {:error, msg} -> {true, msg}
-        end
+        on_event.(
+          {:tool_result,
+           %{
+             "tool_use_id" => id,
+             "name" => name,
+             "is_error" => is_error,
+             "content" => content
+           }}
+        )
 
-      on_event.(
-        {:tool_result,
-         %{
-           "tool_use_id" => id,
-           "name" => name,
-           "is_error" => is_error,
-           "content" => content
-         }}
-      )
+        result = %{
+          "type" => "tool_result",
+          "tool_use_id" => id,
+          "is_error" => is_error,
+          "content" => content
+        }
 
-      :telemetry.execute(
-        [:froth, :anthropic, :tool, :stop],
-        %{},
-        Map.put(tool_meta, :is_error, is_error)
-      )
-
-      %{
-        "type" => "tool_result",
-        "tool_use_id" => id,
-        "is_error" => is_error,
-        "content" => content
-      }
+        {result, %{is_error: is_error, result: content}}
+      end)
     end)
   end
 
@@ -333,83 +388,6 @@ defmodule Froth.Anthropic do
 
   defp new_request_id do
     "anth-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
-  end
-
-  defp emit_stream_start(mode, request_id, body) when is_map(body) do
-    :telemetry.execute(
-      [:froth, :anthropic, :stream, :start],
-      %{
-        message_count: length(Map.get(body, "messages", [])),
-        tool_count: length(Map.get(body, "tools", []))
-      },
-      %{
-        request_id: request_id,
-        mode: mode,
-        model: Map.get(body, "model")
-      }
-    )
-
-    Froth.broadcast(
-      "anthropic:#{request_id}",
-      {mode, :stream_start, %{model: Map.get(body, "model")}}
-    )
-  end
-
-  defp emit_stream_stop(mode, request_id, result) when is_map(result) do
-    usage = Map.get(result, :usage, %{})
-
-    :telemetry.execute(
-      [:froth, :anthropic, :stream, :stop],
-      %{
-        text_len: Map.get(result, :text, "") |> to_string() |> String.length(),
-        content_blocks: length(Map.get(result, :content, [])),
-        duration: nil
-      },
-      %{
-        request_id: request_id,
-        mode: mode,
-        stop_reason: Map.get(result, :stop_reason),
-        usage: usage
-      }
-    )
-
-    Froth.broadcast(
-      "anthropic:#{request_id}",
-      {mode, :stream_finish, %{stop_reason: Map.get(result, :stop_reason), usage: usage}}
-    )
-  end
-
-  defp emit_stream_error(mode, request_id, reason) do
-    :telemetry.execute(
-      [:froth, :anthropic, :stream, :error],
-      %{},
-      %{request_id: request_id, mode: mode, reason: reason}
-    )
-
-    Froth.broadcast("anthropic:#{request_id}", {mode, :stream_error, reason})
-  end
-
-  defp emit_turn_start(request_id, turn, body) do
-    :telemetry.execute(
-      [:froth, :anthropic, :turn, :start],
-      %{
-        message_count: length(Map.get(body, "messages", [])),
-        tool_count: length(Map.get(body, "tools", []))
-      },
-      %{request_id: request_id, turn: turn}
-    )
-  end
-
-  defp emit_turn_stop(request_id, turn, stop_reason, text, usage, tool_use_count) do
-    :telemetry.execute(
-      [:froth, :anthropic, :turn, :stop],
-      %{
-        text_len: String.length(to_string(text || "")),
-        tool_use_count: tool_use_count,
-        usage: usage
-      },
-      %{request_id: request_id, turn: turn, stop_reason: stop_reason}
-    )
   end
 
   defp merge_usage_totals(acc, usage) when is_map(usage) do
@@ -429,112 +407,95 @@ defmodule Froth.Anthropic do
 
   defp merge_usage_totals(acc, _usage), do: acc
 
+  # -- SSE event telemetry --
+
   defp wrap_on_event_with_telemetry(on_event, opts) when is_function(on_event, 1) do
+    base_meta = %{
+      request_id: opts[:request_id],
+      cycle_id: opts[:cycle_id],
+      mode: opts[:mode],
+      turn: opts[:turn]
+    }
+
     fn event ->
-      emit_sse_event(event, opts)
-      Froth.broadcast("anthropic:#{opts[:request_id]}", {opts[:mode], event})
+      emit_sse_event(event, base_meta)
       on_event.(event)
     end
   end
 
-  defp emit_sse_event({:message_start, %{"id" => id, "model" => model}}, opts) do
+  defp emit_sse_event({:message_start, %{"id" => id, "model" => model} = data}, meta) do
     :telemetry.execute(
       [:froth, :anthropic, :sse, :message_start],
       %{},
-      %{request_id: opts[:request_id], response_id: id, model: model}
+      Map.merge(meta, %{response_id: id, model: model, data: data})
     )
   end
 
-  defp emit_sse_event({:thinking_start, %{"index" => idx}}, opts) do
+  defp emit_sse_event({:thinking_start, %{"index" => idx}}, meta) do
     :telemetry.execute(
       [:froth, :anthropic, :sse, :thinking_start],
       %{},
-      %{request_id: opts[:request_id], index: idx}
+      Map.merge(meta, %{index: idx})
     )
   end
 
-  defp emit_sse_event({:thinking_stop, %{"index" => idx, "thinking" => thinking}}, opts) do
+  defp emit_sse_event({:thinking_stop, %{"index" => idx, "thinking" => thinking}}, meta) do
     :telemetry.execute(
       [:froth, :anthropic, :sse, :thinking_stop],
       %{},
-      %{request_id: opts[:request_id], index: idx, thinking_len: String.length(thinking || "")}
+      Map.merge(meta, %{index: idx, thinking: thinking, thinking_len: String.length(thinking || "")})
     )
   end
 
-  defp emit_sse_event({:tool_use_start, %{"id" => id, "name" => name}}, opts) do
+  defp emit_sse_event({:tool_use_start, %{"id" => id, "name" => name, "input" => input}}, meta) do
     :telemetry.execute(
       [:froth, :anthropic, :sse, :tool_use_start],
       %{},
-      %{request_id: opts[:request_id], tool_use_id: id, tool_name: name}
+      Map.merge(meta, %{tool_use_id: id, tool_name: name, input: input})
     )
   end
 
-  defp emit_sse_event({:tool_use_stop, %{"id" => id, "name" => name}}, opts) do
+  defp emit_sse_event({:tool_use_stop, %{"id" => id, "name" => name, "input" => input}}, meta) do
     :telemetry.execute(
       [:froth, :anthropic, :sse, :tool_use_stop],
       %{},
-      %{request_id: opts[:request_id], tool_use_id: id, tool_name: name}
+      Map.merge(meta, %{tool_use_id: id, tool_name: name, input: input})
     )
   end
 
   defp emit_sse_event(
-         {:tool_result, %{"tool_use_id" => id, "name" => name, "is_error" => is_error}},
-         opts
+         {:tool_result, %{"tool_use_id" => id, "name" => name, "is_error" => is_error, "content" => content}},
+         meta
        ) do
     :telemetry.execute(
       [:froth, :anthropic, :sse, :tool_result],
       %{},
-      %{request_id: opts[:request_id], tool_use_id: id, tool_name: name, is_error: is_error}
+      Map.merge(meta, %{tool_use_id: id, tool_name: name, is_error: is_error, content: content})
     )
   end
 
   defp emit_sse_event(
-         {:usage, %{"phase" => phase, "usage" => usage}},
-         opts
+         {:usage, %{"phase" => phase, "usage" => usage} = data},
+         meta
        ) do
     :telemetry.execute(
       [:froth, :anthropic, :sse, :usage],
       %{},
-      %{request_id: opts[:request_id], phase: phase, usage: usage}
+      Map.merge(meta, %{phase: phase, usage: usage, data: data})
     )
   end
 
-  defp emit_sse_event({:text_delta, _}, _opts), do: :ok
-  defp emit_sse_event({:thinking_delta, _}, _opts), do: :ok
-  defp emit_sse_event({:tool_use_delta, _}, _opts), do: :ok
-  defp emit_sse_event(_event, _opts), do: :ok
+  defp emit_sse_event({:text_delta, _}, _meta), do: :ok
+  defp emit_sse_event({:thinking_delta, _}, _meta), do: :ok
+  defp emit_sse_event({:tool_use_delta, _}, _meta), do: :ok
+  defp emit_sse_event(_event, _meta), do: :ok
 
-  # -- Telemetry --
-
-  defp with_telemetry(config, history, fun, opts \\ []) do
-    start = System.monotonic_time()
-    result = fun.()
-    duration = System.monotonic_time() - start
-
-    {ok?, status} =
-      case result do
-        {:ok, _} -> {true, 200}
-        {:error, {:http_error, s, _}} -> {false, s}
-        {:error, _} -> {false, nil}
-      end
-
-    metadata = %{ok?: ok?, status: status, model: config.model, messages: length(history)}
-    metadata = if opts[:stream], do: Map.put(metadata, :stream, true), else: metadata
-
-    :telemetry.execute(
-      [:froth, :anthropic, :request],
-      %{duration: duration, count: 1},
-      metadata
-    )
-
-    result
-  end
+  # -- Helpers --
 
   defp to_api_message(%{role: role, text: text}) when role in [:user, :assistant] do
     %{"role" => Atom.to_string(role), "content" => text}
   end
 
-  # Messages already in API format pass through; legacy atom-keyed maps get converted
   defp ensure_api_message(%{"role" => _, "content" => _} = msg), do: msg
   defp ensure_api_message(%{role: _, text: _} = msg), do: to_api_message(msg)
 
@@ -587,8 +548,6 @@ defmodule Froth.Anthropic do
   defp normalize_max_tokens(_max_tokens, default), do: default
 
   defp default_thinking_for_model(model, configured_thinking) when is_binary(model) do
-    # Claude Opus 4.6 docs recommend adaptive thinking; enabled/budget is deprecated on Opus 4.6.
-    # Allow explicit config to override.
     cond do
       is_map(configured_thinking) ->
         configured_thinking
@@ -707,7 +666,7 @@ defmodule Froth.Anthropic do
         :telemetry.execute(
           [:froth, :anthropic, :sse, :http_status],
           %{},
-          %{request_id: opts[:request_id], mode: opts[:mode], status: status}
+          %{request_id: opts[:request_id], cycle_id: opts[:cycle_id], status: status}
         )
 
         {:cont, %{st | status: status}}

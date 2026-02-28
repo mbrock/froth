@@ -17,205 +17,235 @@ defmodule Froth.Telemetry.Logger do
     )
   end
 
-  # -- Anthropic streaming lifecycle --
+  # -- Anthropic request span --
 
-  def handle_event(
-        [:froth, :anthropic, :stream, :start],
-        measurements,
-        metadata,
-        _config
-      ) do
-    Logger.info("anthropic stream start",
-      request_id: metadata[:request_id],
-      mode: metadata[:mode],
-      model: metadata[:model],
-      messages: measurements[:message_count],
-      tools: measurements[:tool_count]
+  def handle_event([:froth, :anthropic, :request, :start], _measurements, meta, _config) do
+    Logger.info("anthropic request start #{meta[:mode]} #{meta[:model]}",
+      request_id: meta[:request_id],
+      cycle_id: meta[:cycle_id],
+      mode: meta[:mode],
+      model: meta[:model],
+      messages: meta[:message_count],
+      tools: meta[:tool_count]
     )
   end
 
-  def handle_event(
-        [:froth, :anthropic, :stream, :stop],
-        measurements,
-        metadata,
-        _config
-      ) do
-    duration_ms = to_ms(measurements[:duration])
+  def handle_event([:froth, :anthropic, :request, :stop], measurements, meta, _config) do
+    ms = to_ms(measurements[:duration])
 
-    Logger.info("anthropic stream stop #{metadata[:stop_reason]} #{duration_ms}ms",
-      request_id: metadata[:request_id],
-      mode: metadata[:mode],
-      stop_reason: metadata[:stop_reason],
-      duration_ms: duration_ms,
-      text_len: measurements[:text_len],
-      content_blocks: measurements[:content_blocks]
+    Logger.info("anthropic request stop #{meta[:mode]} #{ms}ms ok=#{meta[:ok]}",
+      request_id: meta[:request_id],
+      cycle_id: meta[:cycle_id],
+      mode: meta[:mode],
+      duration_ms: ms,
+      ok: meta[:ok],
+      stop_reason: meta[:stop_reason],
+      text_len: meta[:text_len],
+      usage: meta[:usage]
     )
   end
 
-  def handle_event(
-        [:froth, :anthropic, :stream, :error],
-        _measurements,
-        metadata,
-        _config
-      ) do
-    Logger.error("anthropic stream error",
-      request_id: metadata[:request_id],
-      mode: metadata[:mode],
-      reason: inspect(metadata[:reason])
+  def handle_event([:froth, :anthropic, :request, :exception], measurements, meta, _config) do
+    ms = to_ms(measurements[:duration])
+
+    Logger.error("anthropic request exception #{meta[:mode]} #{ms}ms",
+      request_id: meta[:request_id],
+      cycle_id: meta[:cycle_id],
+      kind: meta[:kind],
+      reason: inspect(meta[:reason]),
+      duration_ms: ms
     )
   end
 
-  # -- Anthropic tool loop turns --
+  # -- Anthropic turn span --
 
-  def handle_event(
-        [:froth, :anthropic, :turn, :start],
-        measurements,
-        metadata,
-        _config
-      ) do
-    Logger.info("anthropic turn #{metadata[:turn]} start",
-      request_id: metadata[:request_id],
-      turn: metadata[:turn],
-      messages: measurements[:message_count],
-      tools: measurements[:tool_count]
+  def handle_event([:froth, :anthropic, :turn, :start], _measurements, meta, _config) do
+    Logger.info("anthropic turn #{meta[:turn]} start",
+      request_id: meta[:request_id],
+      cycle_id: meta[:cycle_id],
+      turn: meta[:turn],
+      messages: meta[:message_count],
+      tools: meta[:tool_count]
     )
   end
 
-  def handle_event(
-        [:froth, :anthropic, :turn, :stop],
-        measurements,
-        metadata,
-        _config
-      ) do
-    Logger.info("anthropic turn #{metadata[:turn]} #{metadata[:stop_reason]}",
-      request_id: metadata[:request_id],
-      turn: metadata[:turn],
-      stop_reason: metadata[:stop_reason],
-      text_len: measurements[:text_len],
-      tool_use_count: measurements[:tool_use_count],
-      usage: measurements[:usage]
+  def handle_event([:froth, :anthropic, :turn, :stop], measurements, meta, _config) do
+    ms = to_ms(measurements[:duration])
+
+    Logger.info("anthropic turn #{meta[:turn]} #{meta[:stop_reason]} #{ms}ms",
+      request_id: meta[:request_id],
+      cycle_id: meta[:cycle_id],
+      turn: meta[:turn],
+      stop_reason: meta[:stop_reason],
+      text_len: meta[:text_len],
+      tool_use_count: meta[:tool_use_count],
+      duration_ms: ms,
+      usage: meta[:usage]
     )
   end
 
-  # -- Tool execution --
+  def handle_event([:froth, :anthropic, :turn, :exception], measurements, meta, _config) do
+    ms = to_ms(measurements[:duration])
 
-  def handle_event(
-        [:froth, :anthropic, :tool, :start],
-        _measurements,
-        metadata,
-        _config
-      ) do
-    Logger.info("tool exec #{metadata[:tool_name]}",
-      request_id: metadata[:request_id],
-      turn: metadata[:turn],
-      tool_use_id: metadata[:tool_use_id],
-      tool_name: metadata[:tool_name]
+    Logger.error("anthropic turn #{meta[:turn]} exception #{ms}ms",
+      request_id: meta[:request_id],
+      cycle_id: meta[:cycle_id],
+      turn: meta[:turn],
+      kind: meta[:kind],
+      reason: inspect(meta[:reason]),
+      duration_ms: ms
     )
   end
 
-  def handle_event(
-        [:froth, :anthropic, :tool, :stop],
-        _measurements,
-        metadata,
-        _config
-      ) do
-    level = if metadata[:is_error], do: :warning, else: :info
+  # -- Tool execution span --
 
-    Logger.log(level, "tool done #{metadata[:tool_name]}#{if metadata[:is_error], do: " ERROR"}",
-      request_id: metadata[:request_id],
-      turn: metadata[:turn],
-      tool_use_id: metadata[:tool_use_id],
-      tool_name: metadata[:tool_name],
-      is_error: metadata[:is_error]
+  def handle_event([:froth, :anthropic, :tool_exec, :start], _measurements, meta, _config) do
+    Logger.info("tool exec #{meta[:tool_name]}",
+      request_id: meta[:request_id],
+      cycle_id: meta[:cycle_id],
+      turn: meta[:turn],
+      tool_use_id: meta[:tool_use_id],
+      tool_name: meta[:tool_name]
     )
   end
 
-  # -- Tool loop completion --
+  def handle_event([:froth, :anthropic, :tool_exec, :stop], measurements, meta, _config) do
+    ms = to_ms(measurements[:duration])
+    level = if meta[:is_error], do: :warning, else: :info
 
-  def handle_event(
-        [:froth, :anthropic, :tool_loop, :stop],
-        measurements,
-        metadata,
-        _config
-      ) do
-    Logger.info("anthropic tool loop complete",
-      request_id: metadata[:request_id],
-      text_len: measurements[:text_len],
-      api_messages: measurements[:api_message_count],
-      usage: measurements[:usage]
+    Logger.log(level, "tool done #{meta[:tool_name]}#{if meta[:is_error], do: " ERROR"} #{ms}ms",
+      request_id: meta[:request_id],
+      cycle_id: meta[:cycle_id],
+      turn: meta[:turn],
+      tool_use_id: meta[:tool_use_id],
+      tool_name: meta[:tool_name],
+      is_error: meta[:is_error],
+      duration_ms: ms
     )
   end
 
-  # -- SSE-level streaming events (debug level) --
+  def handle_event([:froth, :anthropic, :tool_exec, :exception], measurements, meta, _config) do
+    ms = to_ms(measurements[:duration])
 
-  def handle_event([:froth, :anthropic, :sse, :message_start], _m, metadata, _config) do
-    Logger.debug("sse message_start",
-      request_id: metadata[:request_id],
-      response_id: metadata[:response_id],
-      model: metadata[:model]
+    Logger.error("tool exception #{meta[:tool_name]} #{ms}ms",
+      request_id: meta[:request_id],
+      cycle_id: meta[:cycle_id],
+      turn: meta[:turn],
+      tool_use_id: meta[:tool_use_id],
+      tool_name: meta[:tool_name],
+      kind: meta[:kind],
+      reason: inspect(meta[:reason]),
+      duration_ms: ms
     )
   end
 
-  def handle_event([:froth, :anthropic, :sse, :thinking_start], _m, metadata, _config) do
+  # -- SSE-level events (debug) --
+
+  def handle_event([:froth, :anthropic, :sse, :http_status], _m, meta, _config) do
+    Logger.debug("sse http #{meta[:status]}",
+      request_id: meta[:request_id],
+      status: meta[:status]
+    )
+  end
+
+  def handle_event([:froth, :anthropic, :sse, :message_start], _m, meta, _config) do
+    Logger.debug("sse message_start #{meta[:model]}",
+      request_id: meta[:request_id],
+      response_id: meta[:response_id],
+      model: meta[:model]
+    )
+  end
+
+  def handle_event([:froth, :anthropic, :sse, :thinking_start], _m, meta, _config) do
     Logger.debug("sse thinking_start",
-      request_id: metadata[:request_id],
-      index: metadata[:index]
+      request_id: meta[:request_id],
+      index: meta[:index]
     )
   end
 
-  def handle_event([:froth, :anthropic, :sse, :thinking_stop], _m, metadata, _config) do
-    Logger.debug("sse thinking_stop",
-      request_id: metadata[:request_id],
-      thinking_len: metadata[:thinking_len]
+  def handle_event([:froth, :anthropic, :sse, :thinking_stop], _m, meta, _config) do
+    Logger.debug("sse thinking_stop #{meta[:thinking_len]}ch",
+      request_id: meta[:request_id],
+      thinking_len: meta[:thinking_len]
     )
   end
 
-  def handle_event([:froth, :anthropic, :sse, :tool_use_start], _m, metadata, _config) do
-    Logger.debug("sse tool_use_start #{metadata[:tool_name]}",
-      request_id: metadata[:request_id],
-      tool_use_id: metadata[:tool_use_id],
-      tool_name: metadata[:tool_name]
+  def handle_event([:froth, :anthropic, :sse, :tool_use_start], _m, meta, _config) do
+    Logger.debug("sse tool_use_start #{meta[:tool_name]}",
+      request_id: meta[:request_id],
+      tool_use_id: meta[:tool_use_id],
+      tool_name: meta[:tool_name]
     )
   end
 
-  def handle_event([:froth, :anthropic, :sse, :tool_use_stop], _m, metadata, _config) do
-    Logger.debug("sse tool_use_stop #{metadata[:tool_name]}",
-      request_id: metadata[:request_id],
-      tool_use_id: metadata[:tool_use_id],
-      tool_name: metadata[:tool_name]
+  def handle_event([:froth, :anthropic, :sse, :tool_use_stop], _m, meta, _config) do
+    Logger.debug("sse tool_use_stop #{meta[:tool_name]}",
+      request_id: meta[:request_id],
+      tool_use_id: meta[:tool_use_id],
+      tool_name: meta[:tool_name]
     )
   end
 
-  def handle_event([:froth, :anthropic, :sse, :usage], _m, metadata, _config) do
-    Logger.debug("sse usage #{metadata[:phase]}",
-      request_id: metadata[:request_id],
-      phase: metadata[:phase],
-      usage: metadata[:usage]
+  def handle_event([:froth, :anthropic, :sse, :tool_result], _m, meta, _config) do
+    Logger.debug("sse tool_result #{meta[:tool_name]}#{if meta[:is_error], do: " ERROR"}",
+      request_id: meta[:request_id],
+      tool_use_id: meta[:tool_use_id],
+      tool_name: meta[:tool_name],
+      is_error: meta[:is_error]
     )
   end
 
-  def handle_event([:froth, :anthropic, :sse, :http_status], _m, metadata, _config) do
-    Logger.debug("sse http #{metadata[:status]}",
-      request_id: metadata[:request_id],
-      status: metadata[:status]
+  def handle_event([:froth, :anthropic, :sse, :usage], _m, meta, _config) do
+    Logger.debug("sse usage #{meta[:phase]}",
+      request_id: meta[:request_id],
+      phase: meta[:phase]
     )
   end
 
-  # -- Request-level telemetry (existing) --
+  # -- Agent lifecycle --
 
-  def handle_event([:froth, :anthropic, :request], measurements, metadata, _config) do
-    duration_ms = to_ms(measurements[:duration])
-
-    Logger.info("anthropic request #{metadata[:model]} #{duration_ms}ms ok=#{metadata[:ok?]}",
-      model: metadata[:model],
-      duration_ms: duration_ms,
-      ok: metadata[:ok?],
-      status: metadata[:status],
-      stream: metadata[:stream]
+  def handle_event([:froth, :agent, :cycle, :start], _measurements, meta, _config) do
+    Logger.info("agent cycle start",
+      cycle_id: meta[:cycle_id],
+      model: meta[:model]
     )
   end
 
-  # -- Catch-all for any froth events we haven't formatted yet --
+  def handle_event([:froth, :agent, :cycle, :stop], measurements, meta, _config) do
+    ms = to_ms(measurements[:duration])
+
+    Logger.info("agent cycle stop #{meta[:reason]} #{ms}ms",
+      cycle_id: meta[:cycle_id],
+      reason: inspect(meta[:reason]),
+      phase: inspect(meta[:phase]),
+      duration_ms: ms
+    )
+  end
+
+  def handle_event([:froth, :agent, :think, :start], _measurements, meta, _config) do
+    Logger.debug("agent think start",
+      cycle_id: meta[:cycle_id]
+    )
+  end
+
+  def handle_event([:froth, :agent, :think, :stop], measurements, meta, _config) do
+    ms = to_ms(measurements[:duration])
+
+    Logger.debug("agent think stop #{ms}ms",
+      cycle_id: meta[:cycle_id],
+      duration_ms: ms,
+      error: meta[:error] && inspect(meta[:error])
+    )
+  end
+
+  def handle_event([:froth, :agent, :empty_retry], measurements, meta, _config) do
+    Logger.warning("agent empty response retry #{measurements[:retry]}",
+      cycle_id: meta[:cycle_id],
+      retry: measurements[:retry]
+    )
+  end
+
+  # -- Catch-all --
 
   def handle_event(event_name, measurements, metadata, _config) do
     Logger.debug(Enum.join(event_name, "."),
@@ -225,5 +255,6 @@ defmodule Froth.Telemetry.Logger do
   end
 
   defp to_ms(nil), do: nil
-  defp to_ms(native), do: System.convert_time_unit(native, :native, :millisecond)
+  defp to_ms(native) when is_integer(native), do: System.convert_time_unit(native, :native, :millisecond)
+  defp to_ms(_), do: nil
 end
