@@ -22,9 +22,12 @@ defmodule Froth.Telemetry.Logger do
     level = level_for(event_name)
     measurements = normalize_measurements(measurements)
 
-    Logger.log(level, Enum.join(event_name, "."),
-      [{:measurements, measurements} | Enum.to_list(metadata)]
-    )
+    report =
+      [{:event, Enum.join(event_name, ".")}] ++
+        if(measurements, do: [{:measurements, measurements}], else: []) ++
+        Enum.to_list(metadata)
+
+    Logger.log(level, report)
   end
 
   defp level_for([:froth, _, _, :exception]), do: :error
