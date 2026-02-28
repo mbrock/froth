@@ -13,7 +13,9 @@ defmodule Froth.Summarizer do
     Froth.Summarizer.list(chat_id)
   """
 
-  alias Froth.{Anthropic, ChatSummary, Repo}
+  alias Froth.{ChatSummary, Repo}
+  alias Froth.Agent
+  alias Froth.Agent.{Config, Message}
   import Ecto.Query
 
   @model "claude-opus-4-6"
@@ -31,7 +33,7 @@ defmodule Froth.Summarizer do
   One to three paragraphs. No headers, no bullets, no emoji.
   """
 
-  def summarize(chat_id, from_unix, to_unix, opts \\ [])
+  def summarize(chat_id, from_unix, to_unix, _opts \\ [])
       when is_integer(from_unix) and is_integer(to_unix) do
     messages = fetch_messages(chat_id, from_unix, to_unix)
 
@@ -49,38 +51,38 @@ defmodule Froth.Summarizer do
       covered_to_unix = summary_covered_to_unix(max_message_unix, to_unix)
       prompt = build_prompt(transcript, prior, from_unix, prompt_to_unix)
 
-      on_event = fn
-        {:text_delta, text} -> IO.write(text)
-        {:thinking_delta, %{"delta" => t}} -> IO.write([IO.ANSI.faint(), t, IO.ANSI.reset()])
-        {:thinking_stop, _} -> IO.write("\n---\n")
-        _ -> :ok
-      end
+      config = %Config{system: @system_prompt, model: @model, tools: []}
+      user_msg = Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
+      {cycle, stream} = Agent.run(user_msg, config)
 
-      api_opts = [system: @system_prompt, model: @model, tools: []]
+      text =
+        stream
+        |> Enum.reduce(nil, fn
+          {:stream, {:text_delta, delta}}, _acc ->
+            IO.write(delta)
+            nil
 
-      api_opts =
-        case Keyword.get(opts, :api_key_name) do
-          nil ->
-            api_opts
+          {:stream, {:thinking_delta, %{"delta" => t}}}, _acc ->
+            IO.write([IO.ANSI.faint(), t, IO.ANSI.reset()])
+            nil
 
-          name ->
-            case Froth.ApiKey.get(name) do
-              %{key: key} -> Keyword.put(api_opts, :api_key, key)
-              nil -> api_opts
-            end
-        end
+          {:stream, {:thinking_stop, _}}, _acc ->
+            IO.write("\n---\n")
+            nil
 
-      case Anthropic.stream_reply_with_tools(
-             [%{role: :user, text: prompt}],
-             on_event,
-             api_opts
-           ) do
-        {:ok, %{text: text}} ->
-          IO.write("\n")
-          save(chat_id, from_unix, covered_to_unix, text, length(messages))
+          {:event, _event, %{role: :agent} = msg}, _acc ->
+            Message.extract_text(msg.content)
 
-        {:error, _} = err ->
-          err
+          _, acc ->
+            acc
+        end)
+
+      IO.write("\n")
+
+      if text do
+        save(chat_id, from_unix, covered_to_unix, text, length(messages), cycle.id)
+      else
+        {:error, :no_response}
       end
     end
   end
@@ -619,7 +621,7 @@ defmodule Froth.Summarizer do
     min(to_unix, max_message_unix + 1)
   end
 
-  defp save(chat_id, from_unix, to_unix, text, message_count) do
+  defp save(chat_id, from_unix, to_unix, text, message_count, cycle_id) do
     %ChatSummary{}
     |> ChatSummary.changeset(%{
       chat_id: chat_id,
@@ -628,7 +630,7 @@ defmodule Froth.Summarizer do
       agent: @model,
       summary_text: text,
       message_count: message_count,
-      metadata: %{},
+      metadata: if(cycle_id, do: %{"cycle_id" => cycle_id}, else: %{}),
       inserted_at: DateTime.utc_now() |> DateTime.truncate(:second)
     })
     |> Repo.insert()

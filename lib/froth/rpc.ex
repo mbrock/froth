@@ -11,13 +11,4 @@ defmodule Froth.RPC do
     result
   end
 
-  @doc """
-  Stream an LLM completion, sending events as messages to `caller_pid`.
-  """
-  def stream_to(caller_pid, messages) do
-    on_event = fn event -> send(caller_pid, {:event, event}) end
-    result = Froth.Anthropic.stream_reply_with_tools(messages, on_event)
-    send(caller_pid, {:done, result})
-    result
-  end
 end

@@ -24,13 +24,7 @@ defmodule Froth.Telemetry do
   @anthropic_events [
     [:froth, :anthropic, :request, :start],
     [:froth, :anthropic, :request, :stop],
-    [:froth, :anthropic, :request, :exception],
-    [:froth, :anthropic, :turn, :start],
-    [:froth, :anthropic, :turn, :stop],
-    [:froth, :anthropic, :turn, :exception],
-    [:froth, :anthropic, :tool_exec, :start],
-    [:froth, :anthropic, :tool_exec, :stop],
-    [:froth, :anthropic, :tool_exec, :exception]
+    [:froth, :anthropic, :request, :exception]
   ]
 
   @agent_events [

@@ -179,10 +179,11 @@ defmodule Froth.Agent.WorkerTest do
       {cycle, stream} = Froth.Agent.run(message, config)
       assert %Cycle{} = cycle
 
-      events = Enum.to_list(stream)
+      all = Enum.to_list(stream)
+      events = Enum.filter(all, &match?({:event, _, _}, &1))
       assert length(events) >= 1
 
-      {last_event, last_msg} = List.last(events)
+      {:event, last_event, last_msg} = List.last(events)
       assert %Event{} = last_event
       assert last_msg.role == :agent
     end
@@ -207,8 +208,9 @@ defmodule Froth.Agent.WorkerTest do
 
       {_cycle, stream} = Froth.Agent.run(message, config)
 
-      events = Enum.to_list(stream)
-      roles = Enum.map(events, fn {_event, msg} -> msg.role end)
+      all = Enum.to_list(stream)
+      events = Enum.filter(all, &match?({:event, _, _}, &1))
+      roles = Enum.map(events, fn {:event, _event, msg} -> msg.role end)
       assert roles == [:agent, :user, :agent]
     end
   end

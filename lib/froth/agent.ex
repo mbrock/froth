@@ -21,8 +21,11 @@ defmodule Froth.Agent do
         end,
         fn {pid, ref} ->
           receive do
+            {:stream, event} ->
+              {[{:stream, event}], {pid, ref}}
+
             {:event, event, msg} ->
-              {[{event, msg}], {pid, ref}}
+              {[{:event, event, msg}], {pid, ref}}
 
             {:DOWN, ^ref, :process, ^pid, :normal} ->
               {:halt, {pid, ref}}

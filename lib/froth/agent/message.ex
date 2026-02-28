@@ -34,6 +34,26 @@ defmodule Froth.Agent.Message do
   def wrap(value) when is_map(value), do: value
   def wrap(value), do: %{"_wrapped" => value}
 
+  def extract_text(%__MODULE__{content: content}), do: extract_text(content)
+
+  def extract_text(%{"_wrapped" => value}), do: extract_text(value)
+
+  def extract_text(blocks) when is_list(blocks) do
+    blocks
+    |> Enum.flat_map(fn
+      %{"type" => "text", "text" => text} when is_binary(text) -> [text]
+      _ -> []
+    end)
+    |> Enum.join("")
+    |> case do
+      "" -> nil
+      text -> text
+    end
+  end
+
+  def extract_text(text) when is_binary(text), do: text
+  def extract_text(_), do: nil
+
   defp unwrap(%{"_wrapped" => value}), do: value
   defp unwrap(map) when is_map(map), do: map
 end
