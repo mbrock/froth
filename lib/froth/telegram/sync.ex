@@ -42,7 +42,7 @@ defmodule Froth.Telegram.Sync do
 
     total =
       Enum.reduce(chat_ids, 0, fn chat_id, acc ->
-        count = backfill_chat(session_id, chat_id)
+        count = backfill_chat(session_id, chat_id, opts)
         acc + count
       end)
 
@@ -58,12 +58,12 @@ defmodule Froth.Telegram.Sync do
   Backfill a single chat fully. Keeps re-fetching until TDLib
   returns no new messages (each round may pull more from the server).
   """
-  def backfill_chat(session_id, chat_id) do
-    backfill_chat_loop(session_id, chat_id, 0)
+  def backfill_chat(session_id, chat_id, opts \\ []) do
+    backfill_chat_loop(session_id, chat_id, 0, opts)
   end
 
-  defp backfill_chat_loop(session_id, chat_id, grand_total) do
-    count = fetch_history(session_id, chat_id, 0, 0)
+  defp backfill_chat_loop(session_id, chat_id, grand_total, opts) do
+    count = fetch_history(session_id, chat_id, 0, 0, opts)
 
     if count > 0 do
       Span.execute([:froth, :telegram, :sync, :backfill_round], nil, %{
@@ -71,7 +71,7 @@ defmodule Froth.Telegram.Sync do
         count: count
       })
 
-      backfill_chat_loop(session_id, chat_id, grand_total + count)
+      backfill_chat_loop(session_id, chat_id, grand_total + count, opts)
     else
       if grand_total > 0 do
         Span.execute([:froth, :telegram, :sync, :backfill_chat_done], nil, %{
@@ -84,36 +84,41 @@ defmodule Froth.Telegram.Sync do
     end
   end
 
-  defp fetch_history(session_id, chat_id, from_message_id, total) do
-    case Telegram.call(
-           session_id,
-           %{
-             "@type" => "getChatHistory",
-             "chat_id" => chat_id,
-             "from_message_id" => from_message_id,
-             "offset" => 0,
-             "limit" => @history_limit,
-             "only_local" => false
-           },
-           60_000
-         ) do
+  defp fetch_history(session_id, chat_id, from_message_id, total, opts) do
+    request = %{
+      "@type" => "getChatHistory",
+      "chat_id" => chat_id,
+      "from_message_id" => from_message_id,
+      "offset" => 0,
+      "limit" => @history_limit,
+      "only_local" => false
+    }
+
+    maybe_verbose_request(session_id, chat_id, total, request, opts)
+
+    case Telegram.call(session_id, request, 60_000) do
       {:ok, %{"messages" => messages}} when is_list(messages) and messages != [] ->
         stored = store_batch(session_id, messages)
         oldest_id = messages |> List.last() |> Map.fetch!("id")
         new_total = total + stored
 
-        if length(messages) < @history_limit do
+        maybe_verbose_page(session_id, chat_id, total, messages, stored, opts)
+
+        if oldest_id == from_message_id do
           log_backfill(chat_id, new_total)
           new_total
         else
-          fetch_history(session_id, chat_id, oldest_id, new_total)
+          fetch_history(session_id, chat_id, oldest_id, new_total, opts)
         end
 
       {:ok, %{"messages" => _}} ->
+        maybe_verbose_empty(session_id, chat_id, total, opts)
         log_backfill(chat_id, total)
         total
 
       {:ok, %{"@type" => "error", "message" => msg}} ->
+        maybe_verbose_error(session_id, chat_id, request, msg, opts)
+
         Span.execute([:froth, :telegram, :sync, :backfill_error], nil, %{
           chat_id: chat_id,
           error: msg
@@ -122,6 +127,8 @@ defmodule Froth.Telegram.Sync do
         total
 
       other ->
+        maybe_verbose_other(session_id, chat_id, request, other, opts)
+
         Span.execute([:froth, :telegram, :sync, :backfill_error], nil, %{
           chat_id: chat_id,
           response: other
@@ -151,6 +158,56 @@ defmodule Froth.Telegram.Sync do
         chat_id: chat_id,
         count: n
       })
+
+  defp maybe_verbose_request(session_id, chat_id, total, request, opts) do
+    if Keyword.get(opts, :verbose, false) do
+      IO.puts(
+        "[tg backfill] session=#{session_id} chat=#{chat_id} total=#{total} " <>
+          "call=getChatHistory from_message_id=#{request["from_message_id"]} " <>
+          "offset=#{request["offset"]} limit=#{request["limit"]} only_local=#{request["only_local"]}"
+      )
+    end
+  end
+
+  defp maybe_verbose_page(session_id, chat_id, total, messages, stored, opts) do
+    if Keyword.get(opts, :verbose, false) do
+      newest = hd(messages)
+      oldest = List.last(messages)
+
+      IO.puts(
+        "[tg backfill] session=#{session_id} chat=#{chat_id} total_before=#{total} " <>
+          "response=messages count=#{length(messages)} stored=#{stored} " <>
+          "newest_id=#{newest["id"]} oldest_id=#{oldest["id"]} " <>
+          "newest_date=#{newest["date"]} oldest_date=#{oldest["date"]}"
+      )
+    end
+  end
+
+  defp maybe_verbose_empty(session_id, chat_id, total, opts) do
+    if Keyword.get(opts, :verbose, false) do
+      IO.puts(
+        "[tg backfill] session=#{session_id} chat=#{chat_id} total_before=#{total} response=messages count=0"
+      )
+    end
+  end
+
+  defp maybe_verbose_error(session_id, chat_id, request, message, opts) do
+    if Keyword.get(opts, :verbose, false) do
+      IO.puts(
+        "[tg backfill] session=#{session_id} chat=#{chat_id} call=getChatHistory " <>
+          "from_message_id=#{request["from_message_id"]} error=#{inspect(message)}"
+      )
+    end
+  end
+
+  defp maybe_verbose_other(session_id, chat_id, request, other, opts) do
+    if Keyword.get(opts, :verbose, false) do
+      IO.puts(
+        "[tg backfill] session=#{session_id} chat=#{chat_id} call=getChatHistory " <>
+          "from_message_id=#{request["from_message_id"]} other=#{inspect(other, limit: 20, printable_limit: 300)}"
+      )
+    end
+  end
 
   # --- Live capture GenServer ---
 
@@ -218,7 +275,7 @@ defmodule Froth.Telegram.Sync do
         raw: msg
       })
       |> Ecto.Changeset.put_change(:inserted_at, now)
-      |> Repo.insert(on_conflict: :nothing)
+      |> Repo.insert(on_conflict: :nothing, log: false)
 
     case result do
       {:ok, %{id: nil}} ->
