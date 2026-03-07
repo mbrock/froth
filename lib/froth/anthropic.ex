@@ -116,6 +116,13 @@ defmodule Froth.Anthropic do
 
       tools = Keyword.get(overrides, :tools, Keyword.get(cfg, :tools, []))
 
+      cache_control =
+        Keyword.get(
+          overrides,
+          :cache_control,
+          Keyword.get(cfg, :cache_control, %{"type" => "ephemeral"})
+        )
+
       {:ok,
        %{
          api_key: api_key,
@@ -125,6 +132,7 @@ defmodule Froth.Anthropic do
          thinking: thinking,
          max_tokens: max_tokens,
          tools: tools,
+         cache_control: cache_control,
          headers: base_headers(api_key) ++ [{"accept", "text/event-stream"}]
        }}
     end
@@ -139,6 +147,7 @@ defmodule Froth.Anthropic do
       "messages" => api_messages,
       "stream" => true
     }
+    |> maybe_put_cache_control(config.cache_control)
     |> maybe_put_system(config.system)
     |> maybe_put_thinking(config.thinking)
     |> maybe_put_output_config(config.output_config)
@@ -164,6 +173,11 @@ defmodule Froth.Anthropic do
     system = String.trim(system)
     if system == "", do: body, else: Map.put(body, "system", system)
   end
+
+  defp maybe_put_cache_control(body, cache_control) when is_map(cache_control),
+    do: Map.put(body, "cache_control", cache_control)
+
+  defp maybe_put_cache_control(body, _cache_control), do: body
 
   defp maybe_put_thinking(body, thinking) when is_map(thinking),
     do: Map.put(body, "thinking", thinking)

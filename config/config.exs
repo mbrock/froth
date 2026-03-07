@@ -70,6 +70,7 @@ config :logger_json, encoder: JSON
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
+config :floki, :html_parser, Floki.HTMLParser.FastHtml
 
 config :froth, Oban,
   engine: Oban.Engines.Basic,

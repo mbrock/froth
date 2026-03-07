@@ -38,6 +38,7 @@ defmodule FrothWeb.Router do
     live "/wiki/:slug", WikiLive, :show
     get "/media/:chat_id/:message_id", MediaController, :show
     live "/voice", VoiceLive, :index
+    live "/bot-context", BotContextLive, :index
   end
 
   scope "/froth/mini", FrothWeb do

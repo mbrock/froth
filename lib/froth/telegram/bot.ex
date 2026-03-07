@@ -13,10 +13,10 @@ defmodule Froth.Telegram.Bot do
   alias Froth.Agent
   alias Froth.Agent.{Config, Cycle, Message, ToolUse, Worker}
   alias Froth.Telemetry.Span
-  alias Froth.Inference.Prompt
   alias Froth.Inference.Tools
   alias Froth.Repo
   alias Froth.Telegram.BotAdapter
+  alias Froth.Telegram.BotContext
   alias Froth.Telegram.CycleLink
 
   defstruct [
@@ -38,8 +38,6 @@ defmodule Froth.Telegram.Bot do
     cycle_replied?: false
   ]
 
-  @recap_sessions_limit 10
-  @recap_max_tokens_approx 20_000
   @telegram_text_limit 4096
 
   def child_spec(opts) when is_map(opts), do: child_spec(Map.to_list(opts))
@@ -338,7 +336,7 @@ defmodule Froth.Telegram.Bot do
       get_in(msg, ["content", "text", "text"]) ||
         get_in(msg, ["content", "caption", "text"]) || ""
 
-    user_content = build_initial_user_content(msg, state.bot_config)
+    user_content = BotContext.build_context(msg, state.bot_config)
 
     start_cycle(state, chat_id, reply_to, text, user_content)
   end
@@ -663,267 +661,6 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp build_initial_user_content(%{"chat_id" => chat_id} = msg, bot_config)
-       when is_integer(chat_id) and is_map(bot_config) do
-    context_opts =
-      case message_unix(msg) do
-        unix when is_integer(unix) ->
-          [before_unix: unix, telegram_session_id: bot_config.session_id]
-
-        _ ->
-          [telegram_session_id: bot_config.session_id]
-      end
-
-    context_blocks = Froth.Summarizer.context_blocks(chat_id, context_opts)
-
-    task_overview = Froth.Tasks.context_summary(bot_config.id, chat_id)
-    new_messages_section = format_new_messages([msg])
-
-    new_messages_section =
-      if task_overview != "" do
-        task_overview <> "\n\n" <> new_messages_section
-      else
-        new_messages_section
-      end
-
-    session_recap = previous_session_recap(bot_config.id, chat_id)
-
-    new_messages_section =
-      if session_recap != "" do
-        session_recap <> "\n\n" <> new_messages_section
-      else
-        new_messages_section
-      end
-
-    Prompt.initial_user_content(context_blocks, "", new_messages_section)
-  end
-
-  defp build_initial_user_content(_msg, _bot_config), do: nil
-
-  defp message_unix(%{"date" => value}) when is_integer(value), do: value
-
-  defp message_unix(%{"date" => value}) when is_binary(value) do
-    case Integer.parse(String.trim(value)) do
-      {n, ""} -> n
-      _ -> nil
-    end
-  end
-
-  defp message_unix(_), do: nil
-
-  defp format_new_messages(messages) when is_list(messages) do
-    messages
-    |> sort_messages()
-    |> Enum.map_join("\n\n", fn msg ->
-      sender = get_in(msg, ["sender_id", "user_id"]) || "unknown"
-      message_id = msg["id"] || "unknown"
-
-      text =
-        get_in(msg, ["content", "text", "text"]) ||
-          get_in(msg, ["content", "caption", "text"]) || ""
-
-      """
-      <message id=\"#{message_id}\" from=\"#{sender}\">
-      #{text}
-      </message>
-      """
-      |> String.trim()
-    end)
-  end
-
-  defp sort_messages(messages) when is_list(messages) do
-    Enum.sort_by(messages, &to_int_or_fallback(&1["id"]))
-  end
-
-  defp to_int_or_fallback(value) when is_integer(value), do: value
-
-  defp to_int_or_fallback(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {n, ""} -> n
-      _ -> 0
-    end
-  end
-
-  defp to_int_or_fallback(_), do: 0
-
-  defp previous_session_recap(bot_id, chat_id) when is_binary(bot_id) and is_integer(chat_id) do
-    links =
-      Repo.all(
-        from(l in CycleLink,
-          join: c in Cycle,
-          on: c.id == l.cycle_id,
-          where: l.bot_id == ^bot_id and l.chat_id == ^chat_id,
-          order_by: [desc: c.inserted_at],
-          limit: 20,
-          select: %{cycle_id: l.cycle_id, inserted_at: c.inserted_at}
-        ),
-        log: false
-      )
-
-    interesting =
-      links
-      |> Enum.map(fn link ->
-        api_messages = load_cycle_api_messages(link.cycle_id)
-        %{cycle_id: link.cycle_id, inserted_at: link.inserted_at, api_messages: api_messages}
-      end)
-      |> Enum.filter(&has_real_tools?(&1.api_messages))
-      |> Enum.take(@recap_sessions_limit)
-
-    if interesting == [] do
-      ""
-    else
-      sections = Enum.map(interesting, &format_session_recap/1)
-      total = Enum.join(sections, "\n\n")
-
-      if String.length(total) > @recap_max_tokens_approx * 4 do
-        truncate_recap(interesting, @recap_max_tokens_approx * 4)
-      else
-        total
-      end
-    end
-  end
-
-  defp load_cycle_api_messages(cycle_id) do
-    head_id = Agent.latest_head_id(%Cycle{id: cycle_id})
-
-    head_id
-    |> Agent.load_messages()
-    |> Enum.map(&Message.to_api/1)
-  end
-
-  defp has_real_tools?(messages) when is_list(messages) do
-    Enum.any?(messages, fn
-      %{"role" => "assistant", "content" => content} when is_list(content) ->
-        Enum.any?(content, fn block ->
-          block["type"] == "tool_use" and block["name"] not in ["send_message"]
-        end)
-
-      _ ->
-        false
-    end)
-  end
-
-  defp has_real_tools?(_), do: false
-
-  defp truncate_recap(sessions, max_chars) do
-    {sections, _remaining} =
-      Enum.reduce(sessions, {[], max_chars}, fn session, {acc, budget} ->
-        section = format_session_recap(session)
-        len = String.length(section)
-
-        if budget - len > 0 do
-          {[section | acc], budget - len}
-        else
-          {acc, 0}
-        end
-      end)
-
-    sections
-    |> Enum.reverse()
-    |> Enum.join("\n\n")
-  end
-
-  defp format_session_recap(session) do
-    entries =
-      (session.api_messages || [])
-      |> Enum.flat_map(fn
-        %{"role" => "assistant", "content" => content} when is_list(content) ->
-          Enum.flat_map(content, fn
-            %{"type" => "tool_use", "name" => "send_message"} ->
-              []
-
-            %{"type" => "tool_use", "name" => name, "input" => input} ->
-              [{:call, name, recap_tool_snippet(name, input)}]
-
-            _ ->
-              []
-          end)
-
-        %{"role" => "user", "content" => content} when is_list(content) ->
-          Enum.flat_map(content, fn
-            %{"type" => "tool_result", "content" => result_content, "tool_use_id" => _id} ->
-              result_text = tool_result_recap_text(result_content)
-
-              if String.trim(result_text) == "sent" do
-                []
-              else
-                [{:result, String.slice(result_text, 0, 500)}]
-              end
-
-            _ ->
-              []
-          end)
-
-        _ ->
-          []
-      end)
-
-    if entries == [] do
-      ""
-    else
-      lines =
-        Enum.map(entries, fn
-          {:call, name, snippet} -> "-> " <> name <> ": " <> snippet
-          {:result, text} -> "   <- " <> String.slice(text, 0, 500)
-        end)
-
-      ago = NaiveDateTime.diff(NaiveDateTime.utc_now(), session.inserted_at, :minute)
-
-      "<previous_cycle id=\"" <>
-        session.cycle_id <>
-        "\" minutes_ago=\"" <>
-        Integer.to_string(ago) <>
-        "\">\n" <>
-        Enum.join(lines, "\n") <>
-        "\n</previous_cycle>"
-    end
-  end
-
-  defp recap_tool_snippet(name, input) when is_map(input) do
-    case name do
-      "read_log" ->
-        from = inspect(input["from_date"] || "")
-        to = inspect(input["to_date"] || "")
-        "from=#{from} to=#{to}"
-
-      "search" ->
-        terms = input["query"] || []
-        "query=" <> inspect(Enum.take(terms, 5))
-
-      "view_analysis" ->
-        ids = input["ids"] || []
-        "ids=" <> inspect(Enum.take(ids, 10))
-
-      "look" ->
-        "msg=" <> inspect(input["message_id"])
-
-      other ->
-        keys =
-          input
-          |> Map.keys()
-          |> Enum.map(&to_string/1)
-          |> Enum.take(6)
-
-        "#{other} keys=" <> inspect(keys)
-    end
-  end
-
-  defp recap_tool_snippet(name, _), do: "#{name}"
-
-  defp tool_result_recap_text(content) when is_binary(content), do: content
-
-  defp tool_result_recap_text(content) when is_list(content) do
-    Enum.map_join(content, "\n", &tool_result_block_text/1)
-  end
-
-  defp tool_result_recap_text(content),
-    do: inspect(content, limit: 50, printable_limit: 2000)
-
-  defp tool_result_block_text(%{"type" => "text", "text" => text}) when is_binary(text), do: text
-  defp tool_result_block_text(%{"text" => text}) when is_binary(text), do: text
-  defp tool_result_block_text(%{"type" => type}) when is_binary(type), do: "[#{type}]"
-  defp tool_result_block_text(other), do: inspect(other, limit: 20, printable_limit: 300)
-
   defp send_agent_response(
          %{chat_id: chat_id, reply_to: reply_to, bot_config: bc} = state,
          content
@@ -1153,8 +890,6 @@ defmodule Froth.Telegram.Bot do
   defp prompt_over_200k?(usage) when is_map(usage) do
     total_input_tokens(usage) > 200_000
   end
-
-  defp prompt_over_200k?(_usage), do: false
 
   # Source-of-truth rates (USD / MTok) from https://claude.com/pricing,
   # synced on 2026-02-27.

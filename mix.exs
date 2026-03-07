@@ -21,7 +21,7 @@ defmodule Froth.MixProject do
   def application do
     [
       mod: {Froth.Application, []},
-      extra_applications: [:logger, :runtime_tools]
+      extra_applications: [:logger, :runtime_tools, :fast_html]
     ]
   end
 
@@ -66,6 +66,8 @@ defmodule Froth.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
+      {:floki, "~> 0.38.0"},
+      {:fast_html, "~> 2.0"},
       {:dotenvy, "~> 0.8", only: [:dev, :test]},
       {:rdf, "~> 2.1"},
       {:sparql, "~> 0.3.11"},

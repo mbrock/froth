@@ -63,7 +63,7 @@ defmodule Froth.AnthropicTest do
   end
 
   describe "prompt caching payload passthrough" do
-    test "sends cache_control blocks unchanged to Anthropic" do
+    test "sends top-level cache_control and preserves content blocks" do
       pid = self()
 
       Application.put_env(
@@ -90,6 +90,7 @@ defmodule Froth.AnthropicTest do
         Anthropic.stream_single(messages, fn _event -> :ok end)
 
       assert_received {:api_call, 0, body}
+      assert body["cache_control"] == %{"type" => "ephemeral"}
       content_blocks = get_in(body, ["messages", Access.at(0), "content"])
 
       assert [
