@@ -171,18 +171,26 @@ defmodule FrothWeb.TelemetryLive do
   defp format_time(_), do: ""
 
   defp format_metadata(meta) when is_map(meta) and map_size(meta) == 0, do: nil
+  defp format_metadata(meta) when not is_map(meta), do: nil
 
   defp format_metadata(meta) when is_map(meta) do
     meta
     |> Enum.reject(fn {_k, v} -> v == "" or is_nil(v) end)
     |> Enum.map(fn {k, v} ->
-      val = if is_binary(v) and String.length(v) > 80, do: String.slice(v, 0, 80) <> "…", else: v
+      val = format_value(v)
       "#{k}=#{val}"
     end)
     |> Enum.join(" ")
   end
 
-  defp format_metadata(_), do: nil
+  defp format_value(v) when is_binary(v) do
+    if String.length(v) > 80, do: String.slice(v, 0, 80) <> "…", else: v
+  end
+
+  defp format_value(v) when is_number(v) or is_boolean(v) or is_atom(v), do: to_string(v)
+  defp format_value(v) when is_map(v) or is_list(v), do: inspect(v, limit: 10, printable_limit: 80)
+  defp format_value(v), do: inspect(v, limit: 10, printable_limit: 80)
+
 
   defp short_event(event) do
     event
