@@ -16,7 +16,7 @@ defmodule Froth.Summarizer do
   alias Froth.{ChatSummary, Repo}
   alias Froth.Agent
   alias Froth.Agent.{Config, Message}
-  alias Froth.Telegram.BotContext
+  alias Froth.Telegram.{BotContext, Queries}
   import Ecto.Query
 
   @model "claude-opus-4-6"
@@ -35,12 +35,12 @@ defmodule Froth.Summarizer do
 
   def summarize(chat_id, from_unix, to_unix, _opts \\ [])
       when is_integer(from_unix) and is_integer(to_unix) do
-    messages = BotContext.fetch_messages(chat_id, from_unix, to_unix)
+    messages = Queries.fetch_messages(chat_id, from_unix, to_unix)
 
     if messages == [] do
       {:error, :no_messages}
     else
-      transcript = BotContext.transcript_with_analyses(chat_id, messages)
+      transcript = BotContext.for_messages(chat_id, messages) |> Enum.join("")
       prior = fetch_prior_summaries(chat_id, from_unix)
       max_message_unix = max_message_unix(messages)
       prompt_to_unix = max_message_unix || to_unix

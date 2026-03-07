@@ -19,8 +19,8 @@ defmodule Froth.Telegram.BotContextTest do
   end
 
   test "builds a prompt from only the incoming message when the database is empty" do
-    content =
-      BotContext.build_context(
+    parts =
+      BotContext.for_message(
         incoming_message(
           chat_id: unique_chat_id(),
           id: 10,
@@ -31,15 +31,14 @@ defmodule Froth.Telegram.BotContextTest do
         bot_config()
       )
 
-    assert is_list(content)
-    prompt = content_text(content)
+    assert is_list(parts)
+    prompt = Enum.join(parts, "")
 
     assert prompt =~ ~s(<msg message_id="10")
     assert prompt =~ "hello from telegram"
     refute prompt =~ "<summary"
     refute prompt =~ "<active_tasks>"
     refute prompt =~ "<previous_cycle"
-    assert prompt =~ "Now reply using the send_message tool."
   end
 
   test "includes summaries and only prior telegram messages before the incoming message date" do
@@ -68,8 +67,8 @@ defmodule Froth.Telegram.BotContextTest do
       "future context leak"
     )
 
-    content =
-      BotContext.build_context(
+    parts =
+      BotContext.for_message(
         incoming_message(
           chat_id: chat_id,
           id: 999,
@@ -80,9 +79,9 @@ defmodule Froth.Telegram.BotContextTest do
         bot_config
       )
 
-    assert is_list(content)
+    assert is_list(parts)
 
-    prompt = content_text(content)
+    prompt = Enum.join(parts, "")
 
     assert prompt =~ "<summary date="
     assert prompt =~ "Earlier summary"
@@ -112,8 +111,8 @@ defmodule Froth.Telegram.BotContextTest do
 
     insert_analysis(chat_id, 101, "vision", "observed   cat  on    desk with notes")
 
-    content =
-      BotContext.build_context(
+    parts =
+      BotContext.for_message(
         incoming_message(
           chat_id: chat_id,
           id: 999,
@@ -124,7 +123,7 @@ defmodule Froth.Telegram.BotContextTest do
         bot_config
       )
 
-    prompt = content_text(content)
+    prompt = Enum.join(parts, "")
     assert prompt =~ ~s(<analysis )
     assert prompt =~ ~s(type="vision")
     assert prompt =~ "observed cat on desk with notes"
@@ -171,8 +170,8 @@ defmodule Froth.Telegram.BotContextTest do
         ]
       )
 
-    content =
-      BotContext.build_context(
+    parts =
+      BotContext.for_message(
         incoming_message(
           chat_id: chat_id,
           id: 300,
@@ -183,8 +182,8 @@ defmodule Froth.Telegram.BotContextTest do
         bot_config
       )
 
-    assert is_list(content)
-    prompt = content_text(content)
+    assert is_list(parts)
+    prompt = Enum.join(parts, "")
     assert Regex.match?(~r/<msg message_id="123".*<cycle cycle_id="#{cycle_id}"/s, prompt)
     assert prompt =~ ~s(<call tool="search">)
     assert prompt =~ ~s({"query":["froth","context"]})
@@ -221,8 +220,8 @@ defmodule Froth.Telegram.BotContextTest do
       ]
     )
 
-    content =
-      BotContext.build_context(
+    parts =
+      BotContext.for_message(
         incoming_message(
           chat_id: chat_id,
           id: 301,
@@ -233,13 +232,13 @@ defmodule Froth.Telegram.BotContextTest do
         bot_config
       )
 
-    assert is_list(content)
-    refute content_text(content) =~ "<cycle cycle_id="
+    assert is_list(parts)
+    refute Enum.join(parts, "") =~ "<cycle cycle_id="
   end
 
   test "returns nil for malformed input" do
-    assert BotContext.build_context(%{"chat_id" => "oops"}, bot_config()) == nil
-    assert BotContext.build_context(%{"chat_id" => 1}, :not_a_map) == nil
+    assert BotContext.for_message(%{"chat_id" => "oops"}, bot_config()) == nil
+    assert BotContext.for_message(%{"chat_id" => 1}, :not_a_map) == nil
   end
 
   defp bot_config(opts \\ []) do
@@ -359,15 +358,6 @@ defmodule Froth.Telegram.BotContextTest do
     })
 
     cycle.id
-  end
-
-  defp content_text(content) when is_binary(content), do: content
-
-  defp content_text(content) when is_list(content) do
-    Enum.map_join(content, "", fn
-      %{"text" => text} -> text
-      other -> inspect(other)
-    end)
   end
 
   defp unique_chat_id do

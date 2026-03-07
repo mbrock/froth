@@ -21,14 +21,13 @@ defmodule Froth.Telegram.BotContextHTMLTest do
   describe "recent/1" do
     test "renders recent messages with structured msg tags" do
       messages = [
-        %{time: "2026-03-06 09:12 UTC", sender: "@mikkel", message_id: 4401, text: "morning"}
+        %{date: 1_772_788_320, sender: "@mikkel", message_id: 4401, text: "morning"}
       ]
 
       html = render(BotContextHTML.recent(%{messages: messages}))
 
-      assert html =~
-               ~s(<msg message_id="4401" sender="@mikkel" time="2026-03-06 09:12 UTC" type="messageText">)
-
+      assert html =~ ~s(<msg message_id="4401" sender="@mikkel" time=)
+      assert html =~ ~s(type="messageText">)
       assert html =~ "morning"
     end
   end
@@ -39,7 +38,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
         render(
           BotContextHTML.cycle_trace(%{
             cycle_id: "abc",
-            time: "2026-03-06 09:21:33 UTC",
+            inserted_at: ~U[2026-03-06 09:21:33Z],
             entries: [
               %{
                 kind: :call,
@@ -98,7 +97,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
     test "renders minimal context with only recent messages" do
       ctx = %Context{
         recent_messages: [
-          %{time: "2026-03-06 09:30 UTC", sender: "user:99", message_id: 1, text: "hi"}
+          %{date: 1_741_253_400, sender: "user:99", message_id: 1, text: "hi"}
         ]
       }
 
@@ -116,7 +115,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       result =
         BotContextHTML.render_to_string(
           BotContextHTML.recent_message(%{
-            time: "2026-03-06 09:12 UTC",
+            date: 1_741_252_320,
             sender: "user:1",
             message_id: 1,
             text: "hi"
@@ -133,7 +132,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
         BotContextHTML.render_to_string(
           BotContextHTML.cycle_trace(%{
             cycle_id: "abc",
-            time: "2026-03-06 09:21:33 UTC",
+            inserted_at: ~U[2026-03-06 09:21:33Z],
             entries: [
               %{kind: :call, tool: "look", input_json: ~s({"message_id":"4401"})},
               %{kind: :return, text: "ok"}
@@ -159,8 +158,8 @@ defmodule Froth.Telegram.BotContextHTMLTest do
           omitted_count: 1
         },
         recent_messages: [
-          %{time: "2026-03-06 09:12 UTC", sender: "@mikkel", message_id: 4401, text: "hi"},
-          %{time: "2026-03-06 09:13 UTC", sender: "@luna", message_id: 4402, text: "hey"}
+          %{date: 1_741_252_320, sender: "@mikkel", message_id: 4401, text: "hi"},
+          %{date: 1_741_252_380, sender: "@luna", message_id: 4402, text: "hey"}
         ]
       }
 

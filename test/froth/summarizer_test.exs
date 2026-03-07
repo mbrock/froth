@@ -23,16 +23,16 @@ defmodule Froth.SummarizerTest do
     insert_telegram_message(session_id, chat_id, 102, 8, 1_700_000_800, "still older")
     insert_telegram_message(session_id, chat_id, 103, 9, 1_700_000_900, "future context leak")
 
-    Process.put({:bot_context_chat_name, session_id, chat_id}, "Froth chat")
-    Process.put({:bot_context_user_label, session_id, 7}, "@seven")
-    Process.put({:bot_context_user_label, session_id, 8}, "@eight")
+    Process.put({:chat_name, session_id, chat_id}, "Froth chat")
+    Process.put({:user_label, session_id, 7}, "@seven")
+    Process.put({:user_label, session_id, 8}, "@eight")
 
     opts = [
       telegram_session_id: session_id,
       before_unix: 1_700_000_850
     ]
 
-    parts = BotContext.context_parts(chat_id, opts)
+    parts = BotContext.render_parts(chat_id, opts)
 
     assert length(parts) == 4
 
@@ -54,7 +54,7 @@ defmodule Froth.SummarizerTest do
     assert Enum.at(parts, 3) =~ ~s(<msg message_id="102")
 
     refute Enum.join(parts, "") =~ "future context leak"
-    assert BotContext.context(chat_id, opts) == Enum.join(parts, "")
+    assert Enum.join(BotContext.render_parts(chat_id, opts), "") == Enum.join(parts, "")
   end
 
   defp insert_summary(chat_id, from_date, to_date, summary_text) do

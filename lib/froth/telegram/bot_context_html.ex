@@ -31,7 +31,7 @@ defmodule Froth.Telegram.BotContextHTML do
             omitted_count: non_neg_integer()
           }
     @type recent_message :: %{
-            time: String.t(),
+            date: integer() | nil,
             sender: String.t(),
             message_id: integer(),
             text: String.t(),
@@ -42,7 +42,7 @@ defmodule Froth.Telegram.BotContextHTML do
     @type cycle_entry ::
             %{kind: :call, tool: String.t(), input_json: String.t()}
             | %{kind: :return, text: String.t()}
-    @type cycle_trace :: %{cycle_id: String.t(), time: String.t(), entries: [cycle_entry()]}
+    @type cycle_trace :: %{cycle_id: String.t(), inserted_at: any(), entries: [cycle_entry()]}
 
     @type t :: %__MODULE__{
             summaries: [summary()],
@@ -74,7 +74,7 @@ defmodule Froth.Telegram.BotContextHTML do
           <.page_break />
         <% end %>
         <.recent_message
-          time={m.time}
+          date={m.date}
           sender={m.sender}
           message_id={m.message_id}
           type={Map.get(m, :type, "messageText")}
@@ -141,7 +141,7 @@ defmodule Froth.Telegram.BotContextHTML do
     ~H"""
     <.recent_message
       :for={m <- @messages}
-      time={m.time}
+      date={m.date}
       sender={m.sender}
       message_id={m.message_id}
       type={Map.get(m, :type, "messageText")}
@@ -152,7 +152,7 @@ defmodule Froth.Telegram.BotContextHTML do
     """
   end
 
-  attr :time, :string, required: true
+  attr :date, :integer, required: true
   attr :sender, :string, required: true
   attr :message_id, :any, required: true
   attr :type, :string, default: "messageText"
@@ -162,13 +162,13 @@ defmodule Froth.Telegram.BotContextHTML do
 
   def recent_message(assigns) do
     ~H"""
-    <msg message_id={to_string(@message_id)} sender={@sender} time={@time} type={@type}>
+    <msg message_id={to_string(@message_id)} sender={@sender} time={format_time(@date)} type={@type}>
       {@text}
       <.analysis :for={a <- @analyses} id={a.id} type={a.type} text={a.text} />
       <.cycle_trace
         :for={cycle <- @cycles}
         cycle_id={cycle.cycle_id}
-        time={cycle.time}
+        inserted_at={cycle.inserted_at}
         entries={cycle.entries}
       />
     </msg>
@@ -188,12 +188,12 @@ defmodule Froth.Telegram.BotContextHTML do
   end
 
   attr :cycle_id, :string, required: true
-  attr :time, :string, required: true
+  attr :inserted_at, :any, required: true
   attr :entries, :list, required: true
 
   def cycle_trace(assigns) do
     ~H"""
-    <cycle cycle_id={@cycle_id} at={@time}>
+    <cycle cycle_id={@cycle_id} at={format_datetime(@inserted_at)}>
       <.trace_entry :for={entry <- @entries} entry={entry} />
     </cycle>
     """
@@ -436,6 +436,24 @@ defmodule Froth.Telegram.BotContextHTML do
         "wbr"
       ]
 
+  # ── formatting helpers ────────────────────────────────────────────
+
+  defp format_time(unix) when is_integer(unix) do
+    DateTime.from_unix!(unix) |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
+  end
+
+  defp format_time(_), do: "unknown"
+
+  defp format_datetime(%DateTime{} = dt) do
+    dt |> DateTime.shift_zone!("Etc/UTC") |> Calendar.strftime("%Y-%m-%d %H:%M:%S UTC")
+  end
+
+  defp format_datetime(%NaiveDateTime{} = ndt) do
+    ndt |> DateTime.from_naive!("Etc/UTC") |> Calendar.strftime("%Y-%m-%d %H:%M:%S UTC")
+  end
+
+  defp format_datetime(other), do: to_string(other)
+
   # ── sample view model ─────────────────────────────────────────────
 
   def sample_context do
@@ -458,14 +476,14 @@ defmodule Froth.Telegram.BotContextHTML do
       ],
       recent_messages: [
         %{
-          time: "2026-03-06 09:12 UTC",
+          date: 1_741_252_320,
           sender: "@mikkel",
           message_id: 4401,
           text: "morning, checking the logs now",
           cycles: [
             %{
               cycle_id: "01JNWXYZ",
-              time: "2026-03-06 08:41:03 UTC",
+              inserted_at: ~U[2026-03-06 08:41:03Z],
               entries: [
                 %{
                   kind: :call,
@@ -487,7 +505,7 @@ defmodule Froth.Telegram.BotContextHTML do
           ]
         },
         %{
-          time: "2026-03-06 09:15 UTC",
+          date: 1_741_252_500,
           sender: "@charlie",
           message_id: 4402,
           text: "the summarizer ran overnight, looks clean",
@@ -500,7 +518,7 @@ defmodule Froth.Telegram.BotContextHTML do
           ]
         },
         %{
-          time: "2026-03-06 09:18 UTC",
+          date: 1_741_252_680,
           sender: "@mikkel",
           message_id: 4403,
           text: "nice. i want to rework the context builder today",
@@ -514,7 +532,7 @@ defmodule Froth.Telegram.BotContextHTML do
           cycles: [
             %{
               cycle_id: "01JNWABC",
-              time: "2026-03-06 09:08:52 UTC",
+              inserted_at: ~U[2026-03-06 09:08:52Z],
               entries: [
                 %{
                   kind: :call,
@@ -530,13 +548,13 @@ defmodule Froth.Telegram.BotContextHTML do
           ]
         },
         %{
-          time: "2026-03-06 09:22 UTC",
+          date: 1_741_252_920,
           sender: "@luna",
           message_id: 4404,
           text: "can we look at the voice pipeline too?"
         },
         %{
-          time: "2026-03-06 09:24 UTC",
+          date: 1_741_253_040,
           sender: "user:42",
           message_id: 4405,
           text: "what does the context look like right now?"

@@ -336,7 +336,11 @@ defmodule Froth.Telegram.Bot do
       get_in(msg, ["content", "text", "text"]) ||
         get_in(msg, ["content", "caption", "text"]) || ""
 
-    user_content = BotContext.build_context(msg, state.bot_config)
+    user_content =
+      case BotContext.for_message(msg, state.bot_config) do
+        nil -> nil
+        parts -> parts_to_text_blocks(parts)
+      end
 
     start_cycle(state, chat_id, reply_to, text, user_content)
   end
@@ -417,6 +421,21 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp start_cycle(state, _chat_id, _reply_to, _text, _user_content), do: state
+
+  @response_instruction "\n\nNow reply using the send_message tool."
+
+  defp parts_to_text_blocks(parts) when is_list(parts) do
+    parts
+    |> append_response_instruction()
+    |> Enum.map(fn part -> %{"type" => "text", "text" => part} end)
+  end
+
+  defp append_response_instruction([]), do: [String.trim(@response_instruction)]
+
+  defp append_response_instruction(parts) do
+    {last, rest} = List.pop_at(parts, -1)
+    rest ++ [last <> @response_instruction]
+  end
 
   defp stop_cycle(state, cycle_id, opts) when is_binary(cycle_id) do
     state = normalize_state(state)
