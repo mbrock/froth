@@ -3,8 +3,8 @@ defmodule FrothWeb.TelemetryLive do
 
   import Ecto.Query
 
-  @page_size 100
-  @max_events 500
+  @page_size 3000
+  @max_events 5000
 
   @impl true
   def mount(_params, _session, socket) do
@@ -90,7 +90,7 @@ defmodule FrothWeb.TelemetryLive do
         order_by: [desc: e.inserted_at],
         limit: ^@page_size,
         select: %{
-          id: e.id,
+          id: type(e.id, Ecto.UUID),
           event: e.event,
           span_id: e.span_id,
           parent_id: e.parent_id,

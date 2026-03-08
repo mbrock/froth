@@ -27,6 +27,7 @@ defmodule Froth.Telegram.Bot do
     :chat_id,
     :reply_to,
     :cycle_started_ms,
+    :cycle_span_id,
     :last_tool_error,
     :last_sent_message_id,
     :last_sent_message_text,
@@ -80,7 +81,9 @@ defmodule Froth.Telegram.Bot do
 
     :ok = BotAdapter.subscribe(bot_config.session_id)
 
-    Span.execute([:froth, :telegram, :bot, :listening], nil, %{
+    session_span = Froth.Telegram.Session.span_id(bot_config.session_id)
+
+    Span.execute([:froth, :telegram, :bot, :listening], session_span, %{
       bot_id: bot_config.id,
       session_id: bot_config.session_id,
       username: bot_config.bot_username
@@ -91,16 +94,46 @@ defmodule Froth.Telegram.Bot do
 
   @impl true
   def handle_info({:telegram_update, update}, state) do
-    case route_update(update, state.bot_config) do
+    update_type = update["@type"] || "unknown"
+    bc = state.bot_config
+    session_span = Froth.Telegram.Session.span_id(bc.session_id)
+    chat_id = get_in(update, ["message", "chat_id"])
+    sender_id = get_in(update, ["message", "sender_id", "user_id"])
+    text = get_in(update, ["message", "content", "text", "text"])
+
+    case route_update(update, bc) do
       {:mention, msg} ->
+        Span.execute([:froth, :telegram, :bot, :update], session_span, %{
+          bot_id: bc.id,
+          update_type: update_type,
+          action: "mention",
+          chat_id: chat_id,
+          sender_id: sender_id,
+          message_id: msg["id"],
+          text: String.slice(text || "", 0, 200)
+        })
+
         {:noreply, start_cycle_from_message(state, msg)}
 
       {:callback_stop_cycle, query_id, cycle_id} ->
-        BotAdapter.answer_callback(state.bot_config.session_id, query_id)
+        Span.execute([:froth, :telegram, :bot, :update], session_span, %{
+          bot_id: bc.id,
+          update_type: update_type,
+          action: "callback_stop_cycle",
+          cycle_id: cycle_id
+        })
+
+        BotAdapter.answer_callback(bc.session_id, query_id)
         {:noreply, stop_cycle(state, cycle_id, notify?: true)}
 
       {:callback_stop_active, query_id} ->
-        BotAdapter.answer_callback(state.bot_config.session_id, query_id)
+        Span.execute([:froth, :telegram, :bot, :update], session_span, %{
+          bot_id: bc.id,
+          update_type: update_type,
+          action: "callback_stop_active"
+        })
+
+        BotAdapter.answer_callback(bc.session_id, query_id)
 
         state =
           case state.cycle do
@@ -111,6 +144,14 @@ defmodule Froth.Telegram.Bot do
         {:noreply, state}
 
       :ignore ->
+        Span.execute([:froth, :telegram, :bot, :update], session_span, %{
+          bot_id: bc.id,
+          update_type: update_type,
+          action: "ignore",
+          chat_id: chat_id,
+          sender_id: sender_id
+        })
+
         {:noreply, state}
     end
   end
@@ -178,11 +219,18 @@ defmodule Froth.Telegram.Bot do
       ) do
     state = normalize_state(state)
 
-    Span.execute([:froth, :telegram, :bot, :cycle_finished], nil, %{
-      cycle_id: state.cycle && state.cycle.id,
-      bot_id: state.bot_config.id,
-      reason: reason
-    })
+    if state.cycle_span_id do
+      Span.stop_span(
+        [:froth, :telegram, :bot, :cycle],
+        state.cycle_span_id,
+        state.cycle_started_ms || System.monotonic_time(),
+        %{
+          cycle_id: state.cycle && state.cycle.id,
+          bot_id: state.bot_config.id,
+          reason: inspect(reason)
+        }
+      )
+    end
 
     state =
       state
@@ -199,6 +247,7 @@ defmodule Froth.Telegram.Bot do
          chat_id: nil,
          reply_to: nil,
          cycle_started_ms: nil,
+         cycle_span_id: nil,
          cycle_replied?: false,
          last_tool_error: nil,
          last_sent_message_id: nil,
@@ -351,7 +400,11 @@ defmodule Froth.Telegram.Bot do
     bc = state.bot_config
 
     if state.worker_pid do
-      Span.execute([:froth, :telegram, :bot, :busy], nil, %{bot_id: bc.id, chat_id: chat_id})
+      Span.execute([:froth, :telegram, :bot, :busy], state.cycle_span_id, %{
+        bot_id: bc.id,
+        chat_id: chat_id,
+        active_cycle_id: state.cycle && state.cycle.id
+      })
       BotAdapter.send_message(bc.session_id, chat_id, "(busy, try again in a moment)")
       state
     else
@@ -395,11 +448,17 @@ defmodule Froth.Telegram.Bot do
       {:ok, pid} = Worker.start_link({cycle, config})
       ref = Process.monitor(pid)
 
-      Span.execute([:froth, :telegram, :bot, :cycle_started], nil, %{
-        bot_id: bc.id,
-        cycle_id: cycle.id,
-        chat_id: chat_id
-      })
+      cycle_mono_start = System.monotonic_time()
+
+      session_span = Froth.Telegram.Session.span_id(bc.session_id)
+
+      cycle_span_id =
+        Span.start_span([:froth, :telegram, :bot, :cycle], session_span, %{
+          bot_id: bc.id,
+          cycle_id: cycle.id,
+          chat_id: chat_id,
+          model: bc.model
+        })
 
       %{
         state
@@ -408,7 +467,8 @@ defmodule Froth.Telegram.Bot do
           worker_ref: ref,
           chat_id: chat_id,
           reply_to: reply_to,
-          cycle_started_ms: System.monotonic_time(:millisecond),
+          cycle_started_ms: cycle_mono_start,
+          cycle_span_id: cycle_span_id,
           cycle_replied?: false,
           last_tool_error: nil,
           last_sent_message_id: nil,
@@ -457,6 +517,15 @@ defmodule Froth.Telegram.Bot do
 
     state =
       if (state.cycle && state.cycle.id == cycle_id) and is_pid(state.worker_pid) do
+        if state.cycle_span_id do
+          Span.stop_span(
+            [:froth, :telegram, :bot, :cycle],
+            state.cycle_span_id,
+            state.cycle_started_ms || System.monotonic_time(),
+            %{cycle_id: cycle_id, bot_id: state.bot_config.id, reason: "stopped"}
+          )
+        end
+
         Process.exit(state.worker_pid, :kill)
 
         %{
@@ -467,6 +536,7 @@ defmodule Froth.Telegram.Bot do
             chat_id: nil,
             reply_to: nil,
             cycle_started_ms: nil,
+            cycle_span_id: nil,
             cycle_replied?: false,
             last_tool_error: nil,
             last_sent_message_id: nil,
@@ -832,8 +902,9 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp cycle_elapsed_seconds(started_ms) when is_integer(started_ms) do
-    elapsed_ms = System.monotonic_time(:millisecond) - started_ms
+  defp cycle_elapsed_seconds(started_mono) when is_integer(started_mono) do
+    elapsed_native = System.monotonic_time() - started_mono
+    elapsed_ms = System.convert_time_unit(elapsed_native, :native, :millisecond)
     max(elapsed_ms, 0) / 1000
   end
 

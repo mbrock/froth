@@ -20,6 +20,14 @@ defmodule Froth.Telegram.Session do
 
   def topic(id), do: "telegram:#{id}"
 
+  @doc "Look up this session's telemetry span_id from the Registry."
+  def span_id(session_id) do
+    case Registry.lookup(Froth.Telegram.Registry, session_id) do
+      [{_pid, span_id}] when is_binary(span_id) -> span_id
+      _ -> nil
+    end
+  end
+
   @impl true
   def init(config) do
     id = Map.fetch!(config, :id)
@@ -39,9 +47,17 @@ defmodule Froth.Telegram.Session do
         tgcalls_sink_ref: tgcalls_sink_ref
       }
 
+      session_span_id =
+        Span.start_span([:froth, :telegram, :session], nil, %{session: id})
+
+      Registry.update_value(Froth.Telegram.Registry, id, fn _ -> session_span_id end)
+
+      state = Map.put(state, :span_id, session_span_id)
+      state = Map.put(state, :mono_start, System.monotonic_time())
+
       case Froth.Telegram.Cnode.register_session(id, self()) do
         {:ok, connected?} ->
-          Span.execute([:froth, :telegram, :session, :registered], nil, %{
+          Span.execute([:froth, :telegram, :session, :registered], session_span_id, %{
             session: id,
             connected: connected?
           })
@@ -55,7 +71,7 @@ defmodule Froth.Telegram.Session do
           {:ok, state}
 
         {:error, reason} ->
-          Span.execute([:froth, :telegram, :session, :register_failed], nil, %{
+          Span.execute([:froth, :telegram, :session, :register_failed], session_span_id, %{
             session: id,
             reason: reason
           })
@@ -67,6 +83,15 @@ defmodule Froth.Telegram.Session do
 
   @impl true
   def terminate(_reason, state) do
+    if state[:span_id] do
+      Span.stop_span(
+        [:froth, :telegram, :session],
+        state.span_id,
+        state[:mono_start] || System.monotonic_time(),
+        %{session: state.id}
+      )
+    end
+
     Froth.Telegram.Cnode.unregister_session(state.id, self())
 
     if is_pid(state.tgcalls_sink_pid) do
@@ -136,7 +161,7 @@ defmodule Froth.Telegram.Session do
   end
 
   def handle_info(:telegram_sync_auth_state, state) do
-    Span.execute([:froth, :telegram, :session, :sync_auth], nil, %{session: state.id})
+    Span.execute([:froth, :telegram, :session, :sync_auth], state[:span_id], %{session: state.id})
 
     %{"@type" => "getAuthorizationState"}
     |> encode_request()
@@ -147,18 +172,18 @@ defmodule Froth.Telegram.Session do
   end
 
   def handle_info(:telegram_cnode_connected, %{connected?: true} = state) do
-    Span.execute([:froth, :telegram, :session, :already_connected], nil, %{session: state.id})
+    Span.execute([:froth, :telegram, :session, :already_connected], state[:span_id], %{session: state.id})
     {:noreply, state}
   end
 
   def handle_info(:telegram_cnode_connected, state) do
-    Span.execute([:froth, :telegram, :session, :connected], nil, %{session: state.id})
+    Span.execute([:froth, :telegram, :session, :connected], state[:span_id], %{session: state.id})
     send(self(), :telegram_sync_auth_state)
     {:noreply, %{state | connected?: true}}
   end
 
   def handle_info(:telegram_cnode_disconnected, state) do
-    Span.execute([:froth, :telegram, :session, :disconnected], nil, %{session: state.id})
+    Span.execute([:froth, :telegram, :session, :disconnected], state[:span_id], %{session: state.id})
     {:noreply, %{state | connected?: false}}
   end
 
@@ -168,13 +193,13 @@ defmodule Froth.Telegram.Session do
       ) do
     {tgcalls_sink_pid, tgcalls_sink_ref} = start_tgcalls_sink()
 
-    Span.execute([:froth, :telegram, :session, :tgcalls_sink_restarted], nil, %{session: state.id})
+    Span.execute([:froth, :telegram, :session, :tgcalls_sink_restarted], state[:span_id], %{session: state.id})
 
     {:noreply, %{state | tgcalls_sink_pid: tgcalls_sink_pid, tgcalls_sink_ref: tgcalls_sink_ref}}
   end
 
   def handle_info(msg, state) do
-    Span.execute([:froth, :telegram, :session, :unexpected], nil, %{
+    Span.execute([:froth, :telegram, :session, :unexpected], state[:span_id], %{
       session: state.id,
       message: msg
     })
@@ -212,7 +237,7 @@ defmodule Froth.Telegram.Session do
       {:error, reason} ->
         Span.execute(
           [:froth, :telegram, :session, :tgcalls_route_failed],
-          nil,
+          state[:span_id],
           %{session: state.id, update_type: Map.get(decoded, "@type"), reason: reason}
         )
     end
@@ -241,13 +266,13 @@ defmodule Froth.Telegram.Session do
       "application_version" => "0.1.0"
     }
 
-    Span.execute([:froth, :telegram, :session, :set_tdlib_params], nil, %{session: state.id})
+    Span.execute([:froth, :telegram, :session, :set_tdlib_params], state[:span_id], %{session: state.id})
     send_request(state, params)
     state
   end
 
   defp handle_auth_state(%{"@type" => "authorizationStateWaitEncryptionKey"}, state) do
-    Span.execute([:froth, :telegram, :session, :check_encryption_key], nil, %{session: state.id})
+    Span.execute([:froth, :telegram, :session, :check_encryption_key], state[:span_id], %{session: state.id})
     send_request(state, %{"@type" => "checkDatabaseEncryptionKey", "encryption_key" => ""})
     state
   end
@@ -257,7 +282,7 @@ defmodule Froth.Telegram.Session do
 
     cond do
       is_binary(config.bot_token) and config.bot_token != "" ->
-        Span.execute([:froth, :telegram, :session, :auth_bot_token], nil, %{session: state.id})
+        Span.execute([:froth, :telegram, :session, :auth_bot_token], state[:span_id], %{session: state.id})
 
         send_request(state, %{
           "@type" => "checkAuthenticationBotToken",
@@ -265,7 +290,7 @@ defmodule Froth.Telegram.Session do
         })
 
       is_binary(config.phone_number) and config.phone_number != "" ->
-        Span.execute([:froth, :telegram, :session, :auth_phone], nil, %{session: state.id})
+        Span.execute([:froth, :telegram, :session, :auth_phone], state[:span_id], %{session: state.id})
 
         send_request(state, %{
           "@type" => "setAuthenticationPhoneNumber",
@@ -273,19 +298,19 @@ defmodule Froth.Telegram.Session do
         })
 
       true ->
-        Span.execute([:froth, :telegram, :session, :no_credentials], nil, %{session: state.id})
+        Span.execute([:froth, :telegram, :session, :no_credentials], state[:span_id], %{session: state.id})
     end
 
     state
   end
 
   defp handle_auth_state(%{"@type" => "authorizationStateReady"}, state) do
-    Span.execute([:froth, :telegram, :session, :ready], nil, %{session: state.id})
+    Span.execute([:froth, :telegram, :session, :ready], state[:span_id], %{session: state.id})
     state
   end
 
   defp handle_auth_state(%{"@type" => type}, state) do
-    Span.execute([:froth, :telegram, :session, :auth_state], nil, %{session: state.id, type: type})
+    Span.execute([:froth, :telegram, :session, :auth_state], state[:span_id], %{session: state.id, type: type})
 
     state
   end
@@ -315,7 +340,7 @@ defmodule Froth.Telegram.Session do
   defp maybe_log_send_error({:error, reason}, session_id) do
     Span.execute([:froth, :telegram, :session, :send_failed], nil, %{
       session: session_id,
-      reason: reason
+      reason: inspect(reason)
     })
 
     {:error, reason}
