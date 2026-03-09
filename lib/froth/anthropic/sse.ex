@@ -1,5 +1,6 @@
 defmodule Froth.Anthropic.SSE do
   @moduledoc false
+  @behaviour Froth.LLM
 
   def split_frames(buf) do
     # Support both LF and CRLF. We normalize CRLF to LF for parsing.
@@ -123,6 +124,30 @@ defmodule Froth.Anthropic.SSE do
       end)
 
     {%{st | buf: rest}, events, done?}
+  end
+
+  def consume_payload(state, %{"type" => "message_stop"}) when is_map(state) do
+    {state, [], true}
+  end
+
+  def consume_payload(state, %{"type" => "error"} = payload) when is_map(state) do
+    {state, [inspect(payload)], true}
+  end
+
+  def consume_payload(state, %{} = payload) when is_map(state) do
+    {state, events} = handle_payload(state, payload)
+    {state, events, false}
+  end
+
+  def result(state) when is_map(state) do
+    %{
+      text: state.text,
+      content: blocks_to_content(state.blocks),
+      stop_reason: state.stop_reason,
+      usage: state.usage,
+      model: state.model,
+      message_id: state.message_id
+    }
   end
 
   def handle_payload(

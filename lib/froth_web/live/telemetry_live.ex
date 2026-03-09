@@ -188,9 +188,11 @@ defmodule FrothWeb.TelemetryLive do
   end
 
   defp format_value(v) when is_number(v) or is_boolean(v) or is_atom(v), do: to_string(v)
-  defp format_value(v) when is_map(v) or is_list(v), do: inspect(v, limit: 10, printable_limit: 80)
-  defp format_value(v), do: inspect(v, limit: 10, printable_limit: 80)
 
+  defp format_value(v) when is_map(v) or is_list(v),
+    do: inspect(v, limit: 10, printable_limit: 80)
+
+  defp format_value(v), do: inspect(v, limit: 10, printable_limit: 80)
 
   defp short_event(event) do
     event
@@ -270,13 +272,20 @@ defmodule FrothWeb.TelemetryLive do
                 </td>
                 <td class="px-3 py-1.5 font-mono text-zinc-600 whitespace-nowrap">
                   <%= if sid = event[:span_id] || event.metadata["span_id"] do %>
-                    <span class="text-zinc-500" title={"span: #{sid}"}>{String.slice(sid, 0, 8)}</span>
+                    <span class="text-zinc-500" title={"span: #{sid}"}>
+                      {String.slice(sid, 0, 8)}
+                    </span>
                   <% end %>
                   <%= if pid = event[:parent_id] || event.metadata["parent_id"] do %>
-                    <span class="text-zinc-600" title={"parent: #{pid}"}>← {String.slice(to_string(pid), 0, 8)}</span>
+                    <span class="text-zinc-600" title={"parent: #{pid}"}>
+                      ← {String.slice(to_string(pid), 0, 8)}
+                    </span>
                   <% end %>
                 </td>
-                <td class="px-3 py-1.5 text-zinc-400 truncate max-w-lg" title={format_metadata(event.metadata)}>
+                <td
+                  class="px-3 py-1.5 text-zinc-400 truncate max-w-lg"
+                  title={format_metadata(event.metadata)}
+                >
                   {format_metadata(event.metadata) || ""}
                 </td>
               </tr>
