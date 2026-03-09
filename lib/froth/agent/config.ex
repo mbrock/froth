@@ -1,5 +1,6 @@
 defmodule Froth.Agent.Config do
   @type t :: %__MODULE__{
+          provider: atom() | String.t() | module() | nil,
           system: String.t() | nil,
           model: String.t() | nil,
           tools: [map()],
@@ -9,5 +10,5 @@ defmodule Froth.Agent.Config do
           effort: String.t() | nil
         }
 
-  defstruct [:system, :model, :tool_executor, :context, :thinking, :effort, tools: []]
+  defstruct [:provider, :system, :model, :tool_executor, :context, :thinking, :effort, tools: []]
 end

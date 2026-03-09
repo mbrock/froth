@@ -30,6 +30,28 @@ defmodule Froth.Telemetry do
     [:froth, :anthropic, :request, :exception]
   ]
 
+  @openai_events [
+    [:froth, :openai, :request, :start],
+    [:froth, :openai, :request, :stop],
+    [:froth, :openai, :request, :exception]
+  ]
+
+  @grok_events [
+    [:froth, :grok, :request, :start],
+    [:froth, :grok, :request, :stop],
+    [:froth, :grok, :request, :exception]
+  ]
+
+  @gemini_events [
+    [:froth, :gemini, :request, :start],
+    [:froth, :gemini, :request, :stop],
+    [:froth, :gemini, :request, :exception]
+  ]
+
+  @llm_events [
+    [:froth, :llm, :edit]
+  ]
+
   @agent_events [
     [:froth, :agent, :cycle, :start],
     [:froth, :agent, :cycle, :stop],
@@ -226,7 +248,11 @@ defmodule Froth.Telemetry do
   ]
 
   @all_events @http_events ++
+                @llm_events ++
                 @anthropic_events ++
+                @openai_events ++
+                @grok_events ++
+                @gemini_events ++
                 @agent_events ++
                 @telegram_events ++
                 @codex_events ++
@@ -237,6 +263,14 @@ defmodule Froth.Telemetry do
   def attach_handlers do
     Froth.Telemetry.Logger.attach(@all_events)
     Froth.Telemetry.Store.attach(@all_events)
-    Froth.Telemetry.Broadcaster.attach(@anthropic_events ++ @http_events)
+
+    Froth.Telemetry.Broadcaster.attach(
+      @anthropic_events ++
+        @openai_events ++
+        @grok_events ++
+        @gemini_events ++
+        @http_events ++
+        @llm_events
+    )
   end
 end

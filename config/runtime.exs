@@ -90,6 +90,60 @@ config :froth, Froth.Anthropic,
          %{"type" => "enabled", "budget_tokens" => budget}
      end)
 
+config :froth, Froth.OpenAI,
+  api_key: System.get_env("OPENAI_API_KEY"),
+  model: System.get_env("OPENAI_MODEL", "gpt-5-mini"),
+  system: System.get_env("OPENAI_SYSTEM", ""),
+  max_tokens:
+    (case System.get_env("OPENAI_MAX_TOKENS", "16384") do
+       value ->
+         case Integer.parse(value) do
+           {n, ""} when n > 0 -> n
+           _ -> 16_384
+         end
+     end),
+  effort:
+    (case System.get_env("OPENAI_EFFORT", "") |> String.downcase() |> String.trim() do
+       "" -> nil
+       effort -> effort
+     end)
+
+config :froth, Froth.Grok,
+  api_key: System.get_env("GROK_API_KEY") || System.get_env("XAI_API_KEY"),
+  model: System.get_env("GROK_MODEL", "grok-4-1-fast-reasoning"),
+  system: System.get_env("GROK_SYSTEM", ""),
+  max_tokens:
+    (case System.get_env("GROK_MAX_TOKENS", "16384") do
+       value ->
+         case Integer.parse(value) do
+           {n, ""} when n > 0 -> n
+           _ -> 16_384
+         end
+     end),
+  effort:
+    (case System.get_env("GROK_EFFORT", "") |> String.downcase() |> String.trim() do
+       "" -> nil
+       effort -> effort
+     end)
+
+config :froth, Froth.Gemini,
+  api_key: System.get_env("GEMINI_API_KEY") || System.get_env("GOOGLE_API_KEY"),
+  model: System.get_env("GEMINI_MODEL", "gemini-2.5-flash"),
+  system: System.get_env("GEMINI_SYSTEM", ""),
+  max_tokens:
+    (case System.get_env("GEMINI_MAX_TOKENS", "16384") do
+       value ->
+         case Integer.parse(value) do
+           {n, ""} when n > 0 -> n
+           _ -> 16_384
+         end
+     end),
+  effort:
+    (case System.get_env("GEMINI_EFFORT", "") |> String.downcase() |> String.trim() do
+       "" -> nil
+       effort -> effort
+     end)
+
 config :froth, Froth.Analyzer, tdlib_session: System.get_env("ANALYZER_TDLIB_SESSION")
 
 config :froth, Froth.Podcast,

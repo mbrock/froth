@@ -19,6 +19,8 @@ defmodule Froth.AnthropicCase do
     on_exit(fn ->
       Application.put_env(:froth, Froth.Anthropic, original)
       Application.delete_env(:froth, :sse_stream_fun)
+      Application.delete_env(:froth, :llm_stream_fun)
+      Application.delete_env(:froth, :llm_stream_single_fun)
       Application.delete_env(:froth, :post_json_fun)
     end)
 

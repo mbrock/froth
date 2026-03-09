@@ -141,7 +141,11 @@ defmodule FrothWeb.TelemetryLive do
   defp event_color("froth.telegram." <> _), do: "text-blue-400"
   defp event_color("froth.agent." <> _), do: "text-purple-400"
   defp event_color("froth.http." <> _), do: "text-amber-400"
+  defp event_color("froth.llm." <> _), do: "text-lime-400"
   defp event_color("froth.anthropic." <> _), do: "text-orange-400"
+  defp event_color("froth.openai." <> _), do: "text-sky-400"
+  defp event_color("froth.grok." <> _), do: "text-fuchsia-400"
+  defp event_color("froth.gemini." <> _), do: "text-yellow-300"
   defp event_color("froth.codex." <> _), do: "text-emerald-400"
   defp event_color("froth.qwen." <> _), do: "text-pink-400"
   defp event_color("froth.tasks." <> _), do: "text-cyan-400"
@@ -153,7 +157,11 @@ defmodule FrothWeb.TelemetryLive do
       {"froth.telegram.", "Telegram"},
       {"froth.agent.", "Agent"},
       {"froth.http.", "HTTP"},
+      {"froth.llm.", "LLM"},
       {"froth.anthropic.", "Anthropic"},
+      {"froth.openai.", "OpenAI"},
+      {"froth.grok.", "Grok"},
+      {"froth.gemini.", "Gemini"},
       {"froth.codex.", "Codex"},
       {"froth.qwen.", "Qwen"},
       {"froth.tasks.", "Tasks"}

@@ -10,6 +10,7 @@ defmodule Froth.Agent.Worker do
 
   alias Froth.Agent
   alias Froth.Agent.{Config, Cycle, Message, ToolUse, ToolResult}
+  alias Froth.LLM
   alias Froth.Telemetry.Span
 
   @type invocation :: {reference(), ToolUse.t()}
@@ -59,7 +60,11 @@ defmodule Froth.Agent.Worker do
     now = System.monotonic_time()
 
     span_id =
-      Span.start_span([:froth, :agent, :cycle], nil, %{cycle_id: cycle.id, model: config.model})
+      Span.start_span([:froth, :agent, :cycle], nil, %{
+        cycle_id: cycle.id,
+        model: config.model,
+        provider: config.provider || LLM.provider_name_for_model(config.model)
+      })
 
     worker = %__MODULE__{
       config: config,
@@ -181,6 +186,7 @@ defmodule Froth.Agent.Worker do
     opts =
       [
         system: worker.config.system || "",
+        provider: worker.config.provider,
         model: worker.config.model,
         tools: worker.config.tools,
         thinking: worker.config.thinking,
@@ -191,7 +197,7 @@ defmodule Froth.Agent.Worker do
 
     task =
       Task.Supervisor.async_nolink(Froth.Agent.TaskSupervisor, fn ->
-        Froth.Anthropic.stream_single(
+        LLM.stream_single(
           api_messages,
           fn event -> Froth.broadcast("cycle:#{cycle_id}", {:stream, event}) end,
           opts

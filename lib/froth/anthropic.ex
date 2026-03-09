@@ -1,8 +1,9 @@
 defmodule Froth.Anthropic do
   @moduledoc false
 
-  alias Froth.Anthropic.SSE
   alias Froth.LLM
+  alias Froth.LLM.Providers.Anthropic, as: AnthropicProvider
+  alias Froth.LLM.Request
   alias Froth.Telemetry.Span
 
   @api_url "https://api.anthropic.com/v1/messages"
@@ -42,6 +43,7 @@ defmodule Froth.Anthropic do
     with {:ok, config} <- build_config(opts) do
       parent_id = Keyword.get(opts, :parent_id)
       body = build_request_body(config, api_messages)
+      request = build_llm_request(config, api_messages, parent_id)
 
       meta = %{
         mode: :stream_single,
@@ -51,7 +53,9 @@ defmodule Froth.Anthropic do
       }
 
       Span.span([:froth, :anthropic, :request], parent_id, meta, fn span_id ->
-        case stream_sse_events(@api_url, config.headers, body, on_event, span_id) do
+        request = %{request | parent_id: span_id}
+
+        case stream_sse_events(request, @api_url, config.headers, body, on_event, span_id) do
           {:ok, result} ->
             stop_meta = %{
               ok: true,
@@ -155,6 +159,22 @@ defmodule Froth.Anthropic do
     |> maybe_put_tools(config.tools)
   end
 
+  defp build_llm_request(config, api_messages, parent_id) do
+    %Request{
+      provider: AnthropicProvider,
+      messages: api_messages,
+      model: config.model,
+      system: config.system,
+      max_tokens: config.max_tokens,
+      tools: config.tools,
+      thinking: config.thinking,
+      output_config: config.output_config,
+      cache_control: config.cache_control,
+      headers: config.headers,
+      parent_id: parent_id
+    }
+  end
+
   # -- SSE event telemetry --
 
   defp wrap_on_event_with_telemetry(on_event, parent_id) when is_function(on_event, 1) do
@@ -247,17 +267,12 @@ defmodule Froth.Anthropic do
 
   @doc false
   def active_api_key do
-    case Froth.Repo.query(
-           "SELECT key FROM api_keys WHERE provider = 'anthropic' AND active = true LIMIT 1"
-         ) do
-      {:ok, %{rows: [[key]]}} -> key
-      _ -> nil
-    end
+    Froth.LLM.active_api_key("anthropic")
   end
 
   # -- HTTP / SSE --
 
-  defp stream_sse_events(url, headers, body, on_event, parent_id) do
+  defp stream_sse_events(request, url, headers, body, on_event, parent_id) do
     wrapped_on_event = wrap_on_event_with_telemetry(on_event, parent_id)
 
     case Application.get_env(:froth, :sse_stream_fun) do
@@ -265,15 +280,23 @@ defmodule Froth.Anthropic do
         fun.(url, headers, body, wrapped_on_event)
 
       _ ->
-        do_req_stream_sse_events(url, headers, body, wrapped_on_event, parent_id)
+        do_req_stream_sse_events(request, body, wrapped_on_event, parent_id)
     end
   end
 
-  defp do_req_stream_sse_events(url, headers, body, on_event, parent_id) do
-    http_meta = %{method: :post, url: url, headers: headers, body: body, stream: true}
+  defp do_req_stream_sse_events(%Request{} = request, body, on_event, parent_id) do
+    {:ok, transport_request} = AnthropicProvider.build_request(request)
+
+    http_meta = %{
+      method: :post,
+      url: transport_request.url,
+      headers: transport_request.headers,
+      body: body,
+      stream: true
+    }
 
     Span.span([:froth, :http, :request], parent_id, http_meta, fn _span_id ->
-      case LLM.stream_sse(url, headers, body, on_event, SSE, receive_timeout: 60_000) do
+      case LLM.stream(request, on_event, receive_timeout: 60_000) do
         {:ok, _} = ok ->
           {ok, %{status: 200}}
 

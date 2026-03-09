@@ -213,5 +213,46 @@ defmodule Froth.Agent.WorkerTest do
       roles = Enum.map(events, fn {:event, _event, msg} -> msg.role end)
       assert roles == [:agent, :user, :agent]
     end
+
+    test "routes provider selection through Froth.LLM" do
+      test_pid = self()
+      executor = start_executor(fn _, _ -> "ok" end)
+
+      Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, on_event, opts ->
+        send(test_pid, {:llm_call, api_messages, opts})
+        on_event.({:text_delta, "hello"})
+
+        {:ok,
+         %{
+           text: "hello",
+           content: [%{"type" => "text", "text" => "hello"}],
+           stop_reason: "stop",
+           usage: %{},
+           model: opts[:model],
+           message_id: "msg_test"
+         }}
+      end)
+
+      config = %Config{
+        provider: :openai,
+        model: "gpt-5-mini",
+        tools: [],
+        tool_executor: executor
+      }
+
+      message = Repo.insert!(%Message{role: :user, content: Message.wrap("hello")})
+
+      {_cycle, stream} = Froth.Agent.run(message, config)
+      all = Enum.to_list(stream)
+
+      assert_receive {:llm_call, api_messages, opts}
+      assert [%{"role" => "user", "content" => "hello"}] = api_messages
+      assert opts[:provider] == :openai
+      assert opts[:model] == "gpt-5-mini"
+
+      events = Enum.filter(all, &match?({:event, _, _}, &1))
+      {:event, _event, last_msg} = List.last(events)
+      assert last_msg.role == :agent
+    end
   end
 end
