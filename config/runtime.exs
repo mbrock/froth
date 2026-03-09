@@ -110,7 +110,7 @@ config :froth, Froth.OpenAI,
 
 config :froth, Froth.Grok,
   api_key: System.get_env("GROK_API_KEY") || System.get_env("XAI_API_KEY"),
-  model: System.get_env("GROK_MODEL", "grok-4-1-fast-reasoning"),
+  model: System.get_env("GROK_MODEL", "grok-4-1-fast-non-reasoning"),
   system: System.get_env("GROK_SYSTEM", ""),
   max_tokens:
     (case System.get_env("GROK_MAX_TOKENS", "16384") do
@@ -128,7 +128,7 @@ config :froth, Froth.Grok,
 
 config :froth, Froth.Gemini,
   api_key: System.get_env("GEMINI_API_KEY") || System.get_env("GOOGLE_API_KEY"),
-  model: System.get_env("GEMINI_MODEL", "gemini-2.5-flash"),
+  model: System.get_env("GEMINI_MODEL", "gemini-3-flash-preview"),
   system: System.get_env("GEMINI_SYSTEM", ""),
   max_tokens:
     (case System.get_env("GEMINI_MAX_TOKENS", "16384") do

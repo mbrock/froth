@@ -7,7 +7,7 @@ defmodule Froth.Grok do
   alias Froth.LLM.Request
 
   @default_max_tokens 16_384
-  @default_model "grok-4-1-fast-reasoning"
+  @default_model "grok-4-1-fast-non-reasoning"
   @endpoint "https://api.x.ai/v1/chat/completions"
 
   def stream_single(api_messages, on_event, opts \\ [])

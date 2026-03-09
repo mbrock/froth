@@ -7,7 +7,7 @@ defmodule Froth.Gemini do
   alias Froth.LLM.Request
 
   @default_max_tokens 16_384
-  @default_model "gemini-2.5-flash"
+  @default_model "gemini-3-flash-preview"
   @endpoint "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
   def stream_single(api_messages, on_event, opts \\ [])

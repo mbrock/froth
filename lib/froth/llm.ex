@@ -1,6 +1,9 @@
 defmodule Froth.LLM do
   @moduledoc false
 
+  import Ecto.Query, only: [from: 2]
+
+  alias Froth.ApiKey
   alias Froth.LLM.{Edit, Request, Store}
   alias Froth.LLM.Transport.SSE
   alias Froth.Telemetry.Span
@@ -34,6 +37,7 @@ defmodule Froth.LLM do
 
       _ ->
         provider = request.provider
+        telemetry_provider = Keyword.get(opts, :provider_name, provider)
         on_edit = Keyword.get(opts, :on_edit, fn _edit -> :ok end)
         parent_id = request.parent_id || Keyword.get(opts, :parent_id)
 
@@ -51,7 +55,7 @@ defmodule Froth.LLM do
               store = Store.apply_edits(store, edits)
 
               Enum.each(edits, fn edit ->
-                emit_edit(provider, edit, parent_id)
+                emit_edit(telemetry_provider, edit, parent_id)
                 on_edit.(edit)
 
                 case provider.project_event(edit) do
@@ -83,14 +87,16 @@ defmodule Froth.LLM do
       |> List.wrap()
       |> Enum.map(&to_string/1)
 
-    placeholders = Enum.map_join(1..length(providers), ", ", fn _ -> "?" end)
-
-    case Froth.Repo.query(
-           "SELECT key FROM api_keys WHERE provider IN (#{placeholders}) AND active = true LIMIT 1",
-           providers
-         ) do
-      {:ok, %{rows: [[key]]}} -> key
-      _ -> nil
+    if providers == [] do
+      nil
+    else
+      from(api_key in ApiKey,
+        where: api_key.provider in ^providers,
+        order_by: [desc: api_key.inserted_at],
+        limit: 1,
+        select: api_key.key
+      )
+      |> Froth.Repo.one()
     end
   rescue
     _ -> nil
@@ -160,6 +166,10 @@ defmodule Froth.LLM do
       attrs: edit.attrs,
       raw: edit.raw
     })
+  end
+
+  defp provider_name(provider) when provider in [:anthropic, :openai, :grok, :gemini] do
+    provider
   end
 
   defp provider_name(provider) when is_atom(provider) do

@@ -20,10 +20,12 @@ defmodule Froth.LLM.Client do
     }
 
     Span.span([:froth, provider_name, :request], parent_id, meta, fn span_id ->
+      stream_opts = Keyword.put_new(opts, :provider_name, provider_name)
+
       case LLM.stream(
              %{request | parent_id: span_id},
              wrap_on_event_with_telemetry(on_event, span_id),
-             opts
+             stream_opts
            ) do
         {:ok, result} ->
           stop_meta = %{

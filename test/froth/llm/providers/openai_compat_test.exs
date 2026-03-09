@@ -140,8 +140,10 @@ defmodule Froth.LLM.Providers.OpenAICompatTest do
       )
 
     result = store |> Store.apply_edits(edits_2) |> OpenAICompat.finalize()
+    close_edit = Enum.find(edits_2, &(&1.op == :close))
 
     assert result.stop_reason == "tool_calls"
+    assert close_edit.attrs["input"] == %{"text" => "hi"}
 
     assert result.content == [
              %{
@@ -151,5 +153,72 @@ defmodule Froth.LLM.Providers.OpenAICompatTest do
                "input" => %{"text" => "hi"}
              }
            ]
+  end
+
+  test "preserves provider-specific tool call metadata across tool loop turns" do
+    store = Store.new()
+
+    {edits, _done?} =
+      OpenAICompat.decode_payload(
+        %{
+          "id" => "chatcmpl_3",
+          "model" => "gemini-3-flash-preview",
+          "choices" => [
+            %{
+              "delta" => %{
+                "tool_calls" => [
+                  %{
+                    "index" => 0,
+                    "id" => "call_1",
+                    "extra_content" => %{"google" => %{"thought_signature" => "sig_123"}},
+                    "function" => %{
+                      "name" => "froth_echo",
+                      "arguments" => "{\"text\":\"hi\"}"
+                    }
+                  }
+                ]
+              },
+              "finish_reason" => "stop"
+            }
+          ]
+        },
+        store
+      )
+
+    result = store |> Store.apply_edits(edits) |> OpenAICompat.finalize()
+
+    request = %Request{
+      provider: OpenAICompat,
+      endpoint: "https://example.test/v1/chat/completions",
+      headers: [{"authorization", "Bearer test"}],
+      model: "gemini-3-flash-preview",
+      messages: [
+        %{"role" => "user", "content" => "Call froth_echo"},
+        %{"role" => "assistant", "content" => result.content},
+        %{
+          "role" => "user",
+          "content" => [
+            %{"type" => "tool_result", "tool_use_id" => "call_1", "content" => "echoed: hi"}
+          ]
+        }
+      ]
+    }
+
+    {:ok, %{body: body}} = OpenAICompat.build_request(request)
+
+    assistant_message = Enum.find(body["messages"], &(&1["role"] == "assistant"))
+    [tool_call] = assistant_message["tool_calls"]
+
+    assert result.content == [
+             %{
+               "type" => "tool_use",
+               "id" => "call_1",
+               "name" => "froth_echo",
+               "input" => %{"text" => "hi"},
+               "extra_content" => %{"google" => %{"thought_signature" => "sig_123"}}
+             }
+           ]
+
+    assert tool_call["extra_content"] == %{"google" => %{"thought_signature" => "sig_123"}}
   end
 end

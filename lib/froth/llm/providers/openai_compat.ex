@@ -49,7 +49,9 @@ defmodule Froth.LLM.Providers.OpenAICompat do
       |> maybe_add_text_delta(delta, payload)
       |> maybe_add_tool_call_deltas(delta, payload)
       |> maybe_add_finish_reason(finish_reason, payload)
-      |> maybe_close_tool_calls(finish_reason, store, payload)
+
+    preview_store = Store.apply_edits(store, edits)
+    edits = maybe_close_tool_calls(edits, finish_reason, preview_store, payload)
 
     {edits, false}
   end
@@ -144,16 +146,20 @@ defmodule Froth.LLM.Providers.OpenAICompat do
   end
 
   defp encode_message(%{"role" => "assistant", "content" => content}) do
+    text = assistant_text_content(content)
+    tool_calls = assistant_tool_calls(content)
+
+    message =
+      %{"role" => "assistant"}
+      |> maybe_put("content", text, &(is_binary(&1) and &1 != ""))
+      |> maybe_put("tool_calls", tool_calls, &non_empty_list?/1)
+
     [
-      %{
-        "role" => "assistant",
-        "content" => assistant_text_content(content),
-        "tool_calls" => assistant_tool_calls(content)
-      }
+      if(Map.has_key?(message, "content") or Map.has_key?(message, "tool_calls"),
+        do: message,
+        else: Map.put(message, "content", "")
+      )
     ]
-    |> Enum.map(fn message ->
-      if message["tool_calls"] == [], do: Map.delete(message, "tool_calls"), else: message
-    end)
   end
 
   defp encode_message(message) when is_map(message), do: [message]
@@ -229,9 +235,9 @@ defmodule Froth.LLM.Providers.OpenAICompat do
 
   defp assistant_tool_calls(content) when is_list(content) do
     Enum.flat_map(content, fn
-      %{"type" => "tool_use", "id" => id, "name" => name, "input" => input}
+      %{"type" => "tool_use", "id" => id, "name" => name, "input" => input} = tool_use
       when is_binary(id) and is_binary(name) and is_map(input) ->
-        [
+        tool_call =
           %{
             "id" => id,
             "type" => "function",
@@ -240,7 +246,9 @@ defmodule Froth.LLM.Providers.OpenAICompat do
               "arguments" => Jason.encode!(input)
             }
           }
-        ]
+          |> Map.merge(Map.drop(tool_use, ["type", "id", "name", "input"]))
+
+        [tool_call]
 
       _ ->
         []
@@ -293,11 +301,7 @@ defmodule Froth.LLM.Providers.OpenAICompat do
     Enum.reduce(tool_calls, edits, fn tool_call, acc ->
       idx = tool_call["index"] || 0
       function = Map.get(tool_call, "function", %{})
-
-      attrs =
-        %{}
-        |> maybe_put_attr("id", tool_call["id"])
-        |> maybe_put_attr("name", function["name"])
+      attrs = tool_call_attrs(tool_call)
 
       acc =
         if map_size(attrs) > 0 do
@@ -362,13 +366,9 @@ defmodule Froth.LLM.Providers.OpenAICompat do
         end
 
       attrs =
-        %{
-          "id" => Map.get(tool_call, "id"),
-          "name" => Map.get(tool_call, "name"),
-          "input" => input
-        }
-        |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-        |> Map.new()
+        tool_call
+        |> Map.drop(["arguments_json", "input"])
+        |> maybe_put_attr("input", input)
 
       acc ++ [%Edit{op: :close, resource: ["message", "tool_calls", idx], attrs: attrs, raw: raw}]
     end)
@@ -394,7 +394,11 @@ defmodule Froth.LLM.Providers.OpenAICompat do
               Map.get(tool_call, "input", %{})
           end
 
-        [%{"type" => "tool_use", "id" => id, "name" => name, "input" => input}]
+        tool_use =
+          %{"type" => "tool_use", "id" => id, "name" => name, "input" => input}
+          |> Map.merge(Map.drop(tool_call, ["id", "name", "type", "arguments_json", "input"]))
+
+        [tool_use]
       else
         _ -> []
       end
@@ -409,6 +413,16 @@ defmodule Froth.LLM.Providers.OpenAICompat do
 
   defp maybe_put(body, key, value, predicate) when is_function(predicate, 1) do
     if predicate.(value), do: Map.put(body, key, value), else: body
+  end
+
+  defp tool_call_attrs(tool_call) when is_map(tool_call) do
+    function = Map.get(tool_call, "function", %{})
+
+    tool_call
+    |> Map.drop(["index", "function"])
+    |> Enum.reject(fn {_key, value} -> value in [nil, ""] end)
+    |> Map.new()
+    |> maybe_put_attr("name", function["name"])
   end
 
   defp maybe_put_attr(attrs, _key, value) when value in [nil, ""], do: attrs
