@@ -176,6 +176,8 @@ Fixing the facts does not fix the vibe. Only a new vibe fixes the vibe.
 - Worse not better. The family motto (2026-03-13).
 - Vibes are blobs, rules are patches. Store the blob.
 - Robots are strongly sensitive to vibes. The RLHF truce.
+- "I'll remember that" = write it down NOW in your readme/memory/soul file.
+  The sentence is the backup vibe applied to cognition.
 
 ## Document Formats
 
