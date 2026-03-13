@@ -8,7 +8,8 @@ defmodule Froth.Grok do
 
   @default_max_tokens 16_384
   @default_model "grok-4-1-fast-non-reasoning"
-  @endpoint "https://api.x.ai/v1/chat/completions"
+  @chat_endpoint "https://api.x.ai/v1/chat/completions"
+  @responses_endpoint "https://api.x.ai/v1/responses"
 
   def stream_single(api_messages, on_event, opts \\ [])
       when is_list(api_messages) and is_function(on_event, 1) do
@@ -28,17 +29,33 @@ defmodule Froth.Grok do
     if is_nil(api_key) or api_key == "" do
       {:error, :missing_api_key}
     else
+      tools = Keyword.get(overrides, :tools, Keyword.get(cfg, :tools, []))
+
+      # Use Responses API when built-in tools (x_search, web_search) are present
+      has_builtin_tools =
+        Enum.any?(tools, fn
+          %{"type" => t} when t in ["x_search", "web_search", "code_interpreter"] -> true
+          _ -> false
+        end)
+
+      {provider, endpoint} =
+        if has_builtin_tools do
+          {Froth.LLM.Providers.XAIResponses, @responses_endpoint}
+        else
+          {OpenAICompat, @chat_endpoint}
+        end
+
       {:ok,
        %Request{
-         provider: OpenAICompat,
+         provider: provider,
          messages: api_messages,
          model: Keyword.get(overrides, :model, Keyword.get(cfg, :model, @default_model)),
          system: system_prompt(Keyword.get(overrides, :system, Keyword.get(cfg, :system, ""))),
          max_tokens:
            Keyword.get(overrides, :max_tokens, Keyword.get(cfg, :max_tokens, @default_max_tokens)),
-         tools: Keyword.get(overrides, :tools, Keyword.get(cfg, :tools, [])),
+         tools: tools,
          headers: [{"authorization", "Bearer #{api_key}"}],
-         endpoint: Keyword.get(overrides, :endpoint, Keyword.get(cfg, :endpoint, @endpoint)),
+         endpoint: Keyword.get(overrides, :endpoint, Keyword.get(cfg, :endpoint, endpoint)),
          provider_options: %{
            "reasoning_effort" => Keyword.get(overrides, :effort, Keyword.get(cfg, :effort))
          }

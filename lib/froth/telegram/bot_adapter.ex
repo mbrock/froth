@@ -38,12 +38,26 @@ defmodule Froth.Telegram.BotAdapter do
   defp name_triggered?(msg, triggers) when is_list(triggers) do
     text = get_in(msg, ["content", "text", "text"]) || ""
     downcased = String.downcase(text)
-    Enum.any?(triggers, fn trigger -> String.contains?(downcased, String.downcase(trigger)) end)
+
+    Enum.any?(triggers, fn trigger ->
+      t = String.downcase(trigger)
+      # Use word boundary for short triggers (< 15 chars) to avoid
+      # "charlie" matching inside "captaincharliekirkbot"
+      if String.length(t) < 15 do
+        Regex.match?(~r/\b#{Regex.escape(t)}\b/, downcased)
+      else
+        String.contains?(downcased, t)
+      end
+    end)
   end
+
+  # Allow DMs from owner or any explicitly allowed user
+  # Mikael, Daniel, John Sherman
+  @allowed_dm_users [362_441_422, 1_635_262_887, 7_986_089_238, 8_564_331_819]
 
   def allowed_chat?(chat_id, owner_user_id, _session_id)
       when is_integer(chat_id) and is_integer(owner_user_id) and chat_id > 0 do
-    chat_id == owner_user_id
+    chat_id in @allowed_dm_users
   end
 
   def allowed_chat?(chat_id, owner_user_id, session_id)

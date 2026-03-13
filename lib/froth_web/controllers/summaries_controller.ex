@@ -1,12 +1,14 @@
 defmodule FrothWeb.SummariesController do
   use FrothWeb, :controller
 
+  @chat_id -1_003_690_254_489
+
   def index(conn, _params) do
     import Ecto.Query
 
     summaries =
       from(s in "chat_summaries",
-        where: s.chat_id == -1_003_690_254_489,
+        where: s.chat_id == ^@chat_id,
         select: %{
           id: s.id,
           from_date: s.from_date,
@@ -14,7 +16,7 @@ defmodule FrothWeb.SummariesController do
           summary_text: s.summary_text,
           message_count: s.message_count
         },
-        order_by: [asc: s.from_date]
+        order_by: [desc: s.from_date]
       )
       |> Froth.Repo.all()
       |> Enum.map(fn s ->
@@ -23,7 +25,7 @@ defmodule FrothWeb.SummariesController do
       end)
       # Group by date and take the longest summary per date
       |> Enum.group_by(& &1.from_date)
-      |> Enum.sort_by(fn {date, _} -> date end)
+      |> Enum.sort_by(fn {date, _} -> date end, {:desc, Date})
       |> Enum.map(fn {date, entries} ->
         best = Enum.max_by(entries, &String.length(&1.summary_text))
         {date, best}

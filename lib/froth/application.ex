@@ -18,6 +18,7 @@ defmodule Froth.Application do
         {Phoenix.PubSub, name: Froth.PubSub},
         Froth.Telegram,
         Froth.Telegram.Bots,
+        Froth.RegionalNews,
         {Registry, keys: :unique, name: Froth.Agent.Registry},
         {Task.Supervisor, name: Froth.Agent.TaskSupervisor}
       ] ++

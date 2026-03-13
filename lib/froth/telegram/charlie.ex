@@ -3,9 +3,9 @@ defmodule Froth.Telegram.Charlie do
   Charlie bot profile (identity + prompt config) backed by `Froth.Telegram.Bot`.
   """
 
-  alias Froth.Inference.Tools
   alias Froth.Telegram.Bot
   alias Froth.Telegram.Profiles.CharliePrompt
+  alias Froth.Telegram.Toolsets.Charlie, as: CharlieTools
 
   @default_bot_id "charlie"
   @default_bot_username "charliebuddybot"
@@ -16,6 +16,7 @@ defmodule Froth.Telegram.Charlie do
     cfg = Application.get_env(:froth, __MODULE__, [])
 
     %{
+      runtime_module: __MODULE__,
       id: @default_bot_id,
       bot_username: @default_bot_username,
       bot_user_id: Keyword.get(cfg, :bot_user_id, 0),
@@ -23,8 +24,16 @@ defmodule Froth.Telegram.Charlie do
       session_id: @default_session_id,
       model: @default_model,
       system_prompt_fun: &CharliePrompt.system_prompt/2,
-      name_triggers: ["charlie"],
-      tools: Tools.specs_for_api()
+      name_triggers: [
+        "charlie",
+        "calling all robots",
+        "calling all the robots",
+        "calling on all robots",
+        "calling on all the robots",
+        "calling on the robots"
+      ],
+      tools_module: CharlieTools,
+      lore_file: Application.app_dir(:froth, "priv/charlie_lore.md")
     }
   end
 

@@ -94,6 +94,78 @@ defmodule Froth.Telegram.BotContextTest do
     assert prompt =~ "fresh message"
   end
 
+  test "can opt out of summaries while still loading recent messages" do
+    chat_id = unique_chat_id()
+    bot_config = bot_config(include_summaries: false)
+
+    insert_summary(chat_id, 1_700_000_000, 1_700_000_600, "Earlier summary")
+
+    insert_telegram_message(
+      bot_config.session_id,
+      chat_id,
+      101,
+      7,
+      1_700_000_500,
+      "older context"
+    )
+
+    insert_telegram_message(
+      bot_config.session_id,
+      chat_id,
+      102,
+      8,
+      1_700_000_700,
+      "recent context"
+    )
+
+    parts =
+      BotContext.for_message(
+        incoming_message(
+          chat_id: chat_id,
+          id: 999,
+          sender_id: 42,
+          text: "fresh message",
+          date: 1_700_000_850
+        ),
+        bot_config
+      )
+
+    prompt = Enum.join(parts, "")
+
+    refute prompt =~ "<summary date="
+    assert prompt =~ "older context"
+    assert prompt =~ "recent context"
+    assert prompt =~ "fresh message"
+  end
+
+  test "can limit recent messages for lightweight bot contexts" do
+    chat_id = unique_chat_id()
+    bot_config = bot_config(include_summaries: false, recent_message_limit: 2)
+
+    insert_telegram_message(bot_config.session_id, chat_id, 101, 7, 1_700_000_100, "too old")
+    insert_telegram_message(bot_config.session_id, chat_id, 102, 8, 1_700_000_200, "older")
+    insert_telegram_message(bot_config.session_id, chat_id, 103, 9, 1_700_000_300, "newer")
+
+    parts =
+      BotContext.for_message(
+        incoming_message(
+          chat_id: chat_id,
+          id: 999,
+          sender_id: 42,
+          text: "fresh message",
+          date: 1_700_000_400
+        ),
+        bot_config
+      )
+
+    prompt = Enum.join(parts, "")
+
+    refute prompt =~ "too old"
+    assert prompt =~ "older"
+    assert prompt =~ "newer"
+    assert prompt =~ "fresh message"
+  end
+
   test "includes analysis excerpts in normal bot context representation" do
     bot_config = bot_config()
     chat_id = unique_chat_id()
@@ -127,6 +199,37 @@ defmodule Froth.Telegram.BotContextTest do
     assert prompt =~ ~s(<analysis )
     assert prompt =~ ~s(type="vision")
     assert prompt =~ "observed cat on desk with notes"
+  end
+
+  test "lore mode still respects the latest summary cutoff" do
+    chat_id = unique_chat_id()
+    session_id = "test-session-#{System.unique_integer([:positive])}"
+    lore_file = lore_file_fixture("Compressed lore")
+
+    insert_summary(chat_id, 1_700_000_000, 1_700_000_600, "Earlier summary")
+
+    insert_telegram_message(session_id, chat_id, 100, 7, 1_700_000_500, "already summarized")
+    insert_telegram_message(session_id, chat_id, 101, 8, 1_700_000_700, "recent context")
+
+    parts =
+      BotContext.for_message(
+        incoming_message(
+          chat_id: chat_id,
+          id: 999,
+          sender_id: 42,
+          text: "fresh message",
+          date: 1_700_000_850
+        ),
+        Map.put(bot_config(session_id: session_id), :lore_file, lore_file)
+      )
+
+    prompt = Enum.join(parts, "")
+
+    assert prompt =~ ~s(<summary date="lore">)
+    assert prompt =~ "Compressed lore"
+    assert prompt =~ "recent context"
+    refute prompt =~ "Earlier summary"
+    refute prompt =~ "already summarized"
   end
 
   test "attaches cycle traces to the linked recent message and omits send_message noise" do
@@ -244,7 +347,9 @@ defmodule Froth.Telegram.BotContextTest do
   defp bot_config(opts \\ []) do
     %{
       id: Keyword.get(opts, :id, "charlie"),
-      session_id: Keyword.get(opts, :session_id, "test-session")
+      session_id: Keyword.get(opts, :session_id, "test-session"),
+      include_summaries: Keyword.get(opts, :include_summaries, true),
+      recent_message_limit: Keyword.get(opts, :recent_message_limit)
     }
   end
 
@@ -362,5 +467,17 @@ defmodule Froth.Telegram.BotContextTest do
 
   defp unique_chat_id do
     9_000_000_000 + System.unique_integer([:positive])
+  end
+
+  defp lore_file_fixture(text) do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "froth-bot-context-lore-#{System.unique_integer([:positive])}.md"
+      )
+
+    File.write!(path, text)
+    on_exit(fn -> File.rm(path) end)
+    path
   end
 end

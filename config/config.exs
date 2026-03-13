@@ -91,15 +91,9 @@ config :froth, Oban,
     {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(30)}
   ]
 
-config :froth, Froth.Telegram.Bot, [
-  [
-    id: "barble",
-    session_id: "agentbot",
-    bot_username: "barblebot",
-    system_prompt:
-      "You are Barble, a helpful and concise assistant on Telegram. Keep responses short and direct."
-  ]
-]
+# Legacy static bot workers stay opt-in. Built-in profile bots such as Charlie
+# and Lennart are managed by `Froth.Telegram.Bots`.
+config :froth, Froth.Telegram.Bot, []
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

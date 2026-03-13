@@ -6,6 +6,8 @@ defmodule Froth.WikiTest do
   alias Froth.Wiki.Entry
 
   setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
     Repo.delete_all(Entry)
     :ok
   end

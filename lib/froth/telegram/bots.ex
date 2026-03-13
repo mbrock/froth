@@ -2,12 +2,12 @@ defmodule Froth.Telegram.Bots do
   @moduledoc """
   Runtime manager for Telegram bot workers.
 
-  Each bot runs as its own `Froth.Telegram.Charlie` worker instance registered by bot id.
+  Each bot runs through its profile module and is registered by bot id.
   """
 
   use Supervisor
 
-  alias Froth.Telegram.Charlie
+  alias Froth.Telegram.{Charlie, Lennart}
   alias Froth.Telemetry.Span
 
   @registry Froth.Telegram.BotRegistry
@@ -45,12 +45,14 @@ defmodule Froth.Telegram.Bots do
 
   def start_bot(config) when is_map(config) do
     bot_id = Map.fetch!(config, :id)
+    runtime_module = Map.get(config, :runtime_module, Charlie)
 
     child_config =
       config
+      |> Map.delete(:runtime_module)
       |> Map.put_new(:name, via(bot_id))
 
-    DynamicSupervisor.start_child(@supervisor, {Charlie, child_config})
+    DynamicSupervisor.start_child(@supervisor, {runtime_module, child_config})
   end
 
   def stop_bot(bot_id) when is_binary(bot_id) do
@@ -95,7 +97,7 @@ defmodule Froth.Telegram.Bots do
       |> Keyword.get(:bots, [])
 
     case bots do
-      [] -> [Charlie.default_config(), Froth.Telegram.Bertil.default_config()]
+      [] -> [Charlie.default_config(), Lennart.default_config()]
       list when is_list(list) -> list
     end
   end

@@ -9,6 +9,9 @@ defmodule Froth.Summarizer do
     # Summarize a calendar day (UTC)
     Froth.Summarizer.summarize_day(chat_id, ~D[2026-02-05])
 
+    # List pending daily summary dates up to yesterday (UTC)
+    Froth.Summarizer.pending_summary_dates(chat_id)
+
     # List existing summaries
     Froth.Summarizer.list(chat_id)
   """
@@ -89,6 +92,25 @@ defmodule Froth.Summarizer do
     summarize(chat_id, from_unix, to_unix)
   end
 
+  def pending_summary_dates(chat_id, today \\ Date.utc_today()) do
+    cutoff_date = Date.add(today, -1)
+
+    case latest_summary_date(chat_id) do
+      nil ->
+        []
+
+      latest_date ->
+        if Date.compare(latest_date, cutoff_date) == :lt do
+          latest_date
+          |> Date.add(1)
+          |> Date.range(cutoff_date)
+          |> Enum.to_list()
+        else
+          []
+        end
+    end
+  end
+
   def list(chat_id) do
     Repo.all(
       from(s in ChatSummary,
@@ -107,6 +129,23 @@ defmodule Froth.Summarizer do
       ),
       log: false
     )
+  end
+
+  defp latest_summary_date(chat_id) do
+    Repo.one(
+      from(s in ChatSummary,
+        where: s.chat_id == ^chat_id and s.from_date != s.to_date,
+        where: fragment("? - ? <= 86400", s.to_date, s.from_date),
+        order_by: [desc: s.from_date],
+        limit: 1,
+        select: s.from_date
+      ),
+      log: false
+    )
+    |> case do
+      nil -> nil
+      from_unix -> DateTime.from_unix!(from_unix) |> DateTime.to_date()
+    end
   end
 
   defp build_prompt(transcript, prior_summaries, from_unix, to_unix) do

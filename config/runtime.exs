@@ -154,30 +154,19 @@ config :froth, Froth.Telegram.Charlie,
   bot_user_id: String.to_integer(System.get_env("CHARLIE_BOT_USER_ID", "0")),
   owner_user_id: String.to_integer(System.get_env("CHARLIE_OWNER_USER_ID", "0"))
 
-bertil_bot_user_id = String.to_integer(System.get_env("BERTIL_BOT_USER_ID", "0"))
-bertil_owner_user_id = String.to_integer(System.get_env("BERTIL_OWNER_USER_ID", "0"))
+lennart_bot_user_id =
+  String.to_integer(
+    System.get_env("LENNART_BOT_USER_ID") || System.get_env("BERTIL_BOT_USER_ID") || "0"
+  )
 
-config :froth, Froth.Telegram.Bertil,
-  bot_user_id: bertil_bot_user_id,
-  owner_user_id: bertil_owner_user_id
+lennart_owner_user_id =
+  String.to_integer(
+    System.get_env("LENNART_OWNER_USER_ID") || System.get_env("BERTIL_OWNER_USER_ID") || "0"
+  )
 
-# Merge user IDs into the Barble (simple bot) config from compile-time config.exs
-barble_bots =
-  (Application.get_env(:froth, Froth.Telegram.Bot) || [])
-  |> Enum.map(fn bot_opts ->
-    case Keyword.get(bot_opts, :id) do
-      "barble" ->
-        bot_opts
-        |> Keyword.put_new(:bot_user_id, bertil_bot_user_id)
-        |> Keyword.put_new(:owner_user_id, bertil_owner_user_id)
-        |> Keyword.put_new(:name_triggers, ["lennart"])
-
-      _ ->
-        bot_opts
-    end
-  end)
-
-config :froth, Froth.Telegram.Bot, barble_bots
+config :froth, Froth.Telegram.Lennart,
+  bot_user_id: lennart_bot_user_id,
+  owner_user_id: lennart_owner_user_id
 
 config :froth, Froth.Telegram,
   # optional override for where the built executable lives

@@ -34,6 +34,10 @@ defmodule Froth.Telegram.Bot do
     cycle_usage_total: %{},
     cycle_cost_usd: 0.0,
     stream_usage_current: %{},
+    cycle_tool_calls: 0,
+    cycle_send_message_calls: 0,
+    cycle_limit_hit?: false,
+    cycle_suppressed?: false,
     active_tasks: %{},
     control_prompt_cycles: MapSet.new(),
     cycle_replied?: false
@@ -63,6 +67,20 @@ defmodule Froth.Telegram.Bot do
 
   @impl true
   def init(opts) do
+    tools =
+      if Keyword.has_key?(opts, :tools) do
+        Keyword.fetch!(opts, :tools)
+      else
+        nil
+      end
+
+    tools_module =
+      if Keyword.has_key?(opts, :tools_module) do
+        Keyword.fetch!(opts, :tools_module)
+      else
+        nil
+      end
+
     bot_config = %{
       id: to_string(Keyword.fetch!(opts, :id)),
       session_id: to_string(Keyword.fetch!(opts, :session_id)),
@@ -74,9 +92,15 @@ defmodule Froth.Telegram.Bot do
         Keyword.get(opts, :system_prompt, "You are a helpful assistant on Telegram."),
       system_prompt_fun: Keyword.get(opts, :system_prompt_fun),
       name_triggers: Keyword.get(opts, :name_triggers, []),
-      tools: Keyword.get(opts, :tools, []),
+      tools: tools,
+      tools_module: tools_module,
       thinking: Keyword.get(opts, :thinking),
-      effort: Keyword.get(opts, :effort)
+      effort: Keyword.get(opts, :effort),
+      lore_file: Keyword.get(opts, :lore_file),
+      include_summaries: Keyword.get(opts, :include_summaries, true),
+      recent_message_limit: Keyword.get(opts, :recent_message_limit),
+      max_tool_calls: Keyword.get(opts, :max_tool_calls),
+      max_send_message_calls: Keyword.get(opts, :max_send_message_calls)
     }
 
     :ok = BotAdapter.subscribe(bot_config.session_id)
@@ -189,6 +213,11 @@ defmodule Froth.Telegram.Bot do
     {:noreply, %{state | stream_usage_current: usage}}
   end
 
+  def handle_info({:stream, {:tool_use_start, data}}, state) when is_map(data) do
+    state = normalize_state(state)
+    {:noreply, maybe_enforce_cycle_limits(state, data)}
+  end
+
   def handle_info({:stream, _event}, state), do: {:noreply, state}
 
   def handle_info({:eval_done_detail, %{status: status, result: result}}, state)
@@ -254,7 +283,11 @@ defmodule Froth.Telegram.Bot do
          last_sent_message_text: nil,
          cycle_usage_total: %{},
          cycle_cost_usd: 0.0,
-         stream_usage_current: %{}
+         stream_usage_current: %{},
+         cycle_tool_calls: 0,
+         cycle_send_message_calls: 0,
+         cycle_limit_hit?: false,
+         cycle_suppressed?: false
      }}
   end
 
@@ -303,12 +336,14 @@ defmodule Froth.Telegram.Bot do
       sender == bot_config.bot_user_id ->
         :ignore
 
-      (BotAdapter.mentioned?(
-         msg,
-         bot_config.bot_username,
-         bot_config.bot_user_id,
-         bot_config.name_triggers
-       ) or is_reply_to_bot) and
+      # DMs (positive chat_id) skip mention check — every message is addressed to us
+      (chat_id > 0 or
+         BotAdapter.mentioned?(
+           msg,
+           bot_config.bot_username,
+           bot_config.bot_user_id,
+           bot_config.name_triggers
+         ) or is_reply_to_bot) and
           BotAdapter.allowed_chat?(chat_id, bot_config.owner_user_id, bot_config.session_id) ->
         {:mention, msg}
 
@@ -388,7 +423,7 @@ defmodule Froth.Telegram.Bot do
     user_content =
       case BotContext.for_message(msg, state.bot_config) do
         nil -> nil
-        parts -> parts_to_text_blocks(parts)
+        parts -> parts_to_text_blocks(parts, state.bot_config)
       end
 
     start_cycle(state, chat_id, reply_to, text, user_content)
@@ -432,7 +467,7 @@ defmodule Froth.Telegram.Bot do
       config = %Config{
         system: resolve_system_prompt(chat_id, bc),
         model: bc.model,
-        tools: bc.tools || [],
+        tools: resolve_tool_specs(bc),
         tool_executor: self(),
         context: %{
           chat_id: chat_id,
@@ -476,7 +511,11 @@ defmodule Froth.Telegram.Bot do
           last_sent_message_text: nil,
           cycle_usage_total: %{},
           cycle_cost_usd: 0.0,
-          stream_usage_current: %{}
+          stream_usage_current: %{},
+          cycle_tool_calls: 0,
+          cycle_send_message_calls: 0,
+          cycle_limit_hit?: false,
+          cycle_suppressed?: false
       }
     end
   end
@@ -485,10 +524,18 @@ defmodule Froth.Telegram.Bot do
 
   @response_instruction "\n\nNow reply using the send_message tool."
 
-  defp parts_to_text_blocks(parts) when is_list(parts) do
+  defp parts_to_text_blocks(parts, bot_config) when is_list(parts) do
     parts
-    |> append_response_instruction()
+    |> maybe_append_response_instruction(bot_config)
     |> Enum.map(fn part -> %{"type" => "text", "text" => part} end)
+  end
+
+  defp maybe_append_response_instruction(parts, bot_config) do
+    if send_message_tool_enabled?(bot_config) do
+      append_response_instruction(parts)
+    else
+      parts
+    end
   end
 
   defp append_response_instruction([]), do: [String.trim(@response_instruction)]
@@ -544,7 +591,11 @@ defmodule Froth.Telegram.Bot do
             last_sent_message_text: nil,
             cycle_usage_total: %{},
             cycle_cost_usd: 0.0,
-            stream_usage_current: %{}
+            stream_usage_current: %{},
+            cycle_tool_calls: 0,
+            cycle_send_message_calls: 0,
+            cycle_limit_hit?: false,
+            cycle_suppressed?: false
         }
       else
         state
@@ -756,22 +807,205 @@ defmodule Froth.Telegram.Bot do
          content
        )
        when is_integer(chat_id) do
-    text = extract_text(content)
+    raw_text = extract_text(content)
 
-    if text != "" do
-      case BotAdapter.send_message(bc.session_id, chat_id, text, reply_to: reply_to) do
-        {:ok, sent} ->
-          track_sent_message(state, sent, text)
+    case extract_text_tool_calls(raw_text) do
+      [] ->
+        case normalize_agent_reply_text(raw_text) do
+          {:ok, text, entities} ->
+            send_plaintext_response(state, bc.session_id, chat_id, reply_to, text,
+              entities: entities
+            )
 
-        {:error, reason} ->
-          put_last_tool_error(state, inspect(reason))
-      end
-    else
-      state
+          :no_reply ->
+            %{state | cycle_suppressed?: true}
+
+          :empty ->
+            state
+        end
+
+      tool_uses ->
+        execute_text_tool_calls(state, tool_uses)
     end
   end
 
   defp send_agent_response(state, _), do: state
+
+  defp send_plaintext_response(state, session_id, chat_id, reply_to, text, opts)
+       when is_binary(session_id) and is_integer(chat_id) and is_binary(text) do
+    send_opts = [reply_to: reply_to] ++ Keyword.take(opts, [:entities])
+
+    case BotAdapter.send_message(session_id, chat_id, text, send_opts) do
+      {:ok, sent} ->
+        track_sent_message(state, sent, text)
+
+      {:error, reason} ->
+        put_last_tool_error(state, inspect(reason))
+    end
+  end
+
+  defp normalize_agent_reply_text(text) when is_binary(text) do
+    {cleaned, entities} = process_grok_citations(text)
+
+    cleaned
+    |> String.trim()
+    |> case do
+      "" ->
+        :empty
+
+      trimmed ->
+        if String.upcase(trimmed) == "NO_REPLY" do
+          :no_reply
+        else
+          {:ok, trimmed, entities}
+        end
+    end
+  end
+
+  defp normalize_agent_reply_text(content) do
+    content
+    |> extract_text()
+    |> normalize_agent_reply_text()
+  end
+
+  @citation_re ~r/\[\[(\d+)\]\]\(([^)]+)\)/
+
+  defp process_grok_citations(text) when is_binary(text) do
+    # Strip XML-style grok tags first
+    text =
+      text
+      |> then(&Regex.replace(~r/<grok:render\b[^>]*\/>/u, &1, ""))
+      |> then(&Regex.replace(~r/<grok:render\b[^>]*>.*?<\/grok:render>/su, &1, ""))
+      |> then(&Regex.replace(~r/<grok:cite\b[^>]*>.*?<\/grok:cite>/su, &1, ""))
+      |> then(&Regex.replace(~r/<argument\b[^>]*>.*?<\/argument>/su, &1, ""))
+
+    # Collect [[N]](url) citations, strip inline, append as footnotes
+    citations =
+      Regex.scan(@citation_re, text)
+      |> Enum.map(fn [_full, num, url] -> {num, url} end)
+      |> Enum.uniq_by(fn {num, _url} -> num end)
+
+    cleaned = Regex.replace(@citation_re, text, "")
+
+    footnotes =
+      case citations do
+        [] ->
+          ""
+
+        refs ->
+          "\n\n" <>
+            Enum.map_join(refs, "\n", fn {num, url} ->
+              clean_url = Regex.replace(~r/\[(?:post|web):\d+\]$/, url, "")
+              "[#{num}] #{clean_url}"
+            end)
+      end
+
+    {cleaned <> footnotes, []}
+  end
+
+  defp process_grok_citations(_), do: {"", []}
+
+  defp extract_text_tool_calls(text) when is_binary(text) do
+    ~r/<tool_call>\s*(\{.*?\})\s*<\/tool_call>/s
+    |> Regex.scan(text, capture: :all_but_first)
+    |> Enum.map(&List.first/1)
+    |> Enum.map(&decode_text_tool_call/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp extract_text_tool_calls(_), do: []
+
+  defp decode_text_tool_call(json) when is_binary(json) do
+    with {:ok, %{"name" => "send_message", "arguments" => arguments}} when is_map(arguments) <-
+           Jason.decode(json),
+         text when is_binary(text) and text != "" <- arguments["text"] do
+      %ToolUse{name: "send_message", input: %{"text" => text}}
+    else
+      _ -> nil
+    end
+  end
+
+  defp decode_text_tool_call(_), do: nil
+
+  defp execute_text_tool_calls(
+         %{chat_id: chat_id, reply_to: reply_to, cycle: cycle} = state,
+         tool_uses
+       )
+       when is_integer(chat_id) and is_list(tool_uses) do
+    cycle_id = if(cycle, do: cycle.id, else: nil)
+    context = %{chat_id: chat_id, reply_to: reply_to, cycle_id: cycle_id}
+
+    {state, sent_any?} =
+      Enum.reduce_while(tool_uses, {state, false}, fn tool_use, {state, sent_any?} ->
+        {result, state} = execute_tool_call(state, tool_use, context)
+
+        case result do
+          {:ok, _} ->
+            {:cont, {state, true}}
+
+          {:error, reason} when is_binary(reason) ->
+            {:halt, {put_last_tool_error(state, reason), sent_any?}}
+
+          {:error, reason} ->
+            {:halt, {put_last_tool_error(state, inspect(reason)), sent_any?}}
+        end
+      end)
+
+    if sent_any?, do: state, else: maybe_send_plaintext_tool_call_fallback(state, tool_uses)
+  end
+
+  defp execute_text_tool_calls(state, _tool_uses), do: state
+
+  defp maybe_send_plaintext_tool_call_fallback(state, [%ToolUse{input: %{"text" => text}} | _])
+       when is_binary(text) do
+    normalize_agent_reply_text(text)
+    |> case do
+      {:ok, cleaned, entities} ->
+        send_plaintext_response(
+          state,
+          state.bot_config.session_id,
+          state.chat_id,
+          state.reply_to,
+          cleaned,
+          entities: entities
+        )
+
+      _ ->
+        state
+    end
+  end
+
+  defp maybe_send_plaintext_tool_call_fallback(state, _tool_uses), do: state
+
+  defp send_message_tool_enabled?(bot_config) when is_map(bot_config) do
+    bot_config
+    |> resolve_tool_specs()
+    |> Enum.any?(&match?(%{"name" => "send_message"}, &1))
+  end
+
+  defp send_message_tool_enabled?(_), do: false
+
+  defp resolve_tool_specs(bot_config) when is_map(bot_config) do
+    case Map.get(bot_config, :tools) do
+      tools when is_list(tools) ->
+        tools
+
+      _ ->
+        case Map.get(bot_config, :tools_module) do
+          module when is_atom(module) ->
+            if Code.ensure_loaded?(module) and function_exported?(module, :specs_for_api, 0) do
+              module.specs_for_api()
+            else
+              []
+            end
+
+          _ ->
+            []
+        end
+    end
+  end
+
+  defp resolve_tool_specs(_), do: []
 
   defp track_sent_message(state, sent, text) when is_map(state) and is_binary(text) do
     base = %{state | cycle_replied?: true, last_sent_message_text: text}
@@ -1106,7 +1340,70 @@ defmodule Froth.Telegram.Bot do
 
   defp put_last_tool_error(state, _), do: state
 
+  defp maybe_enforce_cycle_limits(%{cycle_limit_hit?: true} = state, _tool_use_start), do: state
+
+  defp maybe_enforce_cycle_limits(state, %{"name" => tool_name}) when is_binary(tool_name) do
+    tool_calls = state.cycle_tool_calls + 1
+
+    send_message_calls =
+      state.cycle_send_message_calls +
+        if(tool_name == "send_message", do: 1, else: 0)
+
+    state = %{
+      state
+      | cycle_tool_calls: tool_calls,
+        cycle_send_message_calls: send_message_calls
+    }
+
+    cond do
+      exceeded_limit?(tool_calls, state.bot_config.max_tool_calls) ->
+        abort_cycle_for_limit(
+          state,
+          "I hit my tool-call limit and stopped. Ask again if you want me to continue."
+        )
+
+      exceeded_limit?(send_message_calls, state.bot_config.max_send_message_calls) ->
+        abort_cycle_for_limit(
+          state,
+          "I was about to keep replying, so I stopped. Ask again if you want more."
+        )
+
+      true ->
+        state
+    end
+  end
+
+  defp maybe_enforce_cycle_limits(state, _tool_use_start), do: state
+
+  defp exceeded_limit?(_count, nil), do: false
+  defp exceeded_limit?(count, limit) when is_integer(limit), do: count > limit
+  defp exceeded_limit?(_count, _limit), do: false
+
+  defp abort_cycle_for_limit(
+         %{cycle_limit_hit?: false, worker_pid: worker_pid, chat_id: chat_id, bot_config: bc} =
+           state,
+         message
+       )
+       when is_pid(worker_pid) and is_integer(chat_id) and is_binary(message) do
+    state = %{state | cycle_limit_hit?: true}
+
+    state =
+      case BotAdapter.send_message(bc.session_id, chat_id, message, reply_to: state.reply_to) do
+        {:ok, sent} ->
+          track_sent_message(state, sent, message)
+
+        {:error, reason} ->
+          put_last_tool_error(state, inspect(reason))
+      end
+
+    Process.exit(worker_pid, {:shutdown, :tool_limit_exceeded})
+    state
+  end
+
+  defp abort_cycle_for_limit(state, _message), do: %{state | cycle_limit_hit?: true}
+
   defp maybe_send_silent_cycle_fallback(%{cycle_replied?: true} = state), do: state
+  defp maybe_send_silent_cycle_fallback(%{cycle_suppressed?: true} = state), do: state
 
   defp maybe_send_silent_cycle_fallback(%{chat_id: chat_id, bot_config: bc} = state)
        when is_integer(chat_id) do

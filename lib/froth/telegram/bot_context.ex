@@ -57,23 +57,46 @@ defmodule Froth.Telegram.BotContext do
 
   defp build(chat_id, opts) when is_integer(chat_id) and is_list(opts) do
     before_unix = opt_before_unix(opts)
-    dailies = Queries.daily_summaries(chat_id, before_unix)
 
-    last_covered =
-      case List.last(dailies) do
-        nil -> 0
-        s -> s.to_date
+    {summaries, last_covered} =
+      case {opt_include_summaries(opts), opts[:lore_file]} do
+        {false, _} ->
+          {[], 0}
+
+        {true, path} when is_binary(path) ->
+          # Compressed lore mode: read a single file instead of 40 DB summaries
+          text = File.read!(path)
+
+          last_covered =
+            case Queries.latest_daily_summary_end(chat_id, before_unix) do
+              unix when is_integer(unix) -> unix
+              _ -> 0
+            end
+
+          {[%{date: "lore", text: text}], last_covered}
+
+        {true, _} ->
+          dailies = Queries.daily_summaries(chat_id, before_unix)
+
+          last_covered =
+            case List.last(dailies) do
+              nil -> 0
+              s -> s.to_date
+            end
+
+          summaries =
+            Enum.map(dailies, fn s ->
+              %{
+                date: DateTime.from_unix!(s.from_date) |> Calendar.strftime("%Y-%m-%d"),
+                text: s.summary_text
+              }
+            end)
+
+          {summaries, last_covered}
       end
 
-    summaries =
-      Enum.map(dailies, fn s ->
-        %{
-          date: DateTime.from_unix!(s.from_date) |> Calendar.strftime("%Y-%m-%d"),
-          text: s.summary_text
-        }
-      end)
-
     db_rows = fetch_recent(chat_id, last_covered, before_unix)
+    db_rows = limit_recent_rows(db_rows, opts)
     recent = build_recent(chat_id, db_rows, opts)
 
     %Context{
@@ -214,6 +237,9 @@ defmodule Froth.Telegram.BotContext do
 
   defp message_opts(msg, bot_config) do
     base = [telegram_session_id: bot_config.session_id, bot_id: bot_config.id]
+    base = if lf = Map.get(bot_config, :lore_file), do: [{:lore_file, lf} | base], else: base
+    base = [{:include_summaries, Map.get(bot_config, :include_summaries, true)} | base]
+    base = maybe_put_opt(base, :recent_message_limit, Map.get(bot_config, :recent_message_limit))
 
     case msg_unix(msg) do
       unix when is_integer(unix) -> [{:before_unix, unix} | base]
@@ -243,7 +269,32 @@ defmodule Froth.Telegram.BotContext do
     end
   end
 
+  defp opt_include_summaries(opts) do
+    case opts[:include_summaries] do
+      false -> false
+      _ -> true
+    end
+  end
+
+  defp opt_recent_message_limit(opts) do
+    case opts[:recent_message_limit] do
+      n when is_integer(n) and n > 0 -> n
+      v when is_binary(v) -> parse_int(v)
+      _ -> nil
+    end
+  end
+
   # ── helpers ───────────────────────────────────────────────────────
+
+  defp limit_recent_rows(rows, opts) when is_list(rows) and is_list(opts) do
+    case opt_recent_message_limit(opts) do
+      n when is_integer(n) and n > 0 -> Enum.take(rows, -n)
+      _ -> rows
+    end
+  end
+
+  defp maybe_put_opt(opts, _key, nil), do: opts
+  defp maybe_put_opt(opts, key, value), do: [{key, value} | opts]
 
   defp msg_unix(%{"date" => v}) when is_integer(v), do: v
   defp msg_unix(%{"date" => v}) when is_binary(v), do: parse_int(v)

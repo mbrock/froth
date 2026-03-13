@@ -69,6 +69,16 @@ defmodule Froth.Telegram.Queries do
     |> Repo.all(log: false)
   end
 
+  def latest_daily_summary_end(chat_id, before_unix \\ nil) when is_integer(chat_id) do
+    from(s in ChatSummary,
+      where: s.chat_id == ^chat_id and s.from_date != s.to_date,
+      where: fragment("? - ? <= 86400", s.to_date, s.from_date),
+      select: max(s.to_date)
+    )
+    |> maybe_before_unix(before_unix)
+    |> Repo.one(log: false)
+  end
+
   defp maybe_before_unix(query, nil), do: query
 
   defp maybe_before_unix(query, unix) when is_integer(unix),

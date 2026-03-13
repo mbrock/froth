@@ -40,6 +40,8 @@ defmodule FrothWeb.Router do
     live "/voice", VoiceLive, :index
     live "/bot-context", BotContextLive, :index
     live "/telemetry", TelemetryLive, :index
+    live "/chat-stats", ChatStatsLive, :index
+    live "/chat-stats/:day", ChatStatsLive, :index
   end
 
   scope "/froth/mini", FrothWeb do
@@ -59,10 +61,9 @@ defmodule FrothWeb.Router do
     post "/debug", MiniDebugController, :create
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", FrothWeb do
-  #   pipe_through :api
-  # end
+  scope "/", FrothWeb do
+    get "/news", NewsController, :show
+  end
 
   # Enable LiveDashboard in development
   if Application.compile_env(:froth, :dev_routes) do

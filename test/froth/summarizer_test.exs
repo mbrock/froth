@@ -3,6 +3,7 @@ defmodule Froth.SummarizerTest do
 
   alias Froth.ChatSummary
   alias Froth.Repo
+  alias Froth.Summarizer
   alias Froth.Telegram.BotContext
   alias Froth.Telegram.Message, as: TelegramMessage
   alias Froth.Telegram.SessionConfig
@@ -57,6 +58,62 @@ defmodule Froth.SummarizerTest do
     assert Enum.join(BotContext.render_parts(chat_id, opts), "") == Enum.join(parts, "")
   end
 
+  test "pending_summary_dates returns missing days after the latest summary through yesterday" do
+    chat_id = unique_chat_id()
+
+    insert_summary(
+      chat_id,
+      day_start_unix(~D[2026-03-07]),
+      day_start_unix(~D[2026-03-08]),
+      "March 7 summary"
+    )
+
+    assert Summarizer.pending_summary_dates(chat_id, ~D[2026-03-09]) == [~D[2026-03-08]]
+  end
+
+  test "pending_summary_dates batches multiple missing days" do
+    chat_id = unique_chat_id()
+
+    insert_summary(
+      chat_id,
+      day_start_unix(~D[2026-03-05]),
+      day_start_unix(~D[2026-03-06]),
+      "March 5 summary"
+    )
+
+    assert Summarizer.pending_summary_dates(chat_id, ~D[2026-03-09]) == [
+             ~D[2026-03-06],
+             ~D[2026-03-07],
+             ~D[2026-03-08]
+           ]
+  end
+
+  test "pending_summary_dates keys off the summarized day even when coverage ends before midnight" do
+    chat_id = unique_chat_id()
+
+    insert_summary(
+      chat_id,
+      day_start_unix(~D[2026-03-07]),
+      day_start_unix(~D[2026-03-07]) + 43_200,
+      "Partial March 7 summary"
+    )
+
+    assert Summarizer.pending_summary_dates(chat_id, ~D[2026-03-09]) == [~D[2026-03-08]]
+  end
+
+  test "pending_summary_dates returns an empty list when yesterday is already covered" do
+    chat_id = unique_chat_id()
+
+    insert_summary(
+      chat_id,
+      day_start_unix(~D[2026-03-08]),
+      day_start_unix(~D[2026-03-09]),
+      "March 8 summary"
+    )
+
+    assert Summarizer.pending_summary_dates(chat_id, ~D[2026-03-09]) == []
+  end
+
   defp insert_summary(chat_id, from_date, to_date, summary_text) do
     Repo.insert!(
       ChatSummary.changeset(%ChatSummary{}, %{
@@ -102,5 +159,11 @@ defmodule Froth.SummarizerTest do
 
   defp unique_chat_id do
     9_100_000_000 + System.unique_integer([:positive])
+  end
+
+  defp day_start_unix(%Date{} = date) do
+    date
+    |> DateTime.new!(~T[00:00:00], "Etc/UTC")
+    |> DateTime.to_unix()
   end
 end
