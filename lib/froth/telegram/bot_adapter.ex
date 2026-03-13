@@ -53,7 +53,7 @@ defmodule Froth.Telegram.BotAdapter do
 
   # Allow DMs from owner or any explicitly allowed user
   # Mikael, Daniel, John Sherman
-  @allowed_dm_users [362_441_422, 1_635_262_887, 7_986_089_238, 8_564_331_819]
+  @allowed_dm_users [362_441_422, 1_635_262_887, 7_986_089_238, 8_564_331_819, 6_071_676_050]
 
   def allowed_chat?(chat_id, owner_user_id, _session_id)
       when is_integer(chat_id) and is_integer(owner_user_id) and chat_id > 0 do
