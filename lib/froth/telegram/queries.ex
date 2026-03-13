@@ -14,6 +14,7 @@ defmodule Froth.Telegram.Queries do
   def fetch_messages(chat_id, from_unix, to_unix)
       when is_integer(chat_id) and is_integer(from_unix) and is_integer(to_unix) do
     from(m in "telegram_messages",
+      distinct: m.message_id,
       where: m.chat_id == ^chat_id and m.date >= ^from_unix and m.date < ^to_unix,
       order_by: [asc: m.date, asc: m.inserted_at],
       select: %{
@@ -31,6 +32,7 @@ defmodule Froth.Telegram.Queries do
   def fetch_messages(chat_id, from_unix, :infinity)
       when is_integer(chat_id) and is_integer(from_unix) do
     from(m in "telegram_messages",
+      distinct: m.message_id,
       where: m.chat_id == ^chat_id and m.date >= ^from_unix,
       order_by: [asc: m.date, asc: m.inserted_at],
       select: %{
