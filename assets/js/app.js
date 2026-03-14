@@ -25,6 +25,7 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/froth"
 import topbar from "../vendor/topbar"
 import VoiceAudio from "./hooks/voice_audio"
+import SceneEngine from "./hooks/scene_engine"
 
 const ToolScroll = {
   mounted() {
@@ -107,7 +108,7 @@ let useViewTransition = false
 const liveSocket = new LiveSocket("/froth/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, ToolScroll, VoiceAudio},
+  hooks: {...colocatedHooks, ToolScroll, VoiceAudio, SceneEngine},
   dom: {
     // Use the View Transitions API when available.
     onDocumentPatch(start) {
