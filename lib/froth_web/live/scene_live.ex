@@ -23,16 +23,10 @@ defmodule FrothWeb.SceneLive do
       nil
     end
 
-    characters = [
-      %{id: "cloud", name: "Cloud", x: 600, y: 900, state: "wandering", facing: "right"},
-      %{id: "lara", name: "Lara", x: 900, y: 1000, state: "wandering", facing: "left"}
-    ]
-
     {:ok,
      socket
      |> assign(:bg_url, bg_url)
-     |> assign(:walkmap, walkmap)
-     |> assign(:characters, characters)}
+     |> assign(:walkmap, walkmap)}
   end
 
   @impl true
@@ -41,9 +35,8 @@ defmodule FrothWeb.SceneLive do
     <div id="scene-view" phx-hook="SceneView"
          data-bg={@bg_url}
          data-walkmap={Jason.encode!(@walkmap)}
-         data-characters={Jason.encode!(@characters)}
-         style="width: 100vw; height: 100vh; overflow: hidden; background: #111; position: relative;">
-      <canvas id="game-canvas" style="display: block; width: 100%; height: 100%;"></canvas>
+         data-characters="[]"
+         style="width: 100vw; height: 100vh; overflow: hidden; background: #111;">
     </div>
     """
   end

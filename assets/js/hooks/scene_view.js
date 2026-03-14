@@ -1,57 +1,74 @@
-// SceneView — minimal scene renderer
-// No zoom. No buttons. Characters wander the walk polygons.
-// Subtle walkmap overlay so you can evaluate Gemini's output.
+// SceneView — pure Three.js game renderer
+// Background as textured plane, characters as primitive skeletons,
+// walk map as line geometry. One renderer, one coordinate system.
 
 import * as THREE from "@/vendor/three.module.min.js"
 import { createCloud, createLaraCroft } from "@/js/lib/primitive_characters.js"
 
 const SceneView = {
   mounted() {
-    this.canvas = document.getElementById("game-canvas")
-    this.ctx = this.canvas.getContext("2d")
-    this.bgImage = null
-    this.walkmap = null
+    this.el.innerHTML = ""
+    this.clock = new THREE.Clock()
+
+    // Scene dimensions from walkmap
     this.sceneWidth = 2048
     this.sceneHeight = 1376
-    this.characters = []
 
-    // Three.js for 3D characters
-    this.renderer3d = new THREE.WebGLRenderer({ antialias: false, alpha: true })
-    this.renderer3d.setClearColor(0x000000, 0)
-    this.renderer3d.domElement.style.position = "absolute"
-    this.renderer3d.domElement.style.top = "0"
-    this.renderer3d.domElement.style.left = "0"
-    this.renderer3d.domElement.style.pointerEvents = "none"
-    this.el.appendChild(this.renderer3d.domElement)
-
-    this.scene3d = new THREE.Scene()
-    this.scene3d.add(new THREE.AmbientLight(0xffffff, 0.7))
-    const dir = new THREE.DirectionalLight(0xffd080, 0.5)
-    dir.position.set(1, 2, 1)
-    this.scene3d.add(dir)
-
-    // Orthographic camera — fixed, no zoom
-    this.camera3d = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000)
-    this.camera3d.position.set(0, 0, 100)
-    this.camera3d.lookAt(0, 0, 0)
-
-    // Load data
     try { this.walkmap = JSON.parse(this.el.dataset.walkmap) } catch(e) {}
     if (this.walkmap && this.walkmap.dimensions) {
       this.sceneWidth = this.walkmap.dimensions.width
       this.sceneHeight = this.walkmap.dimensions.height
     }
 
-    // Background
+    // Renderer
+    this.renderer = new THREE.WebGLRenderer({ antialias: false })
+    this.renderer.setClearColor(0x111111)
+    this.renderer.domElement.style.display = "block"
+    this.renderer.domElement.style.width = "100%"
+    this.renderer.domElement.style.height = "100%"
+    this.el.appendChild(this.renderer.domElement)
+
+    this.scene = new THREE.Scene()
+
+    // Orthographic camera centered on scene
+    this.camera = new THREE.OrthographicCamera(
+      -this.sceneWidth / 2, this.sceneWidth / 2,
+      this.sceneHeight / 2, -this.sceneHeight / 2,
+      -1000, 1000
+    )
+    this.camera.position.set(0, 0, 100)
+    this.camera.lookAt(0, 0, 0)
+
+    // Lighting — flat PS1 style
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.75))
+    const dir = new THREE.DirectionalLight(0xffd080, 0.4)
+    dir.position.set(1, 2, 1)
+    this.scene.add(dir)
+
+    // Background plane — textured with the Flux painting
     const bgUrl = this.el.dataset.bg
     if (bgUrl) {
-      this.bgImage = new Image()
-      this.bgImage.src = bgUrl
+      const loader = new THREE.TextureLoader()
+      loader.load(bgUrl, (tex) => {
+        tex.minFilter = THREE.LinearFilter
+        tex.magFilter = THREE.LinearFilter
+        const geo = new THREE.PlaneGeometry(this.sceneWidth, this.sceneHeight)
+        const mat = new THREE.MeshBasicMaterial({ map: tex })
+        const plane = new THREE.Mesh(geo, mat)
+        plane.position.set(0, 0, -10) // behind everything
+        this.scene.add(plane)
+      })
     }
 
-    // Build characters
+    // Walk map overlay geometry
+    this.buildWalkmapOverlay()
+
+    // Characters
+    this.characters = []
+    this.walkablePolygons = (this.walkmap && this.walkmap.walk_polygons) || []
+
     const charDefs = [createCloud(), createLaraCroft()]
-    const startPositions = [
+    const starts = [
       { x: 600, y: 950 },
       { x: 1000, y: 1000 }
     ]
@@ -62,96 +79,178 @@ const SceneView = {
       const group = this.buildSkeleton(def.skeleton, boneMap)
       const scale = 50 / def.height
       group.scale.set(scale, scale, scale)
-      this.scene3d.add(group)
+      this.scene.add(group)
+
+      // Name label as sprite
+      const label = this.makeLabel(def.name)
+      this.scene.add(label)
 
       this.characters.push({
-        def, group, boneMap,
-        x: startPositions[i].x,
-        y: startPositions[i].y,
+        def, group, boneMap, label,
+        x: starts[i].x,
+        y: starts[i].y,
         target_x: null,
         target_y: null,
         state: "idle",
         facing: Math.random() > 0.5 ? "right" : "left",
         animTime: Math.random() * 10,
-        waitTimer: 0,
         wanderCooldown: Math.random() * 2
       })
     }
 
-    // Precompute walkable areas for wandering
-    this.walkablePolygons = (this.walkmap && this.walkmap.walk_polygons) || []
-
     this.resize()
     window.addEventListener("resize", () => this.resize())
-    this.clock = new THREE.Clock()
     this.animate()
   },
 
   destroyed() {
     if (this.rafId) cancelAnimationFrame(this.rafId)
-    this.renderer3d.dispose()
+    this.renderer.dispose()
   },
 
   resize() {
     const rect = this.el.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
+    this.renderer.setSize(rect.width, rect.height)
+    this.renderer.setPixelRatio(dpr)
 
-    // Canvas2D for background + walkmap overlay
-    this.canvas.width = rect.width * dpr
-    this.canvas.height = rect.height * dpr
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    this.canvasWidth = rect.width
-    this.canvasHeight = rect.height
+    // Fit scene to viewport maintaining aspect ratio
+    const viewAspect = rect.width / rect.height
+    const sceneAspect = this.sceneWidth / this.sceneHeight
 
-    // Three.js
-    this.renderer3d.setSize(rect.width, rect.height)
-    this.renderer3d.setPixelRatio(dpr)
-
-    // Compute scale to fit scene
-    const scaleX = rect.width / this.sceneWidth
-    const scaleY = rect.height / this.sceneHeight
-    this.fitScale = Math.min(scaleX, scaleY)
-    this.offsetX = (rect.width - this.sceneWidth * this.fitScale) / 2
-    this.offsetY = (rect.height - this.sceneHeight * this.fitScale) / 2
-
-    // Update ortho camera to match
-    const hw = rect.width / (2 * this.fitScale)
-    const hh = rect.height / (2 * this.fitScale)
-    this.camera3d.left = -hw
-    this.camera3d.right = hw
-    this.camera3d.top = hh
-    this.camera3d.bottom = -hh
-    this.camera3d.position.set(
-      this.sceneWidth / 2 - this.offsetX / this.fitScale,
-      -(this.sceneHeight / 2 - this.offsetY / this.fitScale),
-      100
-    )
-    // Actually simpler: center on scene
-    this.camera3d.position.set(0, 0, 100)
-    this.camera3d.left = -this.sceneWidth / 2
-    this.camera3d.right = this.sceneWidth / 2
-    this.camera3d.top = this.sceneHeight / 2
-    this.camera3d.bottom = -this.sceneHeight / 2
-    this.camera3d.updateProjectionMatrix()
+    if (viewAspect > sceneAspect) {
+      // Viewport is wider — fit by height
+      const half = this.sceneHeight / 2
+      this.camera.top = half
+      this.camera.bottom = -half
+      this.camera.left = -half * viewAspect
+      this.camera.right = half * viewAspect
+    } else {
+      // Viewport is taller — fit by width
+      const half = this.sceneWidth / 2
+      this.camera.left = -half
+      this.camera.right = half
+      this.camera.top = half / viewAspect
+      this.camera.bottom = -half / viewAspect
+    }
+    this.camera.updateProjectionMatrix()
   },
 
-  // Random point inside a polygon
+  // Convert scene pixel coords (origin top-left, Y down)
+  // to Three.js coords (origin center, Y up)
+  s2t(x, y) {
+    return {
+      x: x - this.sceneWidth / 2,
+      y: -(y - this.sceneHeight / 2)
+    }
+  },
+
+  buildWalkmapOverlay() {
+    if (!this.walkmap) return
+
+    // Walk polygons — green lines, faint green fill
+    for (const wp of (this.walkmap.walk_polygons || [])) {
+      const pts3d = wp.vertices.map(v => {
+        const t = this.s2t(v[0], v[1])
+        return new THREE.Vector3(t.x, t.y, -5)
+      })
+      if (pts3d.length > 0) pts3d.push(pts3d[0].clone())
+
+      // Line
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(pts3d)
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x00ff66, transparent: true, opacity: 0.35 })
+      this.scene.add(new THREE.Line(lineGeo, lineMat))
+
+      // Filled polygon (using ShapeGeometry)
+      if (wp.vertices.length >= 3) {
+        const shape = new THREE.Shape()
+        for (let i = 0; i < wp.vertices.length; i++) {
+          const t = this.s2t(wp.vertices[i][0], wp.vertices[i][1])
+          if (i === 0) shape.moveTo(t.x, t.y)
+          else shape.lineTo(t.x, t.y)
+        }
+        const fillGeo = new THREE.ShapeGeometry(shape)
+        const fillMat = new THREE.MeshBasicMaterial({
+          color: 0x00ff44, transparent: true, opacity: 0.08, side: THREE.DoubleSide
+        })
+        const fillMesh = new THREE.Mesh(fillGeo, fillMat)
+        fillMesh.position.z = -5
+        this.scene.add(fillMesh)
+      }
+    }
+
+    // Blocked regions — red lines
+    for (const br of (this.walkmap.blocked_regions || [])) {
+      const pts3d = br.vertices.map(v => {
+        const t = this.s2t(v[0], v[1])
+        return new THREE.Vector3(t.x, t.y, -4)
+      })
+      if (pts3d.length > 0) pts3d.push(pts3d[0].clone())
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(pts3d)
+      const lineMat = new THREE.LineBasicMaterial({ color: 0xff3300, transparent: true, opacity: 0.25 })
+      this.scene.add(new THREE.Line(lineGeo, lineMat))
+    }
+
+    // Interactive objects — yellow spheres
+    for (const obj of (this.walkmap.interactive_objects || [])) {
+      const t = this.s2t(obj.x, obj.y)
+      const geo = new THREE.SphereGeometry(12, 6, 4)
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 0.4 })
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.position.set(t.x, t.y, -3)
+      this.scene.add(mesh)
+    }
+
+    // Light sources — subtle orange spheres
+    const lights = (this.walkmap.lighting || {}).light_sources || []
+    for (const l of lights) {
+      const t = this.s2t(l.x, l.y)
+      const geo = new THREE.SphereGeometry(l.radius * 0.1, 8, 6)
+      const mat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(l.color || "#ffaa44"),
+        transparent: true, opacity: 0.15
+      })
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.position.set(t.x, t.y, -6)
+      this.scene.add(mesh)
+    }
+  },
+
+  makeLabel(text) {
+    const canvas = document.createElement("canvas")
+    canvas.width = 256
+    canvas.height = 64
+    const ctx = canvas.getContext("2d")
+    ctx.font = "bold 28px monospace"
+    ctx.textAlign = "center"
+    ctx.strokeStyle = "#000"
+    ctx.lineWidth = 4
+    ctx.strokeText(text, 128, 40)
+    ctx.fillStyle = "#fff"
+    ctx.fillText(text, 128, 40)
+
+    const tex = new THREE.CanvasTexture(canvas)
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true })
+    const sprite = new THREE.Sprite(mat)
+    sprite.scale.set(80, 20, 1)
+    return sprite
+  },
+
   randomPointInPolygon(vertices) {
-    // Bounding box approach with rejection sampling
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
     for (const [x, y] of vertices) {
       minX = Math.min(minX, x); maxX = Math.max(maxX, x)
       minY = Math.min(minY, y); maxY = Math.max(maxY, y)
     }
-    for (let attempt = 0; attempt < 100; attempt++) {
+    for (let i = 0; i < 100; i++) {
       const x = minX + Math.random() * (maxX - minX)
       const y = minY + Math.random() * (maxY - minY)
       if (this.pointInPolygon(x, y, vertices)) return { x, y }
     }
-    // Fallback: centroid
-    const cx = vertices.reduce((s, v) => s + v[0], 0) / vertices.length
-    const cy = vertices.reduce((s, v) => s + v[1], 0) / vertices.length
-    return { x: cx, y: cy }
+    return {
+      x: vertices.reduce((s, v) => s + v[0], 0) / vertices.length,
+      y: vertices.reduce((s, v) => s + v[1], 0) / vertices.length
+    }
   },
 
   pointInPolygon(x, y, vertices) {
@@ -166,20 +265,18 @@ const SceneView = {
     return inside
   },
 
-  pickWanderTarget(char) {
+  pickWanderTarget() {
     if (this.walkablePolygons.length === 0) return null
-    // Pick a random walkable polygon, then a random point inside it
     const poly = this.walkablePolygons[Math.floor(Math.random() * this.walkablePolygons.length)]
     return this.randomPointInPolygon(poly.vertices)
   },
 
   updateCharacters(dt) {
     for (const c of this.characters) {
-      // Wandering AI
       if (c.state === "idle") {
         c.wanderCooldown -= dt
         if (c.wanderCooldown <= 0) {
-          const target = this.pickWanderTarget(c)
+          const target = this.pickWanderTarget()
           if (target) {
             c.target_x = target.x
             c.target_y = target.y
@@ -206,13 +303,14 @@ const SceneView = {
         }
       }
 
-      // Update Three.js position
-      const sx = c.x - this.sceneWidth / 2
-      const sy = -(c.y - this.sceneHeight / 2)
-      c.group.position.set(sx, sy, 10)
+      // Position in Three.js coords
+      const t = this.s2t(c.x, c.y)
+      c.group.position.set(t.x, t.y, 0)
       c.group.rotation.y = c.facing === "left" ? Math.PI : 0
 
-      // Animate bones
+      // Label above character
+      c.label.position.set(t.x, t.y + 55, 1)
+
       this.applyAnimation(c, dt)
     }
   },
@@ -309,115 +407,10 @@ const SceneView = {
     }
   },
 
-  render2D() {
-    const ctx = this.ctx
-    const w = this.canvasWidth
-    const h = this.canvasHeight
-    ctx.clearRect(0, 0, w, h)
-    ctx.fillStyle = "#111"
-    ctx.fillRect(0, 0, w, h)
-
-    // Draw background fitted to canvas
-    ctx.save()
-    ctx.translate(this.offsetX, this.offsetY)
-    ctx.scale(this.fitScale, this.fitScale)
-
-    if (this.bgImage && this.bgImage.complete) {
-      ctx.drawImage(this.bgImage, 0, 0)
-    }
-
-    // Subtle walkmap overlay — always on
-    if (this.walkmap) {
-      // Walk polygons — faint green
-      ctx.globalAlpha = 0.12
-      for (const wp of (this.walkmap.walk_polygons || [])) {
-        ctx.fillStyle = "#00ff44"
-        ctx.strokeStyle = "#00ff88"
-        ctx.lineWidth = 2
-        ctx.beginPath()
-        for (let i = 0; i < wp.vertices.length; i++) {
-          const [x, y] = wp.vertices[i]
-          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
-        }
-        ctx.closePath()
-        ctx.fill()
-        ctx.globalAlpha = 0.35
-        ctx.stroke()
-        ctx.globalAlpha = 0.12
-      }
-
-      // Blocked regions — faint red
-      ctx.globalAlpha = 0.08
-      for (const br of (this.walkmap.blocked_regions || [])) {
-        ctx.fillStyle = "#ff2200"
-        ctx.strokeStyle = "#ff4400"
-        ctx.lineWidth = 1.5
-        ctx.beginPath()
-        for (let i = 0; i < br.vertices.length; i++) {
-          const [x, y] = br.vertices[i]
-          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
-        }
-        ctx.closePath()
-        ctx.fill()
-        ctx.globalAlpha = 0.25
-        ctx.stroke()
-        ctx.globalAlpha = 0.08
-      }
-
-      // Interactive objects — small yellow dots
-      ctx.globalAlpha = 0.5
-      for (const obj of (this.walkmap.interactive_objects || [])) {
-        ctx.fillStyle = "#ffcc00"
-        ctx.beginPath()
-        ctx.arc(obj.x, obj.y, 8, 0, Math.PI * 2)
-        ctx.fill()
-      }
-
-      // Labels for walk regions
-      ctx.globalAlpha = 0.4
-      ctx.fillStyle = "#88ff88"
-      ctx.font = "18px monospace"
-      for (const wp of (this.walkmap.walk_polygons || [])) {
-        const cx = wp.vertices.reduce((s, v) => s + v[0], 0) / wp.vertices.length
-        const cy = wp.vertices.reduce((s, v) => s + v[1], 0) / wp.vertices.length
-        ctx.fillText(wp.id + " (" + wp.surface + ")", cx - 60, cy)
-      }
-
-      ctx.globalAlpha = 1
-    }
-
-    // Character name labels (drawn in scene space)
-    for (const c of this.characters) {
-      ctx.fillStyle = "#fff"
-      ctx.strokeStyle = "#000"
-      ctx.lineWidth = 3
-      ctx.font = "bold 16px monospace"
-      ctx.textAlign = "center"
-      ctx.strokeText(c.def.name, c.x, c.y - 45)
-      ctx.fillText(c.def.name, c.x, c.y - 45)
-
-      // Movement line
-      if (c.target_x != null) {
-        ctx.strokeStyle = "rgba(255,255,255,0.15)"
-        ctx.lineWidth = 1
-        ctx.setLineDash([6, 6])
-        ctx.beginPath()
-        ctx.moveTo(c.x, c.y)
-        ctx.lineTo(c.target_x, c.target_y)
-        ctx.stroke()
-        ctx.setLineDash([])
-      }
-    }
-    ctx.textAlign = "left"
-
-    ctx.restore()
-  },
-
   animate() {
     const dt = this.clock.getDelta()
     this.updateCharacters(dt)
-    this.render2D()
-    this.renderer3d.render(this.scene3d, this.camera3d)
+    this.renderer.render(this.scene, this.camera)
     this.rafId = requestAnimationFrame(() => this.animate())
   }
 }
