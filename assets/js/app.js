@@ -28,6 +28,7 @@ import VoiceAudio from "./hooks/voice_audio"
 import SceneEngine from "./hooks/scene_engine"
 import SceneEngine3D from "./hooks/scene_engine_3d"
 import SceneView from "./hooks/scene_view"
+import SceneEditor from "./hooks/scene_editor"
 
 const ToolScroll = {
   mounted() {
@@ -110,7 +111,7 @@ let useViewTransition = false
 const liveSocket = new LiveSocket("/froth/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, ToolScroll, VoiceAudio, SceneEngine, SceneEngine3D, SceneView},
+  hooks: {...colocatedHooks, ToolScroll, VoiceAudio, SceneEngine, SceneEngine3D, SceneView, SceneEditor},
   dom: {
     // Use the View Transitions API when available.
     onDocumentPatch(start) {

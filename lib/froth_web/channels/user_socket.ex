@@ -2,6 +2,7 @@ defmodule FrothWeb.UserSocket do
   use Phoenix.Socket
 
   channel "room:*", FrothWeb.RoomChannel
+  channel "scene:*", FrothWeb.SceneChannel
 
   @impl true
   def connect(_params, socket, _connect_info) do
