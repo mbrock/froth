@@ -51,14 +51,24 @@ defmodule Froth.RetroDiffusion do
 
     prompt_style = build_prompt_style(model, style)
 
-    body = Jason.encode!(%{
+    reference_images = Keyword.get(opts, :reference_images, [])
+
+    body_map = %{
       "prompt" => prompt,
       "prompt_style" => prompt_style,
       "width" => width,
       "height" => height,
       "num_images" => num_images,
       "include_downloadable_data" => true
-    })
+    }
+
+    body_map = if reference_images != [] do
+      Map.put(body_map, "reference_images", reference_images)
+    else
+      body_map
+    end
+
+    body = Jason.encode!(body_map)
 
     case do_request(body) do
       {:ok, response} ->
@@ -87,7 +97,8 @@ defmodule Froth.RetroDiffusion do
       "num_images" => Keyword.get(opts, :num_images, 1),
       "chat_id" => Keyword.get(opts, :chat_id),
       "send" => Keyword.get(opts, :send, false),
-      "caption" => Keyword.get(opts, :caption)
+      "caption" => Keyword.get(opts, :caption),
+      "reference_images" => Keyword.get(opts, :reference_images, [])
     }
 
     %{"prompt" => prompt}

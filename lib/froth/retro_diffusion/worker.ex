@@ -25,10 +25,13 @@ defmodule Froth.RetroDiffusion.Worker do
 
     Logger.info("RetroDiffusion generating: #{inspect(prompt)} (#{model}/#{style} #{width}x#{height})")
 
+    reference_images = args["reference_images"] || []
+
     case Froth.RetroDiffusion.generate(prompt,
            style: style, model: model,
            width: width, height: height,
-           num_images: num_images) do
+           num_images: num_images,
+           reference_images: reference_images) do
       {:ok, result} ->
         Logger.info("RetroDiffusion done: cost=$#{result.cost}, remaining=$#{result.remaining}")
 
