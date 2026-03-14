@@ -42,6 +42,7 @@ defmodule FrothWeb.Router do
     live "/telemetry", TelemetryLive, :index
     live "/chat-stats", ChatStatsLive, :index
     live "/chat-stats/:day", ChatStatsLive, :index
+    live "/jobs", JobsLive, :index
   end
 
   scope "/froth/mini", FrothWeb do
