@@ -2,17 +2,23 @@ defmodule Froth.Dataset do
   @moduledoc """
   GenServer holding an RDF.Dataset in memory.
 
-  On startup, auto-loads all datasets stored in the `datasets` table.
+  On startup, auto-loads all datasets stored in the `datasets` table,
+  then loads all .ttl and .nt files from the configured RDF directory
+  (default: ~/rdf).
 
       Froth.Dataset.load("@prefix ex: <http://example.org/> . ex:s ex:p ex:o .")
       Froth.Dataset.query({:_, ~I<http://schema.org/name>, :name?})
       Froth.Dataset.sparql("SELECT ?name WHERE { ?s <http://schema.org/name> ?name }")
       Froth.Dataset.graph_names()
+      Froth.Dataset.load_directory("/home/mbrock/rdf")
   """
 
   use GenServer
+  require Logger
 
   alias Froth.Telemetry.Span
+
+  @rdf_dir Path.expand("~/rdf")
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -25,6 +31,16 @@ defmodule Froth.Dataset do
   """
   def load(trig_string) when is_binary(trig_string) do
     GenServer.call(__MODULE__, {:load, trig_string}, :infinity)
+  end
+
+  @doc """
+  Load all .ttl and .nt files from a directory, merging into the current dataset.
+  Each file becomes a named graph (IRI derived from filename).
+
+  Returns `{:ok, %{files: n, triples: n, elapsed_ms: n}}`.
+  """
+  def load_directory(dir \\ @rdf_dir) do
+    GenServer.call(__MODULE__, {:load_directory, dir}, :infinity)
   end
 
   @doc """
@@ -64,6 +80,13 @@ defmodule Froth.Dataset do
     GenServer.call(__MODULE__, :graph_names)
   end
 
+  @doc """
+  Return the total statement count across all graphs.
+  """
+  def statement_count do
+    GenServer.call(__MODULE__, :statement_count)
+  end
+
   # --- Server ---
 
   @impl true
@@ -75,6 +98,7 @@ defmodule Froth.Dataset do
   def handle_continue(:auto_load, state) do
     import Ecto.Query
 
+    # Phase 1: load from postgres
     stored =
       Froth.Repo.all(from(d in Froth.Dataset.Stored, select: %{name: d.name, data: d.data}))
 
@@ -97,20 +121,80 @@ defmodule Froth.Dataset do
             merged
 
           {:error, reason} ->
-            Span.execute([:froth, :dataset, :auto_load_failed], nil, %{name: name, reason: reason})
+            Span.execute([:froth, :dataset, :auto_load_failed], nil, %{
+              name: name,
+              reason: reason
+            })
 
             ds
         end
       end)
 
-    total = RDF.Dataset.statement_count(dataset)
+    total_pg = RDF.Dataset.statement_count(dataset)
 
     Span.execute([:froth, :dataset, :auto_load_complete], nil, %{
       datasets: length(stored),
-      total_triples: total
+      total_triples: total_pg
     })
 
+    Logger.info("[Dataset] Loaded #{total_pg} triples from #{length(stored)} postgres datasets")
+
+    # Phase 2: load from ~/rdf directory
+    dataset = do_load_directory(@rdf_dir, dataset)
+
+    total = RDF.Dataset.statement_count(dataset)
+    Logger.info("[Dataset] Total: #{total} triples across #{length(RDF.Dataset.graph_names(dataset))} named graphs")
+
     {:noreply, %{state | dataset: dataset}}
+  end
+
+  defp do_load_directory(dir, dataset) do
+    if File.dir?(dir) do
+      files =
+        dir
+        |> File.ls!()
+        |> Enum.filter(fn f -> String.ends_with?(f, ".ttl") or String.ends_with?(f, ".nt") end)
+        |> Enum.sort()
+
+      Logger.info("[Dataset] Loading #{length(files)} RDF files from #{dir}")
+
+      Enum.reduce(files, dataset, fn filename, ds ->
+        path = Path.join(dir, filename)
+        graph_name = RDF.IRI.new!("file:///rdf/#{filename}")
+        t0 = System.monotonic_time(:millisecond)
+
+        result =
+          cond do
+            String.ends_with?(filename, ".ttl") ->
+              RDF.Turtle.read_file(path)
+
+            String.ends_with?(filename, ".nt") ->
+              RDF.NTriples.read_file(path)
+          end
+
+        case result do
+          {:ok, graph} ->
+            # Put the parsed graph into the dataset under its named graph
+            named = RDF.Graph.change_name(graph, graph_name)
+            merged = RDF.Dataset.add(ds, named)
+            elapsed = System.monotonic_time(:millisecond) - t0
+            count = RDF.Graph.triple_count(graph)
+
+            Logger.info(
+              "[Dataset] Loaded #{filename}: #{count} triples in #{elapsed}ms -> graph #{graph_name}"
+            )
+
+            merged
+
+          {:error, reason} ->
+            Logger.warning("[Dataset] Failed to load #{filename}: #{inspect(reason)}")
+            ds
+        end
+      end)
+    else
+      Logger.info("[Dataset] RDF directory #{dir} not found, skipping")
+      dataset
+    end
   end
 
   @impl true
@@ -134,6 +218,20 @@ defmodule Froth.Dataset do
       {:error, reason} ->
         {:reply, {:error, reason}, state}
     end
+  end
+
+  def handle_call({:load_directory, dir}, _from, state) do
+    t0 = System.monotonic_time(:millisecond)
+    before_count = RDF.Dataset.statement_count(state.dataset)
+    dataset = do_load_directory(dir, state.dataset)
+    after_count = RDF.Dataset.statement_count(dataset)
+    elapsed = System.monotonic_time(:millisecond) - t0
+    new_triples = after_count - before_count
+    graphs = RDF.Dataset.graph_names(dataset)
+
+    {:reply,
+     {:ok, %{files: length(graphs), triples: after_count, new_triples: new_triples, elapsed_ms: elapsed}},
+     %{state | dataset: dataset}}
   end
 
   def handle_call({:query, pattern}, _from, %{dataset: ds} = state) do
@@ -164,5 +262,9 @@ defmodule Froth.Dataset do
 
   def handle_call(:graph_names, _from, %{dataset: ds} = state) do
     {:reply, RDF.Dataset.graph_names(ds), state}
+  end
+
+  def handle_call(:statement_count, _from, %{dataset: ds} = state) do
+    {:reply, RDF.Dataset.statement_count(ds), state}
   end
 end

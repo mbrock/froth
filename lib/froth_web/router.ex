@@ -62,6 +62,12 @@ defmodule FrothWeb.Router do
   end
 
   scope "/", FrothWeb do
+    pipe_through :browser
+
+    live "/jbo", JboLive, :index
+  end
+
+  scope "/", FrothWeb do
     get "/news", NewsController, :show
   end
 

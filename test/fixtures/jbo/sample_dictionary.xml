@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dictionary>
+  <direction from="lojban" to="English">
+    <valsi word="a" type="cmavo">
+      <selmaho>A</selmaho>
+      <user>
+        <username>officialdata</username>
+        <realname>Official Data</realname>
+      </user>
+      <definition>logical connective: sumti afterthought or.</definition>
+      <definitionid>1339</definitionid>
+      <glossword word="and/or" sense="inclusive or" />
+      <glossword word="or" sense="inclusive or" />
+    </valsi>
+    <valsi word="a'a" type="cmavo">
+      <selmaho>UI1</selmaho>
+      <user>
+        <username>officialdata</username>
+        <realname>Official Data</realname>
+      </user>
+      <definition>attitudinal: attentive - inattentive - avoiding.</definition>
+      <definitionid>1340</definitionid>
+      <notes>See also {jundi}, {rivbi}.</notes>
+      <glossword word="attentive" />
+    </valsi>
+    <valsi unofficial="true" word="a'au" type="experimental cmavo">
+      <selmaho>UI1</selmaho>
+      <user>
+        <username>sidas</username>
+        <realname>Shimada Taku</realname>
+      </user>
+      <definition>attitudinal: moved deeply - unimpressive.</definition>
+      <definitionid>67963</definitionid>
+      <glossword word="moved" />
+    </valsi>
+    <valsi word="jundi" type="gismu">
+      <user>
+        <username>officialdata</username>
+        <realname>Official Data</realname>
+      </user>
+      <rafsi>jud</rafsi>
+      <definition>$x_1$ is attentive to $x_2$.</definition>
+      <definitionid>2401</definitionid>
+      <glossword word="attend" />
+      <keyword word="attentive one" place="1" />
+      <keyword word="object of attention" place="2" />
+    </valsi>
+    <valsi word="rivbi" type="gismu">
+      <user>
+        <username>officialdata</username>
+        <realname>Official Data</realname>
+      </user>
+      <rafsi>riv</rafsi>
+      <definition>$x_1$ avoids/evades $x_2$.</definition>
+      <definitionid>4980</definitionid>
+      <glossword word="avoid" />
+    </valsi>
+    <valsi word="bangu" type="gismu">
+      <user>
+        <username>officialdata</username>
+        <realname>Official Data</realname>
+      </user>
+      <rafsi>ban</rafsi>
+      <rafsi>bau</rafsi>
+      <definition>$x_1$ is a language used by $x_2$ to express $x_3$.</definition>
+      <definitionid>1512</definitionid>
+      <notes>See also {gerna}, {valsi}, {cmavo}.</notes>
+      <glossword word="language" />
+      <keyword word="language" place="1" />
+      <keyword word="speaker" place="2" />
+      <keyword word="expressed content" place="3" />
+    </valsi>
+  </direction>
+</dictionary>

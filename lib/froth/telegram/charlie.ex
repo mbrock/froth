@@ -33,7 +33,9 @@ defmodule Froth.Telegram.Charlie do
         "calling on the robots"
       ],
       tools_module: CharlieTools,
-      lore_file: Application.app_dir(:froth, "priv/charlie_lore.md")
+      lore_file: Application.app_dir(:froth, "priv/charlie_lore.md"),
+      recent_message_limit: 200,
+      debounce_ms: 2000
     }
   end
 

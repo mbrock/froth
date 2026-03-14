@@ -40,7 +40,9 @@ defmodule Froth.Telegram.Bot do
     cycle_suppressed?: false,
     active_tasks: %{},
     control_prompt_cycles: MapSet.new(),
-    cycle_replied?: false
+    cycle_replied?: false,
+    debounce_timer: nil,
+    debounce_msg: nil
   ]
 
   @telegram_text_limit 4096
@@ -100,7 +102,8 @@ defmodule Froth.Telegram.Bot do
       include_summaries: Keyword.get(opts, :include_summaries, true),
       recent_message_limit: Keyword.get(opts, :recent_message_limit),
       max_tool_calls: Keyword.get(opts, :max_tool_calls),
-      max_send_message_calls: Keyword.get(opts, :max_send_message_calls)
+      max_send_message_calls: Keyword.get(opts, :max_send_message_calls),
+      debounce_ms: Keyword.get(opts, :debounce_ms, 0)
     }
 
     :ok = BotAdapter.subscribe(bot_config.session_id)
@@ -137,7 +140,7 @@ defmodule Froth.Telegram.Bot do
           text: String.slice(text || "", 0, 200)
         })
 
-        {:noreply, start_cycle_from_message(state, msg)}
+        {:noreply, debounce_or_start(state, msg)}
 
       {:callback_stop_cycle, query_id, cycle_id} ->
         Span.execute([:froth, :telegram, :bot, :update], session_span, %{
@@ -167,6 +170,18 @@ defmodule Froth.Telegram.Bot do
 
         {:noreply, state}
 
+      {:callback_game, query_id, game_short_name} ->
+        Span.execute([:froth, :telegram, :bot, :update], session_span, %{
+          bot_id: bc.id,
+          update_type: update_type,
+          action: "callback_game",
+          game: game_short_name
+        })
+
+        game_url = game_url_for(game_short_name)
+        BotAdapter.answer_callback_with_url(bc.session_id, query_id, game_url)
+        {:noreply, state}
+
       :ignore ->
         Span.execute([:froth, :telegram, :bot, :update], session_span, %{
           bot_id: bc.id,
@@ -177,6 +192,20 @@ defmodule Froth.Telegram.Bot do
         })
 
         {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info(:debounce_fire, state) do
+    state = %{state | debounce_timer: nil}
+
+    case state.debounce_msg do
+      nil ->
+        {:noreply, state}
+
+      msg ->
+        state = %{state | debounce_msg: nil}
+        {:noreply, start_cycle_from_message(state, msg)}
     end
   end
 
@@ -361,17 +390,27 @@ defmodule Froth.Telegram.Bot do
   defp route_callback_query(query) do
     query_id = query["id"]
 
-    case parse_callback_payload(query) do
-      {:ok, "stopcycle", cycle_id} when is_integer(query_id) and is_binary(cycle_id) ->
-        {:callback_stop_cycle, query_id, cycle_id}
-
-      {:ok, "stoploop", _} when is_integer(query_id) ->
-        {:callback_stop_active, query_id}
+    case query do
+      %{"payload" => %{"@type" => "callbackQueryPayloadGame", "game_short_name" => game}}
+      when is_integer(query_id) ->
+        {:callback_game, query_id, game}
 
       _ ->
-        :ignore
+        case parse_callback_payload(query) do
+          {:ok, "stopcycle", cycle_id} when is_integer(query_id) and is_binary(cycle_id) ->
+            {:callback_stop_cycle, query_id, cycle_id}
+
+          {:ok, "stoploop", _} when is_integer(query_id) ->
+            {:callback_stop_active, query_id}
+
+          _ ->
+            :ignore
+        end
     end
   end
+
+  defp game_url_for("word"), do: "https://1.foo/name-game-3"
+  defp game_url_for(_), do: "https://1.foo/name-game-3"
 
   defp parse_callback_payload(%{
          "payload" => %{"@type" => "callbackQueryPayloadData", "data" => data_b64}
@@ -411,6 +450,23 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp replied_to_bot?(_, _), do: false
+
+  # --- Debounce ---
+
+  defp debounce_or_start(state, msg) do
+    debounce_ms = state.bot_config[:debounce_ms] || 0
+
+    if debounce_ms > 0 and is_nil(state.worker_pid) do
+      # Cancel existing timer if any
+      if state.debounce_timer, do: Process.cancel_timer(state.debounce_timer)
+
+      timer = Process.send_after(self(), :debounce_fire, debounce_ms)
+      %{state | debounce_timer: timer, debounce_msg: msg}
+    else
+      # No debounce or already in a cycle — fire immediately
+      start_cycle_from_message(state, msg)
+    end
+  end
 
   defp start_cycle_from_message(state, msg) when is_map(msg) do
     chat_id = msg["chat_id"]

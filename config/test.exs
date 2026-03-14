@@ -17,6 +17,8 @@ config :froth, FrothWeb.Endpoint,
 # No agent bots in test
 config :froth, Froth.Telegram.Bot, []
 
+config :froth, :jbo_dictionary_preload, false
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

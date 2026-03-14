@@ -236,6 +236,15 @@ defmodule Froth.Telegram.BotAdapter do
     })
   end
 
+  def answer_callback_with_url(session_id, callback_query_id, url)
+      when is_binary(session_id) and is_integer(callback_query_id) and is_binary(url) do
+    Froth.Telegram.send(session_id, %{
+      "@type" => "answerCallbackQuery",
+      "callback_query_id" => callback_query_id,
+      "url" => url
+    })
+  end
+
   defp reply_to_msg(nil), do: nil
 
   defp reply_to_msg(message_id) when is_integer(message_id) do
