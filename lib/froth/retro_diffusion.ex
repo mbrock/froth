@@ -56,7 +56,8 @@ defmodule Froth.RetroDiffusion do
       "prompt_style" => prompt_style,
       "width" => width,
       "height" => height,
-      "num_images" => num_images
+      "num_images" => num_images,
+      "include_downloadable_data" => true
     })
 
     case do_request(body) do
