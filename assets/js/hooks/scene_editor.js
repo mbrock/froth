@@ -1,13 +1,13 @@
-// SceneEditor — quad-based walking plane editor
-// All state from the channel. All mutations through the channel.
-// Walking planes are quads (4 draggable screen-space points).
-// Characters scale via bilinear interpolation inside quads.
+// SceneEditor — quad-based walking plane editor with reference scale calibration
+// Grid shows actual 3D character models standing at covid distance.
+// Drag a corner character's head to set the reference scale.
+// All state through Phoenix channel event sourcing.
 
 import * as THREE from "@/vendor/three.module.min.js"
 import { createCloud, createLaraCroft } from "@/js/lib/primitive_characters.js"
 import {
-  bilinearInterpolate, scaleAtV, screenToUV, pointInQuad,
-  generateGrid, generateGridLines
+  bilinearInterpolate, scaleAtV, charPixelHeight, screenToUV, pointInQuad,
+  generateCharacterGrid, generateGridLines
 } from "@/js/lib/quad_math.js"
 import { Socket } from "phoenix"
 
@@ -21,30 +21,26 @@ const SceneEditor = {
     this.state = {
       background: null,
       dimensions: { width: 2048, height: 1376 },
-      planes: [],      // walking planes: { id, corners: [[x,y]x4], surface, elevation }
+      planes: [],      // { id, corners: [[x,y]x4], surface, reference_scale, grid_spacing }
       objects: [],
       spawns: [],
       characters: []
     }
 
-    // Editor
     this.selectedPlane = null
-    this.dragCorner = null  // { planeId, cornerIndex }
+    this.dragCorner = null
+    this.dragScale = null   // dragging the reference scale handle
     this.showGrid = true
-    this.gridDensity = 10
+    this.gridRows = 10
+    this.gridCols = 10
     this.lastSeq = 0
-
-    // Character wandering state
     this.charStates = {}
 
     // Three.js
     this.renderer = new THREE.WebGLRenderer({ antialias: false })
     this.renderer.setClearColor(0x111111)
     this.el.appendChild(this.renderer.domElement)
-    this.renderer.domElement.style.display = "block"
-    this.renderer.domElement.style.width = "100%"
-    this.renderer.domElement.style.height = "100%"
-    this.renderer.domElement.style.cursor = "crosshair"
+    this.renderer.domElement.style.cssText = "display:block;width:100%;height:100%;cursor:crosshair;"
 
     this.scene = new THREE.Scene()
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000)
@@ -62,14 +58,13 @@ const SceneEditor = {
     this.scene.add(this.charGroup)
     this.handleGroup = new THREE.Group()
     this.scene.add(this.handleGroup)
+    this.gridCharGroup = new THREE.Group()
+    this.scene.add(this.gridCharGroup)
 
-    // Build UI panels
     this.el.style.position = "relative"
     this.buildToolbar()
-    this.buildPropsPanel()
     this.buildStatusBar()
 
-    // Mouse
     this.renderer.domElement.addEventListener("mousedown", (e) => this.onMouseDown(e))
     this.renderer.domElement.addEventListener("mousemove", (e) => this.onMouseMove(e))
     this.renderer.domElement.addEventListener("mouseup", (e) => this.onMouseUp(e))
@@ -78,8 +73,7 @@ const SceneEditor = {
     // Channel
     this.sceneId = this.el.dataset.sceneId || "default"
     this.bgUrl = this.el.dataset.bgUrl
-    const socketPath = "/froth/socket"
-    this.socket = new Socket(socketPath)
+    this.socket = new Socket("/froth/socket")
     this.socket.connect()
     this.channel = this.socket.channel("scene:" + this.sceneId, {})
     this.channel.join()
@@ -91,7 +85,6 @@ const SceneEditor = {
         }
         this.rebuildScene()
       })
-
     this.channel.on("event", (evt) => {
       this.lastSeq = evt.seq
       this.applyEvent(evt)
@@ -110,12 +103,16 @@ const SceneEditor = {
   },
 
   migrateState(s) {
-    // Ensure planes array exists (old events used walk_polygons)
     if (!s.planes) s.planes = []
     if (!s.objects) s.objects = []
     if (!s.spawns) s.spawns = []
     if (!s.characters) s.characters = []
     if (!s.dimensions) s.dimensions = { width: 2048, height: 1376 }
+    // Ensure reference_scale on all planes
+    for (const pl of s.planes) {
+      if (!pl.reference_scale) pl.reference_scale = 60
+      if (!pl.grid_spacing) pl.grid_spacing = 2.5
+    }
     return s
   },
 
@@ -123,166 +120,150 @@ const SceneEditor = {
 
   buildToolbar() {
     this.toolbar = document.createElement("div")
-    this.toolbar.style.cssText = "position:absolute;top:0;left:0;bottom:0;width:180px;background:rgba(17,17,17,0.92);border-right:1px solid #333;padding:12px;display:flex;flex-direction:column;gap:8px;z-index:10;overflow-y:auto;"
+    this.toolbar.style.cssText = "position:absolute;top:0;left:0;bottom:0;width:200px;background:rgba(17,17,17,0.92);border-right:1px solid #333;padding:12px;display:flex;flex-direction:column;gap:8px;z-index:10;overflow-y:auto;"
 
-    const title = document.createElement("div")
-    title.textContent = "SCENE EDITOR"
-    title.style.cssText = "font:bold 13px monospace;color:#888;letter-spacing:2px;margin-bottom:4px;"
-    this.toolbar.appendChild(title)
-
-    // Tool buttons
-    const tools = [
-      { id: "add_plane", label: "＋ Add Walking Plane", color: "#0f0", action: () => this.addPlane() },
-      { id: "add_cloud", label: "＋ Cloud", color: "#88f", action: () => this.addChar("cloud") },
-      { id: "add_lara", label: "＋ Lara", color: "#f8f", action: () => this.addChar("lara") },
-    ]
-
-    for (const t of tools) {
-      const btn = document.createElement("button")
-      btn.textContent = t.label
-      btn.style.cssText = `padding:8px 12px;font:12px monospace;background:#1a1a2a;color:${t.color};border:1px solid #333;cursor:pointer;text-align:left;border-radius:3px;`
-      btn.onmouseenter = () => btn.style.borderColor = t.color
-      btn.onmouseleave = () => btn.style.borderColor = "#333"
-      btn.onclick = t.action
-      this.toolbar.appendChild(btn)
+    const h = (text, css) => { const d = document.createElement("div"); d.textContent = text; d.style.cssText = css; return d }
+    const btn = (text, color, action) => {
+      const b = document.createElement("button")
+      b.textContent = text
+      b.style.cssText = `padding:8px 12px;font:12px monospace;background:#1a1a2a;color:${color};border:1px solid #333;cursor:pointer;text-align:left;border-radius:3px;`
+      b.onmouseenter = () => b.style.borderColor = color
+      b.onmouseleave = () => b.style.borderColor = "#333"
+      b.onclick = action
+      return b
     }
+
+    this.toolbar.appendChild(h("SCENE EDITOR", "font:bold 13px monospace;color:#888;letter-spacing:2px;margin-bottom:4px;"))
+    this.toolbar.appendChild(btn("+ Walking Plane", "#0f0", () => this.addPlane()))
+    this.toolbar.appendChild(btn("+ Cloud", "#88f", () => this.addChar("cloud")))
+    this.toolbar.appendChild(btn("+ Lara", "#f8f", () => this.addChar("lara")))
 
     // Divider
-    const div1 = document.createElement("hr")
-    div1.style.cssText = "border:none;border-top:1px solid #333;margin:4px 0;"
-    this.toolbar.appendChild(div1)
+    this.toolbar.appendChild(Object.assign(document.createElement("hr"), { style: "border:none;border-top:1px solid #333;margin:4px 0;" }))
 
     // Grid toggle
-    const gridRow = document.createElement("div")
-    gridRow.style.cssText = "display:flex;align-items:center;gap:8px;"
+    const gridRow = document.createElement("label")
+    gridRow.style.cssText = "display:flex;align-items:center;gap:8px;cursor:pointer;font:11px monospace;color:#aaa;"
     const gridCheck = document.createElement("input")
-    gridCheck.type = "checkbox"
-    gridCheck.checked = this.showGrid
+    gridCheck.type = "checkbox"; gridCheck.checked = this.showGrid
     gridCheck.onchange = () => { this.showGrid = gridCheck.checked; this.rebuildOverlay() }
-    const gridLabel = document.createElement("label")
-    gridLabel.textContent = "Show Grid"
-    gridLabel.style.cssText = "font:11px monospace;color:#aaa;cursor:pointer;"
-    gridLabel.onclick = () => { gridCheck.checked = !gridCheck.checked; gridCheck.onchange() }
     gridRow.appendChild(gridCheck)
-    gridRow.appendChild(gridLabel)
+    gridRow.appendChild(document.createTextNode("Show calibration grid"))
     this.toolbar.appendChild(gridRow)
 
-    // Grid density slider
+    // Grid density
     const densRow = document.createElement("div")
     densRow.style.cssText = "display:flex;flex-direction:column;gap:2px;"
-    const densLabel = document.createElement("div")
-    densLabel.style.cssText = "font:10px monospace;color:#777;"
-    densLabel.textContent = `Grid: ${this.gridDensity}×${this.gridDensity}`
+    this.densLabel = h(`Grid: ${this.gridRows}×${this.gridCols}`, "font:10px monospace;color:#777;")
     const densSlider = document.createElement("input")
-    densSlider.type = "range"
-    densSlider.min = 3; densSlider.max = 20; densSlider.value = this.gridDensity
+    densSlider.type = "range"; densSlider.min = 3; densSlider.max = 15; densSlider.value = this.gridRows
     densSlider.style.cssText = "width:100%;accent-color:#0f0;"
     densSlider.oninput = () => {
-      this.gridDensity = parseInt(densSlider.value)
-      densLabel.textContent = `Grid: ${this.gridDensity}×${this.gridDensity}`
+      this.gridRows = this.gridCols = parseInt(densSlider.value)
+      this.densLabel.textContent = `Grid: ${this.gridRows}×${this.gridCols}`
       this.rebuildOverlay()
     }
-    densRow.appendChild(densLabel)
+    densRow.appendChild(this.densLabel)
     densRow.appendChild(densSlider)
     this.toolbar.appendChild(densRow)
 
-    // Divider
-    const div2 = document.createElement("hr")
-    div2.style.cssText = "border:none;border-top:1px solid #333;margin:4px 0;"
-    this.toolbar.appendChild(div2)
+    this.toolbar.appendChild(Object.assign(document.createElement("hr"), { style: "border:none;border-top:1px solid #333;margin:4px 0;" }))
 
-    // Delete button
-    this.deleteBtn = document.createElement("button")
-    this.deleteBtn.textContent = "Delete Selected"
-    this.deleteBtn.style.cssText = "padding:6px 10px;font:11px monospace;background:#2a1a1a;color:#f44;border:1px solid #333;cursor:pointer;border-radius:3px;opacity:0.4;"
-    this.deleteBtn.onclick = () => this.deleteSelected()
+    // Selected plane info
+    this.planeInfo = document.createElement("div")
+    this.planeInfo.style.cssText = "font:11px monospace;color:#aaa;"
+    this.toolbar.appendChild(this.planeInfo)
+
+    // Reference scale slider (only visible when a plane is selected)
+    this.scaleRow = document.createElement("div")
+    this.scaleRow.style.cssText = "display:flex;flex-direction:column;gap:2px;display:none;"
+    this.scaleLabel = h("Ref scale: 60px", "font:10px monospace;color:#0f0;")
+    this.scaleSlider = document.createElement("input")
+    this.scaleSlider.type = "range"; this.scaleSlider.min = 10; this.scaleSlider.max = 200; this.scaleSlider.value = 60
+    this.scaleSlider.style.cssText = "width:100%;accent-color:#0f0;"
+    this.scaleSlider.oninput = () => {
+      const pl = this.state.planes.find(p => p.id === this.selectedPlane)
+      if (pl) {
+        pl.reference_scale = parseInt(this.scaleSlider.value)
+        this.scaleLabel.textContent = `Ref scale: ${pl.reference_scale}px (=${Math.round(pl.reference_scale / 1.8 * 10) / 10}px/m)`
+        this.rebuildOverlay()
+      }
+    }
+    this.scaleSlider.onchange = () => {
+      const pl = this.state.planes.find(p => p.id === this.selectedPlane)
+      if (pl) this.emit("update_plane", { id: pl.id, reference_scale: pl.reference_scale })
+    }
+    // Surface selector
+    this.surfSelect = document.createElement("select")
+    this.surfSelect.style.cssText = "width:100%;padding:4px;font:11px monospace;background:#222;color:#aaa;border:1px solid #444;margin-top:4px;"
+    for (const s of ["grass", "cobblestone", "wood", "dirt", "stone", "water", "sand"]) {
+      const opt = document.createElement("option"); opt.value = s; opt.textContent = s
+      this.surfSelect.appendChild(opt)
+    }
+    this.surfSelect.onchange = () => {
+      const pl = this.state.planes.find(p => p.id === this.selectedPlane)
+      if (pl) this.emit("update_plane", { id: pl.id, surface: this.surfSelect.value })
+    }
+    this.scaleRow.appendChild(this.scaleLabel)
+    this.scaleRow.appendChild(this.scaleSlider)
+    this.scaleRow.appendChild(h("Surface:", "font:10px monospace;color:#777;margin-top:4px;"))
+    this.scaleRow.appendChild(this.surfSelect)
+    this.toolbar.appendChild(this.scaleRow)
+
+    // Delete
+    this.deleteBtn = btn("Delete Selected", "#f44", () => this.deleteSelected())
+    this.deleteBtn.style.opacity = "0.4"
     this.toolbar.appendChild(this.deleteBtn)
 
-    // Planes list
+    // Plane list
     this.planesList = document.createElement("div")
     this.planesList.style.cssText = "margin-top:8px;display:flex;flex-direction:column;gap:3px;"
     this.toolbar.appendChild(this.planesList)
 
-    this.el.appendChild(this.toolbar)
-  },
+    // Instructions
+    this.toolbar.appendChild(h(
+      "Drag white squares to shape the quad. Use the scale slider to resize the standing characters until they match the painting. 2.5m apart at covid distance.",
+      "margin-top:auto;font:9px monospace;color:#555;line-height:1.4;"
+    ))
 
-  buildPropsPanel() {
-    this.propsPanel = document.createElement("div")
-    this.propsPanel.style.cssText = "position:absolute;top:0;right:0;width:200px;background:rgba(17,17,17,0.92);border-left:1px solid #333;padding:12px;z-index:10;display:none;font:11px monospace;color:#aaa;"
-    this.el.appendChild(this.propsPanel)
+    this.el.appendChild(this.toolbar)
   },
 
   buildStatusBar() {
     this.statusBar = document.createElement("div")
-    this.statusBar.style.cssText = "position:absolute;bottom:0;left:180px;right:0;height:24px;background:rgba(17,17,17,0.85);border-top:1px solid #333;padding:0 12px;font:11px monospace;color:#666;display:flex;align-items:center;z-index:10;"
+    this.statusBar.style.cssText = "position:absolute;bottom:0;left:200px;right:0;height:24px;background:rgba(17,17,17,0.85);border-top:1px solid #333;padding:0 12px;font:11px monospace;color:#666;display:flex;align-items:center;z-index:10;"
     this.el.appendChild(this.statusBar)
   },
 
-  updatePlanesList() {
+  updateUI() {
+    // Plane list
     this.planesList.innerHTML = ""
     for (const pl of this.state.planes) {
       const row = document.createElement("div")
-      row.style.cssText = `padding:4px 6px;font:10px monospace;cursor:pointer;border-radius:2px;border:1px solid ${this.selectedPlane === pl.id ? "#0f0" : "#333"};color:${this.selectedPlane === pl.id ? "#0f0" : "#888"};background:${this.selectedPlane === pl.id ? "#0a1a0a" : "transparent"};`
-      row.textContent = `${pl.id} (${pl.surface || "grass"})`
-      row.onclick = () => { this.selectedPlane = pl.id; this.updatePlanesList(); this.rebuildOverlay(); this.updatePropsPanel() }
+      const sel = this.selectedPlane === pl.id
+      row.style.cssText = `padding:4px 6px;font:10px monospace;cursor:pointer;border-radius:2px;border:1px solid ${sel ? "#0f0" : "#333"};color:${sel ? "#0f0" : "#888"};background:${sel ? "#0a1a0a" : "transparent"};`
+      row.textContent = `${pl.id.replace("plane_","")} (${pl.surface || "grass"}) s=${pl.reference_scale}`
+      row.onclick = () => { this.selectedPlane = pl.id; this.updateUI(); this.rebuildOverlay() }
       this.planesList.appendChild(row)
     }
-    this.deleteBtn.style.opacity = this.selectedPlane ? "1" : "0.4"
-  },
 
-  updatePropsPanel() {
-    if (!this.selectedPlane) {
-      this.propsPanel.style.display = "none"
-      return
-    }
+    // Selected plane controls
     const pl = this.state.planes.find(p => p.id === this.selectedPlane)
-    if (!pl) { this.propsPanel.style.display = "none"; return }
-
-    this.propsPanel.style.display = "block"
-    this.propsPanel.innerHTML = ""
-
-    const title = document.createElement("div")
-    title.textContent = pl.id
-    title.style.cssText = "font:bold 12px monospace;color:#0f0;margin-bottom:8px;"
-    this.propsPanel.appendChild(title)
-
-    // Surface type
-    const surfLabel = document.createElement("div")
-    surfLabel.textContent = "Surface:"
-    surfLabel.style.cssText = "color:#777;margin-bottom:2px;"
-    this.propsPanel.appendChild(surfLabel)
-
-    const surfaces = ["grass", "cobblestone", "wood", "dirt", "stone", "water", "sand"]
-    const surfSelect = document.createElement("select")
-    surfSelect.style.cssText = "width:100%;padding:4px;font:11px monospace;background:#222;color:#aaa;border:1px solid #444;margin-bottom:8px;"
-    for (const s of surfaces) {
-      const opt = document.createElement("option")
-      opt.value = s; opt.textContent = s
-      if (pl.surface === s) opt.selected = true
-      surfSelect.appendChild(opt)
-    }
-    surfSelect.onchange = () => {
-      this.emit("update_plane", { id: pl.id, surface: surfSelect.value })
-    }
-    this.propsPanel.appendChild(surfSelect)
-
-    // Corner coordinates (read-only for now)
-    const cornersLabel = document.createElement("div")
-    cornersLabel.textContent = "Corners (drag to edit):"
-    cornersLabel.style.cssText = "color:#777;margin-bottom:4px;"
-    this.propsPanel.appendChild(cornersLabel)
-
-    const cornerNames = ["TL", "TR", "BR", "BL"]
-    for (let i = 0; i < 4; i++) {
-      const c = pl.corners[i]
-      const row = document.createElement("div")
-      row.textContent = `${cornerNames[i]}: ${Math.round(c[0])}, ${Math.round(c[1])}`
-      row.style.cssText = "color:#999;font:10px monospace;padding:1px 0;"
-      this.propsPanel.appendChild(row)
+    if (pl) {
+      this.scaleRow.style.display = "flex"
+      this.scaleSlider.value = pl.reference_scale
+      this.scaleLabel.textContent = `Ref scale: ${pl.reference_scale}px (1.8m person at BL)`
+      this.surfSelect.value = pl.surface || "grass"
+      this.planeInfo.textContent = `Selected: ${pl.id}`
+      this.deleteBtn.style.opacity = "1"
+    } else {
+      this.scaleRow.style.display = "none"
+      this.planeInfo.textContent = "No plane selected"
+      this.deleteBtn.style.opacity = "0.4"
     }
   },
 
-  // --- Coordinate conversion ---
+  // --- Coordinates ---
 
   s2t(x, y) {
     return {
@@ -303,7 +284,7 @@ const SceneEditor = {
     }
   },
 
-  // --- Events ---
+  // --- Channel ---
 
   emit(type, payload) {
     if (this.channel) this.channel.push("event", { type, payload })
@@ -313,40 +294,29 @@ const SceneEditor = {
     const p = evt.payload
     switch (evt.type) {
       case "set_background":
-        this.state.background = p.url
-        this.loadBackground(p.url)
-        break
+        this.state.background = p.url; this.loadBackground(p.url); break
       case "add_plane":
-        this.state.planes.push({ id: p.id, corners: p.corners, surface: p.surface || "grass", elevation: p.elevation || 0 })
-        this.rebuildOverlay(); this.updatePlanesList()
-        break
+        this.state.planes.push({
+          id: p.id, corners: p.corners, surface: p.surface || "grass",
+          reference_scale: p.reference_scale || 60, grid_spacing: p.grid_spacing || 2.5
+        })
+        this.rebuildOverlay(); this.updateUI(); break
       case "update_plane":
         { const pl = this.state.planes.find(x => x.id === p.id)
           if (pl) {
             if (p.corners) pl.corners = p.corners
             if (p.surface) pl.surface = p.surface
-            if (p.elevation !== undefined) pl.elevation = p.elevation
-            this.rebuildOverlay(); this.updatePropsPanel()
-          } }
-        break
+            if (p.reference_scale !== undefined) pl.reference_scale = p.reference_scale
+            if (p.grid_spacing !== undefined) pl.grid_spacing = p.grid_spacing
+            this.rebuildOverlay(); this.updateUI()
+          } } break
       case "remove_plane":
         this.state.planes = this.state.planes.filter(x => x.id !== p.id)
         if (this.selectedPlane === p.id) this.selectedPlane = null
-        this.rebuildOverlay(); this.updatePlanesList(); this.updatePropsPanel()
-        break
+        this.rebuildOverlay(); this.updateUI(); break
       case "add_character":
         this.state.characters.push({ id: p.id, type: p.type, x: p.x, y: p.y })
-        this.rebuildCharacters()
-        break
-      case "add_spawn":
-        this.state.spawns.push({ id: p.id, x: p.x, y: p.y, facing: p.facing })
-        this.rebuildOverlay()
-        break
-      case "add_object":
-        this.state.objects.push({ id: p.id, x: p.x, y: p.y, type: p.type, label: p.label })
-        this.rebuildOverlay()
-        break
-      // Legacy walk_polygon events -> ignore for now
+        this.rebuildCharacters(); break
       default: break
     }
   },
@@ -356,17 +326,14 @@ const SceneEditor = {
   onMouseDown(e) {
     const scene = this.screenToScene(e.clientX, e.clientY)
 
-    // Check if clicking a corner handle
+    // Check corner handles (20px hit area)
     for (const pl of this.state.planes) {
       for (let i = 0; i < 4; i++) {
-        const dx = scene.x - pl.corners[i][0]
-        const dy = scene.y - pl.corners[i][1]
-        const handleSize = 20
-        if (Math.abs(dx) < handleSize && Math.abs(dy) < handleSize) {
+        const dx = scene.x - pl.corners[i][0], dy = scene.y - pl.corners[i][1]
+        if (Math.abs(dx) < 20 && Math.abs(dy) < 20) {
           this.dragCorner = { planeId: pl.id, cornerIndex: i }
           this.selectedPlane = pl.id
-          this.updatePlanesList()
-          this.updatePropsPanel()
+          this.updateUI()
           this.renderer.domElement.style.cursor = "grabbing"
           return
         }
@@ -377,18 +344,13 @@ const SceneEditor = {
     for (const pl of this.state.planes) {
       if (pointInQuad(pl.corners, scene.x, scene.y)) {
         this.selectedPlane = pl.id
-        this.updatePlanesList()
-        this.updatePropsPanel()
-        this.rebuildOverlay()
+        this.updateUI(); this.rebuildOverlay()
         return
       }
     }
 
-    // Clicked nothing — deselect
     this.selectedPlane = null
-    this.updatePlanesList()
-    this.updatePropsPanel()
-    this.rebuildOverlay()
+    this.updateUI(); this.rebuildOverlay()
   },
 
   onMouseMove(e) {
@@ -400,15 +362,13 @@ const SceneEditor = {
       if (pl) {
         pl.corners[this.dragCorner.cornerIndex] = [scene.x, scene.y]
         this.rebuildOverlay()
-        this.updatePropsPanel()
+        this.updateUI()
       }
     } else {
-      // Hover cursor
       let onHandle = false
       for (const pl of this.state.planes) {
         for (let i = 0; i < 4; i++) {
-          const dx = scene.x - pl.corners[i][0]
-          const dy = scene.y - pl.corners[i][1]
+          const dx = scene.x - pl.corners[i][0], dy = scene.y - pl.corners[i][1]
           if (Math.abs(dx) < 20 && Math.abs(dy) < 20) { onHandle = true; break }
         }
         if (onHandle) break
@@ -419,11 +379,8 @@ const SceneEditor = {
 
   onMouseUp(e) {
     if (this.dragCorner) {
-      // Persist the corner move
       const pl = this.state.planes.find(p => p.id === this.dragCorner.planeId)
-      if (pl) {
-        this.emit("update_plane", { id: pl.id, corners: pl.corners })
-      }
+      if (pl) this.emit("update_plane", { id: pl.id, corners: pl.corners })
       this.dragCorner = null
       this.renderer.domElement.style.cursor = "crosshair"
     }
@@ -432,26 +389,23 @@ const SceneEditor = {
   // --- Actions ---
 
   addPlane() {
-    const W = this.state.dimensions.width
-    const H = this.state.dimensions.height
+    const W = this.state.dimensions.width, H = this.state.dimensions.height
     const id = "plane_" + Date.now()
-    // Default quad centered with perspective
     const cx = W / 2, cy = H / 2
     const corners = [
-      [cx - 200, cy - 150],  // TL (far)
-      [cx + 200, cy - 150],  // TR (far)
-      [cx + 300, cy + 200],  // BR (near)
-      [cx - 300, cy + 200],  // BL (near)
+      [cx - 200, cy - 150],  // TL (far, small)
+      [cx + 200, cy - 150],  // TR (far, small)
+      [cx + 350, cy + 250],  // BR (near, big)
+      [cx - 350, cy + 250],  // BL (near, big)
     ]
-    this.emit("add_plane", { id, corners, surface: "grass" })
+    this.emit("add_plane", { id, corners, surface: "grass", reference_scale: 60 })
     this.selectedPlane = id
   },
 
   addChar(type) {
     const id = type + "_" + Date.now()
-    const W = this.state.dimensions.width
-    const H = this.state.dimensions.height
-    this.emit("add_character", { id, type, x: W / 2, y: H / 2 })
+    const W = this.state.dimensions.width, H = this.state.dimensions.height
+    this.emit("add_character", { id, type, x: W / 2, y: H * 0.65 })
   },
 
   deleteSelected() {
@@ -464,12 +418,10 @@ const SceneEditor = {
 
   resize() {
     const rect = this.el.getBoundingClientRect()
-    const dpr = window.devicePixelRatio || 1
     this.renderer.setSize(rect.width, rect.height)
-    this.renderer.setPixelRatio(dpr)
+    this.renderer.setPixelRatio(window.devicePixelRatio || 1)
 
-    const W = this.state.dimensions.width
-    const H = this.state.dimensions.height
+    const W = this.state.dimensions.width, H = this.state.dimensions.height
     const viewAspect = rect.width / rect.height
     const sceneAspect = W / H
     if (viewAspect > sceneAspect) {
@@ -486,8 +438,7 @@ const SceneEditor = {
     this.loadBackground(this.state.background)
     this.rebuildOverlay()
     this.rebuildCharacters()
-    this.updatePlanesList()
-    this.updatePropsPanel()
+    this.updateUI()
   },
 
   loadBackground(url) {
@@ -508,21 +459,20 @@ const SceneEditor = {
   rebuildOverlay() {
     this.clearGroup(this.overlayGroup)
     this.clearGroup(this.handleGroup)
+    this.clearGroup(this.gridCharGroup)
 
     for (const pl of this.state.planes) {
       const selected = this.selectedPlane === pl.id
       const color = selected ? 0x00ff88 : 0x00ff44
-      const alpha = selected ? 0.15 : 0.06
 
       // Quad fill
-      this.drawQuadFill(pl.corners, color, alpha, -5)
-
+      this.drawQuadFill(pl.corners, color, selected ? 0.12 : 0.04, -5)
       // Quad outline
-      this.drawQuadOutline(pl.corners, color, selected ? 0.7 : 0.3, -4.9)
+      this.drawQuadOutline(pl.corners, color, selected ? 0.6 : 0.2, -4.9)
 
-      // Grid
       if (this.showGrid) {
-        const gridLines = generateGridLines(pl.corners, this.gridDensity, this.gridDensity)
+        // Grid lines
+        const gridLines = generateGridLines(pl.corners, this.gridRows, this.gridCols)
         for (const line of gridLines) {
           const pts = line.map(p => {
             const t = this.s2t(p.x, p.y)
@@ -531,32 +481,43 @@ const SceneEditor = {
           const geo = new THREE.BufferGeometry().setFromPoints(pts)
           const mat = new THREE.LineBasicMaterial({
             color: selected ? 0x00ff66 : 0x00aa44,
-            transparent: true,
-            opacity: selected ? 0.2 : 0.08
+            transparent: true, opacity: selected ? 0.15 : 0.06
           })
           this.overlayGroup.add(new THREE.Line(geo, mat))
         }
 
-        // Standing figures at grid intersections
+        // Character models at grid intersections (only for selected plane)
         if (selected) {
-          const grid = generateGrid(pl.corners, this.gridDensity, this.gridDensity)
+          const refScale = pl.reference_scale || 60
+          const grid = generateCharacterGrid(pl.corners, this.gridRows, this.gridCols, refScale)
+
+          // Use Cloud model for grid characters
+          const cloudDef = createCloud()
           for (const gp of grid) {
+            // Skip edge points for clarity
             if (gp.u === 0 || gp.u === 1 || gp.v === 0 || gp.v === 1) continue
+
             const t = this.s2t(gp.x, gp.y)
-            const figScale = gp.scale * 4
-            // Simple stick figure
-            const figGeo = new THREE.BufferGeometry().setFromPoints([
-              new THREE.Vector3(t.x, t.y, -3),
-              new THREE.Vector3(t.x, t.y + figScale * 3, -3),
-            ])
-            const figMat = new THREE.LineBasicMaterial({ color: 0x88ffaa, transparent: true, opacity: 0.4 })
-            this.overlayGroup.add(new THREE.Line(figGeo, figMat))
-            // Head
-            const headGeo = new THREE.CircleGeometry(figScale * 0.8, 6)
-            const headMat = new THREE.MeshBasicMaterial({ color: 0x88ffaa, transparent: true, opacity: 0.3 })
-            const headMesh = new THREE.Mesh(headGeo, headMat)
-            headMesh.position.set(t.x, t.y + figScale * 3.8, -3)
-            this.overlayGroup.add(headMesh)
+            // Character pixel height determines the Three.js scale
+            const charH = gp.pixelHeight
+            const meshScale = charH / cloudDef.height
+
+            // Build a mini Cloud at this position
+            const boneMap = {}
+            const group = this.buildSkeleton(cloudDef.skeleton, boneMap)
+            group.scale.set(meshScale, meshScale, meshScale)
+            group.position.set(t.x, t.y, -2)
+
+            // Ghost material — transparent greenish
+            group.traverse((child) => {
+              if (child.isMesh) {
+                child.material = new THREE.MeshLambertMaterial({
+                  color: 0x44ff88, transparent: true, opacity: 0.35, flatShading: true
+                })
+              }
+            })
+
+            this.gridCharGroup.add(group)
           }
         }
       }
@@ -566,19 +527,16 @@ const SceneEditor = {
       for (let i = 0; i < 4; i++) {
         const c = pl.corners[i]
         const t = this.s2t(c[0], c[1])
-        // Square handle
-        const hSize = selected ? 12 : 8
+        const hSize = selected ? 14 : 8
         const hGeo = new THREE.PlaneGeometry(hSize, hSize)
         const hMat = new THREE.MeshBasicMaterial({
           color: selected ? 0xffffff : 0x00ff66,
-          transparent: true,
-          opacity: selected ? 0.9 : 0.5
+          transparent: true, opacity: selected ? 0.9 : 0.5
         })
         const hMesh = new THREE.Mesh(hGeo, hMat)
         hMesh.position.set(t.x, t.y, -1)
         this.handleGroup.add(hMesh)
 
-        // Label
         if (selected) {
           const label = this.makeSmallLabel(cornerNames[i])
           label.position.set(t.x, t.y + 18, -0.5)
@@ -589,7 +547,6 @@ const SceneEditor = {
   },
 
   drawQuadFill(corners, color, opacity, z) {
-    // Two triangles: TL-TR-BR and TL-BR-BL
     const verts = []
     for (const idx of [[0,1,2], [0,2,3]]) {
       for (const i of idx) {
@@ -599,8 +556,9 @@ const SceneEditor = {
     }
     const geo = new THREE.BufferGeometry()
     geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3))
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide })
-    this.overlayGroup.add(new THREE.Mesh(geo, mat))
+    this.overlayGroup.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity, side: THREE.DoubleSide
+    })))
   },
 
   drawQuadOutline(corners, color, opacity, z) {
@@ -608,9 +566,10 @@ const SceneEditor = {
       const t = this.s2t(c[0], c[1])
       return new THREE.Vector3(t.x, t.y, z)
     })
-    const geo = new THREE.BufferGeometry().setFromPoints(pts)
-    const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity })
-    this.overlayGroup.add(new THREE.Line(geo, mat))
+    this.overlayGroup.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity })
+    ))
   },
 
   makeSmallLabel(text) {
@@ -619,9 +578,9 @@ const SceneEditor = {
     const ctx = canvas.getContext("2d")
     ctx.font = "bold 18px monospace"; ctx.textAlign = "center"
     ctx.fillStyle = "#fff"; ctx.fillText(text, 32, 22)
-    const tex = new THREE.CanvasTexture(canvas)
-    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true })
-    const sprite = new THREE.Sprite(mat)
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: new THREE.CanvasTexture(canvas), transparent: true
+    }))
     sprite.scale.set(30, 15, 1)
     return sprite
   },
@@ -646,7 +605,6 @@ const SceneEditor = {
       const def = factory()
       const boneMap = {}
       const group = this.buildSkeleton(def.skeleton, boneMap)
-      // Base scale (will be modulated by quad position)
       group.scale.set(3, 3, 3)
       this.charGroup.add(group)
       const label = this.makeLabel(def.name)
@@ -665,9 +623,8 @@ const SceneEditor = {
 
   updateCharacters(dt) {
     const planes = this.state.planes
-
     for (const [id, c] of Object.entries(this.charStates)) {
-      // Wandering
+      // Wander
       if (c.state === "idle") {
         c.wanderCooldown -= dt
         if (c.wanderCooldown <= 0 && planes.length > 0) {
@@ -676,12 +633,10 @@ const SceneEditor = {
           const v = 0.1 + Math.random() * 0.8
           const target = bilinearInterpolate(pl.corners, u, v)
           c.target_x = target.x; c.target_y = target.y
-          c.targetPlane = pl; c.targetUV = { u, v }
           c.state = "walking"
           c.wanderCooldown = 2 + Math.random() * 4
         }
       }
-
       if (c.state === "walking" && c.target_x != null) {
         const dx = c.target_x - c.x, dy = c.target_y - c.y
         const dist = Math.sqrt(dx * dx + dy * dy)
@@ -695,12 +650,13 @@ const SceneEditor = {
         }
       }
 
-      // Find which plane the character is in and get their scale
+      // Scale based on which plane they are in
       let charScale = 3
       for (const pl of planes) {
         if (pointInQuad(pl.corners, c.x, c.y)) {
           const uv = screenToUV(pl.corners, c.x, c.y)
-          charScale = scaleAtV(pl.corners, uv.v) * 3
+          const pixH = charPixelHeight(pl.corners, uv.v, pl.reference_scale || 60)
+          charScale = pixH / c.def.height
           break
         }
       }
@@ -779,8 +735,9 @@ const SceneEditor = {
     ctx.font = "bold 28px monospace"; ctx.textAlign = "center"
     ctx.strokeStyle = "#000"; ctx.lineWidth = 4; ctx.strokeText(text, 128, 40)
     ctx.fillStyle = "#fff"; ctx.fillText(text, 128, 40)
-    const tex = new THREE.CanvasTexture(canvas)
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }))
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: new THREE.CanvasTexture(canvas), transparent: true
+    }))
     sprite.scale.set(80, 20, 1)
     return sprite
   },

@@ -155,7 +155,7 @@ defmodule Froth.SceneEvents do
   end
 
   def apply_event(%{type: "add_plane", payload: p}, state) do
-    plane = %{corners: p["corners"], surface: p["surface"] || "grass", elevation: p["elevation"] || 0}
+    plane = %{corners: p["corners"], surface: p["surface"] || "grass", elevation: p["elevation"] || 0, reference_scale: p["reference_scale"] || 60, grid_spacing: p["grid_spacing"] || 2.5}
     put_in(state, [:planes, p["id"]], plane)
   end
 
@@ -166,6 +166,8 @@ defmodule Froth.SceneEvents do
         |> then(fn e -> if p["corners"], do: %{e | corners: p["corners"]}, else: e end)
         |> then(fn e -> if p["surface"], do: %{e | surface: p["surface"]}, else: e end)
         |> then(fn e -> if p["elevation"], do: %{e | elevation: p["elevation"]}, else: e end)
+        |> then(fn e -> if p["reference_scale"], do: Map.put(e, :reference_scale, p["reference_scale"]), else: e end)
+        |> then(fn e -> if p["grid_spacing"], do: Map.put(e, :grid_spacing, p["grid_spacing"]), else: e end)
       else
         nil
       end
