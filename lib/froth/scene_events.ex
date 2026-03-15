@@ -74,6 +74,7 @@ defmodule Froth.SceneEvents do
     %{
       background: nil,
       walk_polygons: %{},
+      planes: %{},
       blocked_regions: %{},
       objects: %{},
       spawns: %{},
@@ -153,6 +154,28 @@ defmodule Froth.SceneEvents do
     %{state | dimensions: %{width: p["width"], height: p["height"]}}
   end
 
+  def apply_event(%{type: "add_plane", payload: p}, state) do
+    plane = %{corners: p["corners"], surface: p["surface"] || "grass", elevation: p["elevation"] || 0}
+    put_in(state, [:planes, p["id"]], plane)
+  end
+
+  def apply_event(%{type: "update_plane", payload: p}, state) do
+    update_in(state, [:planes, p["id"]], fn existing ->
+      if existing do
+        existing
+        |> then(fn e -> if p["corners"], do: %{e | corners: p["corners"]}, else: e end)
+        |> then(fn e -> if p["surface"], do: %{e | surface: p["surface"]}, else: e end)
+        |> then(fn e -> if p["elevation"], do: %{e | elevation: p["elevation"]}, else: e end)
+      else
+        nil
+      end
+    end)
+  end
+
+  def apply_event(%{type: "remove_plane", payload: p}, state) do
+    update_in(state, [:planes], &Map.delete(&1, p["id"]))
+  end
+
   def apply_event(_, state), do: state
 
   @doc "Serialize state to JSON-friendly map for the client."
@@ -162,6 +185,7 @@ defmodule Froth.SceneEvents do
       dimensions: state.dimensions,
       projection: state.projection,
       walk_polygons: state.walk_polygons |> Enum.map(fn {id, p} -> Map.put(p, :id, id) end),
+      planes: state.planes |> Enum.map(fn {id, p} -> Map.put(p, :id, id) end),
       blocked_regions: state.blocked_regions |> Enum.map(fn {id, r} -> Map.put(r, :id, id) end),
       objects: state.objects |> Enum.map(fn {id, o} -> Map.put(o, :id, id) end),
       spawns: state.spawns |> Enum.map(fn {id, s} -> Map.put(s, :id, id) end),

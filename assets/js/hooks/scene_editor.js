@@ -1,9 +1,14 @@
-// SceneEditor — event-sourced collaborative scene editor
-// All state comes from the channel. All mutations go through the channel.
-// The renderer is a pure function of the current state.
+// SceneEditor — quad-based walking plane editor
+// All state from the channel. All mutations through the channel.
+// Walking planes are quads (4 draggable screen-space points).
+// Characters scale via bilinear interpolation inside quads.
 
 import * as THREE from "@/vendor/three.module.min.js"
 import { createCloud, createLaraCroft } from "@/js/lib/primitive_characters.js"
+import {
+  bilinearInterpolate, scaleAtV, screenToUV, pointInQuad,
+  generateGrid, generateGridLines
+} from "@/js/lib/quad_math.js"
 import { Socket } from "phoenix"
 
 const CHAR_DEFS = { cloud: createCloud, lara: createLaraCroft }
@@ -13,97 +18,78 @@ const SceneEditor = {
     this.el.innerHTML = ""
     this.clock = new THREE.Clock()
 
-    // State — materialized from events
     this.state = {
       background: null,
       dimensions: { width: 2048, height: 1376 },
-      projection: { scale: 1, offset_x: 0, offset_y: 0, rotation: 0 },
-      walk_polygons: [],
-      blocked_regions: [],
+      planes: [],      // walking planes: { id, corners: [[x,y]x4], surface, elevation }
       objects: [],
       spawns: [],
       characters: []
     }
 
-    // Editor state (local only)
-    this.mode = "walk"  // "walk" | "blocked" | "select" | "spawn" | "object"
-    this.drawing = false
-    this.currentVertices = []
-    this.selectedId = null
+    // Editor
+    this.selectedPlane = null
+    this.dragCorner = null  // { planeId, cornerIndex }
+    this.showGrid = true
+    this.gridDensity = 10
     this.lastSeq = 0
 
-    // Wandering character state (local)
+    // Character wandering state
     this.charStates = {}
 
     // Three.js
     this.renderer = new THREE.WebGLRenderer({ antialias: false })
     this.renderer.setClearColor(0x111111)
+    this.el.appendChild(this.renderer.domElement)
     this.renderer.domElement.style.display = "block"
     this.renderer.domElement.style.width = "100%"
     this.renderer.domElement.style.height = "100%"
-    this.el.appendChild(this.renderer.domElement)
+    this.renderer.domElement.style.cursor = "crosshair"
 
     this.scene = new THREE.Scene()
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000)
     this.camera.position.set(0, 0, 100)
     this.camera.lookAt(0, 0, 0)
-
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.75))
     const dir = new THREE.DirectionalLight(0xffd080, 0.4)
     dir.position.set(1, 2, 1)
     this.scene.add(dir)
 
-    // Managed Three.js objects
     this.bgMesh = null
     this.overlayGroup = new THREE.Group()
     this.scene.add(this.overlayGroup)
     this.charGroup = new THREE.Group()
     this.scene.add(this.charGroup)
-    this.drawingGroup = new THREE.Group()  // current polygon being drawn
-    this.scene.add(this.drawingGroup)
+    this.handleGroup = new THREE.Group()
+    this.scene.add(this.handleGroup)
 
-    // HUD overlay (HTML)
-    this.hud = document.createElement("div")
-    this.hud.style.cssText = "position:absolute;top:8px;left:8px;z-index:10;font:12px monospace;color:#ccc;display:flex;flex-direction:column;gap:4px;"
+    // Build UI panels
     this.el.style.position = "relative"
-    this.el.appendChild(this.hud)
+    this.buildToolbar()
+    this.buildPropsPanel()
+    this.buildStatusBar()
 
-    this.buildHUD()
-
-    // Mouse events
-    this.renderer.domElement.addEventListener("click", (e) => this.onClick(e))
-    this.renderer.domElement.addEventListener("dblclick", (e) => this.onDblClick(e))
-    this.renderer.domElement.addEventListener("contextmenu", (e) => {
-      e.preventDefault()
-      this.finishDrawing()
-    })
+    // Mouse
+    this.renderer.domElement.addEventListener("mousedown", (e) => this.onMouseDown(e))
     this.renderer.domElement.addEventListener("mousemove", (e) => this.onMouseMove(e))
+    this.renderer.domElement.addEventListener("mouseup", (e) => this.onMouseUp(e))
+    this.renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault())
 
-    // Keyboard
-    window.addEventListener("keydown", (e) => this.onKey(e))
-
-    // Connect to channel
+    // Channel
     this.sceneId = this.el.dataset.sceneId || "default"
     this.bgUrl = this.el.dataset.bgUrl
-
-    // Use the existing Phoenix socket from LiveView
     const socketPath = "/froth/socket"
     this.socket = new Socket(socketPath)
     this.socket.connect()
     this.channel = this.socket.channel("scene:" + this.sceneId, {})
     this.channel.join()
       .receive("ok", (resp) => {
-        console.log("Joined scene:", this.sceneId, resp)
-        this.state = resp.state
+        this.state = this.migrateState(resp.state)
         this.lastSeq = resp.last_seq
-        // If no background set, use default
         if (!this.state.background && this.bgUrl) {
           this.emit("set_background", { url: this.bgUrl })
         }
         this.rebuildScene()
-      })
-      .receive("error", (resp) => {
-        console.error("Failed to join scene:", resp)
       })
 
     this.channel.on("event", (evt) => {
@@ -123,63 +109,176 @@ const SceneEditor = {
     this.renderer.dispose()
   },
 
-  // --- HUD ---
+  migrateState(s) {
+    // Ensure planes array exists (old events used walk_polygons)
+    if (!s.planes) s.planes = []
+    if (!s.objects) s.objects = []
+    if (!s.spawns) s.spawns = []
+    if (!s.characters) s.characters = []
+    if (!s.dimensions) s.dimensions = { width: 2048, height: 1376 }
+    return s
+  },
 
-  buildHUD() {
-    const modes = [
-      { key: "w", mode: "walk", label: "Walk (W)", color: "#0f0" },
-      { key: "b", mode: "blocked", label: "Blocked (B)", color: "#f33" },
-      { key: "s", mode: "spawn", label: "Spawn (S)", color: "#0ff" },
-      { key: "o", mode: "object", label: "Object (O)", color: "#ff0" },
-      { key: "v", mode: "select", label: "Select (V)", color: "#fff" },
+  // --- UI ---
+
+  buildToolbar() {
+    this.toolbar = document.createElement("div")
+    this.toolbar.style.cssText = "position:absolute;top:0;left:0;bottom:0;width:180px;background:rgba(17,17,17,0.92);border-right:1px solid #333;padding:12px;display:flex;flex-direction:column;gap:8px;z-index:10;overflow-y:auto;"
+
+    const title = document.createElement("div")
+    title.textContent = "SCENE EDITOR"
+    title.style.cssText = "font:bold 13px monospace;color:#888;letter-spacing:2px;margin-bottom:4px;"
+    this.toolbar.appendChild(title)
+
+    // Tool buttons
+    const tools = [
+      { id: "add_plane", label: "＋ Add Walking Plane", color: "#0f0", action: () => this.addPlane() },
+      { id: "add_cloud", label: "＋ Cloud", color: "#88f", action: () => this.addChar("cloud") },
+      { id: "add_lara", label: "＋ Lara", color: "#f8f", action: () => this.addChar("lara") },
     ]
 
-    this.modeButtons = {}
-    for (const m of modes) {
+    for (const t of tools) {
       const btn = document.createElement("button")
-      btn.textContent = m.label
-      btn.style.cssText = `padding:3px 8px;font:11px monospace;background:#222;color:${m.color};border:1px solid #444;cursor:pointer;text-align:left;`
-      btn.onclick = () => this.setMode(m.mode)
-      this.hud.appendChild(btn)
-      this.modeButtons[m.mode] = btn
+      btn.textContent = t.label
+      btn.style.cssText = `padding:8px 12px;font:12px monospace;background:#1a1a2a;color:${t.color};border:1px solid #333;cursor:pointer;text-align:left;border-radius:3px;`
+      btn.onmouseenter = () => btn.style.borderColor = t.color
+      btn.onmouseleave = () => btn.style.borderColor = "#333"
+      btn.onclick = t.action
+      this.toolbar.appendChild(btn)
     }
 
-    // Add characters buttons
-    const charDiv = document.createElement("div")
-    charDiv.style.cssText = "margin-top:8px;display:flex;flex-direction:column;gap:2px;"
-    for (const type of ["cloud", "lara"]) {
-      const btn = document.createElement("button")
-      btn.textContent = `+ ${type}`
-      btn.style.cssText = "padding:2px 6px;font:10px monospace;background:#223;color:#88f;border:1px solid #446;cursor:pointer;"
-      btn.onclick = () => this.addCharacter(type)
-      charDiv.appendChild(btn)
+    // Divider
+    const div1 = document.createElement("hr")
+    div1.style.cssText = "border:none;border-top:1px solid #333;margin:4px 0;"
+    this.toolbar.appendChild(div1)
+
+    // Grid toggle
+    const gridRow = document.createElement("div")
+    gridRow.style.cssText = "display:flex;align-items:center;gap:8px;"
+    const gridCheck = document.createElement("input")
+    gridCheck.type = "checkbox"
+    gridCheck.checked = this.showGrid
+    gridCheck.onchange = () => { this.showGrid = gridCheck.checked; this.rebuildOverlay() }
+    const gridLabel = document.createElement("label")
+    gridLabel.textContent = "Show Grid"
+    gridLabel.style.cssText = "font:11px monospace;color:#aaa;cursor:pointer;"
+    gridLabel.onclick = () => { gridCheck.checked = !gridCheck.checked; gridCheck.onchange() }
+    gridRow.appendChild(gridCheck)
+    gridRow.appendChild(gridLabel)
+    this.toolbar.appendChild(gridRow)
+
+    // Grid density slider
+    const densRow = document.createElement("div")
+    densRow.style.cssText = "display:flex;flex-direction:column;gap:2px;"
+    const densLabel = document.createElement("div")
+    densLabel.style.cssText = "font:10px monospace;color:#777;"
+    densLabel.textContent = `Grid: ${this.gridDensity}×${this.gridDensity}`
+    const densSlider = document.createElement("input")
+    densSlider.type = "range"
+    densSlider.min = 3; densSlider.max = 20; densSlider.value = this.gridDensity
+    densSlider.style.cssText = "width:100%;accent-color:#0f0;"
+    densSlider.oninput = () => {
+      this.gridDensity = parseInt(densSlider.value)
+      densLabel.textContent = `Grid: ${this.gridDensity}×${this.gridDensity}`
+      this.rebuildOverlay()
     }
-    this.hud.appendChild(charDiv)
+    densRow.appendChild(densLabel)
+    densRow.appendChild(densSlider)
+    this.toolbar.appendChild(densRow)
 
-    // Instructions
-    const info = document.createElement("div")
-    info.style.cssText = "margin-top:8px;font:10px monospace;color:#666;max-width:180px;line-height:1.4;"
-    info.innerHTML = "click: add vertex<br>right-click: finish polygon<br>dblclick: finish + close<br>esc: cancel drawing<br>del: remove selected"
-    this.hud.appendChild(info)
+    // Divider
+    const div2 = document.createElement("hr")
+    div2.style.cssText = "border:none;border-top:1px solid #333;margin:4px 0;"
+    this.toolbar.appendChild(div2)
 
-    // Status line
-    this.statusEl = document.createElement("div")
-    this.statusEl.style.cssText = "margin-top:4px;font:10px monospace;color:#888;"
-    this.hud.appendChild(this.statusEl)
+    // Delete button
+    this.deleteBtn = document.createElement("button")
+    this.deleteBtn.textContent = "Delete Selected"
+    this.deleteBtn.style.cssText = "padding:6px 10px;font:11px monospace;background:#2a1a1a;color:#f44;border:1px solid #333;cursor:pointer;border-radius:3px;opacity:0.4;"
+    this.deleteBtn.onclick = () => this.deleteSelected()
+    this.toolbar.appendChild(this.deleteBtn)
 
-    this.updateModeButtons()
+    // Planes list
+    this.planesList = document.createElement("div")
+    this.planesList.style.cssText = "margin-top:8px;display:flex;flex-direction:column;gap:3px;"
+    this.toolbar.appendChild(this.planesList)
+
+    this.el.appendChild(this.toolbar)
   },
 
-  setMode(mode) {
-    this.mode = mode
-    this.cancelDrawing()
-    this.updateModeButtons()
+  buildPropsPanel() {
+    this.propsPanel = document.createElement("div")
+    this.propsPanel.style.cssText = "position:absolute;top:0;right:0;width:200px;background:rgba(17,17,17,0.92);border-left:1px solid #333;padding:12px;z-index:10;display:none;font:11px monospace;color:#aaa;"
+    this.el.appendChild(this.propsPanel)
   },
 
-  updateModeButtons() {
-    for (const [m, btn] of Object.entries(this.modeButtons)) {
-      btn.style.borderColor = m === this.mode ? "#fff" : "#444"
-      btn.style.fontWeight = m === this.mode ? "bold" : "normal"
+  buildStatusBar() {
+    this.statusBar = document.createElement("div")
+    this.statusBar.style.cssText = "position:absolute;bottom:0;left:180px;right:0;height:24px;background:rgba(17,17,17,0.85);border-top:1px solid #333;padding:0 12px;font:11px monospace;color:#666;display:flex;align-items:center;z-index:10;"
+    this.el.appendChild(this.statusBar)
+  },
+
+  updatePlanesList() {
+    this.planesList.innerHTML = ""
+    for (const pl of this.state.planes) {
+      const row = document.createElement("div")
+      row.style.cssText = `padding:4px 6px;font:10px monospace;cursor:pointer;border-radius:2px;border:1px solid ${this.selectedPlane === pl.id ? "#0f0" : "#333"};color:${this.selectedPlane === pl.id ? "#0f0" : "#888"};background:${this.selectedPlane === pl.id ? "#0a1a0a" : "transparent"};`
+      row.textContent = `${pl.id} (${pl.surface || "grass"})`
+      row.onclick = () => { this.selectedPlane = pl.id; this.updatePlanesList(); this.rebuildOverlay(); this.updatePropsPanel() }
+      this.planesList.appendChild(row)
+    }
+    this.deleteBtn.style.opacity = this.selectedPlane ? "1" : "0.4"
+  },
+
+  updatePropsPanel() {
+    if (!this.selectedPlane) {
+      this.propsPanel.style.display = "none"
+      return
+    }
+    const pl = this.state.planes.find(p => p.id === this.selectedPlane)
+    if (!pl) { this.propsPanel.style.display = "none"; return }
+
+    this.propsPanel.style.display = "block"
+    this.propsPanel.innerHTML = ""
+
+    const title = document.createElement("div")
+    title.textContent = pl.id
+    title.style.cssText = "font:bold 12px monospace;color:#0f0;margin-bottom:8px;"
+    this.propsPanel.appendChild(title)
+
+    // Surface type
+    const surfLabel = document.createElement("div")
+    surfLabel.textContent = "Surface:"
+    surfLabel.style.cssText = "color:#777;margin-bottom:2px;"
+    this.propsPanel.appendChild(surfLabel)
+
+    const surfaces = ["grass", "cobblestone", "wood", "dirt", "stone", "water", "sand"]
+    const surfSelect = document.createElement("select")
+    surfSelect.style.cssText = "width:100%;padding:4px;font:11px monospace;background:#222;color:#aaa;border:1px solid #444;margin-bottom:8px;"
+    for (const s of surfaces) {
+      const opt = document.createElement("option")
+      opt.value = s; opt.textContent = s
+      if (pl.surface === s) opt.selected = true
+      surfSelect.appendChild(opt)
+    }
+    surfSelect.onchange = () => {
+      this.emit("update_plane", { id: pl.id, surface: surfSelect.value })
+    }
+    this.propsPanel.appendChild(surfSelect)
+
+    // Corner coordinates (read-only for now)
+    const cornersLabel = document.createElement("div")
+    cornersLabel.textContent = "Corners (drag to edit):"
+    cornersLabel.style.cssText = "color:#777;margin-bottom:4px;"
+    this.propsPanel.appendChild(cornersLabel)
+
+    const cornerNames = ["TL", "TR", "BR", "BL"]
+    for (let i = 0; i < 4; i++) {
+      const c = pl.corners[i]
+      const row = document.createElement("div")
+      row.textContent = `${cornerNames[i]}: ${Math.round(c[0])}, ${Math.round(c[1])}`
+      row.style.cssText = "color:#999;font:10px monospace;padding:1px 0;"
+      this.propsPanel.appendChild(row)
     }
   },
 
@@ -196,200 +295,172 @@ const SceneEditor = {
     const rect = this.renderer.domElement.getBoundingClientRect()
     const nx = ((clientX - rect.left) / rect.width) * 2 - 1
     const ny = -((clientY - rect.top) / rect.height) * 2 + 1
-
     const vec = new THREE.Vector3(nx, ny, 0)
     vec.unproject(this.camera)
-
-    // Three.js coords to scene coords
-    const sx = vec.x + this.state.dimensions.width / 2
-    const sy = -vec.y + this.state.dimensions.height / 2
-    return { x: Math.round(sx), y: Math.round(sy) }
+    return {
+      x: Math.round(vec.x + this.state.dimensions.width / 2),
+      y: Math.round(-vec.y + this.state.dimensions.height / 2)
+    }
   },
 
   // --- Events ---
 
   emit(type, payload) {
-    if (this.channel) {
-      this.channel.push("event", { type, payload })
-    }
+    if (this.channel) this.channel.push("event", { type, payload })
   },
 
   applyEvent(evt) {
-    // Apply server event to local state
     const p = evt.payload
     switch (evt.type) {
       case "set_background":
         this.state.background = p.url
         this.loadBackground(p.url)
         break
-      case "add_walk_polygon":
-        this.state.walk_polygons.push({ id: p.id, vertices: p.vertices, surface: p.surface || "grass", elevation: p.elevation || 0 })
-        this.rebuildOverlay()
+      case "add_plane":
+        this.state.planes.push({ id: p.id, corners: p.corners, surface: p.surface || "grass", elevation: p.elevation || 0 })
+        this.rebuildOverlay(); this.updatePlanesList()
         break
-      case "update_walk_polygon":
-        { const wp = this.state.walk_polygons.find(w => w.id === p.id)
-          if (wp) { wp.vertices = p.vertices; this.rebuildOverlay() } }
+      case "update_plane":
+        { const pl = this.state.planes.find(x => x.id === p.id)
+          if (pl) {
+            if (p.corners) pl.corners = p.corners
+            if (p.surface) pl.surface = p.surface
+            if (p.elevation !== undefined) pl.elevation = p.elevation
+            this.rebuildOverlay(); this.updatePropsPanel()
+          } }
         break
-      case "remove_walk_polygon":
-        this.state.walk_polygons = this.state.walk_polygons.filter(w => w.id !== p.id)
-        this.rebuildOverlay()
+      case "remove_plane":
+        this.state.planes = this.state.planes.filter(x => x.id !== p.id)
+        if (this.selectedPlane === p.id) this.selectedPlane = null
+        this.rebuildOverlay(); this.updatePlanesList(); this.updatePropsPanel()
         break
-      case "add_blocked_region":
-        this.state.blocked_regions.push({ id: p.id, vertices: p.vertices, type: p.type || "wall" })
-        this.rebuildOverlay()
+      case "add_character":
+        this.state.characters.push({ id: p.id, type: p.type, x: p.x, y: p.y })
+        this.rebuildCharacters()
         break
-      case "remove_blocked_region":
-        this.state.blocked_regions = this.state.blocked_regions.filter(b => b.id !== p.id)
+      case "add_spawn":
+        this.state.spawns.push({ id: p.id, x: p.x, y: p.y, facing: p.facing })
         this.rebuildOverlay()
         break
       case "add_object":
         this.state.objects.push({ id: p.id, x: p.x, y: p.y, type: p.type, label: p.label })
         this.rebuildOverlay()
         break
-      case "remove_object":
-        this.state.objects = this.state.objects.filter(o => o.id !== p.id)
-        this.rebuildOverlay()
-        break
-      case "add_spawn":
-        this.state.spawns.push({ id: p.id, x: p.x, y: p.y, facing: p.facing })
-        this.rebuildOverlay()
-        break
-      case "remove_spawn":
-        this.state.spawns = this.state.spawns.filter(s => s.id !== p.id)
-        this.rebuildOverlay()
-        break
-      case "add_character":
-        this.state.characters.push({ id: p.id, type: p.type, x: p.x, y: p.y })
-        this.rebuildCharacters()
-        break
-      case "set_dimensions":
-        this.state.dimensions = { width: p.width, height: p.height }
-        this.resize()
-        break
+      // Legacy walk_polygon events -> ignore for now
+      default: break
     }
   },
 
-  // --- Drawing ---
+  // --- Mouse ---
 
-  onClick(e) {
+  onMouseDown(e) {
     const scene = this.screenToScene(e.clientX, e.clientY)
 
-    if (this.mode === "walk" || this.mode === "blocked") {
-      this.drawing = true
-      this.currentVertices.push([scene.x, scene.y])
-      this.updateDrawingPreview()
-    } else if (this.mode === "spawn") {
-      const id = "spawn_" + Date.now()
-      this.emit("add_spawn", { id, x: scene.x, y: scene.y, facing: "right" })
-    } else if (this.mode === "object") {
-      const id = "obj_" + Date.now()
-      const type = prompt("Object type (chest/door/npc/sign/shrine/campfire):") || "chest"
-      this.emit("add_object", { id, x: scene.x, y: scene.y, type, label: type })
-    } else if (this.mode === "select") {
-      this.selectAt(scene.x, scene.y)
+    // Check if clicking a corner handle
+    for (const pl of this.state.planes) {
+      for (let i = 0; i < 4; i++) {
+        const dx = scene.x - pl.corners[i][0]
+        const dy = scene.y - pl.corners[i][1]
+        const handleSize = 20
+        if (Math.abs(dx) < handleSize && Math.abs(dy) < handleSize) {
+          this.dragCorner = { planeId: pl.id, cornerIndex: i }
+          this.selectedPlane = pl.id
+          this.updatePlanesList()
+          this.updatePropsPanel()
+          this.renderer.domElement.style.cursor = "grabbing"
+          return
+        }
+      }
     }
-  },
 
-  onDblClick(e) {
-    if (this.drawing && this.currentVertices.length >= 3) {
-      this.finishDrawing()
+    // Check if clicking inside a plane
+    for (const pl of this.state.planes) {
+      if (pointInQuad(pl.corners, scene.x, scene.y)) {
+        this.selectedPlane = pl.id
+        this.updatePlanesList()
+        this.updatePropsPanel()
+        this.rebuildOverlay()
+        return
+      }
     }
+
+    // Clicked nothing — deselect
+    this.selectedPlane = null
+    this.updatePlanesList()
+    this.updatePropsPanel()
+    this.rebuildOverlay()
   },
 
   onMouseMove(e) {
     const scene = this.screenToScene(e.clientX, e.clientY)
-    this.statusEl.textContent = `${scene.x}, ${scene.y} | ${this.mode}${this.drawing ? ` (${this.currentVertices.length} pts)` : ""}`
+    this.statusBar.textContent = `${scene.x}, ${scene.y} | planes: ${this.state.planes.length} | chars: ${this.state.characters.length}`
 
-    if (this.drawing && this.currentVertices.length > 0) {
-      this.updateDrawingPreview([scene.x, scene.y])
+    if (this.dragCorner) {
+      const pl = this.state.planes.find(p => p.id === this.dragCorner.planeId)
+      if (pl) {
+        pl.corners[this.dragCorner.cornerIndex] = [scene.x, scene.y]
+        this.rebuildOverlay()
+        this.updatePropsPanel()
+      }
+    } else {
+      // Hover cursor
+      let onHandle = false
+      for (const pl of this.state.planes) {
+        for (let i = 0; i < 4; i++) {
+          const dx = scene.x - pl.corners[i][0]
+          const dy = scene.y - pl.corners[i][1]
+          if (Math.abs(dx) < 20 && Math.abs(dy) < 20) { onHandle = true; break }
+        }
+        if (onHandle) break
+      }
+      this.renderer.domElement.style.cursor = onHandle ? "grab" : "crosshair"
     }
   },
 
-  onKey(e) {
-    if (e.key === "Escape") this.cancelDrawing()
-    else if (e.key === "w") this.setMode("walk")
-    else if (e.key === "b") this.setMode("blocked")
-    else if (e.key === "s") this.setMode("spawn")
-    else if (e.key === "o") this.setMode("object")
-    else if (e.key === "v") this.setMode("select")
-    else if (e.key === "Delete" || e.key === "Backspace") this.deleteSelected()
-    else if (e.key === "Enter" && this.drawing) this.finishDrawing()
+  onMouseUp(e) {
+    if (this.dragCorner) {
+      // Persist the corner move
+      const pl = this.state.planes.find(p => p.id === this.dragCorner.planeId)
+      if (pl) {
+        this.emit("update_plane", { id: pl.id, corners: pl.corners })
+      }
+      this.dragCorner = null
+      this.renderer.domElement.style.cursor = "crosshair"
+    }
   },
 
-  finishDrawing() {
-    if (!this.drawing || this.currentVertices.length < 3) {
-      this.cancelDrawing()
-      return
-    }
+  // --- Actions ---
 
-    const id = (this.mode === "walk" ? "walk_" : "blocked_") + Date.now()
-    if (this.mode === "walk") {
-      this.emit("add_walk_polygon", { id, vertices: this.currentVertices, surface: "grass" })
-    } else if (this.mode === "blocked") {
-      this.emit("add_blocked_region", { id, vertices: this.currentVertices, type: "wall" })
-    }
-
-    this.currentVertices = []
-    this.drawing = false
-    this.clearDrawingPreview()
+  addPlane() {
+    const W = this.state.dimensions.width
+    const H = this.state.dimensions.height
+    const id = "plane_" + Date.now()
+    // Default quad centered with perspective
+    const cx = W / 2, cy = H / 2
+    const corners = [
+      [cx - 200, cy - 150],  // TL (far)
+      [cx + 200, cy - 150],  // TR (far)
+      [cx + 300, cy + 200],  // BR (near)
+      [cx - 300, cy + 200],  // BL (near)
+    ]
+    this.emit("add_plane", { id, corners, surface: "grass" })
+    this.selectedPlane = id
   },
 
-  cancelDrawing() {
-    this.currentVertices = []
-    this.drawing = false
-    this.clearDrawingPreview()
-  },
-
-  selectAt(sx, sy) {
-    // Find nearest polygon or object
-    let best = null, bestDist = 40
-
-    for (const wp of this.state.walk_polygons) {
-      const cx = wp.vertices.reduce((s, v) => s + v[0], 0) / wp.vertices.length
-      const cy = wp.vertices.reduce((s, v) => s + v[1], 0) / wp.vertices.length
-      const d = Math.sqrt((sx - cx) ** 2 + (sy - cy) ** 2)
-      if (d < bestDist) { best = { type: "walk", id: wp.id }; bestDist = d }
-    }
-
-    for (const br of this.state.blocked_regions) {
-      const cx = br.vertices.reduce((s, v) => s + v[0], 0) / br.vertices.length
-      const cy = br.vertices.reduce((s, v) => s + v[1], 0) / br.vertices.length
-      const d = Math.sqrt((sx - cx) ** 2 + (sy - cy) ** 2)
-      if (d < bestDist) { best = { type: "blocked", id: br.id }; bestDist = d }
-    }
-
-    for (const obj of this.state.objects) {
-      const d = Math.sqrt((sx - obj.x) ** 2 + (sy - obj.y) ** 2)
-      if (d < bestDist) { best = { type: "object", id: obj.id }; bestDist = d }
-    }
-
-    for (const sp of this.state.spawns) {
-      const d = Math.sqrt((sx - sp.x) ** 2 + (sy - sp.y) ** 2)
-      if (d < bestDist) { best = { type: "spawn", id: sp.id }; bestDist = d }
-    }
-
-    this.selectedId = best
-    this.rebuildOverlay()
+  addChar(type) {
+    const id = type + "_" + Date.now()
+    const W = this.state.dimensions.width
+    const H = this.state.dimensions.height
+    this.emit("add_character", { id, type, x: W / 2, y: H / 2 })
   },
 
   deleteSelected() {
-    if (!this.selectedId) return
-    const { type, id } = this.selectedId
-    if (type === "walk") this.emit("remove_walk_polygon", { id })
-    else if (type === "blocked") this.emit("remove_blocked_region", { id })
-    else if (type === "object") this.emit("remove_object", { id })
-    else if (type === "spawn") this.emit("remove_spawn", { id })
-    this.selectedId = null
+    if (!this.selectedPlane) return
+    this.emit("remove_plane", { id: this.selectedPlane })
+    this.selectedPlane = null
   },
 
-  addCharacter(type) {
-    const id = type + "_" + Date.now()
-    const cx = this.state.dimensions.width / 2
-    const cy = this.state.dimensions.height / 2
-    this.emit("add_character", { id, type, x: cx, y: cy })
-  },
-
-  // --- Three.js rendering ---
+  // --- Three.js ---
 
   resize() {
     const rect = this.el.getBoundingClientRect()
@@ -401,17 +472,12 @@ const SceneEditor = {
     const H = this.state.dimensions.height
     const viewAspect = rect.width / rect.height
     const sceneAspect = W / H
-
     if (viewAspect > sceneAspect) {
-      this.camera.top = H / 2
-      this.camera.bottom = -H / 2
-      this.camera.left = -H / 2 * viewAspect
-      this.camera.right = H / 2 * viewAspect
+      this.camera.top = H / 2; this.camera.bottom = -H / 2
+      this.camera.left = -H / 2 * viewAspect; this.camera.right = H / 2 * viewAspect
     } else {
-      this.camera.left = -W / 2
-      this.camera.right = W / 2
-      this.camera.top = W / 2 / viewAspect
-      this.camera.bottom = -W / 2 / viewAspect
+      this.camera.left = -W / 2; this.camera.right = W / 2
+      this.camera.top = W / 2 / viewAspect; this.camera.bottom = -W / 2 / viewAspect
     }
     this.camera.updateProjectionMatrix()
   },
@@ -420,164 +486,169 @@ const SceneEditor = {
     this.loadBackground(this.state.background)
     this.rebuildOverlay()
     this.rebuildCharacters()
+    this.updatePlanesList()
+    this.updatePropsPanel()
   },
 
   loadBackground(url) {
     if (!url) return
     if (this.bgMesh) { this.scene.remove(this.bgMesh); this.bgMesh = null }
-    const loader = new THREE.TextureLoader()
-    loader.load(url, (tex) => {
-      tex.minFilter = THREE.LinearFilter
-      tex.magFilter = THREE.LinearFilter
-      const W = this.state.dimensions.width
-      const H = this.state.dimensions.height
-      const geo = new THREE.PlaneGeometry(W, H)
-      const mat = new THREE.MeshBasicMaterial({ map: tex })
-      this.bgMesh = new THREE.Mesh(geo, mat)
+    new THREE.TextureLoader().load(url, (tex) => {
+      tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter
+      const W = this.state.dimensions.width, H = this.state.dimensions.height
+      this.bgMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(W, H),
+        new THREE.MeshBasicMaterial({ map: tex })
+      )
       this.bgMesh.position.z = -10
       this.scene.add(this.bgMesh)
     })
   },
 
   rebuildOverlay() {
-    // Clear
-    while (this.overlayGroup.children.length > 0) {
-      const c = this.overlayGroup.children[0]
-      this.overlayGroup.remove(c)
-      if (c.geometry) c.geometry.dispose()
-      if (c.material) c.material.dispose()
-    }
+    this.clearGroup(this.overlayGroup)
+    this.clearGroup(this.handleGroup)
 
-    // Walk polygons
-    for (const wp of this.state.walk_polygons) {
-      const selected = this.selectedId && this.selectedId.type === "walk" && this.selectedId.id === wp.id
-      this.drawPolygon(wp.vertices, selected ? 0x00ff88 : 0x00ff44, selected ? 0.3 : 0.12, -5)
-      this.drawPolyline(wp.vertices, selected ? 0x00ffaa : 0x00ff66, selected ? 0.8 : 0.35, -4.9, true)
-      // Vertices as dots
-      for (const v of wp.vertices) {
-        this.drawDot(v[0], v[1], 6, 0x00ff88, 0.6, -4.8)
+    for (const pl of this.state.planes) {
+      const selected = this.selectedPlane === pl.id
+      const color = selected ? 0x00ff88 : 0x00ff44
+      const alpha = selected ? 0.15 : 0.06
+
+      // Quad fill
+      this.drawQuadFill(pl.corners, color, alpha, -5)
+
+      // Quad outline
+      this.drawQuadOutline(pl.corners, color, selected ? 0.7 : 0.3, -4.9)
+
+      // Grid
+      if (this.showGrid) {
+        const gridLines = generateGridLines(pl.corners, this.gridDensity, this.gridDensity)
+        for (const line of gridLines) {
+          const pts = line.map(p => {
+            const t = this.s2t(p.x, p.y)
+            return new THREE.Vector3(t.x, t.y, -4.5)
+          })
+          const geo = new THREE.BufferGeometry().setFromPoints(pts)
+          const mat = new THREE.LineBasicMaterial({
+            color: selected ? 0x00ff66 : 0x00aa44,
+            transparent: true,
+            opacity: selected ? 0.2 : 0.08
+          })
+          this.overlayGroup.add(new THREE.Line(geo, mat))
+        }
+
+        // Standing figures at grid intersections
+        if (selected) {
+          const grid = generateGrid(pl.corners, this.gridDensity, this.gridDensity)
+          for (const gp of grid) {
+            if (gp.u === 0 || gp.u === 1 || gp.v === 0 || gp.v === 1) continue
+            const t = this.s2t(gp.x, gp.y)
+            const figScale = gp.scale * 4
+            // Simple stick figure
+            const figGeo = new THREE.BufferGeometry().setFromPoints([
+              new THREE.Vector3(t.x, t.y, -3),
+              new THREE.Vector3(t.x, t.y + figScale * 3, -3),
+            ])
+            const figMat = new THREE.LineBasicMaterial({ color: 0x88ffaa, transparent: true, opacity: 0.4 })
+            this.overlayGroup.add(new THREE.Line(figGeo, figMat))
+            // Head
+            const headGeo = new THREE.CircleGeometry(figScale * 0.8, 6)
+            const headMat = new THREE.MeshBasicMaterial({ color: 0x88ffaa, transparent: true, opacity: 0.3 })
+            const headMesh = new THREE.Mesh(headGeo, headMat)
+            headMesh.position.set(t.x, t.y + figScale * 3.8, -3)
+            this.overlayGroup.add(headMesh)
+          }
+        }
+      }
+
+      // Corner handles
+      const cornerNames = ["TL", "TR", "BR", "BL"]
+      for (let i = 0; i < 4; i++) {
+        const c = pl.corners[i]
+        const t = this.s2t(c[0], c[1])
+        // Square handle
+        const hSize = selected ? 12 : 8
+        const hGeo = new THREE.PlaneGeometry(hSize, hSize)
+        const hMat = new THREE.MeshBasicMaterial({
+          color: selected ? 0xffffff : 0x00ff66,
+          transparent: true,
+          opacity: selected ? 0.9 : 0.5
+        })
+        const hMesh = new THREE.Mesh(hGeo, hMat)
+        hMesh.position.set(t.x, t.y, -1)
+        this.handleGroup.add(hMesh)
+
+        // Label
+        if (selected) {
+          const label = this.makeSmallLabel(cornerNames[i])
+          label.position.set(t.x, t.y + 18, -0.5)
+          this.handleGroup.add(label)
+        }
       }
     }
-
-    // Blocked regions
-    for (const br of this.state.blocked_regions) {
-      const selected = this.selectedId && this.selectedId.type === "blocked" && this.selectedId.id === br.id
-      this.drawPolygon(br.vertices, selected ? 0xff4444 : 0xff2200, selected ? 0.25 : 0.08, -5)
-      this.drawPolyline(br.vertices, selected ? 0xff6666 : 0xff4400, selected ? 0.7 : 0.25, -4.9, true)
-    }
-
-    // Spawns
-    for (const sp of this.state.spawns) {
-      const selected = this.selectedId && this.selectedId.type === "spawn" && this.selectedId.id === sp.id
-      this.drawDot(sp.x, sp.y, selected ? 16 : 12, 0x00ffff, selected ? 0.8 : 0.5, -3)
-    }
-
-    // Objects
-    for (const obj of this.state.objects) {
-      const selected = this.selectedId && this.selectedId.type === "object" && this.selectedId.id === obj.id
-      this.drawDot(obj.x, obj.y, selected ? 14 : 10, 0xffcc00, selected ? 0.8 : 0.4, -3)
-    }
   },
 
-  drawPolygon(vertices, color, opacity, z) {
-    if (vertices.length < 3) return
-    const shape = new THREE.Shape()
-    for (let i = 0; i < vertices.length; i++) {
-      const t = this.s2t(vertices[i][0], vertices[i][1])
-      if (i === 0) shape.moveTo(t.x, t.y)
-      else shape.lineTo(t.x, t.y)
+  drawQuadFill(corners, color, opacity, z) {
+    // Two triangles: TL-TR-BR and TL-BR-BL
+    const verts = []
+    for (const idx of [[0,1,2], [0,2,3]]) {
+      for (const i of idx) {
+        const t = this.s2t(corners[i][0], corners[i][1])
+        verts.push(t.x, t.y, z)
+      }
     }
-    const geo = new THREE.ShapeGeometry(shape)
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3))
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide })
-    const mesh = new THREE.Mesh(geo, mat)
-    mesh.position.z = z
-    this.overlayGroup.add(mesh)
+    this.overlayGroup.add(new THREE.Mesh(geo, mat))
   },
 
-  drawPolyline(vertices, color, opacity, z, closed) {
-    const pts = vertices.map(v => {
-      const t = this.s2t(v[0], v[1])
+  drawQuadOutline(corners, color, opacity, z) {
+    const pts = [...corners, corners[0]].map(c => {
+      const t = this.s2t(c[0], c[1])
       return new THREE.Vector3(t.x, t.y, z)
     })
-    if (closed && pts.length > 0) pts.push(pts[0].clone())
     const geo = new THREE.BufferGeometry().setFromPoints(pts)
     const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity })
     this.overlayGroup.add(new THREE.Line(geo, mat))
   },
 
-  drawDot(sx, sy, radius, color, opacity, z) {
-    const t = this.s2t(sx, sy)
-    const geo = new THREE.CircleGeometry(radius, 8)
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity })
-    const mesh = new THREE.Mesh(geo, mat)
-    mesh.position.set(t.x, t.y, z)
-    this.overlayGroup.add(mesh)
+  makeSmallLabel(text) {
+    const canvas = document.createElement("canvas")
+    canvas.width = 64; canvas.height = 32
+    const ctx = canvas.getContext("2d")
+    ctx.font = "bold 18px monospace"; ctx.textAlign = "center"
+    ctx.fillStyle = "#fff"; ctx.fillText(text, 32, 22)
+    const tex = new THREE.CanvasTexture(canvas)
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true })
+    const sprite = new THREE.Sprite(mat)
+    sprite.scale.set(30, 15, 1)
+    return sprite
   },
 
-  // Drawing preview
-  updateDrawingPreview(mousePos) {
-    this.clearDrawingPreview()
-    const verts = [...this.currentVertices]
-    if (mousePos) verts.push(mousePos)
-    if (verts.length < 2) {
-      // Just a dot
-      if (verts.length === 1) {
-        this.drawPreviewDot(verts[0][0], verts[0][1])
-      }
-      return
-    }
-    const color = this.mode === "walk" ? 0x00ff88 : 0xff6666
-    const pts = verts.map(v => {
-      const t = this.s2t(v[0], v[1])
-      return new THREE.Vector3(t.x, t.y, -2)
-    })
-    const geo = new THREE.BufferGeometry().setFromPoints(pts)
-    const mat = new THREE.LineBasicMaterial({ color, linewidth: 2 })
-    this.drawingGroup.add(new THREE.Line(geo, mat))
-    for (const v of this.currentVertices) {
-      this.drawPreviewDot(v[0], v[1])
-    }
-  },
-
-  drawPreviewDot(sx, sy) {
-    const t = this.s2t(sx, sy)
-    const geo = new THREE.CircleGeometry(5, 6)
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 })
-    const mesh = new THREE.Mesh(geo, mat)
-    mesh.position.set(t.x, t.y, -1)
-    this.drawingGroup.add(mesh)
-  },
-
-  clearDrawingPreview() {
-    while (this.drawingGroup.children.length > 0) {
-      const c = this.drawingGroup.children[0]
-      this.drawingGroup.remove(c)
+  clearGroup(group) {
+    while (group.children.length > 0) {
+      const c = group.children[0]
+      group.remove(c)
       if (c.geometry) c.geometry.dispose()
-      if (c.material) c.material.dispose()
+      if (c.material) { if (c.material.map) c.material.map.dispose(); c.material.dispose() }
     }
   },
 
   // --- Characters ---
 
   rebuildCharacters() {
-    while (this.charGroup.children.length > 0) {
-      const c = this.charGroup.children[0]
-      this.charGroup.remove(c)
-      // dispose recursively
-    }
+    this.clearGroup(this.charGroup)
     this.charStates = {}
-
     for (const ch of this.state.characters) {
       const factory = CHAR_DEFS[ch.type]
       if (!factory) continue
       const def = factory()
       const boneMap = {}
       const group = this.buildSkeleton(def.skeleton, boneMap)
-      const scale = 50 / def.height
-      group.scale.set(scale, scale, scale)
+      // Base scale (will be modulated by quad position)
+      group.scale.set(3, 3, 3)
       this.charGroup.add(group)
-
-      // Label
       const label = this.makeLabel(def.name)
       this.charGroup.add(label)
 
@@ -585,64 +656,38 @@ const SceneEditor = {
         def, group, boneMap, label,
         x: ch.x, y: ch.y,
         target_x: null, target_y: null,
-        state: "idle",
-        facing: "right",
+        state: "idle", facing: "right",
         animTime: Math.random() * 10,
-        wanderCooldown: Math.random() * 3
+        wanderCooldown: Math.random() * 2
       }
     }
   },
 
-  // --- Character wandering & animation (same as before) ---
-
-  pointInPolygon(x, y, vertices) {
-    let inside = false
-    for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
-      const xi = vertices[i][0], yi = vertices[i][1]
-      const xj = vertices[j][0], yj = vertices[j][1]
-      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi))
-        inside = !inside
-    }
-    return inside
-  },
-
-  randomPointInPolygon(vertices) {
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-    for (const [x, y] of vertices) {
-      minX = Math.min(minX, x); maxX = Math.max(maxX, x)
-      minY = Math.min(minY, y); maxY = Math.max(maxY, y)
-    }
-    for (let i = 0; i < 100; i++) {
-      const x = minX + Math.random() * (maxX - minX)
-      const y = minY + Math.random() * (maxY - minY)
-      if (this.pointInPolygon(x, y, vertices)) return { x, y }
-    }
-    return {
-      x: vertices.reduce((s, v) => s + v[0], 0) / vertices.length,
-      y: vertices.reduce((s, v) => s + v[1], 0) / vertices.length
-    }
-  },
-
   updateCharacters(dt) {
-    const walkPolys = this.state.walk_polygons || []
+    const planes = this.state.planes
 
     for (const [id, c] of Object.entries(this.charStates)) {
+      // Wandering
       if (c.state === "idle") {
         c.wanderCooldown -= dt
-        if (c.wanderCooldown <= 0 && walkPolys.length > 0) {
-          const poly = walkPolys[Math.floor(Math.random() * walkPolys.length)]
-          const target = this.randomPointInPolygon(poly.vertices)
-          c.target_x = target.x; c.target_y = target.y; c.state = "walking"
-          c.wanderCooldown = 1 + Math.random() * 4
+        if (c.wanderCooldown <= 0 && planes.length > 0) {
+          const pl = planes[Math.floor(Math.random() * planes.length)]
+          const u = 0.1 + Math.random() * 0.8
+          const v = 0.1 + Math.random() * 0.8
+          const target = bilinearInterpolate(pl.corners, u, v)
+          c.target_x = target.x; c.target_y = target.y
+          c.targetPlane = pl; c.targetUV = { u, v }
+          c.state = "walking"
+          c.wanderCooldown = 2 + Math.random() * 4
         }
       }
 
       if (c.state === "walking" && c.target_x != null) {
         const dx = c.target_x - c.x, dy = c.target_y - c.y
         const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < 8) {
+        if (dist < 5) {
           c.state = "idle"; c.target_x = null; c.target_y = null
-          c.wanderCooldown = 1.5 + Math.random() * 3
+          c.wanderCooldown = 1 + Math.random() * 3
         } else {
           const speed = 60 * dt
           c.x += (dx / dist) * speed; c.y += (dy / dist) * speed
@@ -650,10 +695,22 @@ const SceneEditor = {
         }
       }
 
+      // Find which plane the character is in and get their scale
+      let charScale = 3
+      for (const pl of planes) {
+        if (pointInQuad(pl.corners, c.x, c.y)) {
+          const uv = screenToUV(pl.corners, c.x, c.y)
+          charScale = scaleAtV(pl.corners, uv.v) * 3
+          break
+        }
+      }
+
       const t = this.s2t(c.x, c.y)
       c.group.position.set(t.x, t.y, 0)
+      c.group.scale.set(charScale, charScale, charScale)
       c.group.rotation.y = c.facing === "left" ? Math.PI : 0
-      c.label.position.set(t.x, t.y + 55, 1)
+      c.label.position.set(t.x, t.y + charScale * 22, 1)
+      c.label.scale.set(charScale * 30, charScale * 8, 1)
       this.applyBoneAnimation(c, dt)
     }
   },
@@ -684,8 +741,6 @@ const SceneEditor = {
     return null
   },
 
-  // --- Skeleton builders (same as before) ---
-
   buildSkeleton(skeleton, boneMap) {
     const root = new THREE.Group()
     for (const [name, bone] of Object.entries(skeleton)) root.add(this.buildBone(name, bone, boneMap))
@@ -701,8 +756,7 @@ const SceneEditor = {
     group.userData.baseRotation = group.rotation.clone()
     if (bone.shape) {
       const geo = this.createGeo(bone.shape, bone.size)
-      const mat = new THREE.MeshLambertMaterial({ color: bone.color || 0x888888, flatShading: true })
-      group.add(new THREE.Mesh(geo, mat))
+      group.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: bone.color || 0x888888, flatShading: true })))
     }
     boneMap[name] = group
     if (bone.children) { for (const [cn, cb] of Object.entries(bone.children)) group.add(this.buildBone(cn, cb, boneMap)) }
@@ -726,8 +780,7 @@ const SceneEditor = {
     ctx.strokeStyle = "#000"; ctx.lineWidth = 4; ctx.strokeText(text, 128, 40)
     ctx.fillStyle = "#fff"; ctx.fillText(text, 128, 40)
     const tex = new THREE.CanvasTexture(canvas)
-    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true })
-    const sprite = new THREE.Sprite(mat)
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }))
     sprite.scale.set(80, 20, 1)
     return sprite
   },
