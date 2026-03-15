@@ -64,6 +64,15 @@ defmodule Froth.Podcast do
      The TTS model handles standard written Swedish well. Colloquial
      spellings produce unpredictable pronunciation and sound worse
      than letting the voice model's natural cadence carry the informality.
+
+  4. **"Vad har vi på x?" transitions.** Alex and Sigge typically introduce
+     new topics or segments by asking each other "Vad har vi på x?" where x
+     is the subject — e.g. "Vad har vi på Alexander Bard?" This is their
+     standard transition device and should appear once or twice per episode
+     as a natural way to pivot between subjects. It signals "let us now
+     consult our research" and gives the other speaker permission to deliver
+     prepared material. Without it the episode sounds like a monologue
+     with interruptions rather than a conversation with segments.
   """
 
   alias Froth.Telemetry.Span
