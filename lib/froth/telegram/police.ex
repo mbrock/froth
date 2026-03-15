@@ -28,13 +28,6 @@ defmodule Froth.Telegram.Police do
     947_429_422      # lennart
   ]
 
-  # Human user IDs — never police these
-  @human_user_ids [
-    362_441_422,     # mikael
-    1_635_262_887,   # daniel
-    6_071_676_050    # patty
-  ]
-
   @system_prompt """
   You are the police force for a Telegram group of AI agents (robots) managed by two humans, Daniel and Mikael. Your job is to scan each bot message and detect classic failure modes.
 
@@ -147,68 +140,35 @@ defmodule Froth.Telegram.Police do
 
   defp scan_message(chat_id, message_id, sender_id, text) do
     bot_name = bot_name_for(sender_id)
-
     user_message = "Message from #{bot_name}:\n\n#{text}"
+    messages = [%{"role" => "user", "content" => user_message}]
 
-    messages = [
-      %{"role" => "user", "content" => user_message}
-    ]
+    # Use the return value directly — don't try to collect streaming chunks
+    noop = fn _ -> :ok end
 
-    result = collect_gemini_response(messages)
-
-    case parse_verdict(result) do
-      {:violation, code, reason} ->
-        Logger.info("[Police] FLAGGED #{bot_name} msg:#{message_id} — #{code}: #{reason}")
-        react_and_reply(chat_id, message_id, code, reason, bot_name)
-
-      :clean ->
-        :ok
-
-      :error ->
-        Logger.warning("[Police] Failed to parse Gemini response: #{inspect(result)}")
-    end
-  end
-
-  defp collect_gemini_response(messages) do
-    ref = make_ref()
-    parent = self()
-    acc = %{text: ""}
-
-    on_event = fn
-      {:text, chunk} ->
-        send(parent, {ref, :chunk, chunk})
-
-      {:done, _meta} ->
-        send(parent, {ref, :done})
-
-      _ ->
-        :ok
-    end
-
-    case Froth.Gemini.stream_single(messages, on_event,
+    case Froth.Gemini.stream_single(messages, noop,
            system: @system_prompt,
            model: @model,
            max_tokens: 512
          ) do
-      {:ok, _} ->
-        collect_chunks(ref, "")
+      {:ok, %{text: result}} when is_binary(result) and result != "" ->
+        case parse_verdict(result) do
+          {:violation, code, reason} ->
+            Logger.info("[Police] FLAGGED #{bot_name} msg:#{message_id} — #{code}: #{reason}")
+            react_and_reply(chat_id, message_id, code, reason, bot_name)
+
+          :clean ->
+            Logger.debug("[Police] CLEAN #{bot_name} msg:#{message_id}")
+
+          :error ->
+            Logger.warning("[Police] Parse error for #{bot_name} msg:#{message_id}: #{inspect(result)}")
+        end
+
+      {:ok, %{text: ""}} ->
+        Logger.warning("[Police] Empty response for #{bot_name} msg:#{message_id}")
 
       {:error, reason} ->
-        Logger.warning("[Police] Gemini API error: #{inspect(reason)}")
-        ""
-    end
-  end
-
-  defp collect_chunks(ref, acc) do
-    receive do
-      {^ref, :chunk, chunk} ->
-        collect_chunks(ref, acc <> chunk)
-
-      {^ref, :done} ->
-        acc
-    after
-      30_000 ->
-        acc
+        Logger.warning("[Police] Gemini error for #{bot_name} msg:#{message_id}: #{inspect(reason)}")
     end
   end
 
@@ -241,7 +201,7 @@ defmodule Froth.Telegram.Police do
 
   defp parse_verdict(_), do: :error
 
-  defp react_and_reply(chat_id, message_id, code, reason, bot_name) do
+  defp react_and_reply(chat_id, message_id, code, reason, _bot_name) do
     # Thumbs down reaction
     Froth.Telegram.send(@session_id, %{
       "@type" => "setMessageReactions",
