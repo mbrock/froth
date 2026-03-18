@@ -1,274 +1,929 @@
-// SceneEditor — quad-based walking plane editor with reference scale calibration
-// Grid shows actual 3D character models standing at covid distance.
-// Drag a corner character's head to set the reference scale.
-// All state through Phoenix channel event sourcing.
-
 import * as THREE from "@/vendor/three.module.min.js"
-import { createCloud, createLaraCroft } from "@/js/lib/primitive_characters.js"
-import {
-  bilinearInterpolate, scaleAtV, charPixelHeight, screenToUV, pointInQuad,
-  generateCharacterGrid, generateGridLines
-} from "@/js/lib/quad_math.js"
 import { Socket } from "phoenix"
 
+import { createCloud, createLaraCroft } from "@/js/lib/primitive_characters.js"
+import {
+  MAX_VERTEX_HEIGHT,
+  MIN_VERTEX_HEIGHT,
+  blockedRegionsFromState,
+  clampVertexHeight as clampSceneVertexHeight,
+  constrainPointToWalkableRegions,
+  createDefaultRegion,
+  findNearestEdge,
+  findNearestVertex,
+  insertVertexHeight,
+  legacyPlaneToRegion,
+  normalizeBlockedRegion,
+  normalizeVertexHeights,
+  polygonCentroid,
+  randomWalkablePoint,
+  removeVertexHeight,
+  regionAtPoint,
+  regionDepthAtPoint,
+  regionScaleAtPoint,
+  sceneRegionsFromState,
+  vertexHeadPoint,
+} from "@/js/lib/scene_regions.js"
+
 const CHAR_DEFS = { cloud: createCloud, lara: createLaraCroft }
+const SURFACES = ["stone", "grass", "cobblestone", "dirt", "wood", "sand", "water"]
+const HANDLE_RADIUS = 18
 
 const SceneEditor = {
   mounted() {
-    this.el.innerHTML = ""
     this.clock = new THREE.Clock()
+    this.lastSeq = 0
+    this.previewEnabled = true
+    this.isSpacePressed = false
+    this.selectedRegion = null
+    this.pointerScene = { x: 0, y: 0 }
+    this.hover = { vertex: null, edge: null, height: null, regionId: null }
+    this.interaction = null
+    this.charStates = {}
 
     this.state = {
       background: null,
       dimensions: { width: 2048, height: 1376 },
-      planes: [],      // { id, corners: [[x,y]x4], surface, reference_scale, grid_spacing }
-      objects: [],
-      spawns: [],
-      characters: []
+      regions: [],
+      blockedRegions: [],
+      characters: [],
     }
 
-    this.selectedPlane = null
-    this.dragCorner = null
-    this.dragScale = null   // dragging the reference scale handle
-    this.showGrid = true
-    this.gridRows = 10
-    this.gridCols = 10
-    this.lastSeq = 0
-    this.charStates = {}
+    this.view = {
+      x: this.state.dimensions.width / 2,
+      y: this.state.dimensions.height / 2,
+      zoom: 1,
+    }
 
-    // Three.js
-    this.renderer = new THREE.WebGLRenderer({ antialias: false })
-    this.renderer.setClearColor(0x111111)
-    this.el.appendChild(this.renderer.domElement)
-    this.renderer.domElement.style.cssText = "display:block;width:100%;height:100%;cursor:crosshair;"
-
-    this.scene = new THREE.Scene()
-    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000)
-    this.camera.position.set(0, 0, 100)
-    this.camera.lookAt(0, 0, 0)
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.75))
-    const dir = new THREE.DirectionalLight(0xffd080, 0.4)
-    dir.position.set(1, 2, 1)
-    this.scene.add(dir)
-
-    this.bgMesh = null
-    this.overlayGroup = new THREE.Group()
-    this.scene.add(this.overlayGroup)
-    this.charGroup = new THREE.Group()
-    this.scene.add(this.charGroup)
-    this.handleGroup = new THREE.Group()
-    this.scene.add(this.handleGroup)
-    this.gridCharGroup = new THREE.Group()
-    this.scene.add(this.gridCharGroup)
-
-    this.el.style.position = "relative"
-    this.buildToolbar()
-    this.buildStatusBar()
-
-    this.renderer.domElement.addEventListener("mousedown", (e) => this.onMouseDown(e))
-    this.renderer.domElement.addEventListener("mousemove", (e) => this.onMouseMove(e))
-    this.renderer.domElement.addEventListener("mouseup", (e) => this.onMouseUp(e))
-    this.renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault())
-
-    // Channel
-    this.sceneId = this.el.dataset.sceneId || "default"
-    this.bgUrl = this.el.dataset.bgUrl
-    this.socket = new Socket("/froth/socket")
-    this.socket.connect()
-    this.channel = this.socket.channel("scene:" + this.sceneId, {})
-    this.channel.join()
-      .receive("ok", (resp) => {
-        this.state = this.migrateState(resp.state)
-        this.lastSeq = resp.last_seq
-        if (!this.state.background && this.bgUrl) {
-          this.emit("set_background", { url: this.bgUrl })
-        }
-        this.rebuildScene()
-      })
-    this.channel.on("event", (evt) => {
-      this.lastSeq = evt.seq
-      this.applyEvent(evt)
-    })
+    this.renderShell()
+    this.cacheRefs()
+    this.buildRenderer()
+    this.bindUi()
+    this.connectChannel()
 
     this.resize()
-    window.addEventListener("resize", () => this.resize())
+    this.updateStatus()
     this.animate()
   },
 
   destroyed() {
     if (this.rafId) cancelAnimationFrame(this.rafId)
+    window.removeEventListener("resize", this.boundResize)
+    window.removeEventListener("mouseup", this.boundMouseUp)
+    window.removeEventListener("keydown", this.boundKeyDown)
+    window.removeEventListener("keyup", this.boundKeyUp)
+
     if (this.channel) this.channel.leave()
     if (this.socket) this.socket.disconnect()
-    this.renderer.dispose()
+
+    this.clearGroup(this.overlayGroup)
+    this.clearGroup(this.guideGroup)
+    this.clearGroup(this.handleGroup)
+    this.clearGroup(this.charGroup)
+    if (this.bgMesh) this.disposeObject(this.bgMesh)
+    if (this.renderer) this.renderer.dispose()
   },
 
-  migrateState(s) {
-    if (!s.planes) s.planes = []
-    if (!s.objects) s.objects = []
-    if (!s.spawns) s.spawns = []
-    if (!s.characters) s.characters = []
-    if (!s.dimensions) s.dimensions = { width: 2048, height: 1376 }
-    // Ensure reference_scale on all planes
-    for (const pl of s.planes) {
-      if (!pl.reference_scale) pl.reference_scale = 60
-      if (!pl.grid_spacing) pl.grid_spacing = 2.5
-    }
-    return s
+  renderShell() {
+    this.el.innerHTML = `
+      <div class="relative h-[100dvh] overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.2),_transparent_38%),linear-gradient(180deg,_#1c1917_0%,_#09090b_100%)] text-stone-100">
+        <div class="pointer-events-none absolute inset-0 opacity-35 [background-image:linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] [background-size:28px_28px]"></div>
+        <div class="relative grid h-full min-h-0 grid-rows-[minmax(18rem,42dvh)_minmax(0,1fr)] lg:grid-cols-[24rem_minmax(0,1fr)] lg:grid-rows-1">
+          <aside class="relative min-h-0 overflow-y-auto border-b border-white/10 bg-black/35 backdrop-blur-xl overscroll-contain lg:border-b-0 lg:border-r lg:border-white/10">
+            <div class="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.25),_transparent_60%)]"></div>
+            <div class="relative flex h-full flex-col gap-6 p-5 lg:p-6">
+              <div class="space-y-3">
+                <div class="inline-flex items-center gap-2 rounded-full border border-amber-300/20 bg-amber-200/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-amber-100/80">
+                  Scene Geometry
+                </div>
+                <div class="space-y-2">
+                  <h1 class="font-serif text-3xl leading-tight text-stone-50">Walk regions and corner figures</h1>
+                  <p class="max-w-sm text-sm leading-6 text-stone-300/80">
+                    Define where characters can move as polygons, then size a reference person at each corner until the scene feels right.
+                  </p>
+                  <p class="max-w-sm text-xs leading-6 text-stone-400/80">
+                    Each corner stores its own person height, and the walking scale inside the region is blended from those corner values.
+                  </p>
+                </div>
+              </div>
+
+              <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                <button data-action="add-region" class="group rounded-3xl border border-emerald-300/20 bg-emerald-300/10 px-4 py-4 text-left transition hover:border-emerald-200/50 hover:bg-emerald-300/15">
+                  <div class="text-sm font-semibold text-emerald-100">Add walk region</div>
+                  <div class="mt-1 text-xs leading-5 text-emerald-50/70">Creates a polygon with corner figures you can tune immediately.</div>
+                </button>
+                <button data-action="fit-view" class="group rounded-3xl border border-white/10 bg-white/5 px-4 py-4 text-left transition hover:border-white/30 hover:bg-white/10">
+                  <div class="text-sm font-semibold text-stone-100">Fit entire scene</div>
+                  <div class="mt-1 text-xs leading-5 text-stone-300/75">Reset pan and zoom around the full background.</div>
+                </button>
+                <button data-action="add-cloud" class="group rounded-3xl border border-sky-300/20 bg-sky-300/10 px-4 py-4 text-left transition hover:border-sky-200/50 hover:bg-sky-300/15">
+                  <div class="text-sm font-semibold text-sky-100">Add Cloud preview</div>
+                  <div class="mt-1 text-xs leading-5 text-sky-50/70">Drop a roaming character into the authored geometry.</div>
+                </button>
+                <button data-action="add-lara" class="group rounded-3xl border border-fuchsia-300/20 bg-fuchsia-300/10 px-4 py-4 text-left transition hover:border-fuchsia-200/50 hover:bg-fuchsia-300/15">
+                  <div class="text-sm font-semibold text-fuchsia-100">Add Lara preview</div>
+                  <div class="mt-1 text-xs leading-5 text-fuchsia-50/70">Compare silhouettes and perceived scale in motion.</div>
+                </button>
+              </div>
+
+              <section class="rounded-[28px] border border-white/10 bg-white/5 p-4 shadow-[0_30px_80px_-45px_rgba(0,0,0,0.9)]">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 class="text-sm font-semibold text-stone-100">Preview</h2>
+                    <p class="text-xs leading-5 text-stone-300/75">Toggle animated characters and guide markers.</p>
+                  </div>
+                  <label class="inline-flex cursor-pointer items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-2 text-xs font-medium text-stone-200">
+                    <input data-field="preview" type="checkbox" checked class="size-4 rounded border-white/20 bg-black/20 text-amber-300 focus:ring-amber-300" />
+                    Live preview
+                  </label>
+                </div>
+              </section>
+
+              <section class="flex min-h-0 flex-1 flex-col rounded-[32px] border border-white/10 bg-black/20 shadow-[0_35px_120px_-50px_rgba(0,0,0,0.9)]">
+                <div class="border-b border-white/10 px-5 py-4">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <h2 class="text-sm font-semibold text-stone-100">Regions</h2>
+                      <p class="text-xs leading-5 text-stone-300/75">Select a region to edit its shape and calibrate the character size at each corner.</p>
+                    </div>
+                    <div data-role="scene-count" class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-stone-300/80">
+                      0 regions
+                    </div>
+                  </div>
+                </div>
+                <div data-role="region-list" class="min-h-[12rem] flex-1 space-y-3 overflow-y-auto px-4 py-4"></div>
+              </section>
+
+              <section class="rounded-[32px] border border-white/10 bg-black/25 p-5 shadow-[0_35px_120px_-50px_rgba(0,0,0,0.9)]">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <div class="text-[11px] font-semibold uppercase tracking-[0.3em] text-stone-400">Inspector</div>
+                    <h2 data-role="inspector-title" class="mt-2 text-lg font-semibold text-stone-100">No region selected</h2>
+                    <p data-role="inspector-copy" class="mt-1 text-sm leading-6 text-stone-300/75">
+                      Select a region to rename it, adjust surface metadata, or tune the reference figure at each corner.
+                    </p>
+                  </div>
+                  <button data-action="delete-region" class="rounded-full border border-rose-300/20 bg-rose-300/10 px-3 py-2 text-xs font-semibold text-rose-100 transition hover:border-rose-200/45 hover:bg-rose-300/15 disabled:cursor-not-allowed disabled:opacity-40" disabled>
+                    Delete
+                  </button>
+                </div>
+
+                  <div class="mt-5 grid gap-4">
+                    <label class="grid gap-2 text-sm text-stone-200">
+                      <span class="text-xs font-semibold uppercase tracking-[0.25em] text-stone-400">Label</span>
+                      <input data-field="label" type="text" placeholder="Courtyard" disabled class="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-stone-100 outline-none transition placeholder:text-stone-500 focus:border-amber-300/40 focus:bg-white/10" />
+                    </label>
+
+                  <label class="grid gap-2 text-sm text-stone-200">
+                    <span class="text-xs font-semibold uppercase tracking-[0.25em] text-stone-400">Surface</span>
+                    <select data-field="surface" disabled class="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-stone-100 outline-none transition focus:border-amber-300/40 focus:bg-white/10">
+                      ${SURFACES.map((surface) => `<option value="${surface}">${surface}</option>`).join("")}
+                    </select>
+                  </label>
+
+                  <div class="grid gap-3 rounded-[24px] border border-white/10 bg-black/20 p-4">
+                    <div class="flex items-center justify-between gap-3">
+                      <div>
+                        <div class="text-xs font-semibold uppercase tracking-[0.25em] text-stone-400">Corner Figures</div>
+                        <p data-role="vertex-copy" class="mt-1 text-xs leading-5 text-stone-300/70">
+                          Drag the top of a figure on the canvas or use the controls here for exact adjustments.
+                        </p>
+                      </div>
+                      <div data-role="vertex-summary" class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-stone-300/80">
+                        0 corners
+                      </div>
+                    </div>
+                    <div data-role="vertex-heights" class="grid gap-3"></div>
+                  </div>
+
+                  <div class="grid gap-2">
+                    <div class="flex items-center justify-between gap-3 text-xs font-semibold uppercase tracking-[0.25em] text-stone-400">
+                      <span>Elevation</span>
+                      <span data-role="elevation-value">0</span>
+                    </div>
+                    <input data-field="elevation" type="range" min="-10" max="10" value="0" disabled class="w-full accent-emerald-300" />
+                  </div>
+                </div>
+              </section>
+
+              <section class="rounded-[28px] border border-white/10 bg-black/20 p-4 text-xs leading-6 text-stone-300/75">
+                <div class="font-semibold uppercase tracking-[0.3em] text-stone-400">Editing tips</div>
+                <div class="mt-3 space-y-1">
+                  <p>Left drag white points to reshape the polygon.</p>
+                  <p>Each corner shows a reference person whose size you can tune directly.</p>
+                  <p>Double click an edge to insert a corner. Alt-click a corner to remove it.</p>
+                  <p>Hold space and drag to pan, or use middle mouse if you prefer.</p>
+                  <p>Zoom is intentionally slower and only available through the buttons or a modifier-assisted wheel.</p>
+                </div>
+              </section>
+            </div>
+          </aside>
+
+          <section class="relative min-h-0">
+            <div class="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(253,224,71,0.15),_transparent_30%),radial-gradient(circle_at_bottom_left,_rgba(56,189,248,0.12),_transparent_30%)]"></div>
+            <div class="relative h-full p-4 lg:p-6">
+              <div class="relative h-full min-h-0 overflow-hidden rounded-[34px] border border-white/10 bg-black/35 shadow-[0_50px_140px_-50px_rgba(0,0,0,0.95)]">
+                <div class="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,_rgba(0,0,0,0.45),_transparent)]"></div>
+                <div class="pointer-events-none absolute inset-0 opacity-20 [background-image:radial-gradient(circle_at_1px_1px,rgba(255,255,255,0.6)_1px,transparent_0)] [background-size:24px_24px]"></div>
+
+                <div class="pointer-events-none absolute left-5 top-5 z-10 flex flex-wrap gap-2">
+                  <div data-role="scene-size" class="rounded-full border border-white/10 bg-black/30 px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-stone-200/80">
+                    2048 x 1376
+                  </div>
+                  <div data-role="scene-zoom" class="rounded-full border border-white/10 bg-black/30 px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-stone-200/80">
+                    Zoom 100%
+                  </div>
+                </div>
+
+                <div class="absolute right-5 top-5 z-10 flex items-center gap-2 rounded-full border border-white/10 bg-black/35 px-2 py-2 backdrop-blur-md">
+                  <button data-action="zoom-out" class="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-stone-100 transition hover:border-white/30 hover:bg-white/10">
+                    -
+                  </button>
+                  <button data-action="zoom-reset" class="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-200 transition hover:border-white/30 hover:bg-white/10">
+                    100%
+                  </button>
+                  <button data-action="zoom-in" class="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-stone-100 transition hover:border-white/30 hover:bg-white/10">
+                    +
+                  </button>
+                </div>
+
+                <div data-role="viewport" class="absolute inset-0"></div>
+
+                <div class="absolute inset-x-4 bottom-4 z-10 rounded-full border border-white/10 bg-black/45 px-4 py-3 text-xs text-stone-200/80 backdrop-blur-md lg:inset-x-6">
+                  <div data-role="status">Loading scene editor...</div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    `
   },
 
-  // --- UI ---
+  cacheRefs() {
+    const query = (selector) => this.el.querySelector(selector)
 
-  buildToolbar() {
-    this.toolbar = document.createElement("div")
-    this.toolbar.style.cssText = "position:absolute;top:0;left:0;bottom:0;width:200px;background:rgba(17,17,17,0.92);border-right:1px solid #333;padding:12px;display:flex;flex-direction:column;gap:8px;z-index:10;overflow-y:auto;"
+    this.refs = {
+      viewport: query("[data-role='viewport']"),
+      status: query("[data-role='status']"),
+      regionList: query("[data-role='region-list']"),
+      sceneCount: query("[data-role='scene-count']"),
+      sceneSize: query("[data-role='scene-size']"),
+      sceneZoom: query("[data-role='scene-zoom']"),
+      inspectorTitle: query("[data-role='inspector-title']"),
+      inspectorCopy: query("[data-role='inspector-copy']"),
+      vertexCopy: query("[data-role='vertex-copy']"),
+      vertexSummary: query("[data-role='vertex-summary']"),
+      vertexHeights: query("[data-role='vertex-heights']"),
+      elevationValue: query("[data-role='elevation-value']"),
+      deleteButton: query("[data-action='delete-region']"),
+      labelInput: query("[data-field='label']"),
+      surfaceInput: query("[data-field='surface']"),
+      elevationInput: query("[data-field='elevation']"),
+      previewToggle: query("[data-field='preview']"),
+      actionButtons: [...this.el.querySelectorAll("[data-action]")],
+    }
+  },
 
-    const h = (text, css) => { const d = document.createElement("div"); d.textContent = text; d.style.cssText = css; return d }
-    const btn = (text, color, action) => {
-      const b = document.createElement("button")
-      b.textContent = text
-      b.style.cssText = `padding:8px 12px;font:12px monospace;background:#1a1a2a;color:${color};border:1px solid #333;cursor:pointer;text-align:left;border-radius:3px;`
-      b.onmouseenter = () => b.style.borderColor = color
-      b.onmouseleave = () => b.style.borderColor = "#333"
-      b.onclick = action
-      return b
+  buildRenderer() {
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    this.renderer.setClearColor(0x000000, 0)
+    this.renderer.setPixelRatio(window.devicePixelRatio || 1)
+    this.renderer.domElement.className = "block size-full cursor-crosshair touch-none"
+    this.refs.viewport.appendChild(this.renderer.domElement)
+
+    this.scene = new THREE.Scene()
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000)
+    this.camera.position.set(0, 0, 100)
+    this.camera.lookAt(0, 0, 0)
+
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.8))
+    const light = new THREE.DirectionalLight(0xfff2c1, 0.45)
+    light.position.set(0.5, 1.2, 1)
+    this.scene.add(light)
+
+    this.overlayGroup = new THREE.Group()
+    this.guideGroup = new THREE.Group()
+    this.handleGroup = new THREE.Group()
+    this.charGroup = new THREE.Group()
+
+    this.scene.add(this.overlayGroup)
+    this.scene.add(this.guideGroup)
+    this.scene.add(this.handleGroup)
+    this.scene.add(this.charGroup)
+
+    this.boundResize = () => this.resize()
+    this.boundMouseUp = (event) => this.onMouseUp(event)
+    this.boundKeyDown = (event) => this.onKeyDown(event)
+    this.boundKeyUp = (event) => this.onKeyUp(event)
+
+    window.addEventListener("resize", this.boundResize)
+    window.addEventListener("mouseup", this.boundMouseUp)
+    window.addEventListener("keydown", this.boundKeyDown)
+    window.addEventListener("keyup", this.boundKeyUp)
+
+    this.renderer.domElement.addEventListener("mousedown", (event) => this.onMouseDown(event))
+    this.renderer.domElement.addEventListener("mousemove", (event) => this.onMouseMove(event))
+    this.renderer.domElement.addEventListener("wheel", (event) => this.onWheel(event), { passive: false })
+    this.renderer.domElement.addEventListener("dblclick", (event) => this.onDoubleClick(event))
+    this.renderer.domElement.addEventListener("contextmenu", (event) => event.preventDefault())
+  },
+
+  bindUi() {
+    for (const button of this.refs.actionButtons) {
+      button.addEventListener("click", () => this.handleAction(button.dataset.action))
     }
 
-    this.toolbar.appendChild(h("SCENE EDITOR", "font:bold 13px monospace;color:#888;letter-spacing:2px;margin-bottom:4px;"))
-    this.toolbar.appendChild(btn("+ Walking Plane", "#0f0", () => this.addPlane()))
-    this.toolbar.appendChild(btn("+ Cloud", "#88f", () => this.addChar("cloud")))
-    this.toolbar.appendChild(btn("+ Lara", "#f8f", () => this.addChar("lara")))
+    this.refs.regionList.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-region-id]")
+      if (!row) return
+      this.selectRegion(row.dataset.regionId)
+    })
 
-    // Divider
-    this.toolbar.appendChild(Object.assign(document.createElement("hr"), { style: "border:none;border-top:1px solid #333;margin:4px 0;" }))
-
-    // Grid toggle
-    const gridRow = document.createElement("label")
-    gridRow.style.cssText = "display:flex;align-items:center;gap:8px;cursor:pointer;font:11px monospace;color:#aaa;"
-    const gridCheck = document.createElement("input")
-    gridCheck.type = "checkbox"; gridCheck.checked = this.showGrid
-    gridCheck.onchange = () => { this.showGrid = gridCheck.checked; this.rebuildOverlay() }
-    gridRow.appendChild(gridCheck)
-    gridRow.appendChild(document.createTextNode("Show calibration grid"))
-    this.toolbar.appendChild(gridRow)
-
-    // Grid density
-    const densRow = document.createElement("div")
-    densRow.style.cssText = "display:flex;flex-direction:column;gap:2px;"
-    this.densLabel = h(`Grid: ${this.gridRows}×${this.gridCols}`, "font:10px monospace;color:#777;")
-    const densSlider = document.createElement("input")
-    densSlider.type = "range"; densSlider.min = 3; densSlider.max = 15; densSlider.value = this.gridRows
-    densSlider.style.cssText = "width:100%;accent-color:#0f0;"
-    densSlider.oninput = () => {
-      this.gridRows = this.gridCols = parseInt(densSlider.value)
-      this.densLabel.textContent = `Grid: ${this.gridRows}×${this.gridCols}`
+    this.refs.previewToggle.addEventListener("change", () => {
+      this.previewEnabled = this.refs.previewToggle.checked
       this.rebuildOverlay()
+      this.updatePreviewVisibility()
+    })
+
+    this.refs.labelInput.addEventListener("input", () => {
+      const region = this.selectedRegionRecord()
+      if (!region) return
+      region.label = this.refs.labelInput.value
+      this.updateInspector(region)
+      this.renderRegionList()
+      this.rebuildOverlay()
+    })
+
+    this.refs.labelInput.addEventListener("change", () => {
+      const region = this.selectedRegionRecord()
+      if (!region) return
+      this.emit("update_region", { id: region.id, label: region.label })
+    })
+
+    this.refs.surfaceInput.addEventListener("change", () => {
+      const region = this.selectedRegionRecord()
+      if (!region) return
+      region.surface = this.refs.surfaceInput.value
+      this.renderRegionList()
+      this.emit("update_region", { id: region.id, surface: region.surface })
+    })
+
+    this.refs.vertexHeights.addEventListener("input", (event) => {
+      const control = event.target.closest("[data-vertex-index]")
+      if (!control || control.tagName === "BUTTON") return
+
+      const region = this.selectedRegionRecord()
+      if (!region) return
+
+      const index = parseInt(control.dataset.vertexIndex, 10)
+      const nextValue = this.readVertexHeightValue(control.value, region.vertexHeights[index])
+      this.setVertexHeight(region, index, nextValue)
+    })
+
+    this.refs.vertexHeights.addEventListener("change", (event) => {
+      const control = event.target.closest("[data-vertex-index]")
+      if (!control || control.tagName === "BUTTON") return
+
+      const region = this.selectedRegionRecord()
+      if (!region) return
+
+      const index = parseInt(control.dataset.vertexIndex, 10)
+      const nextValue = this.readVertexHeightValue(control.value, region.vertexHeights[index])
+      this.setVertexHeight(region, index, nextValue)
+      this.commitVertexHeights(region)
+    })
+
+    this.refs.vertexHeights.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-vertex-nudge]")
+      if (!button) return
+
+      event.preventDefault()
+
+      const region = this.selectedRegionRecord()
+      if (!region) return
+
+      const index = parseInt(button.dataset.vertexIndex, 10)
+      const delta = parseInt(button.dataset.vertexNudge, 10)
+      this.setVertexHeight(region, index, region.vertexHeights[index] + delta)
+      this.commitVertexHeights(region)
+    })
+
+    this.refs.elevationInput.addEventListener("input", () => {
+      const region = this.selectedRegionRecord()
+      if (!region) return
+      region.elevation = parseInt(this.refs.elevationInput.value, 10)
+      this.updateInspector(region)
+    })
+
+    this.refs.elevationInput.addEventListener("change", () => {
+      const region = this.selectedRegionRecord()
+      if (!region) return
+      this.emit("update_region", { id: region.id, elevation: region.elevation })
+    })
+  },
+
+  connectChannel() {
+    this.sceneId = this.el.dataset.sceneId || "default"
+    this.bgUrl = this.el.dataset.bgUrl
+    this.socket = new Socket("/froth/socket")
+    this.socket.connect()
+
+    this.channel = this.socket.channel(`scene:${this.sceneId}`, {})
+    this.channel
+      .join()
+      .receive("ok", (response) => {
+        this.state = this.migrateState(response.state)
+        this.lastSeq = response.last_seq
+        this.fitView(false)
+
+        if (!this.state.background && this.bgUrl) {
+          this.emit("set_background", { url: this.bgUrl })
+        }
+
+        this.rebuildScene()
+      })
+
+    this.channel.on("event", (event) => {
+      this.lastSeq = event.seq
+      this.applyEvent(event)
+    })
+  },
+
+  migrateState(state) {
+    const dimensions = state.dimensions || { width: 2048, height: 1376 }
+
+    return {
+      background: state.background || null,
+      dimensions,
+      regions: sceneRegionsFromState(state),
+      blockedRegions: blockedRegionsFromState(state),
+      characters: (state.characters || []).map((character) => ({
+        id: character.id,
+        type: character.type || "cloud",
+        x: character.x ?? Math.round(dimensions.width / 2),
+        y: character.y ?? Math.round(dimensions.height * 0.7),
+      })),
     }
-    densRow.appendChild(this.densLabel)
-    densRow.appendChild(densSlider)
-    this.toolbar.appendChild(densRow)
+  },
 
-    this.toolbar.appendChild(Object.assign(document.createElement("hr"), { style: "border:none;border-top:1px solid #333;margin:4px 0;" }))
+  normalizeRegion(region) {
+    const polygon = (region.polygon || region.vertices || []).map(([x, y]) => [
+      Math.round(x),
+      Math.round(y),
+    ])
+    const vertexHeights = normalizeVertexHeights(polygon, region.vertex_heights || region.vertexHeights, region.depth)
 
-    // Selected plane info
-    this.planeInfo = document.createElement("div")
-    this.planeInfo.style.cssText = "font:11px monospace;color:#aaa;"
-    this.toolbar.appendChild(this.planeInfo)
+    return {
+      id: region.id,
+      label: region.label || `Region ${region.id.replace(/^region_/, "")}`,
+      surface: region.surface || "stone",
+      elevation: region.elevation ?? 0,
+      polygon,
+      vertexHeights,
+    }
+  },
 
-    // Reference scale slider (only visible when a plane is selected)
-    this.scaleRow = document.createElement("div")
-    this.scaleRow.style.cssText = "display:flex;flex-direction:column;gap:2px;display:none;"
-    this.scaleLabel = h("Ref scale: 60px", "font:10px monospace;color:#0f0;")
-    this.scaleSlider = document.createElement("input")
-    this.scaleSlider.type = "range"; this.scaleSlider.min = 10; this.scaleSlider.max = 200; this.scaleSlider.value = 60
-    this.scaleSlider.style.cssText = "width:100%;accent-color:#0f0;"
-    this.scaleSlider.oninput = () => {
-      const pl = this.state.planes.find(p => p.id === this.selectedPlane)
-      if (pl) {
-        pl.reference_scale = parseInt(this.scaleSlider.value)
-        this.scaleLabel.textContent = `Ref scale: ${pl.reference_scale}px (=${Math.round(pl.reference_scale / 1.8 * 10) / 10}px/m)`
+  applyEvent(event) {
+    const payload = event.payload
+
+    switch (event.type) {
+      case "set_background":
+        this.state.background = payload.url
+        this.loadBackground(payload.url)
+        break
+
+      case "add_region":
+        this.upsertRegion({ ...payload, id: payload.id })
+        break
+
+      case "update_region":
+        this.patchRegion(payload.id, payload)
+        break
+
+      case "remove_region":
+        this.state.regions = this.state.regions.filter((region) => region.id !== payload.id)
+        if (this.selectedRegion === payload.id) this.selectedRegion = null
         this.rebuildOverlay()
+        this.renderRegionList()
+        this.updateInspector()
+        break
+
+      case "add_plane":
+        if (!this.state.regions.find((region) => region.id === payload.id)) {
+          this.upsertRegion(legacyPlaneToRegion({ ...payload, id: payload.id }))
+        }
+        break
+
+      case "update_plane":
+        if (!this.state.regions.find((region) => region.id === payload.id)) {
+          this.upsertRegion(legacyPlaneToRegion({ ...payload, id: payload.id }))
+        }
+        break
+
+      case "remove_plane":
+        this.state.regions = this.state.regions.filter((region) => region.id !== payload.id)
+        if (this.selectedRegion === payload.id) this.selectedRegion = null
+        this.rebuildOverlay()
+        this.renderRegionList()
+        this.updateInspector()
+        break
+
+      case "add_character":
+        this.state.characters.push({
+          id: payload.id,
+          type: payload.type || "cloud",
+          x: payload.x ?? Math.round(this.state.dimensions.width / 2),
+          y: payload.y ?? Math.round(this.state.dimensions.height * 0.7),
+        })
+        this.rebuildCharacters()
+        break
+
+      case "add_blocked_region":
+        this.state.blockedRegions.push(normalizeBlockedRegion(payload, this.state.blockedRegions.length))
+        break
+
+      case "remove_blocked_region":
+        this.state.blockedRegions = this.state.blockedRegions.filter((region) => region.id !== payload.id)
+        break
+
+      default:
+        break
+    }
+  },
+
+  upsertRegion(region) {
+    const next = this.normalizeRegion(region)
+    const existing = this.state.regions.findIndex((item) => item.id === next.id)
+
+    if (existing >= 0) {
+      this.state.regions.splice(existing, 1, next)
+    } else {
+      this.state.regions.push(next)
+    }
+
+    this.selectedRegion = next.id
+    this.rebuildOverlay()
+    this.renderRegionList()
+    this.updateInspector(next)
+  },
+
+  patchRegion(id, patch) {
+    const region = this.state.regions.find((item) => item.id === id)
+    if (!region) return
+
+    if (patch.polygon) {
+      region.polygon = patch.polygon.map(([x, y]) => [Math.round(x), Math.round(y)])
+    }
+    if (patch.label !== undefined) region.label = patch.label
+    if (patch.surface !== undefined) region.surface = patch.surface
+    if (patch.elevation !== undefined) region.elevation = patch.elevation
+
+    region.vertexHeights = normalizeVertexHeights(
+      region.polygon,
+      patch.vertex_heights || patch.vertexHeights || region.vertexHeights,
+      patch.depth,
+    )
+
+    this.rebuildOverlay()
+    this.renderRegionList()
+    this.updateInspector(this.selectedRegionRecord())
+  },
+
+  readVertexHeightValue(value, fallback = 72) {
+    const parsed = parseInt(value, 10)
+    return Number.isFinite(parsed) ? parsed : fallback
+  },
+
+  clampVertexHeight(value) {
+    return clampSceneVertexHeight(value)
+  },
+
+  setVertexHeight(region, index, value) {
+    if (!region || index < 0 || index >= region.vertexHeights.length) return
+
+    region.vertexHeights[index] = this.clampVertexHeight(value)
+    this.updateInspector(region)
+    this.rebuildOverlay()
+    this.renderRegionList()
+  },
+
+  commitVertexHeights(region) {
+    if (!region) return
+    this.emit("update_region", { id: region.id, vertex_heights: region.vertexHeights })
+  },
+
+  handleAction(action) {
+    switch (action) {
+      case "add-region":
+        this.addRegion()
+        break
+      case "fit-view":
+        this.fitView(true)
+        break
+      case "zoom-in":
+        this.changeZoom(1.08)
+        break
+      case "zoom-out":
+        this.changeZoom(1 / 1.08)
+        break
+      case "zoom-reset":
+        this.fitView(true)
+        break
+      case "add-cloud":
+        this.addCharacter("cloud")
+        break
+      case "add-lara":
+        this.addCharacter("lara")
+        break
+      case "delete-region":
+        this.deleteSelectedRegion()
+        break
+      default:
+        break
+    }
+  },
+
+  addRegion() {
+    const id = `region_${Date.now()}`
+    const region = createDefaultRegion(this.state.dimensions, id)
+    this.selectedRegion = id
+    this.emit("add_region", region)
+  },
+
+  addCharacter(type) {
+    const id = `${type}_${Date.now()}`
+    const dimensions = this.state.dimensions
+    const fallbackRegion = this.selectedRegionRecord() || this.state.regions[0]
+    const point =
+      randomWalkablePoint(this.state.regions, this.state.blockedRegions, fallbackRegion?.id) || {
+        x: dimensions.width / 2,
+        y: dimensions.height * 0.7,
+        region: fallbackRegion || null,
+      }
+
+    this.emit("add_character", {
+      id,
+      type,
+      x: Math.round(point.x),
+      y: Math.round(point.y),
+    })
+  },
+
+  deleteSelectedRegion() {
+    const region = this.selectedRegionRecord()
+    if (!region) return
+
+    this.selectedRegion = null
+    this.emit("remove_region", { id: region.id })
+    this.emit("remove_plane", { id: region.id })
+  },
+
+  selectedRegionRecord() {
+    return this.state.regions.find((region) => region.id === this.selectedRegion) || null
+  },
+
+  selectRegion(regionId) {
+    this.selectedRegion = regionId
+    this.rebuildOverlay()
+    this.renderRegionList()
+    this.updateInspector(this.selectedRegionRecord())
+  },
+
+  renderRegionList() {
+    this.refs.sceneCount.textContent = `${this.state.regions.length} region${this.state.regions.length === 1 ? "" : "s"}`
+    this.refs.regionList.innerHTML = ""
+
+    for (const region of this.state.regions) {
+      const active = region.id === this.selectedRegion
+      const heights = region.vertexHeights.length ? region.vertexHeights : [72]
+      const row = document.createElement("button")
+      row.type = "button"
+      row.dataset.regionId = region.id
+      row.className = [
+        "group w-full rounded-[24px] border px-4 py-4 text-left transition",
+        active
+          ? "border-amber-300/45 bg-amber-300/12 shadow-[0_20px_60px_-40px_rgba(251,191,36,0.9)]"
+          : "border-white/10 bg-white/5 hover:border-white/25 hover:bg-white/10",
+      ].join(" ")
+
+      row.innerHTML = `
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="text-sm font-semibold ${active ? "text-amber-50" : "text-stone-100"}">${this.escapeHtml(region.label)}</div>
+            <div class="mt-1 text-xs uppercase tracking-[0.2em] ${active ? "text-amber-100/70" : "text-stone-400"}">${region.surface}</div>
+          </div>
+          <div class="rounded-full border ${active ? "border-amber-200/35 bg-amber-100/10 text-amber-50/80" : "border-white/10 bg-black/20 text-stone-300/70"} px-3 py-1 text-[11px] uppercase tracking-[0.2em]">
+            ${region.polygon.length} pts
+          </div>
+        </div>
+        <div class="mt-3 flex items-center gap-2 text-xs ${active ? "text-amber-50/80" : "text-stone-300/70"}">
+          <span>${Math.min(...heights)}-${Math.max(...heights)} px</span>
+          <span class="text-stone-500">/</span>
+          <span>${region.vertexHeights.length} corners</span>
+        </div>
+      `
+
+      this.refs.regionList.appendChild(row)
+    }
+  },
+
+  updateInspector(region = this.selectedRegionRecord()) {
+    const hasRegion = Boolean(region)
+
+    this.refs.deleteButton.disabled = !hasRegion
+    this.refs.labelInput.disabled = !hasRegion
+    this.refs.surfaceInput.disabled = !hasRegion
+    this.refs.elevationInput.disabled = !hasRegion
+
+    if (!region) {
+      this.refs.inspectorTitle.textContent = "No region selected"
+      this.refs.inspectorCopy.textContent =
+        "Select a region to rename it, adjust surface metadata, and set how tall the reference person should be at each corner."
+      this.refs.labelInput.value = ""
+      this.refs.surfaceInput.value = SURFACES[0]
+      this.refs.elevationInput.value = "0"
+      this.refs.vertexSummary.textContent = "0 corners"
+      this.refs.vertexCopy.textContent =
+        "The editor blends the corner figure heights across the region so walking characters inherit the size between them."
+      this.refs.vertexHeights.innerHTML = ""
+      this.refs.elevationValue.textContent = "0"
+      return
+    }
+
+    this.refs.inspectorTitle.textContent = region.label
+    this.refs.inspectorCopy.textContent =
+      "Shape the polygon with corner handles, then size the person at each corner until the whole region feels believable."
+    this.refs.labelInput.value = region.label
+    this.refs.surfaceInput.value = region.surface
+    this.refs.elevationInput.value = String(region.elevation)
+    this.refs.vertexSummary.textContent = `${region.vertexHeights.length} corners`
+    this.refs.vertexCopy.textContent =
+      "Each numbered control matches the same numbered corner in the scene, and the in-between walking scale is blended automatically."
+    this.refs.vertexHeights.innerHTML = region.vertexHeights
+      .map(
+        (height, index) => {
+          const [x, y] = region.polygon[index]
+
+          return `
+            <div class="grid gap-3 rounded-[22px] border border-white/10 bg-white/[0.04] p-3">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-400">Corner ${index + 1}</div>
+                  <div class="mt-1 text-[11px] uppercase tracking-[0.2em] text-stone-500">${x}, ${y}</div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button
+                    type="button"
+                    data-vertex-index="${index}"
+                    data-vertex-nudge="-4"
+                    class="rounded-full border border-white/10 bg-black/25 px-2.5 py-1.5 text-sm font-semibold text-stone-200 transition hover:border-white/25 hover:bg-white/10"
+                  >
+                    -
+                  </button>
+                  <input
+                    data-vertex-index="${index}"
+                    type="number"
+                    min="${MIN_VERTEX_HEIGHT}"
+                    max="${MAX_VERTEX_HEIGHT}"
+                    step="1"
+                    value="${Math.round(height)}"
+                    class="w-20 rounded-2xl border border-white/10 bg-black/25 px-3 py-2 text-center text-sm text-stone-100 outline-none transition focus:border-amber-300/40 focus:bg-white/10"
+                  />
+                  <button
+                    type="button"
+                    data-vertex-index="${index}"
+                    data-vertex-nudge="4"
+                    class="rounded-full border border-white/10 bg-black/25 px-2.5 py-1.5 text-sm font-semibold text-stone-200 transition hover:border-white/25 hover:bg-white/10"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+              <div class="flex items-center gap-3">
+                <input
+                  data-vertex-index="${index}"
+                  type="range"
+                  min="${MIN_VERTEX_HEIGHT}"
+                  max="${MAX_VERTEX_HEIGHT}"
+                  value="${Math.round(height)}"
+                  class="w-full accent-amber-300"
+                />
+                <div class="min-w-14 text-right text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">${Math.round(height)} px</div>
+              </div>
+            </div>
+          `
+        },
+      )
+      .join("")
+    this.refs.elevationValue.textContent = `${region.elevation}`
+  },
+
+  updateStatus() {
+    const region = this.selectedRegionRecord()
+    const selectedText = region ? `${region.label} selected` : "No selection"
+    this.refs.status.textContent = `${Math.round(this.pointerScene.x)}, ${Math.round(this.pointerScene.y)} | ${selectedText} | ${this.state.characters.length} preview characters`
+    this.refs.sceneSize.textContent = `${this.state.dimensions.width} x ${this.state.dimensions.height}`
+    this.refs.sceneZoom.textContent = `Zoom ${Math.round(this.view.zoom * 100)}%`
+  },
+
+  emit(type, payload) {
+    if (this.channel) this.channel.push("event", { type, payload })
+  },
+
+  resize() {
+    if (!this.renderer) return
+
+    const rect = this.refs.viewport.getBoundingClientRect()
+    const dpr = window.devicePixelRatio || 1
+
+    this.renderer.setSize(rect.width, rect.height)
+    this.renderer.setPixelRatio(dpr)
+
+    const width = this.state.dimensions.width
+    const height = this.state.dimensions.height
+    const viewAspect = rect.width / Math.max(rect.height, 1)
+    const sceneAspect = width / height
+
+    if (viewAspect > sceneAspect) {
+      const half = height / 2
+      this.baseFrustum = {
+        left: -half * viewAspect,
+        right: half * viewAspect,
+        top: half,
+        bottom: -half,
+      }
+    } else {
+      const half = width / 2
+      this.baseFrustum = {
+        left: -half,
+        right: half,
+        top: half / viewAspect,
+        bottom: -half / viewAspect,
       }
     }
-    this.scaleSlider.onchange = () => {
-      const pl = this.state.planes.find(p => p.id === this.selectedPlane)
-      if (pl) this.emit("update_plane", { id: pl.id, reference_scale: pl.reference_scale })
-    }
-    // Surface selector
-    this.surfSelect = document.createElement("select")
-    this.surfSelect.style.cssText = "width:100%;padding:4px;font:11px monospace;background:#222;color:#aaa;border:1px solid #444;margin-top:4px;"
-    for (const s of ["grass", "cobblestone", "wood", "dirt", "stone", "water", "sand"]) {
-      const opt = document.createElement("option"); opt.value = s; opt.textContent = s
-      this.surfSelect.appendChild(opt)
-    }
-    this.surfSelect.onchange = () => {
-      const pl = this.state.planes.find(p => p.id === this.selectedPlane)
-      if (pl) this.emit("update_plane", { id: pl.id, surface: this.surfSelect.value })
-    }
-    this.scaleRow.appendChild(this.scaleLabel)
-    this.scaleRow.appendChild(this.scaleSlider)
-    this.scaleRow.appendChild(h("Surface:", "font:10px monospace;color:#777;margin-top:4px;"))
-    this.scaleRow.appendChild(this.surfSelect)
-    this.toolbar.appendChild(this.scaleRow)
 
-    // Delete
-    this.deleteBtn = btn("Delete Selected", "#f44", () => this.deleteSelected())
-    this.deleteBtn.style.opacity = "0.4"
-    this.toolbar.appendChild(this.deleteBtn)
-
-    // Plane list
-    this.planesList = document.createElement("div")
-    this.planesList.style.cssText = "margin-top:8px;display:flex;flex-direction:column;gap:3px;"
-    this.toolbar.appendChild(this.planesList)
-
-    // Instructions
-    this.toolbar.appendChild(h(
-      "Drag white squares to shape the quad. Use the scale slider to resize the standing characters until they match the painting. 2.5m apart at covid distance.",
-      "margin-top:auto;font:9px monospace;color:#555;line-height:1.4;"
-    ))
-
-    this.el.appendChild(this.toolbar)
+    this.applyCamera()
   },
 
-  buildStatusBar() {
-    this.statusBar = document.createElement("div")
-    this.statusBar.style.cssText = "position:absolute;bottom:0;left:200px;right:0;height:24px;background:rgba(17,17,17,0.85);border-top:1px solid #333;padding:0 12px;font:11px monospace;color:#666;display:flex;align-items:center;z-index:10;"
-    this.el.appendChild(this.statusBar)
-  },
-
-  updateUI() {
-    // Plane list
-    this.planesList.innerHTML = ""
-    for (const pl of this.state.planes) {
-      const row = document.createElement("div")
-      const sel = this.selectedPlane === pl.id
-      row.style.cssText = `padding:4px 6px;font:10px monospace;cursor:pointer;border-radius:2px;border:1px solid ${sel ? "#0f0" : "#333"};color:${sel ? "#0f0" : "#888"};background:${sel ? "#0a1a0a" : "transparent"};`
-      row.textContent = `${pl.id.replace("plane_","")} (${pl.surface || "grass"}) s=${pl.reference_scale}`
-      row.onclick = () => { this.selectedPlane = pl.id; this.updateUI(); this.rebuildOverlay() }
-      this.planesList.appendChild(row)
+  fitView(renderNow = true) {
+    this.view = {
+      x: this.state.dimensions.width / 2,
+      y: this.state.dimensions.height / 2,
+      zoom: 1,
     }
 
-    // Selected plane controls
-    const pl = this.state.planes.find(p => p.id === this.selectedPlane)
-    if (pl) {
-      this.scaleRow.style.display = "flex"
-      this.scaleSlider.value = pl.reference_scale
-      this.scaleLabel.textContent = `Ref scale: ${pl.reference_scale}px (1.8m person at BL)`
-      this.surfSelect.value = pl.surface || "grass"
-      this.planeInfo.textContent = `Selected: ${pl.id}`
-      this.deleteBtn.style.opacity = "1"
-    } else {
-      this.scaleRow.style.display = "none"
-      this.planeInfo.textContent = "No plane selected"
-      this.deleteBtn.style.opacity = "0.4"
-    }
+    this.applyCamera()
+    if (renderNow) this.renderer.render(this.scene, this.camera)
   },
 
-  // --- Coordinates ---
+  changeZoom(multiplier) {
+    this.view.zoom = Math.max(0.7, Math.min(3, this.view.zoom * multiplier))
+    this.applyCamera()
+  },
+
+  clampView() {
+    if (!this.baseFrustum) return
+
+    const visibleWidth = (this.baseFrustum.right - this.baseFrustum.left) / this.view.zoom
+    const visibleHeight = (this.baseFrustum.top - this.baseFrustum.bottom) / this.view.zoom
+    const halfVisibleWidth = visibleWidth / 2
+    const halfVisibleHeight = visibleHeight / 2
+    const width = this.state.dimensions.width
+    const height = this.state.dimensions.height
+
+    const minX = halfVisibleWidth >= width / 2 ? width / 2 : halfVisibleWidth
+    const maxX = halfVisibleWidth >= width / 2 ? width / 2 : width - halfVisibleWidth
+    const minY = halfVisibleHeight >= height / 2 ? height / 2 : halfVisibleHeight
+    const maxY = halfVisibleHeight >= height / 2 ? height / 2 : height - halfVisibleHeight
+
+    this.view.x = Math.min(maxX, Math.max(minX, this.view.x))
+    this.view.y = Math.min(maxY, Math.max(minY, this.view.y))
+  },
+
+  applyCamera() {
+    if (!this.baseFrustum) return
+
+    this.clampView()
+
+    this.camera.left = this.baseFrustum.left
+    this.camera.right = this.baseFrustum.right
+    this.camera.top = this.baseFrustum.top
+    this.camera.bottom = this.baseFrustum.bottom
+    this.camera.zoom = this.view.zoom
+
+    const offsetX = this.view.x - this.state.dimensions.width / 2
+    const offsetY = -(this.view.y - this.state.dimensions.height / 2)
+
+    this.camera.position.set(offsetX, offsetY, 100)
+    this.camera.updateProjectionMatrix()
+    this.updateStatus()
+  },
 
   s2t(x, y) {
     return {
       x: x - this.state.dimensions.width / 2,
-      y: -(y - this.state.dimensions.height / 2)
+      y: -(y - this.state.dimensions.height / 2),
     }
   },
 
@@ -276,470 +931,792 @@ const SceneEditor = {
     const rect = this.renderer.domElement.getBoundingClientRect()
     const nx = ((clientX - rect.left) / rect.width) * 2 - 1
     const ny = -((clientY - rect.top) / rect.height) * 2 + 1
-    const vec = new THREE.Vector3(nx, ny, 0)
-    vec.unproject(this.camera)
+    const vector = new THREE.Vector3(nx, ny, 0)
+    vector.unproject(this.camera)
+
     return {
-      x: Math.round(vec.x + this.state.dimensions.width / 2),
-      y: Math.round(-vec.y + this.state.dimensions.height / 2)
+      x: vector.x + this.state.dimensions.width / 2,
+      y: -vector.y + this.state.dimensions.height / 2,
     }
   },
 
-  // --- Channel ---
+  onKeyDown(event) {
+    if (event.code !== "Space") return
 
-  emit(type, payload) {
-    if (this.channel) this.channel.push("event", { type, payload })
+    const target = event.target
+    const editing =
+      target instanceof HTMLElement &&
+      (target.closest("input, textarea, select, button") || target.isContentEditable)
+
+    if (editing) return
+
+    this.isSpacePressed = true
+    this.updateCursor()
   },
 
-  applyEvent(evt) {
-    const p = evt.payload
-    switch (evt.type) {
-      case "set_background":
-        this.state.background = p.url; this.loadBackground(p.url); break
-      case "add_plane":
-        this.state.planes.push({
-          id: p.id, corners: p.corners, surface: p.surface || "grass",
-          reference_scale: p.reference_scale || 60, grid_spacing: p.grid_spacing || 2.5
-        })
-        this.rebuildOverlay(); this.updateUI(); break
-      case "update_plane":
-        { const pl = this.state.planes.find(x => x.id === p.id)
-          if (pl) {
-            if (p.corners) pl.corners = p.corners
-            if (p.surface) pl.surface = p.surface
-            if (p.reference_scale !== undefined) pl.reference_scale = p.reference_scale
-            if (p.grid_spacing !== undefined) pl.grid_spacing = p.grid_spacing
-            this.rebuildOverlay(); this.updateUI()
-          } } break
-      case "remove_plane":
-        this.state.planes = this.state.planes.filter(x => x.id !== p.id)
-        if (this.selectedPlane === p.id) this.selectedPlane = null
-        this.rebuildOverlay(); this.updateUI(); break
-      case "add_character":
-        this.state.characters.push({ id: p.id, type: p.type, x: p.x, y: p.y })
-        this.rebuildCharacters(); break
-      default: break
-    }
+  onKeyUp(event) {
+    if (event.code !== "Space") return
+    this.isSpacePressed = false
+    this.updateCursor()
   },
 
-  // --- Mouse ---
+  onMouseDown(event) {
+    const scenePoint = this.screenToScene(event.clientX, event.clientY)
+    this.pointerScene = scenePoint
+    this.updateStatus()
 
-  onMouseDown(e) {
-    const scene = this.screenToScene(e.clientX, e.clientY)
-
-    // Check corner handles (20px hit area)
-    for (const pl of this.state.planes) {
-      for (let i = 0; i < 4; i++) {
-        const dx = scene.x - pl.corners[i][0], dy = scene.y - pl.corners[i][1]
-        if (Math.abs(dx) < 20 && Math.abs(dy) < 20) {
-          this.dragCorner = { planeId: pl.id, cornerIndex: i }
-          this.selectedPlane = pl.id
-          this.updateUI()
-          this.renderer.domElement.style.cursor = "grabbing"
-          return
-        }
+    if (event.button === 1 || (event.button === 0 && this.isSpacePressed)) {
+      event.preventDefault()
+      this.interaction = {
+        type: "pan",
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startView: { ...this.view },
       }
+      this.renderer.domElement.style.cursor = "grabbing"
+      return
     }
 
-    // Check if clicking inside a plane
-    for (const pl of this.state.planes) {
-      if (pointInQuad(pl.corners, scene.x, scene.y)) {
-        this.selectedPlane = pl.id
-        this.updateUI(); this.rebuildOverlay()
+    const region = this.selectedRegionRecord()
+
+    if (event.altKey && region) {
+      const hit = findNearestVertex(region.polygon, scenePoint.x, scenePoint.y, HANDLE_RADIUS)
+      if (hit && region.polygon.length > 3) {
+        region.polygon.splice(hit.index, 1)
+        region.vertexHeights = removeVertexHeight(region.vertexHeights, hit.index)
+        this.rebuildOverlay()
+        this.updateInspector(region)
+        this.emit("update_region", {
+          id: region.id,
+          polygon: region.polygon,
+          vertex_heights: region.vertexHeights,
+        })
         return
       }
     }
 
-    this.selectedPlane = null
-    this.updateUI(); this.rebuildOverlay()
-  },
-
-  onMouseMove(e) {
-    const scene = this.screenToScene(e.clientX, e.clientY)
-    this.statusBar.textContent = `${scene.x}, ${scene.y} | planes: ${this.state.planes.length} | chars: ${this.state.characters.length}`
-
-    if (this.dragCorner) {
-      const pl = this.state.planes.find(p => p.id === this.dragCorner.planeId)
-      if (pl) {
-        pl.corners[this.dragCorner.cornerIndex] = [scene.x, scene.y]
-        this.rebuildOverlay()
-        this.updateUI()
+    const heightHit = this.hitHeightHandle(scenePoint)
+    if (heightHit) {
+      this.selectRegion(heightHit.regionId)
+      this.interaction = {
+        type: "height",
+        regionId: heightHit.regionId,
+        index: heightHit.index,
+        startHeight: heightHit.height,
+        startSceneY: scenePoint.y,
       }
-    } else {
-      let onHandle = false
-      for (const pl of this.state.planes) {
-        for (let i = 0; i < 4; i++) {
-          const dx = scene.x - pl.corners[i][0], dy = scene.y - pl.corners[i][1]
-          if (Math.abs(dx) < 20 && Math.abs(dy) < 20) { onHandle = true; break }
-        }
-        if (onHandle) break
+      this.renderer.domElement.style.cursor = "grabbing"
+      return
+    }
+
+    const vertexHit = this.hitVertex(scenePoint)
+    if (vertexHit) {
+      this.selectRegion(vertexHit.regionId)
+      this.interaction = {
+        type: "vertex",
+        regionId: vertexHit.regionId,
+        index: vertexHit.index,
       }
-      this.renderer.domElement.style.cursor = onHandle ? "grab" : "crosshair"
+      this.renderer.domElement.style.cursor = "grabbing"
+      return
+    }
+
+    const hitRegion = this.regionAt(scenePoint.x, scenePoint.y)
+    if (hitRegion) {
+      this.selectRegion(hitRegion.id)
+      return
+    }
+
+    this.selectedRegion = null
+    this.rebuildOverlay()
+    this.renderRegionList()
+    this.updateInspector()
+    this.updateCursor()
+  },
+
+  onMouseMove(event) {
+    const scenePoint = this.screenToScene(event.clientX, event.clientY)
+    this.pointerScene = scenePoint
+    this.updateStatus()
+
+    if (!this.interaction) {
+      this.hover = this.computeHover(scenePoint)
+      this.updateCursor()
+      return
+    }
+
+    if (this.interaction.type === "pan") {
+      const dx = (event.clientX - this.interaction.startClientX) / this.view.zoom
+      const dy = (event.clientY - this.interaction.startClientY) / this.view.zoom
+      this.view.x = this.interaction.startView.x - dx
+      this.view.y = this.interaction.startView.y - dy
+      this.applyCamera()
+      return
+    }
+
+    const region = this.state.regions.find((item) => item.id === this.interaction.regionId)
+    if (!region) return
+
+    if (this.interaction.type === "vertex") {
+      region.polygon[this.interaction.index] = [Math.round(scenePoint.x), Math.round(scenePoint.y)]
+      this.rebuildOverlay()
+      this.updateInspector(region)
+      this.renderRegionList()
+      return
+    }
+
+    if (this.interaction.type === "height") {
+      const delta = this.interaction.startSceneY - scenePoint.y
+      this.setVertexHeight(region, this.interaction.index, this.interaction.startHeight + delta)
     }
   },
 
-  onMouseUp(e) {
-    if (this.dragCorner) {
-      const pl = this.state.planes.find(p => p.id === this.dragCorner.planeId)
-      if (pl) this.emit("update_plane", { id: pl.id, corners: pl.corners })
-      this.dragCorner = null
-      this.renderer.domElement.style.cursor = "crosshair"
+  onMouseUp() {
+    if (!this.interaction) return
+
+    const interaction = this.interaction
+    this.interaction = null
+
+    if (interaction.type === "vertex") {
+      const region = this.state.regions.find((item) => item.id === interaction.regionId)
+      if (region) {
+        this.emit("update_region", { id: region.id, polygon: region.polygon })
+      }
     }
-  },
 
-  // --- Actions ---
-
-  addPlane() {
-    const W = this.state.dimensions.width, H = this.state.dimensions.height
-    const id = "plane_" + Date.now()
-    const cx = W / 2, cy = H / 2
-    const corners = [
-      [cx - 200, cy - 150],  // TL (far, small)
-      [cx + 200, cy - 150],  // TR (far, small)
-      [cx + 350, cy + 250],  // BR (near, big)
-      [cx - 350, cy + 250],  // BL (near, big)
-    ]
-    this.emit("add_plane", { id, corners, surface: "grass", reference_scale: 60 })
-    this.selectedPlane = id
-  },
-
-  addChar(type) {
-    const id = type + "_" + Date.now()
-    const W = this.state.dimensions.width, H = this.state.dimensions.height
-    this.emit("add_character", { id, type, x: W / 2, y: H * 0.65 })
-  },
-
-  deleteSelected() {
-    if (!this.selectedPlane) return
-    this.emit("remove_plane", { id: this.selectedPlane })
-    this.selectedPlane = null
-  },
-
-  // --- Three.js ---
-
-  resize() {
-    const rect = this.el.getBoundingClientRect()
-    this.renderer.setSize(rect.width, rect.height)
-    this.renderer.setPixelRatio(window.devicePixelRatio || 1)
-
-    const W = this.state.dimensions.width, H = this.state.dimensions.height
-    const viewAspect = rect.width / rect.height
-    const sceneAspect = W / H
-    if (viewAspect > sceneAspect) {
-      this.camera.top = H / 2; this.camera.bottom = -H / 2
-      this.camera.left = -H / 2 * viewAspect; this.camera.right = H / 2 * viewAspect
-    } else {
-      this.camera.left = -W / 2; this.camera.right = W / 2
-      this.camera.top = W / 2 / viewAspect; this.camera.bottom = -W / 2 / viewAspect
+    if (interaction.type === "height") {
+      const region = this.state.regions.find((item) => item.id === interaction.regionId)
+      if (region) {
+        this.commitVertexHeights(region)
+      }
     }
-    this.camera.updateProjectionMatrix()
+
+    this.hover = this.computeHover(this.pointerScene)
+    this.updateCursor()
+  },
+
+  onDoubleClick(event) {
+    if (event.button !== 0) return
+
+    const region = this.selectedRegionRecord()
+    if (!region) return
+
+    const scenePoint = this.screenToScene(event.clientX, event.clientY)
+    const edge = findNearestEdge(region.polygon, scenePoint.x, scenePoint.y, HANDLE_RADIUS)
+    if (!edge) return
+
+    region.polygon.splice(edge.insertIndex, 0, edge.point)
+    region.vertexHeights = insertVertexHeight(region.vertexHeights, edge.insertIndex)
+    this.rebuildOverlay()
+    this.renderRegionList()
+    this.updateInspector(region)
+    this.emit("update_region", {
+      id: region.id,
+      polygon: region.polygon,
+      vertex_heights: region.vertexHeights,
+    })
+  },
+
+  onWheel(event) {
+    if (!(event.ctrlKey || event.metaKey || event.altKey)) return
+
+    event.preventDefault()
+    this.changeZoom(event.deltaY > 0 ? 1 / 1.04 : 1.04)
+  },
+
+  computeHover(scenePoint) {
+    const height = this.hitHeightHandle(scenePoint)
+    if (height) return { height, vertex: null, edge: null, regionId: height.regionId }
+
+    const vertex = this.hitVertex(scenePoint)
+    if (vertex) return { height: null, vertex, edge: null, regionId: vertex.regionId }
+
+    const region = this.selectedRegionRecord()
+    const edge = region
+      ? findNearestEdge(region.polygon, scenePoint.x, scenePoint.y, HANDLE_RADIUS)
+      : null
+
+    if (edge) {
+      return { height: null, vertex: null, edge, regionId: region.id }
+    }
+
+    const hitRegion = this.regionAt(scenePoint.x, scenePoint.y)
+    return { height: null, vertex: null, edge: null, regionId: hitRegion?.id || null }
+  },
+
+  hitVertex(scenePoint) {
+    const selected = this.selectedRegionRecord()
+
+    if (selected) {
+      const hit = findNearestVertex(selected.polygon, scenePoint.x, scenePoint.y, HANDLE_RADIUS)
+      if (hit) return { ...hit, regionId: selected.id }
+    }
+
+    for (const region of this.state.regions) {
+      if (region.id === this.selectedRegion) continue
+      const hit = findNearestVertex(region.polygon, scenePoint.x, scenePoint.y, 12)
+      if (hit) return { ...hit, regionId: region.id }
+    }
+
+    return null
+  },
+
+  hitHeightHandle(scenePoint) {
+    const region = this.selectedRegionRecord()
+    if (!region) return null
+
+    for (let index = 0; index < region.polygon.length; index++) {
+      const point = vertexHeadPoint(region, index)
+      if (Math.hypot(scenePoint.x - point.x, scenePoint.y - point.y) <= HANDLE_RADIUS) {
+        return { index, regionId: region.id, height: region.vertexHeights[index] }
+      }
+    }
+
+    return null
+  },
+
+  regionAt(x, y) {
+    return regionAtPoint(this.state.regions, x, y, this.state.blockedRegions)
   },
 
   rebuildScene() {
     this.loadBackground(this.state.background)
     this.rebuildOverlay()
     this.rebuildCharacters()
-    this.updateUI()
+    this.renderRegionList()
+    this.updateInspector(this.selectedRegionRecord())
+    this.resize()
   },
 
   loadBackground(url) {
+    if (this.bgMesh) {
+      this.scene.remove(this.bgMesh)
+      this.disposeObject(this.bgMesh)
+      this.bgMesh = null
+    }
+
     if (!url) return
-    if (this.bgMesh) { this.scene.remove(this.bgMesh); this.bgMesh = null }
-    new THREE.TextureLoader().load(url, (tex) => {
-      tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter
-      const W = this.state.dimensions.width, H = this.state.dimensions.height
-      this.bgMesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(W, H),
-        new THREE.MeshBasicMaterial({ map: tex })
-      )
-      this.bgMesh.position.z = -10
-      this.scene.add(this.bgMesh)
+
+    new THREE.TextureLoader().load(url, (texture) => {
+      texture.minFilter = THREE.LinearFilter
+      texture.magFilter = THREE.LinearFilter
+
+      const width = this.state.dimensions.width
+      const height = this.state.dimensions.height
+      const geometry = new THREE.PlaneGeometry(width, height)
+      const material = new THREE.MeshBasicMaterial({ map: texture })
+      const mesh = new THREE.Mesh(geometry, material)
+      mesh.position.z = -10
+      this.bgMesh = mesh
+      this.scene.add(mesh)
     })
   },
 
   rebuildOverlay() {
     this.clearGroup(this.overlayGroup)
+    this.clearGroup(this.guideGroup)
     this.clearGroup(this.handleGroup)
-    this.clearGroup(this.gridCharGroup)
 
-    for (const pl of this.state.planes) {
-      const selected = this.selectedPlane === pl.id
-      const color = selected ? 0x00ff88 : 0x00ff44
+    for (const region of this.state.regions) {
+      const active = region.id === this.selectedRegion
+      this.drawPolygon(region, active)
 
-      // Quad fill
-      this.drawQuadFill(pl.corners, color, selected ? 0.12 : 0.04, -5)
-      // Quad outline
-      this.drawQuadOutline(pl.corners, color, selected ? 0.6 : 0.2, -4.9)
-
-      if (this.showGrid) {
-        // Grid lines
-        const gridLines = generateGridLines(pl.corners, this.gridRows, this.gridCols)
-        for (const line of gridLines) {
-          const pts = line.map(p => {
-            const t = this.s2t(p.x, p.y)
-            return new THREE.Vector3(t.x, t.y, -4.5)
-          })
-          const geo = new THREE.BufferGeometry().setFromPoints(pts)
-          const mat = new THREE.LineBasicMaterial({
-            color: selected ? 0x00ff66 : 0x00aa44,
-            transparent: true, opacity: selected ? 0.15 : 0.06
-          })
-          this.overlayGroup.add(new THREE.Line(geo, mat))
-        }
-
-        // Character models at grid intersections (only for selected plane)
-        if (selected) {
-          const refScale = pl.reference_scale || 60
-          const grid = generateCharacterGrid(pl.corners, this.gridRows, this.gridCols, refScale)
-
-          // Use Cloud model for grid characters
-          const cloudDef = createCloud()
-          for (const gp of grid) {
-            // Skip edge points for clarity
-            if (gp.u === 0 || gp.u === 1 || gp.v === 0 || gp.v === 1) continue
-
-            const t = this.s2t(gp.x, gp.y)
-            // Character pixel height determines the Three.js scale
-            const charH = gp.pixelHeight
-            const meshScale = charH / cloudDef.height
-
-            // Build a mini Cloud at this position
-            const boneMap = {}
-            const group = this.buildSkeleton(cloudDef.skeleton, boneMap)
-            group.scale.set(meshScale, meshScale, meshScale)
-            group.position.set(t.x, t.y, -2)
-
-            // Ghost material — transparent greenish
-            group.traverse((child) => {
-              if (child.isMesh) {
-                child.material = new THREE.MeshLambertMaterial({
-                  color: 0x44ff88, transparent: true, opacity: 0.35, flatShading: true
-                })
-              }
-            })
-
-            this.gridCharGroup.add(group)
-          }
-        }
-      }
-
-      // Corner handles
-      const cornerNames = ["TL", "TR", "BR", "BL"]
-      for (let i = 0; i < 4; i++) {
-        const c = pl.corners[i]
-        const t = this.s2t(c[0], c[1])
-        const hSize = selected ? 14 : 8
-        const hGeo = new THREE.PlaneGeometry(hSize, hSize)
-        const hMat = new THREE.MeshBasicMaterial({
-          color: selected ? 0xffffff : 0x00ff66,
-          transparent: true, opacity: selected ? 0.9 : 0.5
-        })
-        const hMesh = new THREE.Mesh(hGeo, hMat)
-        hMesh.position.set(t.x, t.y, -1)
-        this.handleGroup.add(hMesh)
-
-        if (selected) {
-          const label = this.makeSmallLabel(cornerNames[i])
-          label.position.set(t.x, t.y + 18, -0.5)
-          this.handleGroup.add(label)
-        }
+      if (active) {
+        this.drawReferenceFigures(region)
+        this.drawHandles(region)
+      } else {
+        this.drawHandles(region, true)
       }
     }
   },
 
-  drawQuadFill(corners, color, opacity, z) {
-    const verts = []
-    for (const idx of [[0,1,2], [0,2,3]]) {
-      for (const i of idx) {
-        const t = this.s2t(corners[i][0], corners[i][1])
-        verts.push(t.x, t.y, z)
-      }
-    }
-    const geo = new THREE.BufferGeometry()
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3))
-    this.overlayGroup.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity, side: THREE.DoubleSide
-    })))
-  },
+  drawPolygon(region, active) {
+    if (region.polygon.length < 3) return
 
-  drawQuadOutline(corners, color, opacity, z) {
-    const pts = [...corners, corners[0]].map(c => {
-      const t = this.s2t(c[0], c[1])
-      return new THREE.Vector3(t.x, t.y, z)
+    const shape = new THREE.Shape()
+    region.polygon.forEach(([x, y], index) => {
+      const point = this.s2t(x, y)
+      if (index === 0) shape.moveTo(point.x, point.y)
+      else shape.lineTo(point.x, point.y)
     })
-    this.overlayGroup.add(new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(pts),
-      new THREE.LineBasicMaterial({ color, transparent: true, opacity })
-    ))
+
+    const fill = new THREE.Mesh(
+      new THREE.ShapeGeometry(shape),
+      new THREE.MeshBasicMaterial({
+        color: active ? 0xf59e0b : 0x22c55e,
+        opacity: active ? 0.16 : 0.08,
+        transparent: true,
+        side: THREE.DoubleSide,
+      }),
+    )
+    fill.position.z = -3.5
+    this.overlayGroup.add(fill)
+
+    const outlinePoints = [...region.polygon, region.polygon[0]].map(([x, y]) => {
+      const point = this.s2t(x, y)
+      return new THREE.Vector3(point.x, point.y, -3.25)
+    })
+
+    const outline = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(outlinePoints),
+      new THREE.LineBasicMaterial({
+        color: active ? 0xfbbf24 : 0x34d399,
+        opacity: active ? 0.95 : 0.45,
+        transparent: true,
+      }),
+    )
+
+    this.overlayGroup.add(outline)
+
+    const centroid = polygonCentroid(region.polygon)
+    const label = this.makeLabel(region.label, active ? "#fde68a" : "#bbf7d0", 196, 46)
+    const labelPos = this.s2t(centroid.x, centroid.y)
+    label.position.set(labelPos.x, labelPos.y + 18, -2.75)
+    this.guideGroup.add(label)
   },
 
-  makeSmallLabel(text) {
-    const canvas = document.createElement("canvas")
-    canvas.width = 64; canvas.height = 32
-    const ctx = canvas.getContext("2d")
-    ctx.font = "bold 18px monospace"; ctx.textAlign = "center"
-    ctx.fillStyle = "#fff"; ctx.fillText(text, 32, 22)
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: new THREE.CanvasTexture(canvas), transparent: true
-    }))
-    sprite.scale.set(30, 15, 1)
-    return sprite
+  drawReferenceFigures(region) {
+    region.polygon.forEach(([x, y], index) => {
+      const foot = this.s2t(x, y)
+      const height = region.vertexHeights[index]
+      const headTop = this.s2t(x, y - height)
+      const headRadius = Math.max(6, Math.min(13, height * 0.12))
+      const headCenter = this.s2t(x, y - height + headRadius)
+      const shoulderY = y - height * 0.66
+      const hipY = y - height * 0.38
+      const handReach = Math.max(10, height * 0.16)
+      const stride = Math.max(10, height * 0.12)
+      const shoulder = this.s2t(x, shoulderY)
+      const hips = this.s2t(x, hipY)
+      const leftHand = this.s2t(x - handReach, shoulderY + height * 0.05)
+      const rightHand = this.s2t(x + handReach, shoulderY + height * 0.05)
+      const leftFoot = this.s2t(x - stride, y)
+      const rightFoot = this.s2t(x + stride, y)
+      const hoverHeight = this.hover.height?.regionId === region.id && this.hover.height.index === index
+      const draggingHeight =
+        this.interaction?.type === "height" &&
+        this.interaction.regionId === region.id &&
+        this.interaction.index === index
+      const active = hoverHeight || draggingHeight
+
+      const bodySegments = [
+        [new THREE.Vector3(foot.x, foot.y, -2.78), new THREE.Vector3(headTop.x, headTop.y, -2.78)],
+        [new THREE.Vector3(shoulder.x, shoulder.y, -2.7), new THREE.Vector3(hips.x, hips.y, -2.7)],
+        [new THREE.Vector3(leftHand.x, leftHand.y, -2.7), new THREE.Vector3(rightHand.x, rightHand.y, -2.7)],
+        [new THREE.Vector3(hips.x, hips.y, -2.7), new THREE.Vector3(leftFoot.x, leftFoot.y, -2.7)],
+        [new THREE.Vector3(hips.x, hips.y, -2.7), new THREE.Vector3(rightFoot.x, rightFoot.y, -2.7)],
+      ]
+
+      for (const [start, finish] of bodySegments) {
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([start, finish]),
+          new THREE.LineBasicMaterial({
+            color: active ? 0xfbbf24 : 0xe7e5e4,
+            opacity: active ? 0.98 : 0.74,
+            transparent: true,
+          }),
+        )
+        this.guideGroup.add(line)
+      }
+
+      const rulerHandle = new THREE.Mesh(
+        new THREE.CircleGeometry(active ? 5 : 4, 18),
+        new THREE.MeshBasicMaterial({
+          color: active ? 0xfbbf24 : 0xf8fafc,
+          opacity: 0.98,
+          transparent: true,
+        }),
+      )
+      rulerHandle.position.set(headTop.x, headTop.y, -2.66)
+      this.guideGroup.add(rulerHandle)
+
+      const head = new THREE.Mesh(
+        new THREE.CircleGeometry(headRadius, 22),
+        new THREE.MeshBasicMaterial({
+          color: active ? 0xfbbf24 : 0xffffff,
+          opacity: 0.9,
+          transparent: true,
+        }),
+      )
+      head.position.set(headCenter.x, headCenter.y, -2.65)
+      this.guideGroup.add(head)
+
+      const footMarker = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(foot.x - 7, foot.y, -2.65),
+          new THREE.Vector3(foot.x + 7, foot.y, -2.65),
+        ]),
+        new THREE.LineBasicMaterial({
+          color: 0x94a3b8,
+          opacity: 0.55,
+          transparent: true,
+        }),
+      )
+      this.guideGroup.add(footMarker)
+
+      const label = this.makeLabel(`${index + 1}: ${Math.round(height)}px`, active ? "#fde68a" : "#e7e5e4", 126, 28)
+      label.position.set(headTop.x, headTop.y + 18, -2.6)
+      this.guideGroup.add(label)
+    })
   },
 
-  clearGroup(group) {
-    while (group.children.length > 0) {
-      const c = group.children[0]
-      group.remove(c)
-      if (c.geometry) c.geometry.dispose()
-      if (c.material) { if (c.material.map) c.material.map.dispose(); c.material.dispose() }
-    }
-  },
+  drawHandles(region, dim = false) {
+    region.polygon.forEach(([x, y], index) => {
+      const point = this.s2t(x, y)
+      const handle = new THREE.Mesh(
+        new THREE.CircleGeometry(dim ? 6 : 9, 18),
+        new THREE.MeshBasicMaterial({
+          color: dim ? 0x86efac : 0xffffff,
+          opacity: dim ? 0.5 : 0.92,
+          transparent: true,
+        }),
+      )
+      handle.position.set(point.x, point.y, -2.2)
+      this.handleGroup.add(handle)
 
-  // --- Characters ---
+      if (!dim) {
+        const label = this.makeLabel(String(index + 1), "#ffffff", 40, 28)
+        label.position.set(point.x, point.y + 18, -2.1)
+        this.handleGroup.add(label)
+      }
+    })
+
+  },
 
   rebuildCharacters() {
     this.clearGroup(this.charGroup)
     this.charStates = {}
-    for (const ch of this.state.characters) {
-      const factory = CHAR_DEFS[ch.type]
+
+    for (const character of this.state.characters) {
+      const factory = CHAR_DEFS[character.type]
       if (!factory) continue
+
       const def = factory()
       const boneMap = {}
       const group = this.buildSkeleton(def.skeleton, boneMap)
-      group.scale.set(3, 3, 3)
+      const label = this.makeLabel(def.name, "#ffffff", 220, 54)
+
       this.charGroup.add(group)
-      const label = this.makeLabel(def.name)
       this.charGroup.add(label)
 
-      this.charStates[ch.id] = {
-        def, group, boneMap, label,
-        x: ch.x, y: ch.y,
-        target_x: null, target_y: null,
-        state: "idle", facing: "right",
+      this.charStates[character.id] = {
+        id: character.id,
+        def,
+        boneMap,
+        group,
+        label,
+        x: character.x,
+        y: character.y,
+        regionId: this.regionAt(character.x, character.y)?.id || this.state.regions[0]?.id || null,
+        targetX: null,
+        targetY: null,
+        targetRegionId: null,
+        state: "idle",
+        facing: Math.random() > 0.5 ? "right" : "left",
         animTime: Math.random() * 10,
-        wanderCooldown: Math.random() * 2
+        wanderCooldown: 0.8 + Math.random() * 2.4,
       }
     }
+
+    this.updatePreviewVisibility()
+  },
+
+  updatePreviewVisibility() {
+    this.charGroup.visible = this.previewEnabled
   },
 
   updateCharacters(dt) {
-    const planes = this.state.planes
-    for (const [id, c] of Object.entries(this.charStates)) {
-      // Wander
-      if (c.state === "idle") {
-        c.wanderCooldown -= dt
-        if (c.wanderCooldown <= 0 && planes.length > 0) {
-          const pl = planes[Math.floor(Math.random() * planes.length)]
-          const u = 0.1 + Math.random() * 0.8
-          const v = 0.1 + Math.random() * 0.8
-          const target = bilinearInterpolate(pl.corners, u, v)
-          c.target_x = target.x; c.target_y = target.y
-          c.state = "walking"
-          c.wanderCooldown = 2 + Math.random() * 4
+    if (!this.previewEnabled) return
+
+    const regions = this.state.regions
+    if (!regions.length) return
+    const blockedRegions = this.state.blockedRegions
+
+    for (const character of Object.values(this.charStates)) {
+      const currentPlacement = constrainPointToWalkableRegions(
+        regions,
+        blockedRegions,
+        character.x,
+        character.y,
+        character.regionId,
+      )
+      character.x = currentPlacement.x
+      character.y = currentPlacement.y
+      character.regionId = currentPlacement.region?.id || character.regionId
+
+      if (character.state === "idle") {
+        character.wanderCooldown -= dt
+        if (character.wanderCooldown <= 0) {
+          const target = randomWalkablePoint(regions, blockedRegions, character.regionId)
+
+          if (target) {
+            character.targetX = target.x
+            character.targetY = target.y
+            character.targetRegionId = target.region?.id || character.regionId
+            character.state = "walking"
+          }
+
+          character.wanderCooldown = 1.5 + Math.random() * 2.5
         }
       }
-      if (c.state === "walking" && c.target_x != null) {
-        const dx = c.target_x - c.x, dy = c.target_y - c.y
-        const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < 5) {
-          c.state = "idle"; c.target_x = null; c.target_y = null
-          c.wanderCooldown = 1 + Math.random() * 3
+
+      if (character.state === "walking" && character.targetX != null && character.targetY != null) {
+        const dx = character.targetX - character.x
+        const dy = character.targetY - character.y
+        const distance = Math.hypot(dx, dy)
+
+        if (distance < 5) {
+          character.state = "idle"
+          character.targetX = null
+          character.targetY = null
+          character.targetRegionId = null
         } else {
-          const speed = 60 * dt
-          c.x += (dx / dist) * speed; c.y += (dy / dist) * speed
-          c.facing = dx > 0 ? "right" : "left"
+          const speed = 90 * dt
+          const nextX = character.x + (dx / distance) * speed
+          const nextY = character.y + (dy / distance) * speed
+          const nextPlacement = constrainPointToWalkableRegions(
+            regions,
+            blockedRegions,
+            nextX,
+            nextY,
+            character.targetRegionId || character.regionId,
+          )
+          const hitBoundary = Math.hypot(nextPlacement.x - nextX, nextPlacement.y - nextY) > 0.75
+
+          character.x = nextPlacement.x
+          character.y = nextPlacement.y
+          character.regionId = nextPlacement.region?.id || character.regionId
+          character.facing = dx < 0 ? "left" : "right"
+
+          if (hitBoundary) {
+            character.state = "idle"
+            character.targetX = null
+            character.targetY = null
+            character.targetRegionId = null
+            character.wanderCooldown = 0.9 + Math.random() * 1.5
+          }
         }
       }
 
-      // Scale based on which plane they are in
-      let charScale = 3
-      for (const pl of planes) {
-        if (pointInQuad(pl.corners, c.x, c.y)) {
-          const uv = screenToUV(pl.corners, c.x, c.y)
-          const pixH = charPixelHeight(pl.corners, uv.v, pl.reference_scale || 60)
-          charScale = pixH / c.def.height
-          break
-        }
-      }
+      const region = this.regionAt(character.x, character.y) || currentPlacement.region || regions[0]
+      const scale = region ? regionScaleAtPoint(region, character.x, character.y) / character.def.height : 3.5
+      const depth = region ? regionDepthAtPoint(region, character.x, character.y) : 0
+      const point = this.s2t(character.x, character.y)
 
-      const t = this.s2t(c.x, c.y)
-      c.group.position.set(t.x, t.y, 0)
-      c.group.scale.set(charScale, charScale, charScale)
-      c.group.rotation.y = c.facing === "left" ? Math.PI : 0
-      c.label.position.set(t.x, t.y + charScale * 22, 1)
-      c.label.scale.set(charScale * 30, charScale * 8, 1)
-      this.applyBoneAnimation(c, dt)
+      character.group.position.set(point.x, point.y, depth * 0.8 + 0.4)
+      character.group.scale.set(scale, scale, scale)
+      character.group.rotation.y = character.facing === "left" ? Math.PI : 0
+
+      character.label.position.set(point.x, point.y + scale * 22, depth * 0.8 + 0.5)
+      character.label.scale.set(scale * 0.95, scale * 0.24, 1)
+
+      this.applyBoneAnimation(character, dt)
     }
   },
 
-  applyBoneAnimation(char, dt) {
-    const animName = char.state === "walking" ? "walk" : "idle"
-    const anim = char.def.animations[animName]
-    if (!anim) return
-    char.animTime += dt
-    const t = (char.animTime % anim.duration) / anim.duration
-    for (const [boneName, keyframes] of Object.entries(anim.keyframes)) {
-      const bone = char.boneMap[boneName]
+  applyBoneAnimation(character, dt) {
+    const animationName = character.state === "walking" ? "walk" : "idle"
+    const animation = character.def.animations[animationName]
+    if (!animation) return
+
+    character.animTime += dt
+    const t = (character.animTime % animation.duration) / animation.duration
+
+    for (const [boneName, keyframes] of Object.entries(animation.keyframes)) {
+      const bone = character.boneMap[boneName]
       if (!bone) continue
-      const r = this.lerp(keyframes, t)
-      if (!r) continue
-      if (r.type === "rotation") bone.rotation.set(bone.userData.baseRotation.x + r.value[0], bone.userData.baseRotation.y + r.value[1], bone.userData.baseRotation.z + r.value[2])
-      else if (r.type === "position") bone.position.set(r.value[0], r.value[1], r.value[2])
+
+      const next = this.interpolateKeyframes(keyframes, t)
+      if (!next) continue
+
+      if (next.type === "rotation") {
+        bone.rotation.set(
+          bone.userData.baseRotation.x + next.value[0],
+          bone.userData.baseRotation.y + next.value[1],
+          bone.userData.baseRotation.z + next.value[2],
+        )
+      } else {
+        bone.position.set(next.value[0], next.value[1], next.value[2])
+      }
     }
   },
 
-  lerp(kf, t) {
-    if (!kf || !kf.length) return null
-    let prev = kf[0], next = kf[kf.length - 1]
-    for (let i = 0; i < kf.length - 1; i++) { if (t >= kf[i].t && t <= kf[i+1].t) { prev = kf[i]; next = kf[i+1]; break } }
-    const range = next.t - prev.t, f = range > 0 ? (t - prev.t) / range : 0
-    if (prev.rotation) return { type: "rotation", value: [0,1,2].map(i => prev.rotation[i] + (next.rotation[i] - prev.rotation[i]) * f) }
-    if (prev.position) return { type: "position", value: [0,1,2].map(i => prev.position[i] + (next.position[i] - prev.position[i]) * f) }
+  interpolateKeyframes(keyframes, t) {
+    if (!keyframes?.length) return null
+
+    let previous = keyframes[0]
+    let next = keyframes[keyframes.length - 1]
+
+    for (let index = 0; index < keyframes.length - 1; index++) {
+      if (t >= keyframes[index].t && t <= keyframes[index + 1].t) {
+        previous = keyframes[index]
+        next = keyframes[index + 1]
+        break
+      }
+    }
+
+    const range = next.t - previous.t
+    const factor = range > 0 ? (t - previous.t) / range : 0
+
+    if (previous.rotation) {
+      return {
+        type: "rotation",
+        value: previous.rotation.map((value, index) => value + (next.rotation[index] - value) * factor),
+      }
+    }
+
+    if (previous.position) {
+      return {
+        type: "position",
+        value: previous.position.map((value, index) => value + (next.position[index] - value) * factor),
+      }
+    }
+
     return null
   },
 
   buildSkeleton(skeleton, boneMap) {
     const root = new THREE.Group()
-    for (const [name, bone] of Object.entries(skeleton)) root.add(this.buildBone(name, bone, boneMap))
+    for (const [name, bone] of Object.entries(skeleton)) {
+      root.add(this.buildBone(name, bone, boneMap))
+    }
     return root
   },
 
   buildBone(name, bone, boneMap) {
     const group = new THREE.Group()
     group.name = name
+
     if (bone.position) group.position.set(...bone.position)
     if (bone.rotation) group.rotation.set(...bone.rotation)
+
     group.userData.basePosition = group.position.clone()
     group.userData.baseRotation = group.rotation.clone()
+
     if (bone.shape) {
-      const geo = this.createGeo(bone.shape, bone.size)
-      group.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: bone.color || 0x888888, flatShading: true })))
+      const mesh = new THREE.Mesh(
+        this.createGeometry(bone.shape, bone.size),
+        new THREE.MeshLambertMaterial({
+          color: bone.color || 0x888888,
+          flatShading: true,
+        }),
+      )
+      group.add(mesh)
     }
+
     boneMap[name] = group
-    if (bone.children) { for (const [cn, cb] of Object.entries(bone.children)) group.add(this.buildBone(cn, cb, boneMap)) }
+
+    if (bone.children) {
+      for (const [childName, childBone] of Object.entries(bone.children)) {
+        group.add(this.buildBone(childName, childBone, boneMap))
+      }
+    }
+
     return group
   },
 
-  createGeo(shape, size) {
+  createGeometry(shape, size) {
     switch (shape) {
-      case "box": return new THREE.BoxGeometry(size[0], size[1], size[2] || size[0])
-      case "sphere": return new THREE.SphereGeometry(size[0], 6, 4)
-      case "cylinder": return new THREE.CylinderGeometry(size[0], size[1], size[2], 6)
-      default: return new THREE.BoxGeometry(1, 1, 1)
+      case "box":
+        return new THREE.BoxGeometry(size[0], size[1], size[2] || size[0])
+      case "sphere":
+        return new THREE.SphereGeometry(size[0], 6, 4)
+      case "cylinder":
+        return new THREE.CylinderGeometry(size[0], size[1], size[2], 6)
+      case "cone":
+        return new THREE.ConeGeometry(size[0], size[1], 6)
+      default:
+        return new THREE.BoxGeometry(1, 1, 1)
     }
   },
 
-  makeLabel(text) {
+  makeLabel(text, fill = "#ffffff", width = 180, height = 44) {
     const canvas = document.createElement("canvas")
-    canvas.width = 256; canvas.height = 64
+    canvas.width = width
+    canvas.height = height
+
     const ctx = canvas.getContext("2d")
-    ctx.font = "bold 28px monospace"; ctx.textAlign = "center"
-    ctx.strokeStyle = "#000"; ctx.lineWidth = 4; ctx.strokeText(text, 128, 40)
-    ctx.fillStyle = "#fff"; ctx.fillText(text, 128, 40)
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: new THREE.CanvasTexture(canvas), transparent: true
-    }))
-    sprite.scale.set(80, 20, 1)
+    ctx.font = "600 22px ui-monospace, SFMono-Regular, monospace"
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)"
+    ctx.lineWidth = 6
+    ctx.strokeText(text, width / 2, height / 2)
+    ctx.fillStyle = fill
+    ctx.fillText(text, width / 2, height / 2)
+
+    const texture = new THREE.CanvasTexture(canvas)
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true })
+    const sprite = new THREE.Sprite(material)
+    sprite.scale.set(width * 0.36, height * 0.36, 1)
     return sprite
+  },
+
+  updateCursor() {
+    if (this.interaction) {
+      this.renderer.domElement.style.cursor = this.interaction.type === "pan" ? "grabbing" : "grabbing"
+      return
+    }
+
+    if (this.hover.height) {
+      this.renderer.domElement.style.cursor = "ns-resize"
+      return
+    }
+
+    if (this.hover.vertex) {
+      this.renderer.domElement.style.cursor = "grab"
+      return
+    }
+
+    if (this.hover.edge) {
+      this.renderer.domElement.style.cursor = "copy"
+      return
+    }
+
+    if (this.hover.regionId) {
+      this.renderer.domElement.style.cursor = "pointer"
+      return
+    }
+
+    if (this.isSpacePressed) {
+      this.renderer.domElement.style.cursor = "grab"
+      return
+    }
+
+    this.renderer.domElement.style.cursor = "crosshair"
+  },
+
+  disposeObject(object) {
+    object.traverse((child) => {
+      if (child.geometry) child.geometry.dispose()
+
+      if (child.material) {
+        const materials = Array.isArray(child.material) ? child.material : [child.material]
+        for (const material of materials) {
+          for (const value of Object.values(material)) {
+            if (value?.isTexture) value.dispose()
+          }
+          material.dispose()
+        }
+      }
+    })
+  },
+
+  clearGroup(group) {
+    while (group.children.length > 0) {
+      const child = group.children[0]
+      group.remove(child)
+      this.disposeObject(child)
+    }
+  },
+
+  escapeHtml(value) {
+    return value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;")
   },
 
   animate() {
@@ -747,7 +1724,7 @@ const SceneEditor = {
     this.updateCharacters(dt)
     this.renderer.render(this.scene, this.camera)
     this.rafId = requestAnimationFrame(() => this.animate())
-  }
+  },
 }
 
 export default SceneEditor

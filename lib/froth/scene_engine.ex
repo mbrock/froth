@@ -42,27 +42,35 @@ defmodule Froth.SceneEngine do
 
     model = Keyword.get(opts, :model, "black-forest-labs/flux-2-pro")
 
-    {:ok, pred} = Froth.Replicate.start(String.trim(prompt),
-      model: model,
-      aspect_ratio: "3:2",
-      resolution: "4 MP",
-      output_format: "png",
-      output_quality: 100,
-      safety_tolerance: 5
-    )
+    {:ok, pred} =
+      Froth.Replicate.start(String.trim(prompt),
+        model: model,
+        aspect_ratio: "3:2",
+        resolution: "4 MP",
+        output_format: "png",
+        output_quality: 100,
+        safety_tolerance: 5
+      )
 
     {:ok, done} = Froth.Replicate.await(pred.id)
 
-    url = cond do
-      is_list(done.output) and length(done.output) > 0 -> hd(done.output)
-      is_binary(done.output) -> done.output
-      true -> nil
-    end
+    url =
+      cond do
+        is_list(done.output) and length(done.output) > 0 -> hd(done.output)
+        is_binary(done.output) -> done.output
+        true -> nil
+      end
 
     if url do
       File.mkdir_p!(@output_dir)
       ts = DateTime.utc_now() |> DateTime.to_unix()
-      slug = description |> String.slice(0, 30) |> String.replace(~r/[^a-zA-Z0-9]+/, "-") |> String.trim("-")
+
+      slug =
+        description
+        |> String.slice(0, 30)
+        |> String.replace(~r/[^a-zA-Z0-9]+/, "-")
+        |> String.trim("-")
+
       path = Path.join(@output_dir, "bg-#{ts}-#{slug}.png")
 
       {:ok, %{body: body}} = Req.get(url, receive_timeout: 60_000)
@@ -100,10 +108,11 @@ defmodule Froth.SceneEngine do
 
     case Froth.Analyzer.API.gemini(model, contents, max_output_tokens: 16384) do
       {:ok, text} ->
-        cleaned = text
-        |> String.replace(~r/^```json\n?/, "")
-        |> String.replace(~r/\n?```$/, "")
-        |> String.trim()
+        cleaned =
+          text
+          |> String.replace(~r/^```json\n?/, "")
+          |> String.replace(~r/\n?```$/, "")
+          |> String.trim()
 
         meta_path = String.replace(image_path, ~r/\.png$/, "-walkmap.json")
         File.write!(meta_path, cleaned)
@@ -112,6 +121,7 @@ defmodule Froth.SceneEngine do
           {:ok, walkmap} ->
             Logger.info("SceneEngine walkmap: #{map_size(walkmap)} keys, saved to #{meta_path}")
             {:ok, %{walkmap: walkmap, meta_path: meta_path}}
+
           {:error, _} ->
             {:error, :json_parse_failed}
         end
@@ -123,13 +133,19 @@ defmodule Froth.SceneEngine do
 
   @doc "Generate character sprites via RetroDiffusion Oban jobs."
   def generate_characters(character_descriptions) when is_list(character_descriptions) do
-    jobs = for {prompt, name} <- character_descriptions do
-      {:ok, job} = Froth.RetroDiffusion.enqueue(
-        prompt,
-        style: :default, model: :pro,
-        width: 96, height: 96)
-      {name, job.id}
-    end
+    jobs =
+      for {prompt, name} <- character_descriptions do
+        {:ok, job} =
+          Froth.RetroDiffusion.enqueue(
+            prompt,
+            style: :default,
+            model: :pro,
+            width: 96,
+            height: 96
+          )
+
+        {name, job.id}
+      end
 
     {:ok, jobs}
   end

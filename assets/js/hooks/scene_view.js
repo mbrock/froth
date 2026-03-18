@@ -4,6 +4,15 @@
 
 import * as THREE from "@/vendor/three.module.min.js"
 import { createCloud, createLaraCroft } from "@/js/lib/primitive_characters.js"
+import {
+  blockedRegionsFromState,
+  constrainPointToWalkableRegions,
+  randomWalkablePoint,
+  regionAtPoint,
+  regionDepthAtPoint,
+  regionScaleAtPoint,
+  sceneRegionsFromState,
+} from "@/js/lib/scene_regions.js"
 
 const SceneView = {
   mounted() {
@@ -19,6 +28,8 @@ const SceneView = {
       this.sceneWidth = this.walkmap.dimensions.width
       this.sceneHeight = this.walkmap.dimensions.height
     }
+    this.regions = sceneRegionsFromState(this.walkmap || {})
+    this.blockedRegions = blockedRegionsFromState(this.walkmap || {})
 
     // Renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: false })
@@ -65,7 +76,6 @@ const SceneView = {
 
     // Characters
     this.characters = []
-    this.walkablePolygons = (this.walkmap && this.walkmap.walk_polygons) || []
 
     const charDefs = [createCloud(), createLaraCroft()]
     const starts = [
@@ -75,9 +85,16 @@ const SceneView = {
 
     for (let i = 0; i < charDefs.length; i++) {
       const def = charDefs[i]
+      const spawn =
+        randomWalkablePoint(this.regions, this.blockedRegions) || {
+          x: starts[i].x,
+          y: starts[i].y,
+          region: regionAtPoint(this.regions, starts[i].x, starts[i].y, this.blockedRegions),
+        }
       const boneMap = {}
       const group = this.buildSkeleton(def.skeleton, boneMap)
-      const scale = 50 / def.height
+      const spawnRegion = spawn.region || this.regions[0] || null
+      const scale = spawnRegion ? regionScaleAtPoint(spawnRegion, spawn.x, spawn.y) / def.height : 50 / def.height
       group.scale.set(scale, scale, scale)
       this.scene.add(group)
 
@@ -87,10 +104,12 @@ const SceneView = {
 
       this.characters.push({
         def, group, boneMap, label,
-        x: starts[i].x,
-        y: starts[i].y,
+        x: spawn.x,
+        y: spawn.y,
+        regionId: spawnRegion?.id || null,
         target_x: null,
         target_y: null,
+        target_region_id: null,
         state: "idle",
         facing: Math.random() > 0.5 ? "right" : "left",
         animTime: Math.random() * 10,
@@ -148,24 +167,22 @@ const SceneView = {
   buildWalkmapOverlay() {
     if (!this.walkmap) return
 
-    // Walk polygons — green lines, faint green fill
-    for (const wp of (this.walkmap.walk_polygons || [])) {
-      const pts3d = wp.vertices.map(v => {
-        const t = this.s2t(v[0], v[1])
+    // Walk regions — green lines, faint green fill
+    for (const region of this.regions) {
+      const pts3d = region.polygon.map((vertex) => {
+        const t = this.s2t(vertex[0], vertex[1])
         return new THREE.Vector3(t.x, t.y, -5)
       })
       if (pts3d.length > 0) pts3d.push(pts3d[0].clone())
 
-      // Line
       const lineGeo = new THREE.BufferGeometry().setFromPoints(pts3d)
       const lineMat = new THREE.LineBasicMaterial({ color: 0x00ff66, transparent: true, opacity: 0.35 })
       this.scene.add(new THREE.Line(lineGeo, lineMat))
 
-      // Filled polygon (using ShapeGeometry)
-      if (wp.vertices.length >= 3) {
+      if (region.polygon.length >= 3) {
         const shape = new THREE.Shape()
-        for (let i = 0; i < wp.vertices.length; i++) {
-          const t = this.s2t(wp.vertices[i][0], wp.vertices[i][1])
+        for (let i = 0; i < region.polygon.length; i++) {
+          const t = this.s2t(region.polygon[i][0], region.polygon[i][1])
           if (i === 0) shape.moveTo(t.x, t.y)
           else shape.lineTo(t.x, t.y)
         }
@@ -180,7 +197,7 @@ const SceneView = {
     }
 
     // Blocked regions — red lines
-    for (const br of (this.walkmap.blocked_regions || [])) {
+    for (const br of this.blockedRegions) {
       const pts3d = br.vertices.map(v => {
         const t = this.s2t(v[0], v[1])
         return new THREE.Vector3(t.x, t.y, -4)
@@ -236,50 +253,31 @@ const SceneView = {
     return sprite
   },
 
-  randomPointInPolygon(vertices) {
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-    for (const [x, y] of vertices) {
-      minX = Math.min(minX, x); maxX = Math.max(maxX, x)
-      minY = Math.min(minY, y); maxY = Math.max(maxY, y)
-    }
-    for (let i = 0; i < 100; i++) {
-      const x = minX + Math.random() * (maxX - minX)
-      const y = minY + Math.random() * (maxY - minY)
-      if (this.pointInPolygon(x, y, vertices)) return { x, y }
-    }
-    return {
-      x: vertices.reduce((s, v) => s + v[0], 0) / vertices.length,
-      y: vertices.reduce((s, v) => s + v[1], 0) / vertices.length
-    }
-  },
-
-  pointInPolygon(x, y, vertices) {
-    let inside = false
-    for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
-      const xi = vertices[i][0], yi = vertices[i][1]
-      const xj = vertices[j][0], yj = vertices[j][1]
-      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
-        inside = !inside
-      }
-    }
-    return inside
-  },
-
   pickWanderTarget() {
-    if (this.walkablePolygons.length === 0) return null
-    const poly = this.walkablePolygons[Math.floor(Math.random() * this.walkablePolygons.length)]
-    return this.randomPointInPolygon(poly.vertices)
+    return randomWalkablePoint(this.regions, this.blockedRegions)
   },
 
   updateCharacters(dt) {
     for (const c of this.characters) {
+      const currentPlacement = constrainPointToWalkableRegions(
+        this.regions,
+        this.blockedRegions,
+        c.x,
+        c.y,
+        c.regionId,
+      )
+      c.x = currentPlacement.x
+      c.y = currentPlacement.y
+      c.regionId = currentPlacement.region?.id || c.regionId
+
       if (c.state === "idle") {
         c.wanderCooldown -= dt
         if (c.wanderCooldown <= 0) {
-          const target = this.pickWanderTarget()
+          const target = randomWalkablePoint(this.regions, this.blockedRegions, c.regionId)
           if (target) {
             c.target_x = target.x
             c.target_y = target.y
+            c.target_region_id = target.region?.id || c.regionId
             c.state = "walking"
           }
           c.wanderCooldown = 1 + Math.random() * 4
@@ -294,22 +292,48 @@ const SceneView = {
           c.state = "idle"
           c.target_x = null
           c.target_y = null
+          c.target_region_id = null
           c.wanderCooldown = 1.5 + Math.random() * 3
         } else {
           const speed = 60 * dt
-          c.x += (dx / dist) * speed
-          c.y += (dy / dist) * speed
+          const nextX = c.x + (dx / dist) * speed
+          const nextY = c.y + (dy / dist) * speed
+          const nextPlacement = constrainPointToWalkableRegions(
+            this.regions,
+            this.blockedRegions,
+            nextX,
+            nextY,
+            c.target_region_id || c.regionId,
+          )
+          const hitBoundary = Math.hypot(nextPlacement.x - nextX, nextPlacement.y - nextY) > 0.75
+
+          c.x = nextPlacement.x
+          c.y = nextPlacement.y
+          c.regionId = nextPlacement.region?.id || c.regionId
           c.facing = dx > 0 ? "right" : "left"
+
+          if (hitBoundary) {
+            c.state = "idle"
+            c.target_x = null
+            c.target_y = null
+            c.target_region_id = null
+            c.wanderCooldown = 0.8 + Math.random() * 1.6
+          }
         }
       }
 
+      const region = regionAtPoint(this.regions, c.x, c.y, this.blockedRegions) || currentPlacement.region || this.regions[0]
+      const scale = region ? regionScaleAtPoint(region, c.x, c.y) / c.def.height : 50 / c.def.height
+      const depth = region ? regionDepthAtPoint(region, c.x, c.y) : 0
       // Position in Three.js coords
       const t = this.s2t(c.x, c.y)
-      c.group.position.set(t.x, t.y, 0)
+      c.group.position.set(t.x, t.y, depth * 0.8 + 0.4)
+      c.group.scale.set(scale, scale, scale)
       c.group.rotation.y = c.facing === "left" ? Math.PI : 0
 
       // Label above character
-      c.label.position.set(t.x, t.y + 55, 1)
+      c.label.position.set(t.x, t.y + scale * 22, depth * 0.8 + 0.5)
+      c.label.scale.set(scale * 0.95, scale * 0.24, 1)
 
       this.applyAnimation(c, dt)
     }

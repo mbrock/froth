@@ -143,7 +143,10 @@ defmodule Froth.Dataset do
     dataset = do_load_directory(@rdf_dir, dataset)
 
     total = RDF.Dataset.statement_count(dataset)
-    Logger.info("[Dataset] Total: #{total} triples across #{length(RDF.Dataset.graph_names(dataset))} named graphs")
+
+    Logger.info(
+      "[Dataset] Total: #{total} triples across #{length(RDF.Dataset.graph_names(dataset))} named graphs"
+    )
 
     {:noreply, %{state | dataset: dataset}}
   end
@@ -230,8 +233,13 @@ defmodule Froth.Dataset do
     graphs = RDF.Dataset.graph_names(dataset)
 
     {:reply,
-     {:ok, %{files: length(graphs), triples: after_count, new_triples: new_triples, elapsed_ms: elapsed}},
-     %{state | dataset: dataset}}
+     {:ok,
+      %{
+        files: length(graphs),
+        triples: after_count,
+        new_triples: new_triples,
+        elapsed_ms: elapsed
+      }}, %{state | dataset: dataset}}
   end
 
   def handle_call({:query, pattern}, _from, %{dataset: ds} = state) do

@@ -23,15 +23,20 @@ defmodule Froth.RetroDiffusion.Worker do
     height = args["height"] || 128
     num_images = args["num_images"] || 1
 
-    Logger.info("RetroDiffusion generating: #{inspect(prompt)} (#{model}/#{style} #{width}x#{height})")
+    Logger.info(
+      "RetroDiffusion generating: #{inspect(prompt)} (#{model}/#{style} #{width}x#{height})"
+    )
 
     reference_images = args["reference_images"] || []
 
     case Froth.RetroDiffusion.generate(prompt,
-           style: style, model: model,
-           width: width, height: height,
+           style: style,
+           model: model,
+           width: width,
+           height: height,
            num_images: num_images,
-           reference_images: reference_images) do
+           reference_images: reference_images
+         ) do
       {:ok, result} ->
         Logger.info("RetroDiffusion done: cost=$#{result.cost}, remaining=$#{result.remaining}")
 
@@ -49,7 +54,10 @@ defmodule Froth.RetroDiffusion.Worker do
 
   defp send_to_chat(args, result) do
     chat_id = args["chat_id"]
-    caption = args["caption"] || "#{args["model"]}/#{args["style"]}: '#{args["prompt"]}' — $#{result.cost}"
+
+    caption =
+      args["caption"] ||
+        "#{args["model"]}/#{args["style"]}: '#{args["prompt"]}' — $#{result.cost}"
 
     Enum.each(result.image_paths, fn path ->
       Froth.Telegram.send("charlie", %{

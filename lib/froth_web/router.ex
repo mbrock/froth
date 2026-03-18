@@ -74,6 +74,17 @@ defmodule FrothWeb.Router do
     get "/news", NewsController, :show
   end
 
+  # REST API — HATEOAS-compliant podcast generation
+  # "A REST API should be entered with no prior knowledge
+  # beyond the initial URI." — Roy Fielding
+  scope "/api", FrothWeb do
+    pipe_through :api
+
+    get "/", PodcastController, :root
+    get "/voices", PodcastController, :voices
+    resources "/podcasts", PodcastController, only: [:index, :show, :create]
+  end
+
   # Enable LiveDashboard in development
   if Application.compile_env(:froth, :dev_routes) do
     # If you want to use the LiveDashboard in production, you should put

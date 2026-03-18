@@ -66,7 +66,8 @@ defmodule FrothWeb.JobsLive do
     page = socket.assigns.page
     page_size = socket.assigns.page_size
 
-    q = from(j in Oban.Job, order_by: [desc: j.id], limit: ^page_size, offset: ^(page * page_size))
+    q =
+      from(j in Oban.Job, order_by: [desc: j.id], limit: ^page_size, offset: ^(page * page_size))
 
     q = if state != "all", do: where(q, [j], j.state == ^state), else: q
     q = if queue != "all", do: where(q, [j], j.queue == ^queue), else: q
@@ -78,9 +79,10 @@ defmodule FrothWeb.JobsLive do
   defp load_stats(socket) do
     stats =
       Froth.Repo.all(
-        from j in Oban.Job,
+        from(j in Oban.Job,
           group_by: [j.state, j.queue],
           select: %{state: j.state, queue: j.queue, count: count(j.id)}
+        )
       )
 
     queues =
@@ -108,27 +110,39 @@ defmodule FrothWeb.JobsLive do
       <h1 style="font-size: 1.5rem; margin-bottom: 1rem;">Oban Jobs</h1>
 
       <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap;">
-        <button phx-click="filter-state" phx-value-state="all"
-          style={"padding: 0.25rem 0.75rem; border: 1px solid #555; background: #{if @filter_state == "all", do: "#444", else: "#222"}; color: #eee; cursor: pointer;"}>
-          all (<%= Map.values(@state_counts) |> Enum.sum() %>)
+        <button
+          phx-click="filter-state"
+          phx-value-state="all"
+          style={"padding: 0.25rem 0.75rem; border: 1px solid #555; background: #{if @filter_state == "all", do: "#444", else: "#222"}; color: #eee; cursor: pointer;"}
+        >
+          all ({Map.values(@state_counts) |> Enum.sum()})
         </button>
         <%= for state <- ~w(available scheduled executing completed retryable discarded cancelled) do %>
-          <button phx-click="filter-state" phx-value-state={state}
-            style={"padding: 0.25rem 0.75rem; border: 1px solid #555; background: #{if @filter_state == state, do: "#444", else: "#222"}; color: #{state_color(state)}; cursor: pointer;"}>
-            <%= state %> (<%= Map.get(@state_counts, state, 0) %>)
+          <button
+            phx-click="filter-state"
+            phx-value-state={state}
+            style={"padding: 0.25rem 0.75rem; border: 1px solid #555; background: #{if @filter_state == state, do: "#444", else: "#222"}; color: #{state_color(state)}; cursor: pointer;"}
+          >
+            {state} ({Map.get(@state_counts, state, 0)})
           </button>
         <% end %>
       </div>
 
       <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap;">
-        <button phx-click="filter-queue" phx-value-queue="all"
-          style={"padding: 0.25rem 0.75rem; border: 1px solid #555; background: #{if @filter_queue == "all", do: "#444", else: "#222"}; color: #eee; cursor: pointer;"}>
+        <button
+          phx-click="filter-queue"
+          phx-value-queue="all"
+          style={"padding: 0.25rem 0.75rem; border: 1px solid #555; background: #{if @filter_queue == "all", do: "#444", else: "#222"}; color: #eee; cursor: pointer;"}
+        >
           all queues
         </button>
         <%= for q <- @queues do %>
-          <button phx-click="filter-queue" phx-value-queue={q}
-            style={"padding: 0.25rem 0.75rem; border: 1px solid #555; background: #{if @filter_queue == q, do: "#444", else: "#222"}; color: #eee; cursor: pointer;"}>
-            <%= q %>
+          <button
+            phx-click="filter-queue"
+            phx-value-queue={q}
+            style={"padding: 0.25rem 0.75rem; border: 1px solid #555; background: #{if @filter_queue == q, do: "#444", else: "#222"}; color: #eee; cursor: pointer;"}
+          >
+            {q}
           </button>
         <% end %>
       </div>
@@ -149,32 +163,40 @@ defmodule FrothWeb.JobsLive do
         <tbody>
           <%= for job <- @jobs do %>
             <tr style="border-bottom: 1px solid #333;">
-              <td style="padding: 0.4rem;"><%= job.id %></td>
+              <td style="padding: 0.4rem;">{job.id}</td>
               <td style={"padding: 0.4rem; color: #{state_color(to_string(job.state))};"}>
-                <%= job.state %>
+                {job.state}
               </td>
-              <td style="padding: 0.4rem;"><%= job.queue %></td>
-              <td style="padding: 0.4rem;"><%= short_worker(job.worker) %></td>
+              <td style="padding: 0.4rem;">{job.queue}</td>
+              <td style="padding: 0.4rem;">{short_worker(job.worker)}</td>
               <td style="padding: 0.4rem; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                <span title={Jason.encode!(job.args)}><%= summarize_args(job.args) %></span>
+                <span title={Jason.encode!(job.args)}>{summarize_args(job.args)}</span>
               </td>
-              <td style="padding: 0.4rem;"><%= job.attempt %>/<%= job.max_attempts %></td>
-              <td style="padding: 0.4rem;"><%= format_time(job.inserted_at) %></td>
+              <td style="padding: 0.4rem;">{job.attempt}/{job.max_attempts}</td>
+              <td style="padding: 0.4rem;">{format_time(job.inserted_at)}</td>
               <td style="padding: 0.4rem; display: flex; gap: 0.25rem;">
                 <%= if to_string(job.state) in ~w(retryable discarded) do %>
-                  <button phx-click="retry-job" phx-value-id={job.id}
-                    style="padding: 0.15rem 0.5rem; background: #353; border: 1px solid #5a5; color: #8f8; cursor: pointer; font-size: 0.7rem;">
+                  <button
+                    phx-click="retry-job"
+                    phx-value-id={job.id}
+                    style="padding: 0.15rem 0.5rem; background: #353; border: 1px solid #5a5; color: #8f8; cursor: pointer; font-size: 0.7rem;"
+                  >
                     retry
                   </button>
                 <% end %>
                 <%= if to_string(job.state) in ~w(available scheduled executing retryable) do %>
-                  <button phx-click="cancel-job" phx-value-id={job.id}
-                    style="padding: 0.15rem 0.5rem; background: #533; border: 1px solid #a55; color: #f88; cursor: pointer; font-size: 0.7rem;">
+                  <button
+                    phx-click="cancel-job"
+                    phx-value-id={job.id}
+                    style="padding: 0.15rem 0.5rem; background: #533; border: 1px solid #a55; color: #f88; cursor: pointer; font-size: 0.7rem;"
+                  >
                     cancel
                   </button>
                 <% end %>
                 <%= if job.errors != [] do %>
-                  <span title={Enum.join(job.errors, "\n\n")} style="color: #f88; cursor: help;">⚠</span>
+                  <span title={Enum.join(job.errors, "\n\n")} style="color: #f88; cursor: help;">
+                    ⚠
+                  </span>
                 <% end %>
               </td>
             </tr>
@@ -184,11 +206,21 @@ defmodule FrothWeb.JobsLive do
 
       <div style="display: flex; gap: 1rem; margin-top: 1rem; align-items: center;">
         <%= if @page > 0 do %>
-          <button phx-click="prev-page" style="padding: 0.25rem 0.75rem; background: #333; border: 1px solid #555; color: #eee; cursor: pointer;">← prev</button>
+          <button
+            phx-click="prev-page"
+            style="padding: 0.25rem 0.75rem; background: #333; border: 1px solid #555; color: #eee; cursor: pointer;"
+          >
+            ← prev
+          </button>
         <% end %>
-        <span>page <%= @page + 1 %></span>
+        <span>page {@page + 1}</span>
         <%= if length(@jobs) == @page_size do %>
-          <button phx-click="next-page" style="padding: 0.25rem 0.75rem; background: #333; border: 1px solid #555; color: #eee; cursor: pointer;">next →</button>
+          <button
+            phx-click="next-page"
+            style="padding: 0.25rem 0.75rem; background: #333; border: 1px solid #555; color: #eee; cursor: pointer;"
+          >
+            next →
+          </button>
         <% end %>
       </div>
     </div>
@@ -220,6 +252,7 @@ defmodule FrothWeb.JobsLive do
   defp summarize_args(args), do: inspect(args) |> String.slice(0, 60)
 
   defp format_time(nil), do: "—"
+
   defp format_time(dt) do
     Calendar.strftime(dt, "%H:%M:%S")
   end

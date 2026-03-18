@@ -10,6 +10,15 @@
 
 import * as THREE from "@/vendor/three.module.min.js"
 import { createCloud, createLaraCroft } from "@/js/lib/primitive_characters.js"
+import {
+  blockedRegionsFromState,
+  constrainPointToWalkableRegions,
+  randomWalkablePoint,
+  regionAtPoint,
+  regionDepthAtPoint,
+  regionScaleAtPoint,
+  sceneRegionsFromState,
+} from "@/js/lib/scene_regions.js"
 
 const SceneEngine3D = {
   mounted() {
@@ -26,6 +35,8 @@ const SceneEngine3D = {
       this.sceneWidth = this.walkmap.dimensions.width
       this.sceneHeight = this.walkmap.dimensions.height
     }
+    this.regions = sceneRegionsFromState(this.walkmap || {})
+    this.blockedRegions = blockedRegionsFromState(this.walkmap || {})
 
     // Three.js setup
     this.renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true })
@@ -71,18 +82,25 @@ const SceneEngine3D = {
 
     for (let i = 0; i < charDefs.length; i++) {
       const def = charDefs[i]
-      const spawn = spawns[i % spawns.length]
+      const fallbackSpawn = spawns[i % spawns.length]
+      const spawn =
+        randomWalkablePoint(this.regions, this.blockedRegions) || {
+          x: fallbackSpawn.x,
+          y: fallbackSpawn.y,
+          region: regionAtPoint(this.regions, fallbackSpawn.x, fallbackSpawn.y, this.blockedRegions),
+        }
       const boneMap = {}
       const group = this.buildSkeleton(def.skeleton, boneMap)
 
-      // Scale: character height ~17 units, we want them about 80px tall in scene space
-      const scale = 80 / def.height
+      const spawnRegion = spawn.region || this.regions[0] || null
+      const scale = spawnRegion ? regionScaleAtPoint(spawnRegion, spawn.x, spawn.y) / def.height : 80 / def.height
       group.scale.set(scale, scale, scale)
 
       // Position in scene space — Y is inverted (screen coords: Y down, Three.js: Y up)
       const sx = spawn.x - this.sceneWidth / 2
-      const sy = -(spawn.y - this.sceneHeight / 2) + i * 100
-      group.position.set(sx, sy, 10) // z=10 to float above background
+      const sy = -(spawn.y - this.sceneHeight / 2)
+      const depth = spawnRegion ? regionDepthAtPoint(spawnRegion, spawn.x, spawn.y) : 0
+      group.position.set(sx, sy, depth * 0.8 + 0.4)
 
       this.scene.add(group)
 
@@ -90,12 +108,14 @@ const SceneEngine3D = {
         def,
         group,
         boneMap,
-        x: spawn.x + i * 150,
+        x: spawn.x,
         y: spawn.y,
+        regionId: spawnRegion?.id || null,
         target_x: null,
         target_y: null,
+        target_region_id: null,
         state: "idle",
-        facing: spawn.facing || "right",
+        facing: fallbackSpawn.facing || "right",
         animTime: Math.random() * 10,
         id: `char_${i}`
       }
@@ -124,6 +144,7 @@ const SceneEngine3D = {
       if (char) {
         char.target_x = x
         char.target_y = y
+        char.target_region_id = regionAtPoint(this.regions, x, y, this.blockedRegions)?.id || char.regionId
         char.state = "walking"
       }
     })
@@ -144,10 +165,17 @@ const SceneEngine3D = {
       const serverChars = JSON.parse(this.el.dataset.characters)
       for (const sc of serverChars) {
         const c = this.characters.find(ch => ch.id === sc.id)
-        if (c && sc.target_x != null) {
-          c.target_x = sc.target_x
-          c.target_y = sc.target_y
-          c.state = "walking"
+        if (c) {
+          c.x = sc.x ?? c.x
+          c.y = sc.y ?? c.y
+          c.regionId = regionAtPoint(this.regions, c.x, c.y, this.blockedRegions)?.id || c.regionId
+
+          if (sc.target_x != null) {
+            c.target_x = sc.target_x
+            c.target_y = sc.target_y
+            c.target_region_id = regionAtPoint(this.regions, sc.target_x, sc.target_y, this.blockedRegions)?.id || c.regionId
+            c.state = "walking"
+          }
         }
       }
     } catch(e) {}
@@ -300,6 +328,17 @@ const SceneEngine3D = {
 
   updateCharacters(dt) {
     for (const c of this.characters) {
+      const currentPlacement = constrainPointToWalkableRegions(
+        this.regions,
+        this.blockedRegions,
+        c.x,
+        c.y,
+        c.regionId,
+      )
+      c.x = currentPlacement.x
+      c.y = currentPlacement.y
+      c.regionId = currentPlacement.region?.id || c.regionId
+
       // Movement
       if (c.state === "walking" && c.target_x != null && c.target_y != null) {
         const dx = c.target_x - c.x
@@ -310,19 +349,43 @@ const SceneEngine3D = {
           c.state = "idle"
           c.target_x = null
           c.target_y = null
+          c.target_region_id = null
           this.pushEvent("char-arrived", { id: c.id })
         } else {
           const speed = 120 * dt // pixels per second
-          c.x += (dx / dist) * speed
-          c.y += (dy / dist) * speed
+          const nextX = c.x + (dx / dist) * speed
+          const nextY = c.y + (dy / dist) * speed
+          const nextPlacement = constrainPointToWalkableRegions(
+            this.regions,
+            this.blockedRegions,
+            nextX,
+            nextY,
+            c.target_region_id || c.regionId,
+          )
+          const hitBoundary = Math.hypot(nextPlacement.x - nextX, nextPlacement.y - nextY) > 0.75
+
+          c.x = nextPlacement.x
+          c.y = nextPlacement.y
+          c.regionId = nextPlacement.region?.id || c.regionId
           c.facing = dx > 0 ? "right" : "left"
+
+          if (hitBoundary) {
+            c.state = "idle"
+            c.target_x = null
+            c.target_y = null
+            c.target_region_id = null
+          }
         }
       }
 
+      const region = regionAtPoint(this.regions, c.x, c.y, this.blockedRegions) || currentPlacement.region || this.regions[0]
+      const scale = region ? regionScaleAtPoint(region, c.x, c.y) / c.def.height : 80 / c.def.height
+      const depth = region ? regionDepthAtPoint(region, c.x, c.y) : 0
       // Update Three.js position (scene coords -> Three.js coords)
       const sx = c.x - this.sceneWidth / 2
       const sy = -(c.y - this.sceneHeight / 2)
-      c.group.position.set(sx, sy, 10)
+      c.group.position.set(sx, sy, depth * 0.8 + 0.4)
+      c.group.scale.set(scale, scale, scale)
 
       // Face direction
       c.group.rotation.y = c.facing === "left" ? Math.PI : 0
@@ -359,9 +422,9 @@ const SceneEngine3D = {
 
     if (!this.showWalkmap || !this.walkmap) return
 
-    // Walk polygons — green wireframe
-    for (const w of (this.walkmap.walk_polygons || [])) {
-      const points = w.vertices.map(v =>
+    // Walk regions — green wireframe
+    for (const region of this.regions) {
+      const points = region.polygon.map(v =>
         new THREE.Vector3(v[0] - this.sceneWidth/2, -(v[1] - this.sceneHeight/2), 5)
       )
       if (points.length > 0) points.push(points[0].clone()) // close loop
@@ -373,7 +436,7 @@ const SceneEngine3D = {
     }
 
     // Blocked — red wireframe
-    for (const b of (this.walkmap.blocked_regions || [])) {
+    for (const b of this.blockedRegions) {
       const points = b.vertices.map(v =>
         new THREE.Vector3(v[0] - this.sceneWidth/2, -(v[1] - this.sceneHeight/2), 5)
       )

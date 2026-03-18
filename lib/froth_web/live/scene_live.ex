@@ -3,21 +3,27 @@ defmodule FrothWeb.SceneLive do
 
   @impl true
   def mount(%{"id" => scene_id}, _session, socket) do
-    {:ok, assign(socket, :scene_id, scene_id)}
+    {:ok, socket |> assign(:scene_id, scene_id) |> assign_new(:current_scope, fn -> nil end)}
   end
 
   def mount(_params, _session, socket) do
-    {:ok, assign(socket, :scene_id, "default")}
+    {:ok, socket |> assign(:scene_id, "default") |> assign_new(:current_scope, fn -> nil end)}
   end
 
   @impl true
   def render(assigns) do
     ~H"""
-    <div id="scene-editor" phx-hook="SceneEditor"
-         data-scene-id={@scene_id}
-         data-bg-url="/froth/assets/scene_bg.png"
-         style="width: 100vw; height: 100vh; overflow: hidden; background: #111;">
-    </div>
+    <Layouts.app flash={@flash} current_scope={@current_scope} variant={:plain}>
+      <div
+        id="scene-editor"
+        phx-hook="SceneEditor"
+        phx-update="ignore"
+        data-scene-id={@scene_id}
+        data-bg-url="/froth/assets/scene_bg.png"
+        class="min-h-screen bg-stone-950"
+      >
+      </div>
+    </Layouts.app>
     """
   end
 end

@@ -1,6 +1,14 @@
 // SceneEngine — Canvas2D game renderer for pre-rendered RPG scenes
 // Background: Flux 2 Pro. Walk map: Gemini Flash. Sprites: RetroDiffusion.
 
+import {
+  blockedRegionsFromState,
+  constrainPointToWalkableRegions,
+  regionAtPoint,
+  regionScaleAtPoint,
+  sceneRegionsFromState,
+} from "@/js/lib/scene_regions.js"
+
 const SceneEngine = {
   mounted() {
     this.canvas = document.getElementById("game-canvas")
@@ -9,6 +17,8 @@ const SceneEngine = {
     this.spriteImages = {}
     this.characters = []
     this.walkmap = null
+    this.regions = []
+    this.blockedRegions = []
     this.showWalkmap = false
     this.camera = { x: 0, y: 0, zoom: 1 }
     this.sceneWidth = 2048
@@ -37,6 +47,7 @@ const SceneEngine = {
       if (char) {
         char.target_x = x
         char.target_y = y
+        char.target_region_id = regionAtPoint(this.regions, x, y, this.blockedRegions)?.id || char.regionId
         char.state = "walking"
       }
     })
@@ -58,8 +69,18 @@ const SceneEngine = {
         const existing = this.characters.find(c => c.id === sc.id)
         if (!existing) {
           // New character
-          this.characters.push({...sc, animFrame: 0})
+          this.characters.push({...sc, animFrame: 0, regionId: regionAtPoint(this.regions, sc.x, sc.y, this.blockedRegions)?.id || null, target_region_id: null})
           this.loadSprite(sc.sprite)
+        } else {
+          existing.x = sc.x ?? existing.x
+          existing.y = sc.y ?? existing.y
+          existing.regionId = regionAtPoint(this.regions, existing.x, existing.y, this.blockedRegions)?.id || existing.regionId
+          if (sc.target_x != null && sc.target_y != null) {
+            existing.target_x = sc.target_x
+            existing.target_y = sc.target_y
+            existing.target_region_id = regionAtPoint(this.regions, sc.target_x, sc.target_y, this.blockedRegions)?.id || existing.regionId
+            existing.state = "walking"
+          }
         }
       }
     } catch(e) {}
@@ -95,14 +116,22 @@ const SceneEngine = {
         this.sceneWidth = this.walkmap.dimensions.width
         this.sceneHeight = this.walkmap.dimensions.height
       }
+      this.regions = sceneRegionsFromState(this.walkmap)
+      this.blockedRegions = blockedRegionsFromState(this.walkmap)
     } catch(e) {
       this.walkmap = null
+      this.regions = []
+      this.blockedRegions = []
     }
 
     // Characters
     try {
       this.characters = JSON.parse(el.dataset.characters).map(c => ({
-        ...c, animFrame: 0, bobOffset: Math.random() * Math.PI * 2
+        ...c,
+        animFrame: 0,
+        bobOffset: Math.random() * Math.PI * 2,
+        regionId: regionAtPoint(this.regions, c.x, c.y, this.blockedRegions)?.id || null,
+        target_region_id: null,
       }))
       for (const c of this.characters) {
         if (c.sprite) this.loadSprite(c.sprite)
@@ -218,42 +247,24 @@ const SceneEngine = {
     this.camera.y += scene.y - newScene.y
   },
 
-  // Point-in-polygon test
-  pointInPolygon(x, y, vertices) {
-    let inside = false
-    for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
-      const xi = vertices[i][0], yi = vertices[i][1]
-      const xj = vertices[j][0], yj = vertices[j][1]
-      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
-        inside = !inside
-      }
-    }
-    return inside
-  },
-
   isWalkable(x, y) {
     if (!this.walkmap) return true
-    // Must be inside at least one walk polygon
-    const walks = this.walkmap.walk_polygons || []
-    let inWalk = false
-    for (const w of walks) {
-      if (this.pointInPolygon(x, y, w.vertices)) {
-        inWalk = true
-        break
-      }
-    }
-    if (!inWalk) return false
-
-    // Must not be inside any blocked region
-    const blocked = this.walkmap.blocked_regions || []
-    for (const b of blocked) {
-      if (this.pointInPolygon(x, y, b.vertices)) return false
-    }
-    return true
+    return Boolean(regionAtPoint(this.regions, x, y, this.blockedRegions))
   },
 
   updateCharacters() {
     for (const c of this.characters) {
+      const currentPlacement = constrainPointToWalkableRegions(
+        this.regions,
+        this.blockedRegions,
+        c.x,
+        c.y,
+        c.regionId,
+      )
+      c.x = currentPlacement.x
+      c.y = currentPlacement.y
+      c.regionId = currentPlacement.region?.id || c.regionId
+
       if (c.state === "walking" && c.target_x != null && c.target_y != null) {
         const dx = c.target_x - c.x
         const dy = c.target_y - c.y
@@ -263,14 +274,32 @@ const SceneEngine = {
           c.state = "idle"
           c.target_x = null
           c.target_y = null
+          c.target_region_id = null
           this.pushEvent("char-arrived", { id: c.id })
         } else {
           const speed = 3
-          const nx = dx / dist * speed
-          const ny = dy / dist * speed
-          c.x += nx
-          c.y += ny
+          const nextX = c.x + (dx / dist) * speed
+          const nextY = c.y + (dy / dist) * speed
+          const nextPlacement = constrainPointToWalkableRegions(
+            this.regions,
+            this.blockedRegions,
+            nextX,
+            nextY,
+            c.target_region_id || c.regionId,
+          )
+          const hitBoundary = Math.hypot(nextPlacement.x - nextX, nextPlacement.y - nextY) > 0.75
+
+          c.x = nextPlacement.x
+          c.y = nextPlacement.y
+          c.regionId = nextPlacement.region?.id || c.regionId
           c.facing = dx > 0 ? "right" : "left"
+
+          if (hitBoundary) {
+            c.state = "idle"
+            c.target_x = null
+            c.target_y = null
+            c.target_region_id = null
+          }
         }
       }
       c.animFrame = (c.animFrame || 0) + 0.1
@@ -306,16 +335,15 @@ const SceneEngine = {
 
     // Draw walk map overlay
     if (this.showWalkmap && this.walkmap) {
-      // Walk polygons — green semi-transparent
+      // Walk regions — green semi-transparent
       ctx.globalAlpha = 0.25
-      const walks = this.walkmap.walk_polygons || []
-      for (const w of walks) {
+      for (const region of this.regions) {
         ctx.fillStyle = "#00ff00"
         ctx.strokeStyle = "#00ff00"
         ctx.lineWidth = 2
         ctx.beginPath()
-        for (let i = 0; i < w.vertices.length; i++) {
-          const [x, y] = w.vertices[i]
+        for (let i = 0; i < region.polygon.length; i++) {
+          const [x, y] = region.polygon[i]
           if (i === 0) ctx.moveTo(x, y)
           else ctx.lineTo(x, y)
         }
@@ -327,15 +355,14 @@ const SceneEngine = {
         ctx.globalAlpha = 0.8
         ctx.fillStyle = "#0f0"
         ctx.font = "16px monospace"
-        const cx = w.vertices.reduce((s, v) => s + v[0], 0) / w.vertices.length
-        const cy = w.vertices.reduce((s, v) => s + v[1], 0) / w.vertices.length
-        ctx.fillText(w.id + " (" + w.surface + ")", cx - 40, cy)
+        const cx = region.polygon.reduce((s, v) => s + v[0], 0) / region.polygon.length
+        const cy = region.polygon.reduce((s, v) => s + v[1], 0) / region.polygon.length
+        ctx.fillText(region.label + " (" + region.surface + ")", cx - 40, cy)
         ctx.globalAlpha = 0.25
       }
 
       // Blocked regions — red
-      const blocked = this.walkmap.blocked_regions || []
-      for (const b of blocked) {
+      for (const b of this.blockedRegions) {
         ctx.fillStyle = "#ff0000"
         ctx.strokeStyle = "#ff0000"
         ctx.lineWidth = 2
@@ -398,7 +425,8 @@ const SceneEngine = {
     // Draw characters
     for (const c of this.characters) {
       const img = this.spriteImages[c.sprite]
-      const spriteSize = 64
+      const region = regionAtPoint(this.regions, c.x, c.y, this.blockedRegions) || this.regions[0] || null
+      const spriteSize = region ? regionScaleAtPoint(region, c.x, c.y) : 64
 
       // Breathing/bobbing animation
       const bob = Math.sin((c.bobOffset || 0) + this.frame * 0.05) * 2

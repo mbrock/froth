@@ -62,11 +62,12 @@ defmodule Froth.RetroDiffusion do
       "include_downloadable_data" => true
     }
 
-    body_map = if reference_images != [] do
-      Map.put(body_map, "reference_images", reference_images)
-    else
-      body_map
-    end
+    body_map =
+      if reference_images != [] do
+        Map.put(body_map, "reference_images", reference_images)
+      else
+        body_map
+      end
 
     body = Jason.encode!(body_map)
 
@@ -113,7 +114,8 @@ defmodule Froth.RetroDiffusion do
 
     case Req.get("https://api.retrodiffusion.ai/v1/inferences/credits",
            headers: [{"x-rd-token", key}],
-           receive_timeout: 15_000) do
+           receive_timeout: 15_000
+         ) do
       {:ok, %{status: 200, body: body}} -> {:ok, body}
       {:ok, %{status: s, body: b}} -> {:error, {s, b}}
       {:error, e} -> {:error, e}
@@ -131,7 +133,8 @@ defmodule Froth.RetroDiffusion do
              {"x-rd-token", key},
              {"content-type", "application/json"}
            ],
-           receive_timeout: 120_000) do
+           receive_timeout: 120_000
+         ) do
       {:ok, %{status: 200, body: body}} when is_map(body) ->
         {:ok, body}
 
@@ -148,7 +151,10 @@ defmodule Froth.RetroDiffusion do
   defp save_results(prompt, style, model, response) do
     File.mkdir_p!(@output_dir)
     ts = DateTime.utc_now() |> DateTime.to_unix()
-    slug = prompt |> String.slice(0, 40) |> String.replace(~r/[^a-zA-Z0-9]+/, "-") |> String.trim("-")
+
+    slug =
+      prompt |> String.slice(0, 40) |> String.replace(~r/[^a-zA-Z0-9]+/, "-") |> String.trim("-")
+
     base = "#{ts}-#{slug}"
 
     images = response["base64_images"] || []
@@ -165,24 +171,28 @@ defmodule Froth.RetroDiffusion do
 
     # Save metadata (strip base64 to keep it readable)
     meta = Map.put(response, "base64_images", Enum.map(image_paths, &"saved:#{&1}"))
-    meta = Map.merge(meta, %{
-      "prompt" => prompt,
-      "style" => to_string(style),
-      "model" => to_string(model),
-      "generated_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-    })
+
+    meta =
+      Map.merge(meta, %{
+        "prompt" => prompt,
+        "style" => to_string(style),
+        "model" => to_string(model),
+        "generated_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      })
+
     meta_path = Path.join(@output_dir, "#{base}.json")
     File.write!(meta_path, Jason.encode!(meta, pretty: true))
 
-    {:ok, %{
-      image_paths: image_paths,
-      meta_path: meta_path,
-      cost: response["balance_cost"],
-      remaining: response["remaining_balance"],
-      credits_used: response["credit_cost"],
-      credits_remaining: response["remaining_credits"],
-      model: response["model"]
-    }}
+    {:ok,
+     %{
+       image_paths: image_paths,
+       meta_path: meta_path,
+       cost: response["balance_cost"],
+       remaining: response["remaining_balance"],
+       credits_used: response["credit_cost"],
+       credits_remaining: response["remaining_credits"],
+       model: response["model"]
+     }}
   end
 
   defp build_prompt_style(:fast, style), do: "rd_fast__#{style}"
