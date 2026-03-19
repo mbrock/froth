@@ -82,7 +82,10 @@ defmodule FrothWeb.Router do
 
     get "/", PodcastController, :root
     get "/voices", PodcastController, :voices
-    resources "/podcasts", PodcastController, only: [:index, :show, :create]
+    get "/podcasts/new", PodcastController, :new
+    get "/podcasts", PodcastController, :index
+    get "/podcasts/:id", PodcastController, :show
+    post "/podcasts", PodcastController, :create
   end
 
   # Enable LiveDashboard in development
