@@ -20,49 +20,58 @@ defmodule FrothWeb.PodcastController do
 
   def root(conn, _params) do
     bp = base_path(conn)
+    scripts = Repo.all(
+      from s in Froth.Podcast.Script,
+        where: not is_nil(s.cover_url) and not is_nil(s.audio_url),
+        order_by: [desc: s.inserted_at],
+        limit: 3
+    )
+
+    featured = Enum.map(scripts, fn s ->
+      """
+      <a href="#{ep(conn)}/#{s.id}" class="featured-card">
+        <img src="#{h(s.cover_url)}" alt="" loading="lazy">
+        <span class="featured-title">#{h(s.label)}</span>
+      </a>
+      """
+    end) |> Enum.join("\n")
+
     conn
     |> put_resp_content_type("text/html")
     |> send_resp(200, page("Froth Voice", """
-    <header>
+    <header class="hero">
       <h1>Froth Voice</h1>
-      <p>Generated podcasts with cloned voices.<br>
+      <p class="hero-sub">Generated podcasts with cloned voices.<br>
       The wrapper is the problem. The payload was always fine.</p>
     </header>
-    <nav>
-      <a href="#{ep(conn)}">Episodes</a> ·
-      <a href="#{bp}/voices">Voices</a> ·
-      <a href="#{bp}/new">Create</a> ·
-      <a href="#{bp}/archive">Archive</a> ·
-      <a href="#{bp}/feed.xml">RSS</a>
-    </nav>
+    #{nav(conn)}
+    <div class="featured-row">#{featured}</div>
     """))
   end
 
   # ── Voices ────────────────────────────────────────────
 
   def voices(conn, _params) do
-    bp = base_path(conn)
     voices = Froth.VoiceClone.all()
 
     rows = Enum.map(voices, fn v ->
       """
-      <tr vocab="https://schema.org/" typeof="Person">
-        <td property="name">#{h(v.name)}</td>
-        <td><code>#{h(v.voice_id)}</code></td>
+      <tr>
+        <td property="name"><strong>#{h(v.name)}</strong></td>
         <td>#{h(v.character || "—")}</td>
         <td>#{h(v.language || "—")}</td>
+        <td><code>#{h(v.voice_id)}</code></td>
       </tr>
       """
     end) |> Enum.join("\n")
 
     conn
     |> put_resp_content_type("text/html")
-    |> send_resp(200, page("Voices — #{length(voices)} clones", """
+    |> send_resp(200, page("Voices", """
     #{nav(conn)}
-    <h1>Voice Clones</h1>
-    <p>#{length(voices)} voices. Use the <code>name</code> as the <code>speaker</code> field.</p>
+    <h1>#{length(voices)} Voice Clones</h1>
     <table>
-      <thead><tr><th>Name</th><th>Voice ID</th><th>Character</th><th>Language</th></tr></thead>
+      <thead><tr><th>Name</th><th>Character</th><th>Language</th><th>ID</th></tr></thead>
       <tbody>#{rows}</tbody>
     </table>
     """))
@@ -87,34 +96,44 @@ defmodule FrothWeb.PodcastController do
       speakers = (s.script || [])
       |> Enum.map(& &1["speaker"])
       |> Enum.uniq()
-      |> Enum.join(", ")
+      |> Enum.join(" · ")
 
       cover = if s.cover_url do
         """
-        <img src="#{h(s.cover_url)}" alt="" class="ep-cover" loading="lazy">
+        <div class="card-cover">
+          <img src="#{h(s.cover_url)}" alt="" loading="lazy">
+        </div>
         """
       else
         """
-        <div class="ep-cover ep-cover-empty"></div>
+        <div class="card-cover card-cover-empty"></div>
         """
       end
 
       audio = if s.audio_url do
         """
-        <audio controls preload="none" src="#{h(s.audio_url)}" class="ep-audio"></audio>
+        <div class="card-audio">
+          <audio controls preload="none" src="#{h(s.audio_url)}"></audio>
+        </div>
         """
       else
         ""
       end
 
-      teaser = if s.teaser, do: "<p class=\"ep-teaser\">#{h(s.teaser)}</p>", else: ""
+      teaser = if s.teaser do
+        "<p class=\"card-teaser\">#{h(s.teaser)}</p>"
+      else
+        ""
+      end
+
+      segments = length(s.script || [])
 
       """
-      <article class="ep-card">
+      <article class="card">
         #{cover}
-        <div class="ep-body">
-          <h3><a href="#{ep(conn)}/#{s.id}">#{h(s.label || "Episode ##{s.id}")}</a></h3>
-          <p class="ep-meta">#{h(speakers)}</p>
+        <div class="card-content">
+          <h2><a href="#{ep(conn)}/#{s.id}">#{h(s.label || "Episode ##{s.id}")}</a></h2>
+          <p class="card-meta">#{h(speakers)} · #{segments} segments</p>
           #{teaser}
           #{audio}
         </div>
@@ -136,11 +155,10 @@ defmodule FrothWeb.PodcastController do
 
     conn
     |> put_resp_content_type("text/html")
-    |> send_resp(200, page("Episodes — #{total}", """
+    |> send_resp(200, page("Episodes", """
     #{nav(conn)}
-    <h1>Episodes</h1>
-    <p>#{total} episodes. Showing #{offset + 1}–#{min(offset + limit, total)}.</p>
-    <div class="ep-list">
+    <h1>#{total} Episodes</h1>
+    <div class="card-list">
       #{cards}
     </div>
     <p class="pagination">#{Enum.join(pagination, " · ")}</p>
@@ -164,7 +182,9 @@ defmodule FrothWeb.PodcastController do
       script ->
         cover = if script.cover_url do
           """
-          <img src="#{h(script.cover_url)}" alt="" class="show-cover" loading="lazy">
+          <div class="show-cover">
+            <img src="#{h(script.cover_url)}" alt="" loading="lazy">
+          </div>
           """
         else
           ""
@@ -173,7 +193,7 @@ defmodule FrothWeb.PodcastController do
         audio = if script.audio_url do
           """
           <div class="show-audio">
-            <audio controls preload="metadata" src="#{h(script.audio_url)}" style="width:100%;"></audio>
+            <audio controls preload="metadata" src="#{h(script.audio_url)}"></audio>
             <p><a href="#{h(script.audio_url)}" download>Download MP3</a></p>
           </div>
           """
@@ -198,17 +218,13 @@ defmodule FrothWeb.PodcastController do
 
         conn
         |> put_resp_content_type("text/html")
-        |> send_resp(200, page("#{h(script.label)}", """
+        |> send_resp(200, page(h(script.label), """
         #{nav(conn)}
         <article class="show" vocab="https://schema.org/" typeof="PodcastEpisode">
-          <div class="show-header">
-            #{cover}
-            <div>
-              <h1 property="name">#{h(script.label || "Episode ##{script.id}")}</h1>
-              #{teaser}
-              #{audio}
-            </div>
-          </div>
+          #{cover}
+          <h1 property="name">#{h(script.label || "Episode ##{script.id}")}</h1>
+          #{teaser}
+          #{audio}
           <dl class="show-meta">
             <dt>Status</dt><dd><code>#{h(script.status)}</code></dd>
             <dt>Batch</dt><dd><code>#{h(script.batch_id)}</code></dd>
@@ -224,11 +240,19 @@ defmodule FrothWeb.PodcastController do
   # ── New ───────────────────────────────────────────────
 
   def new(conn, _params) do
-    bp = base_path(conn)
     voices = Froth.VoiceClone.all()
     opts = voices
     |> Enum.map(fn v -> "<option value=\"#{h(v.name)}\">#{h(v.name)}#{if v.character, do: " (#{h(v.character)})", else: ""}</option>" end)
     |> Enum.join("\n")
+
+    segment_html = for _ <- 1..3 do
+      """
+      <div class="segment">
+        <label>Speaker: <select name="speaker[]">#{opts}</select></label>
+        <label>Text: <textarea name="text[]" rows="2" cols="60"></textarea></label>
+      </div>
+      """
+    end |> Enum.join("\n")
 
     conn
     |> put_resp_content_type("text/html")
@@ -238,7 +262,7 @@ defmodule FrothWeb.PodcastController do
     <form method="POST" action="#{ep(conn)}">
       <fieldset>
         <legend>Script</legend>
-        #{for _ <- 1..3 do "<div class=\"segment\"><label>Speaker: <select name=\"speaker[]\">#{opts}</select></label><label>Text: <textarea name=\"text[]\" rows=\"2\" cols=\"60\"></textarea></label></div>" end |> Enum.join("\n")}
+        #{segment_html}
       </fieldset>
       <fieldset>
         <legend>Options</legend>
@@ -394,10 +418,10 @@ defmodule FrothWeb.PodcastController do
 
     conn
     |> put_resp_content_type("text/html")
-    |> send_resp(200, page("Archive — #{length(files)} files, #{div(total_size, 1024 * 1024)} MB", """
+    |> send_resp(200, page("Archive — #{length(files)} files", """
     #{nav(conn)}
     <h1>Audio Archive</h1>
-    <p>#{length(files)} files. #{div(total_size, 1024 * 1024)} MB. Every audio message since February 12, 2026.</p>
+    <p>#{length(files)} files. #{div(total_size, 1024 * 1024)} MB total.</p>
     <table>
       <thead><tr><th></th><th>Caption</th><th style="text-align:right">Size</th><th></th></tr></thead>
       <tbody>#{rows}</tbody>
@@ -411,11 +435,11 @@ defmodule FrothWeb.PodcastController do
     bp = base_path(conn)
     """
     <nav>
-      <a href="#{bp}">Voice</a> ·
-      <a href="#{ep(conn)}">Episodes</a> ·
-      <a href="#{bp}/voices">Voices</a> ·
-      <a href="#{bp}/new">Create</a> ·
-      <a href="#{bp}/archive">Archive</a> ·
+      <a href="#{bp}">Voice</a>
+      <a href="#{ep(conn)}">Episodes</a>
+      <a href="#{bp}/voices">Voices</a>
+      <a href="#{bp}/new">Create</a>
+      <a href="#{bp}/archive">Archive</a>
       <a href="#{bp}/feed.xml">RSS</a>
     </nav>
     """
@@ -424,92 +448,220 @@ defmodule FrothWeb.PodcastController do
   defp page(title, body) do
     """
     <!DOCTYPE html>
-    <html lang="en" vocab="https://schema.org/">
+    <html lang="en">
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <title>#{title}</title>
       <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-          font-family: -apple-system, system-ui, sans-serif;
-          max-width: 64rem; margin: 0 auto; padding: 1rem;
-          color: #111; background: #fff;
+          font-family: 'Inter', -apple-system, system-ui, sans-serif;
+          max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem;
+          color: #1a1a1a; background: #fff;
+          line-height: 1.6;
+          -webkit-font-smoothing: antialiased;
+        }
+
+        /* Hero */
+        .hero { margin-bottom: 2rem; }
+        .hero h1 {
+          font-size: 2.5rem; font-weight: 700;
+          letter-spacing: -0.03em; line-height: 1.1;
+          margin-bottom: 0.5rem;
+        }
+        .hero-sub {
+          font-size: 1.05rem; color: #666;
           line-height: 1.5;
         }
-        h1 { font-size: 1.5rem; margin: 1rem 0 0.5rem; font-weight: 700; }
-        h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
-        h3 { font-size: 1rem; margin: 0 0 0.25rem; font-weight: 600; }
-        h3 a { color: #111; text-decoration: none; }
-        h3 a:hover { text-decoration: underline; }
-        nav {
-          font-size: 0.85rem; padding: 0.75rem 0;
-          border-bottom: 1px solid #e5e5e5; margin-bottom: 1.5rem;
-        }
-        nav a { color: #555; text-decoration: none; }
-        nav a:hover { color: #000; }
-        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 1rem 0; }
-        th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #f0f0f0; }
-        th { font-weight: 600; border-bottom: 2px solid #ddd; }
-        code { background: #f5f5f5; padding: 0.1rem 0.3rem; font-size: 0.85em; border-radius: 3px; }
-        dl { margin: 1rem 0; }
-        dt { font-weight: 600; margin-top: 0.5rem; font-size: 0.85rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
-        dd { margin-left: 0; }
-        fieldset { margin: 1rem 0; padding: 1rem; border: 1px solid #e5e5e5; border-radius: 4px; }
-        legend { font-weight: 600; padding: 0 0.3rem; }
-        label { display: block; margin: 0.5rem 0; font-size: 0.9rem; }
-        textarea, input[type="text"], input[type="number"] {
-          font-family: inherit; font-size: 0.9rem; padding: 0.4rem;
-          border: 1px solid #ddd; border-radius: 3px; width: 100%; max-width: 40rem;
-        }
-        select { font-size: 0.9rem; padding: 0.3rem; border-radius: 3px; }
-        button {
-          margin: 1rem 0; padding: 0.6rem 2rem; font-size: 0.95rem;
-          background: #111; color: #fff; border: none; border-radius: 4px; cursor: pointer;
-        }
-        button:hover { background: #333; }
-        p { margin: 0.5rem 0; }
 
-        /* Episode list */
-        .ep-list { display: flex; flex-direction: column; gap: 1.25rem; margin: 1.5rem 0; }
-        .ep-card {
-          display: flex; gap: 1rem; padding: 1rem;
-          background: #fafafa; border-radius: 6px;
-          border: 1px solid #f0f0f0;
+        /* Featured row on home */
+        .featured-row {
+          display: grid; grid-template-columns: repeat(3, 1fr);
+          gap: 1.25rem; margin: 2rem 0;
         }
-        .ep-cover {
-          width: 80px; height: 80px; object-fit: cover; border-radius: 4px;
-          flex-shrink: 0;
+        .featured-card {
+          display: block; text-decoration: none; color: inherit;
+          border-radius: 8px; overflow: hidden;
+          transition: transform 0.15s;
         }
-        .ep-cover-empty {
-          background: #e5e5e5;
+        .featured-card:hover { transform: translateY(-2px); }
+        .featured-card img {
+          width: 100%; aspect-ratio: 1; object-fit: cover; display: block;
         }
-        .ep-body { flex: 1; min-width: 0; }
-        .ep-meta { font-size: 0.8rem; color: #888; margin: 0; }
-        .ep-teaser { font-size: 0.85rem; color: #555; margin: 0.25rem 0; }
-        .ep-audio { width: 100%; height: 32px; margin-top: 0.5rem; }
+        .featured-title {
+          display: block; padding: 0.75rem;
+          font-size: 0.85rem; font-weight: 600;
+          line-height: 1.3;
+        }
+
+        /* Nav */
+        nav {
+          display: flex; gap: 1.5rem;
+          padding: 0.75rem 0;
+          border-bottom: 1px solid #e5e5e5;
+          margin-bottom: 2.5rem;
+          font-size: 0.85rem;
+        }
+        nav a {
+          color: #666; text-decoration: none;
+          font-weight: 500; letter-spacing: 0.01em;
+        }
+        nav a:hover { color: #000; }
+
+        /* Headings */
+        h1 {
+          font-size: 2rem; font-weight: 700;
+          letter-spacing: -0.02em; line-height: 1.15;
+          margin-bottom: 1.5rem;
+        }
+        h2 {
+          font-size: 1.15rem; font-weight: 600;
+          letter-spacing: -0.01em;
+          margin: 2rem 0 0.75rem;
+        }
+
+        /* Episode cards — big, prominent */
+        .card-list {
+          display: flex; flex-direction: column;
+          gap: 3rem; margin: 2rem 0;
+        }
+        .card {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 2rem;
+          min-height: 320px;
+        }
+        .card:nth-child(even) { direction: rtl; }
+        .card:nth-child(even) > * { direction: ltr; }
+        .card-cover {
+          border-radius: 8px; overflow: hidden;
+          aspect-ratio: 1; background: #f0f0f0;
+        }
+        .card-cover img {
+          width: 100%; height: 100%; object-fit: cover; display: block;
+        }
+        .card-cover-empty { background: #e8e8e8; }
+        .card-content {
+          display: flex; flex-direction: column;
+          justify-content: center;
+          padding: 0.5rem 0;
+        }
+        .card-content h2 {
+          font-size: 1.5rem; font-weight: 700;
+          letter-spacing: -0.02em; line-height: 1.2;
+          margin: 0 0 0.5rem;
+        }
+        .card-content h2 a {
+          color: #1a1a1a; text-decoration: none;
+        }
+        .card-content h2 a:hover { text-decoration: underline; }
+        .card-meta {
+          font-size: 0.8rem; color: #999;
+          text-transform: uppercase; letter-spacing: 0.05em;
+          font-weight: 500; margin: 0 0 0.75rem;
+        }
+        .card-teaser {
+          font-size: 1rem; color: #444;
+          line-height: 1.55; margin: 0 0 1rem;
+        }
+        .card-audio audio {
+          width: 100%; height: 40px;
+        }
 
         /* Show page */
-        .show-header { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; }
-        .show-cover { width: 160px; height: 160px; object-fit: cover; border-radius: 6px; flex-shrink: 0; }
-        .show-teaser { font-size: 0.95rem; color: #555; font-style: italic; margin: 0.5rem 0; }
-        .show-audio { margin: 1rem 0; }
-        .show-meta { font-size: 0.85rem; }
-        .script { margin: 1rem 0 1rem 1.5rem; font-size: 0.9rem; }
-        .script li { margin: 0.4rem 0; }
-
-        .archive-audio { height: 24px; width: 200px; }
-        .segment { margin: 0.5rem 0; padding: 0.5rem; background: #f9f9f9; border-radius: 3px; }
-        .pagination { margin: 1rem 0; font-size: 0.9rem; }
-        footer {
-          margin-top: 3rem; padding-top: 0.75rem; border-top: 1px solid #e5e5e5;
-          font-size: 0.75rem; color: #999;
+        .show-cover {
+          margin-bottom: 2rem;
         }
+        .show-cover img {
+          width: 100%; max-width: 400px;
+          border-radius: 8px; display: block;
+        }
+        .show-teaser {
+          font-size: 1.1rem; color: #555;
+          font-style: italic; line-height: 1.5;
+          margin: 0.75rem 0 1.5rem;
+        }
+        .show-audio {
+          margin: 1.5rem 0;
+        }
+        .show-audio audio { width: 100%; height: 44px; }
+        .show-audio p { margin-top: 0.5rem; font-size: 0.85rem; }
+        .show-audio a { color: #666; }
+        .show-meta {
+          font-size: 0.85rem; margin: 1.5rem 0;
+          display: grid; grid-template-columns: auto 1fr;
+          gap: 0.25rem 1rem;
+        }
+        .show-meta dt {
+          font-weight: 600; color: #999;
+          text-transform: uppercase; letter-spacing: 0.05em;
+          font-size: 0.75rem;
+        }
+        .show-meta dd { color: #444; }
 
-        @media (max-width: 600px) {
-          .ep-cover { width: 60px; height: 60px; }
-          .show-header { flex-direction: column; }
-          .show-cover { width: 120px; height: 120px; }
+        .script {
+          margin: 1rem 0 1rem 1.5rem;
+          font-size: 0.9rem; color: #333;
+        }
+        .script li { margin: 0.5rem 0; line-height: 1.5; }
+        .script strong { font-weight: 600; }
+
+        /* Tables */
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 1rem 0; }
+        th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; }
+        th { font-weight: 600; border-bottom: 2px solid #e5e5e5; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #999; }
+        code { background: #f5f5f5; padding: 0.15rem 0.4rem; font-size: 0.8em; border-radius: 3px; }
+
+        /* Forms */
+        fieldset { margin: 1.5rem 0; padding: 1.25rem; border: 1px solid #e5e5e5; border-radius: 6px; }
+        legend { font-weight: 600; padding: 0 0.4rem; font-size: 0.9rem; }
+        label { display: block; margin: 0.5rem 0; font-size: 0.9rem; }
+        textarea, input[type="text"], input[type="number"] {
+          font-family: inherit; font-size: 0.9rem; padding: 0.5rem;
+          border: 1px solid #ddd; border-radius: 4px; width: 100%; max-width: 40rem;
+        }
+        textarea:focus, input:focus { outline: none; border-color: #999; }
+        select { font-size: 0.9rem; padding: 0.35rem; border-radius: 4px; }
+        button {
+          margin: 1.5rem 0; padding: 0.7rem 2.5rem; font-size: 0.95rem;
+          background: #1a1a1a; color: #fff; border: none; border-radius: 6px;
+          cursor: pointer; font-weight: 500;
+        }
+        button:hover { background: #333; }
+        .segment { margin: 0.75rem 0; padding: 0.75rem; background: #fafafa; border-radius: 4px; }
+
+        .archive-audio { height: 28px; width: 220px; }
+        .pagination { margin: 2rem 0; font-size: 0.9rem; }
+        .pagination a { color: #666; text-decoration: none; font-weight: 500; }
+        .pagination a:hover { color: #000; }
+        p { margin: 0.5rem 0; }
+        dl { margin: 1rem 0; }
+
+        footer {
+          margin-top: 4rem; padding-top: 1rem;
+          border-top: 1px solid #e5e5e5;
+          font-size: 0.75rem; color: #bbb;
+          line-height: 1.6;
+        }
+        footer a { color: #999; text-decoration: none; }
+
+        @media (max-width: 640px) {
+          body { padding: 1rem; }
+          .hero h1 { font-size: 1.8rem; }
+          h1 { font-size: 1.5rem; }
+          .featured-row { grid-template-columns: 1fr; }
+          .card {
+            grid-template-columns: 1fr;
+            gap: 1rem; min-height: auto;
+          }
+          .card:nth-child(even) { direction: ltr; }
+          .card-cover { aspect-ratio: 16/9; max-height: 280px; }
+          .card-content h2 { font-size: 1.25rem; }
+          nav { flex-wrap: wrap; gap: 0.75rem; }
         }
       </style>
     </head>
@@ -517,8 +669,8 @@ defmodule FrothWeb.PodcastController do
       #{body}
       <footer>
         <a href="/froth/voice">Froth Voice</a> ·
-        <a href="/froth/voice/feed.xml">RSS</a> ·
-        "The media type is text/html. It has been sufficient since 1993."
+        <a href="/froth/voice/feed.xml">RSS</a><br>
+        The media type is text/html. It has been sufficient since 1993.
       </footer>
     </body>
     </html>
