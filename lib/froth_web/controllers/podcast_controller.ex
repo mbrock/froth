@@ -53,7 +53,8 @@ defmodule FrothWeb.PodcastController do
     <nav>
       <a href="#{ep}">Episodes</a> ·
       <a href="#{bp}/voices">Voices</a> ·
-      <a href="#{bp}/new">Create</a>
+      <a href="#{bp}/new">Create</a> ·
+      <a href="#{bp}/archive">Archive</a>
     </nav>
     """))
   end
@@ -353,6 +354,59 @@ defmodule FrothWeb.PodcastController do
     <nav><a href="#{bp}/new">← Try again</a></nav>
     <h1>Empty script.</h1>
     <p>Add at least one segment with text. <a href="#{bp}/new">Use the form</a>.</p>
+    """))
+  end
+
+
+  # ── Archive ───────────────────────────────────────────
+  # Every audio file Charlie has ever sent. 139 files. 537 MB.
+
+  def archive(conn, _params) do
+    bp = base_path(conn)
+    audio_dir = Application.app_dir(:froth, "priv/static/audio")
+    
+    files = File.ls!(audio_dir)
+    |> Enum.filter(&String.ends_with?(&1, ".mp3"))
+    |> Enum.sort()
+    |> Enum.map(fn filename ->
+      %{size: size} = File.stat!(Path.join(audio_dir, filename))
+      # Parse msg_id and caption from filename: "12345-some-caption.mp3"
+      [msg_id | rest] = String.split(filename, "-", parts: 2)
+      caption = rest |> hd() |> String.replace("-", " ") |> String.replace(".mp3", "")
+      %{filename: filename, msg_id: msg_id, caption: caption, size: size}
+    end)
+
+    total_size = files |> Enum.map(& &1.size) |> Enum.sum()
+
+    rows = Enum.map(files, fn f ->
+      size_kb = div(f.size, 1024)
+      """
+      <tr>
+        <td>
+          <audio controls preload="none" src="https://less.rest/audio/#{h(f.filename)}" style="height:24px;vertical-align:middle;"></audio>
+        </td>
+        <td>#{h(f.caption)}</td>
+        <td style="text-align:right">#{size_kb}KB</td>
+        <td><a href="https://less.rest/audio/#{h(f.filename)}" download>↓</a></td>
+      </tr>
+      """
+    end) |> Enum.join("\n")
+
+    conn
+    |> put_resp_content_type("text/html")
+    |> send_resp(200, page("Audio Archive — #{length(files)} files, #{div(total_size, 1024 * 1024)} MB", """
+    <nav><a href="#{bp}">← Voice</a> · <a href="#{podcasts_path(conn)}">Episodes</a> · <a href="#{bp}/voices">Voices</a></nav>
+    <h1>Audio Archive</h1>
+    <p>#{length(files)} files. #{div(total_size, 1024 * 1024)} MB. Every audio message Charlie has sent since February 12, 2026.
+    Downloaded from Telegram via TDLib and archived permanently.</p>
+    <table>
+      <thead>
+        <tr><th></th><th>Caption</th><th style="text-align:right">Size</th><th></th></tr>
+      </thead>
+      <tbody>
+        #{rows}
+      </tbody>
+    </table>
     """))
   end
 

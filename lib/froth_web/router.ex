@@ -84,6 +84,7 @@ defmodule FrothWeb.Router do
     get "/episodes", PodcastController, :index
     get "/episodes/:id", PodcastController, :show
     post "/episodes", PodcastController, :create
+    get "/archive", PodcastController, :archive
   end
 
   # Legacy /api redirect
@@ -96,6 +97,7 @@ defmodule FrothWeb.Router do
     get "/podcasts", PodcastController, :index
     get "/podcasts/:id", PodcastController, :show
     post "/podcasts", PodcastController, :create
+    get "/archive", PodcastController, :archive
   end
 
   # Enable LiveDashboard in development
