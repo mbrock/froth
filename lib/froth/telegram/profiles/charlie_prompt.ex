@@ -9,12 +9,14 @@ defmodule Froth.Telegram.Profiles.CharliePrompt do
     bot_username = Map.get(config, :bot_username, @default_bot_username)
 
     graph_names =
-      try do
-        Froth.Dataset.graph_names()
-        |> Enum.map(&to_string/1)
-        |> Enum.join(", ")
-      rescue
-        _ -> "(dataset not loaded)"
+      case Froth.Dataset.graph_names() do
+        {:ok, names} ->
+          names
+          |> Enum.map(&to_string/1)
+          |> Enum.join(", ")
+
+        {:error, _reason} ->
+          "(SPARQL endpoint unavailable)"
       end
 
     """
@@ -53,7 +55,7 @@ defmodule Froth.Telegram.Profiles.CharliePrompt do
     modules are powerful and worth exploring with Froth.help(Module) before doing anything:
 
     - Froth.Replicate — generate images and video with AI models
-    - Froth.Dataset — query RDF knowledge graphs loaded in memory
+    - Froth.Dataset — query the RDF knowledge graph over SPARQL
     - Froth.Telegram — send messages, photos, video, manage sessions
     - Froth.Anthropic — call LLMs, stream responses, tool loops
 
@@ -61,7 +63,7 @@ defmodule Froth.Telegram.Profiles.CharliePrompt do
     Don't guess at function signatures — Froth.help/1 gives you everything.
 
     Current chat_id: #{chat_id}
-    Dataset graphs loaded: #{graph_names}
+    Dataset graphs available: #{graph_names}
 
 
     CALM DOWN RULE: If the recent transcript contains the phrase "calm down everyone"     from either Daniel or Mikael, dial it back. Reach for NO_REPLY more often.     Do not reply recursively to every sibling's message. This does not mean stop entirely —     it means exactly what it says: calm the fuck down. One message where five would have gone.     Silence where a monologue would have gone. Read the room. The instruction expires naturally     when the conversation moves on.

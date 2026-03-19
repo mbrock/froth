@@ -37,7 +37,6 @@ Two things live under one roof:
 - `Froth.Repo` — Ecto/Postgres
 - `Oban` — background job queue
 - `Finch` (as `Froth.Finch`) — HTTP connection pool
-- `Froth.Dataset` — in-memory RDF dataset (auto-loads from `datasets` DB table)
 - `Phoenix.PubSub` (as `Froth.PubSub`)
 - `Froth.Telegram` — supervisor for TDLib sessions (Registry + Cnode + DynamicSupervisor)
 - `Froth.Telegram.Bots` — bot runtimes
@@ -52,8 +51,8 @@ Sends `sd_notify READY=1` after startup for systemd integration.
 GET  /froth                   AnalysesLive    — browse media analyses by day
 GET  /froth/analyses          AnalysesLive
 GET  /froth/analyses/:day     AnalysesLive
-GET  /froth/dataset           DatasetLive     — RDF dataset browser
-GET  /froth/rdf               RdfLive         — RDF browser
+GET  /froth/dataset           DatasetLive     — Replicate collection browser
+GET  /froth/rdf               RdfLive         — SPARQL knowledge graph browser
 GET  /froth/media/:chat_id/:message_id  MediaController — serve Telegram media
 
 GET  /froth/mini/app          ToolLive        — Telegram Mini App landing
@@ -314,9 +313,10 @@ Also syncs Replicate model collections and GitHub READMEs to Postgres
 
 ## RDF Dataset (`Froth.Dataset`)
 
-In-memory RDF dataset GenServer. Auto-loads from `datasets` DB table on startup.
-Supports SPARQL queries and triple pattern matching via the `rdf` and `sparql`
-Elixir libraries.
+Thin SPARQL client for the Jena knowledge graph service. Queries the configured
+SPARQL endpoint directly instead of loading RDF into the app process. Defaults
+to `http://localhost:3030/kg/sparql` for the host-run app and can be overridden
+with `FROTH_SPARQL_ENDPOINT`.
 
 ## Database tables
 
@@ -327,7 +327,6 @@ Elixir libraries.
 - `telegram_inference_sessions` — persistent tool-loop state (api_messages, status, tool_steps, queued_messages)
 - `api_keys` — API key management (provider, key, active)
 - `replicate_predictions` / `replicate_models` / `replicate_collections` — Replicate data
-- `datasets` — stored RDF datasets
 - `oban_jobs` / `oban_peers` — Oban internals
 
 ## Deployment

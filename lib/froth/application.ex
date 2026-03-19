@@ -14,7 +14,6 @@ defmodule Froth.Application do
         Froth.Telemetry.Store,
         {Oban, Application.fetch_env!(:froth, Oban)},
         {Finch, name: Froth.Finch},
-        Froth.Dataset,
         Froth.Jbo.Dictionary,
         {Phoenix.PubSub, name: Froth.PubSub},
         Froth.Telegram,

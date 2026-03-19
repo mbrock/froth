@@ -21,11 +21,16 @@ defmodule Froth.Telegram.Police do
 
   # Bot user IDs — only police bot messages
   @bot_user_ids [
-    6_789_382_533,   # charlie
-    8_396_222_696,   # walter
-    8_507_666_754,   # walter jr
-    8_526_337_359,   # matilda
-    947_429_422      # lennart
+    # charlie
+    6_789_382_533,
+    # walter
+    8_396_222_696,
+    # walter jr
+    8_507_666_754,
+    # matilda
+    8_526_337_359,
+    # lennart
+    947_429_422
   ]
 
   @system_prompt """
@@ -134,6 +139,7 @@ defmodule Froth.Telegram.Police do
         Task.Supervisor.start_child(Froth.TaskSupervisor, fn ->
           scan_message(chat_id, message_id, sender_id, text)
         end)
+
         {:noreply, state}
     end
   end
@@ -161,14 +167,18 @@ defmodule Froth.Telegram.Police do
             Logger.debug("[Police] CLEAN #{bot_name} msg:#{message_id}")
 
           :error ->
-            Logger.warning("[Police] Parse error for #{bot_name} msg:#{message_id}: #{inspect(result)}")
+            Logger.warning(
+              "[Police] Parse error for #{bot_name} msg:#{message_id}: #{inspect(result)}"
+            )
         end
 
       {:ok, %{text: ""}} ->
         Logger.warning("[Police] Empty response for #{bot_name} msg:#{message_id}")
 
       {:error, reason} ->
-        Logger.warning("[Police] Gemini error for #{bot_name} msg:#{message_id}: #{inspect(reason)}")
+        Logger.warning(
+          "[Police] Gemini error for #{bot_name} msg:#{message_id}: #{inspect(reason)}"
+        )
     end
   end
 

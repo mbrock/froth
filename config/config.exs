@@ -72,6 +72,8 @@ config :logger_json, encoder: JSON
 config :phoenix, :json_library, Jason
 config :floki, :html_parser, Floki.HTMLParser.FastHtml
 
+config :tesla, adapter: {Tesla.Adapter.Finch, name: Froth.Finch}
+
 config :froth, Oban,
   engine: Oban.Engines.Basic,
   repo: Froth.Repo,

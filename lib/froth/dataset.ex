@@ -1,278 +1,218 @@
 defmodule Froth.Dataset do
   @moduledoc """
-  GenServer holding an RDF.Dataset in memory.
+  Thin SPARQL client for the RDF knowledge graph served by Jena.
 
-  On startup, auto-loads all datasets stored in the `datasets` table,
-  then loads all .ttl and .nt files from the configured RDF directory
-  (default: ~/rdf).
+  The endpoint defaults to `http://localhost:3030/kg/sparql` for the host-run
+  Phoenix app and can be overridden with the `FROTH_SPARQL_ENDPOINT`
+  environment variable when the app is deployed in a different network
+  topology.
 
-      Froth.Dataset.load("@prefix ex: <http://example.org/> . ex:s ex:p ex:o .")
-      Froth.Dataset.query({:_, ~I<http://schema.org/name>, :name?})
       Froth.Dataset.sparql("SELECT ?name WHERE { ?s <http://schema.org/name> ?name }")
       Froth.Dataset.graph_names()
-      Froth.Dataset.load_directory("/home/mbrock/rdf")
   """
 
-  use GenServer
-  require Logger
+  alias SPARQL.Query
+  alias SPARQL.Query.Result
 
-  alias Froth.Telemetry.Span
+  @default_endpoint "http://localhost:3030/kg/sparql"
+  @default_query_options [raw_mode: true, request_method: :post, protocol_version: "1.1"]
+  @graph_names_query """
+  SELECT DISTINCT ?g
+  WHERE { GRAPH ?g { ?s ?p ?o } }
+  ORDER BY ?g
+  """
+  @statement_count_query """
+  SELECT (COUNT(*) AS ?count)
+  WHERE {
+    { ?s ?p ?o }
+    UNION
+    { GRAPH ?g { ?s ?p ?o } }
+  }
+  """
 
-  @rdf_dir Path.expand("~/rdf")
-
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  @doc """
+  Returns the configured SPARQL query endpoint.
+  """
+  def endpoint do
+    Keyword.get(config(), :endpoint, @default_endpoint)
   end
 
   @doc """
-  Parse a TriG/Turtle string and replace the in-memory dataset with the result.
+  Executes a SPARQL query against the configured endpoint.
 
-  Returns `{:ok, %{statements: n, graphs: n}}` or `{:error, reason}`.
+  Query strings are dispatched via the dedicated `SPARQL.Client` query helpers
+  in raw mode so we avoid the limitations of the in-memory SPARQL parser.
   """
-  def load(trig_string) when is_binary(trig_string) do
-    GenServer.call(__MODULE__, {:load, trig_string}, :infinity)
-  end
-
-  @doc """
-  Load all .ttl and .nt files from a directory, merging into the current dataset.
-  Each file becomes a named graph (IRI derived from filename).
-
-  Returns `{:ok, %{files: n, triples: n, elapsed_ms: n}}`.
-  """
-  def load_directory(dir \\ @rdf_dir) do
-    GenServer.call(__MODULE__, {:load_directory, dir}, :infinity)
-  end
-
-  @doc """
-  Query the default graph with a triple pattern via `RDF.Query.execute/2`.
-
-  Pattern is a tuple of subject, predicate, object where:
-  - Atoms ending in `?` are variables (e.g. `:name?`)
-  - `:_` is a wildcard
-  - IRIs use the `~I` sigil
-
-      Froth.Dataset.query({:_, ~I<http://schema.org/name>, :name?})
-  """
-  def query(pattern) do
-    GenServer.call(__MODULE__, {:query, pattern}, :infinity)
-  end
-
-  @doc """
-  Run a SPARQL SELECT or CONSTRUCT query against all graphs merged.
-
-  Returns `{:ok, %SPARQL.Query.Result{results: [%{"var" => value}, ...]}}` or
-  `{:error, reason}`.
-
-  Supported: SELECT, CONSTRUCT, OPTIONAL, UNION, FILTER, BIND, MINUS, DISTINCT, REDUCED.
-  NOT supported: LIMIT, ORDER BY, OFFSET, GROUP BY, aggregates, subqueries,
-  property paths, ASK, DESCRIBE, VALUES, GRAPH, FROM.
-
-      Froth.Dataset.sparql("SELECT ?name WHERE { ?s <http://schema.org/name> ?name }")
-  """
-  def sparql(query_string) when is_binary(query_string) do
-    GenServer.call(__MODULE__, {:sparql, query_string}, :infinity)
-  end
-
-  @doc """
-  Return the list of named graph IRIs in the dataset.
-  """
-  def graph_names do
-    GenServer.call(__MODULE__, :graph_names)
-  end
-
-  @doc """
-  Return the total statement count across all graphs.
-  """
-  def statement_count do
-    GenServer.call(__MODULE__, :statement_count)
-  end
-
-  # --- Server ---
-
-  @impl true
-  def init(_opts) do
-    {:ok, %{dataset: RDF.Dataset.new()}, {:continue, :auto_load}}
-  end
-
-  @impl true
-  def handle_continue(:auto_load, state) do
-    import Ecto.Query
-
-    # Phase 1: load from postgres
-    stored =
-      Froth.Repo.all(from(d in Froth.Dataset.Stored, select: %{name: d.name, data: d.data}))
-
-    dataset =
-      Enum.reduce(stored, state.dataset, fn %{name: name, data: data}, ds ->
-        t0 = System.monotonic_time(:millisecond)
-
-        case RDF.TriG.read_string(data) do
-          {:ok, parsed} ->
-            merged = RDF.Dataset.add(ds, parsed)
-            elapsed = System.monotonic_time(:millisecond) - t0
-            count = RDF.Dataset.statement_count(parsed)
-
-            Span.execute([:froth, :dataset, :auto_loaded], nil, %{
-              name: name,
-              triples: count,
-              elapsed_ms: elapsed
-            })
-
-            merged
-
-          {:error, reason} ->
-            Span.execute([:froth, :dataset, :auto_load_failed], nil, %{
-              name: name,
-              reason: reason
-            })
-
-            ds
-        end
-      end)
-
-    total_pg = RDF.Dataset.statement_count(dataset)
-
-    Span.execute([:froth, :dataset, :auto_load_complete], nil, %{
-      datasets: length(stored),
-      total_triples: total_pg
-    })
-
-    Logger.info("[Dataset] Loaded #{total_pg} triples from #{length(stored)} postgres datasets")
-
-    # Phase 2: load from ~/rdf directory
-    dataset = do_load_directory(@rdf_dir, dataset)
-
-    total = RDF.Dataset.statement_count(dataset)
-
-    Logger.info(
-      "[Dataset] Total: #{total} triples across #{length(RDF.Dataset.graph_names(dataset))} named graphs"
-    )
-
-    {:noreply, %{state | dataset: dataset}}
-  end
-
-  defp do_load_directory(dir, dataset) do
-    if File.dir?(dir) do
-      files =
-        dir
-        |> File.ls!()
-        |> Enum.filter(fn f -> String.ends_with?(f, ".ttl") or String.ends_with?(f, ".nt") end)
-        |> Enum.sort()
-
-      Logger.info("[Dataset] Loading #{length(files)} RDF files from #{dir}")
-
-      Enum.reduce(files, dataset, fn filename, ds ->
-        path = Path.join(dir, filename)
-        graph_name = RDF.IRI.new!("file:///rdf/#{filename}")
-        t0 = System.monotonic_time(:millisecond)
-
-        result =
-          cond do
-            String.ends_with?(filename, ".ttl") ->
-              RDF.Turtle.read_file(path)
-
-            String.ends_with?(filename, ".nt") ->
-              RDF.NTriples.read_file(path)
-          end
-
-        case result do
-          {:ok, graph} ->
-            # Put the parsed graph into the dataset under its named graph
-            named = RDF.Graph.change_name(graph, graph_name)
-            merged = RDF.Dataset.add(ds, named)
-            elapsed = System.monotonic_time(:millisecond) - t0
-            count = RDF.Graph.triple_count(graph)
-
-            Logger.info(
-              "[Dataset] Loaded #{filename}: #{count} triples in #{elapsed}ms -> graph #{graph_name}"
-            )
-
-            merged
-
-          {:error, reason} ->
-            Logger.warning("[Dataset] Failed to load #{filename}: #{inspect(reason)}")
-            ds
-        end
-      end)
-    else
-      Logger.info("[Dataset] RDF directory #{dir} not found, skipping")
-      dataset
+  def sparql(query_string, opts \\ []) when is_binary(query_string) do
+    with {:ok, form} <- query_form(query_string) do
+      run_query(form, query_string, opts)
     end
   end
 
-  @impl true
-  def handle_call({:load, trig_string}, _from, state) do
-    t0 = System.monotonic_time(:millisecond)
+  @doc """
+  Executes a SPARQL `SELECT` query.
+  """
+  def select(query_string, opts \\ []) when is_binary(query_string) do
+    run_query(:select, query_string, opts)
+  end
 
-    case RDF.TriG.read_string(trig_string) do
-      {:ok, dataset} ->
-        elapsed = System.monotonic_time(:millisecond) - t0
-        count = RDF.Dataset.statement_count(dataset)
-        names = RDF.Dataset.graph_names(dataset)
+  @doc """
+  Executes a SPARQL `ASK` query.
+  """
+  def ask(query_string, opts \\ []) when is_binary(query_string) do
+    run_query(:ask, query_string, opts)
+  end
 
-        Span.execute([:froth, :dataset, :loaded], nil, %{
-          count: count,
-          graphs: length(names),
-          elapsed_ms: elapsed
-        })
+  @doc """
+  Executes a SPARQL `CONSTRUCT` query.
+  """
+  def construct(query_string, opts \\ []) when is_binary(query_string) do
+    run_query(:construct, query_string, opts)
+  end
 
-        {:reply, {:ok, %{statements: count, graphs: length(names)}}, %{state | dataset: dataset}}
+  @doc """
+  Executes a SPARQL `DESCRIBE` query.
+  """
+  def describe(query_string, opts \\ []) when is_binary(query_string) do
+    run_query(:describe, query_string, opts)
+  end
 
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+  @doc """
+  Returns the named graph IRIs exposed by the endpoint.
+  """
+  def graph_names(opts \\ []) do
+    with {:ok, %Result{results: results}} <- select(@graph_names_query, opts) do
+      {:ok, Enum.map(results, &Map.fetch!(&1, "g"))}
     end
   end
 
-  def handle_call({:load_directory, dir}, _from, state) do
-    t0 = System.monotonic_time(:millisecond)
-    before_count = RDF.Dataset.statement_count(state.dataset)
-    dataset = do_load_directory(dir, state.dataset)
-    after_count = RDF.Dataset.statement_count(dataset)
-    elapsed = System.monotonic_time(:millisecond) - t0
-    new_triples = after_count - before_count
-    graphs = RDF.Dataset.graph_names(dataset)
-
-    {:reply,
-     {:ok,
-      %{
-        files: length(graphs),
-        triples: after_count,
-        new_triples: new_triples,
-        elapsed_ms: elapsed
-      }}, %{state | dataset: dataset}}
+  @doc """
+  Returns the total number of statements visible to the endpoint.
+  """
+  def statement_count(opts \\ []) do
+    with {:ok, %Result{results: results}} <- select(@statement_count_query, opts),
+         {:ok, count} <- count_from_results(results) do
+      {:ok, count}
+    end
   end
 
-  def handle_call({:query, pattern}, _from, %{dataset: ds} = state) do
-    graph = RDF.Dataset.default_graph(ds)
+  defp run_query(form, query_string, opts) when form in [:select, :ask, :construct, :describe] do
+    endpoint = Keyword.get(opts, :endpoint, endpoint())
+
+    client_opts =
+      opts
+      |> Keyword.delete(:endpoint)
+      |> query_options()
 
     try do
-      {:reply, RDF.Query.execute(pattern, graph), state}
+      apply(client(), form, [query_string, endpoint, client_opts])
     rescue
-      e -> {:reply, {:error, Exception.message(e)}, state}
+      error -> {:error, Exception.message(error)}
     end
   end
 
-  def handle_call({:sparql, query_string}, _from, %{dataset: ds} = state) do
-    try do
-      query = SPARQL.query(query_string)
-      # Merge all named graphs into one for querying — the SPARQL lib
-      # doesn't handle GRAPH patterns on datasets well
-      merged =
-        ds
-        |> RDF.Dataset.graphs()
-        |> Enum.reduce(RDF.Graph.new(), &RDF.Graph.add(&2, &1))
+  defp query_form(query_string) do
+    case Query.new(query_string) do
+      %Query{form: form} when form in [:select, :ask, :construct, :describe] ->
+        {:ok, form}
 
-      {:reply, {:ok, SPARQL.execute_query(merged, query)}, state}
-    rescue
-      e -> {:reply, {:error, Exception.message(e)}, state}
+      {:error, _reason} ->
+        detect_query_form(query_string)
     end
   end
 
-  def handle_call(:graph_names, _from, %{dataset: ds} = state) do
-    {:reply, RDF.Dataset.graph_names(ds), state}
+  defp detect_query_form(query_string) do
+    case query_string |> strip_query_prologue() |> leading_query_form() do
+      nil -> {:error, "unsupported SPARQL query form"}
+      form -> {:ok, form}
+    end
   end
 
-  def handle_call(:statement_count, _from, %{dataset: ds} = state) do
-    {:reply, RDF.Dataset.statement_count(ds), state}
+  defp strip_query_prologue(query_string) do
+    query_string = String.trim_leading(query_string)
+
+    cond do
+      query_string == "" ->
+        ""
+
+      match = Regex.run(~r/^#.*(?:\r\n|\r|\n)?/, query_string) ->
+        query_string
+        |> String.replace_prefix(List.first(match), "")
+        |> strip_query_prologue()
+
+      match = Regex.run(~r/^PREFIX\s+[^\s:]*:\s*<[^>]+>\s*/i, query_string) ->
+        query_string
+        |> String.replace_prefix(List.first(match), "")
+        |> strip_query_prologue()
+
+      match = Regex.run(~r/^BASE\s+<[^>]+>\s*/i, query_string) ->
+        query_string
+        |> String.replace_prefix(List.first(match), "")
+        |> strip_query_prologue()
+
+      true ->
+        query_string
+    end
+  end
+
+  defp leading_query_form(query_string) do
+    case Regex.run(~r/^(SELECT|ASK|CONSTRUCT|DESCRIBE)\b/i, query_string, capture: :all_but_first) do
+      [form] -> query_form_atom(form)
+      _ -> nil
+    end
+  end
+
+  defp query_form_atom(form) do
+    case String.upcase(form) do
+      "SELECT" -> :select
+      "ASK" -> :ask
+      "CONSTRUCT" -> :construct
+      "DESCRIBE" -> :describe
+    end
+  end
+
+  defp count_from_results([%{"count" => count} | _]), do: count_value(count)
+  defp count_from_results([]), do: {:ok, 0}
+  defp count_from_results(_), do: {:error, "count query returned an unexpected result"}
+
+  defp count_value(%RDF.Literal{} = literal) do
+    case RDF.Term.value(literal) do
+      value when is_integer(value) ->
+        {:ok, value}
+
+      value when is_binary(value) ->
+        case Integer.parse(value) do
+          {count, ""} -> {:ok, count}
+          _ -> {:error, "count query returned a non-integer literal"}
+        end
+
+      _ ->
+        {:error, "count query returned a non-integer literal"}
+    end
+  end
+
+  defp count_value(value) when is_integer(value), do: {:ok, value}
+
+  defp count_value(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {count, ""} -> {:ok, count}
+      _ -> {:error, "count query returned a non-integer value"}
+    end
+  end
+
+  defp count_value(_), do: {:error, "count query returned an unexpected value"}
+
+  defp query_options(opts) do
+    @default_query_options
+    |> Keyword.merge(Keyword.get(config(), :query_opts, []))
+    |> Keyword.merge(opts)
+  end
+
+  defp client do
+    Keyword.get(config(), :client_module, SPARQL.Client)
+  end
+
+  defp config do
+    Application.get_env(:froth, __MODULE__, [])
   end
 end

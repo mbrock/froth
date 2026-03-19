@@ -19,8 +19,8 @@ defmodule Froth.Podcast do
         concurrency: 6
       )
 
-  Speaker atoms (e.g. `:alex`, `:sigge`) are resolved to voice IDs
-  automatically from the `voice_clones` database table.
+  Speaker atoms (e.g. `:alex`, `:sigge`) or speaker names as strings are
+  resolved to voice IDs automatically from the `voice_clones` database table.
 
   Runs asynchronously. Sends Telegram progress updates and the final
   stitched audio. Returns `{:ok, pid}` immediately.
@@ -767,11 +767,12 @@ defmodule Froth.Podcast do
   defp normalize_item({:file, path}) when is_binary(path),
     do: {:file, path, []}
 
-  defp normalize_item({speaker, text}) when is_atom(speaker) and is_binary(text),
-    do: {speaker, text, []}
+  defp normalize_item({speaker, text})
+       when (is_atom(speaker) or is_binary(speaker)) and is_binary(text),
+       do: {speaker, text, []}
 
   defp normalize_item({speaker, text, opts})
-       when is_atom(speaker) and is_binary(text) and is_list(opts),
+       when (is_atom(speaker) or is_binary(speaker)) and is_binary(text) and is_list(opts),
        do: {speaker, text, opts}
 
   defp send_progress(_bot_token, chat_id, text) do

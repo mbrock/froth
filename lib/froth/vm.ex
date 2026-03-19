@@ -39,8 +39,12 @@ defmodule Froth.VM do
   end
 
   def child_spec(opts) do
-    %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]},
-      type: :worker, restart: :permanent}
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker,
+      restart: :permanent
+    }
   end
 
   @doc "Create a new VM. Options: user (default 'froth'), distro ('alpine' or 'arch')"
@@ -76,12 +80,16 @@ defmodule Froth.VM do
   @impl true
   def handle_call({:create, opts}, _from, state),
     do: {:reply, do_create(opts), state}
+
   def handle_call(:list, _from, state),
     do: {:reply, do_list(), state}
+
   def handle_call({:info, quid}, _from, state),
     do: {:reply, do_info(quid), state}
+
   def handle_call({:exec, quid, command}, _from, state),
     do: {:reply, do_exec(quid, command), state}
+
   def handle_call({:destroy, quid}, _from, state),
     do: {:reply, do_destroy(quid), state}
 
@@ -94,25 +102,39 @@ defmodule Froth.VM do
 
     Logger.info("[VM] Creating #{distro} VM #{quid} for #{user}")
 
-    args = ["#{@srv_vm}/libexec/vm-mkfirecracker",
-            "--quid", quid, "--guest-user", user, "--distro", distro]
-    env = [{"PATH", "/srv/vm/bin:/srv/vm/libexec:/srv/bin:" <>
-                    "/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin"}]
+    args = [
+      "#{@srv_vm}/libexec/vm-mkfirecracker",
+      "--quid",
+      quid,
+      "--guest-user",
+      user,
+      "--distro",
+      distro
+    ]
+
+    env = [
+      {"PATH",
+       "/srv/vm/bin:/srv/vm/libexec:/srv/bin:" <>
+         "/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin"}
+    ]
 
     case System.cmd("sudo", args, env: env, stderr_to_stdout: true) do
       {_output, 0} ->
         Logger.info("[VM] Created #{quid}, starting service")
+
         case System.cmd("sudo", ["systemctl", "start", "vmguest@#{quid}.service"],
-               stderr_to_stdout: true) do
+               stderr_to_stdout: true
+             ) do
           {_, 0} ->
             guest_ip = read_state(quid, "guest-ip")
             Logger.info("[VM] #{quid} started at #{guest_ip}")
-            {:ok, %{quid: quid, ip: guest_ip, user: user,
-                     distro: distro, status: :starting}}
+            {:ok, %{quid: quid, ip: guest_ip, user: user, distro: distro, status: :starting}}
+
           {err, code} ->
             Logger.error("[VM] Failed to start #{quid}: #{err}")
             {:error, {:start_failed, code, err}}
         end
+
       {output, code} ->
         Logger.error("[VM] Failed to create #{quid}: #{output}")
         {:error, {:create_failed, code, output}}
@@ -120,29 +142,38 @@ defmodule Froth.VM do
   end
 
   defp do_list do
-    quids = case File.ls(@run_dir) do
-      {:ok, entries} -> entries
-      {:error, _} -> []
-    end
+    quids =
+      case File.ls(@run_dir) do
+        {:ok, entries} -> entries
+        {:error, _} -> []
+      end
 
-    vms = Enum.map(quids, fn quid ->
-      %{quid: quid,
-        ip: read_state(quid, "guest-ip"),
-        user: read_state(quid, "guest-user"),
-        running: service_active?(quid)}
-    end)
+    vms =
+      Enum.map(quids, fn quid ->
+        %{
+          quid: quid,
+          ip: read_state(quid, "guest-ip"),
+          user: read_state(quid, "guest-user"),
+          running: service_active?(quid)
+        }
+      end)
 
     {:ok, vms}
   end
 
   defp do_info(quid) do
     ip = read_state(quid, "guest-ip")
+
     if ip do
-      {:ok, %{quid: quid, ip: ip,
-              mac: read_state(quid, "guest-mac"),
-              user: read_state(quid, "guest-user"),
-              running: service_active?(quid),
-              config: read_state_json(quid, "firecracker.json")}}
+      {:ok,
+       %{
+         quid: quid,
+         ip: ip,
+         mac: read_state(quid, "guest-mac"),
+         user: read_state(quid, "guest-user"),
+         running: service_active?(quid),
+         config: read_state_json(quid, "firecracker.json")
+       }}
     else
       {:error, :not_found}
     end
@@ -150,16 +181,23 @@ defmodule Froth.VM do
 
   defp do_exec(quid, command) do
     ip = read_state(quid, "guest-ip")
+
     if ip do
       ssh_args = [
-        "-i", @ssh_key,
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "ConnectTimeout=5",
-        "-o", "LogLevel=ERROR",
+        "-i",
+        @ssh_key,
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "LogLevel=ERROR",
         "root@#{ip}",
         command
       ]
+
       case System.cmd("ssh", ssh_args, stderr_to_stdout: true) do
         {output, 0} -> {:ok, String.trim(output)}
         {output, code} -> {:error, {:exit, code, String.trim(output)}}
@@ -171,13 +209,13 @@ defmodule Froth.VM do
 
   defp do_destroy(quid) do
     Logger.info("[VM] Destroying #{quid}")
-    System.cmd("sudo", ["systemctl", "stop", "vmguest@#{quid}.service"],
-      stderr_to_stdout: true)
-    System.cmd("sudo", ["ip", "link", "del", "#{quid}-tap0"],
-      stderr_to_stdout: true)
+    System.cmd("sudo", ["systemctl", "stop", "vmguest@#{quid}.service"], stderr_to_stdout: true)
+    System.cmd("sudo", ["ip", "link", "del", "#{quid}-tap0"], stderr_to_stdout: true)
+
     for dir <- ["/var/lib/ntvm/#{quid}", "#{@run_dir}/#{quid}"] do
       System.cmd("sudo", ["rm", "-rf", dir], stderr_to_stdout: true)
     end
+
     clean_hosts(quid)
     Logger.info("[VM] Destroyed #{quid}")
     :ok
@@ -188,6 +226,7 @@ defmodule Froth.VM do
   defp generate_quid do
     consonants = ~c"bcdfghjklmnprstvwyz"
     vowels = ~c"aeiou"
+
     1..12
     |> Enum.map(fn i ->
       chars = if rem(i, 2) == 1, do: consonants, else: vowels
@@ -214,15 +253,16 @@ defmodule Froth.VM do
             {:ok, data} -> data
             _ -> nil
           end
-        _ -> nil
+
+        _ ->
+          nil
       end
     end
     |> Enum.find(& &1)
   end
 
   defp service_active?(quid) do
-    case System.cmd("systemctl", ["is-active", "vmguest@#{quid}.service"],
-           stderr_to_stdout: true) do
+    case System.cmd("systemctl", ["is-active", "vmguest@#{quid}.service"], stderr_to_stdout: true) do
       {"active\n", 0} -> true
       _ -> false
     end
@@ -231,13 +271,16 @@ defmodule Froth.VM do
   defp clean_hosts(quid) do
     case File.read("/etc/hosts") do
       {:ok, content} ->
-        cleaned = content
+        cleaned =
+          content
           |> String.split("\n")
           |> Enum.reject(&String.contains?(&1, quid))
           |> Enum.join("\n")
-        System.cmd("sudo", ["tee", "/etc/hosts"],
-          input: cleaned, stderr_to_stdout: true)
-      _ -> :ok
+
+        System.cmd("sudo", ["tee", "/etc/hosts"], input: cleaned, stderr_to_stdout: true)
+
+      _ ->
+        :ok
     end
   rescue
     _ -> :ok

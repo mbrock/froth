@@ -72,6 +72,7 @@ defmodule Froth.MixProject do
       {:dotenvy, "~> 0.8", only: [:dev, :test]},
       {:rdf, "~> 2.1"},
       {:sparql, "~> 0.3.11"},
+      {:sparql_client, "~> 0.5"},
       {:oban, "~> 2.19"},
       {:earmark, "~> 1.4"},
       {:logger_json, "~> 7.0"},

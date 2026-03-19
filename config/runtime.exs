@@ -32,6 +32,13 @@ config :froth, FrothWeb.Endpoint, http: [port: String.to_integer(System.get_env(
 
 config :froth, Froth.Replicate, api_token: System.get_env("REPLICATE_API_TOKEN")
 
+# The app usually runs on the host while Fuseki runs in Docker, so localhost is
+# the right default here. Override this when Froth itself runs in Docker or the
+# SPARQL service is reachable on a different network path.
+config :froth, Froth.Dataset,
+  endpoint: System.get_env("FROTH_SPARQL_ENDPOINT", "http://localhost:3030/kg/sparql"),
+  query_opts: [request_method: :post, protocol_version: "1.1"]
+
 config :froth, Froth.Summarizer,
   recent_context_chunk_size:
     (case System.get_env("SUMMARIZER_RECENT_CONTEXT_CHUNK_SIZE") do
