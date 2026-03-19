@@ -1,10 +1,10 @@
 defmodule FrothWeb.PodcastController do
   @moduledoc """
-  Podcast API as HTML hypermedia.
+  Voice — HTML hypermedia for podcast generation.
 
   Not JSON with _links pretending to be REST.
   Actual HTML. Forms are the affordances. Links are the state transitions.
-  The browser is the universal client. curl sees the same thing.
+  Audio elements are the content. The browser is the universal client.
 
   "A REST API should spend almost all of its descriptive effort in defining
   the media type(s) used for representing resources and driving application
@@ -16,26 +16,44 @@ defmodule FrothWeb.PodcastController do
   alias Froth.Repo
   import Ecto.Query
 
-  # We bypass the root layout and render our own minimal HTML.
-  # No Phoenix JS, no LiveView, no app.css. Just HTML.
-
   plug :put_layout, false
+
+  # Detect which scope we're under for link generation
+  defp base_path(conn) do
+    if String.starts_with?(conn.request_path, "/froth/voice") do
+      "/froth/voice"
+    else
+      "/api"
+    end
+  end
+
+  defp episodes_path(conn), do: "#{base_path(conn)}/episodes"
+  defp voices_path(conn), do: "#{base_path(conn)}/voices"
+  defp new_path(conn), do: "#{base_path(conn)}/new"
+
+  # For /api compat, podcasts path
+  defp podcasts_path(conn) do
+    if base_path(conn) == "/api", do: "/api/podcasts", else: "#{base_path(conn)}/episodes"
+  end
 
   # ── Root ──────────────────────────────────────────────
 
   def root(conn, _params) do
+    bp = base_path(conn)
+    ep = if bp == "/api", do: "#{bp}/podcasts", else: "#{bp}/episodes"
+    
     conn
     |> put_resp_content_type("text/html")
-    |> send_resp(200, page("Froth Podcast API", """
+    |> send_resp(200, page("Froth Voice", """
     <header>
-      <h1>Froth Podcast API</h1>
+      <h1>Froth Voice</h1>
       <p>Generate podcasts with cloned voices.<br>
       The wrapper is the problem. The payload was always fine.</p>
     </header>
     <nav>
-      <a href="/api/podcasts">Podcasts</a> ·
-      <a href="/api/voices">Voices</a> ·
-      <a href="/api/podcasts/new">Create</a>
+      <a href="#{ep}">Episodes</a> ·
+      <a href="#{bp}/voices">Voices</a> ·
+      <a href="#{bp}/new">Create</a>
     </nav>
     """))
   end
@@ -43,13 +61,15 @@ defmodule FrothWeb.PodcastController do
   # ── Voices ────────────────────────────────────────────
 
   def voices(conn, _params) do
+    bp = base_path(conn)
+    ep = podcasts_path(conn)
     voices = Froth.VoiceClone.all()
 
     rows = Enum.map(voices, fn v ->
       """
       <tr vocab="https://schema.org/" typeof="Person">
         <td property="name">#{h(v.name)}</td>
-        <td>#{h(v.voice_id)}</td>
+        <td><code>#{h(v.voice_id)}</code></td>
         <td>#{h(v.character || "—")}</td>
         <td>#{h(v.language || "—")}</td>
         <td><code>#{h(v.tts_model || "—")}</code></td>
@@ -60,9 +80,9 @@ defmodule FrothWeb.PodcastController do
     conn
     |> put_resp_content_type("text/html")
     |> send_resp(200, page("Voices — #{length(voices)} clones", """
-    <nav><a href="/api">← API root</a> · <a href="/api/podcasts">Podcasts</a> · <a href="/api/podcasts/new">Create</a></nav>
+    <nav><a href="#{bp}">← Voice</a> · <a href="#{ep}">Episodes</a> · <a href="#{bp}/new">Create</a></nav>
     <h1>Voice Clones</h1>
-    <p>#{length(voices)} voices available. Use the <code>name</code> as the <code>speaker</code> field when creating podcasts.</p>
+    <p>#{length(voices)} voices available. Use the <code>name</code> as the <code>speaker</code> field.</p>
     <table>
       <thead>
         <tr><th>Name</th><th>Voice ID</th><th>Character</th><th>Language</th><th>Model</th></tr>
@@ -74,9 +94,11 @@ defmodule FrothWeb.PodcastController do
     """))
   end
 
-  # ── List Podcasts ─────────────────────────────────────
+  # ── List Episodes ─────────────────────────────────────
 
   def index(conn, params) do
+    bp = base_path(conn)
+    ep = podcasts_path(conn)
     limit = Map.get(params, "limit", "20") |> String.to_integer() |> min(100)
     offset = Map.get(params, "offset", "0") |> String.to_integer()
 
@@ -95,10 +117,18 @@ defmodule FrothWeb.PodcastController do
       |> Enum.uniq()
       |> Enum.join(", ")
 
+      audio_html = if s.audio_url do
+        """
+        <audio controls preload="none" src="#{h(s.audio_url)}" style="height:24px;vertical-align:middle;"></audio>
+        """
+      else
+        ""
+      end
+
       """
       <tr>
-        <td><a href="/api/podcasts/#{s.id}">#{s.id}</a></td>
-        <td>#{h(s.label || "—")}</td>
+        <td><a href="#{ep}/#{s.id}">#{s.id}</a></td>
+        <td>#{h(s.label || "—")} #{audio_html}</td>
         <td><code>#{h(s.status)}</code></td>
         <td>#{h(speakers)}</td>
         <td>#{format_time(s.inserted_at)}</td>
@@ -108,12 +138,12 @@ defmodule FrothWeb.PodcastController do
 
     nav_links = []
     nav_links = if offset > 0 do
-      ["<a href=\"/api/podcasts?limit=#{limit}&offset=#{max(0, offset - limit)}\">← Previous</a>" | nav_links]
+      ["<a href=\"#{ep}?limit=#{limit}&offset=#{max(0, offset - limit)}\">← Previous</a>" | nav_links]
     else
       nav_links
     end
     nav_links = if offset + limit < total do
-      nav_links ++ ["<a href=\"/api/podcasts?limit=#{limit}&offset=#{offset + limit}\">Next →</a>"]
+      nav_links ++ ["<a href=\"#{ep}?limit=#{limit}&offset=#{offset + limit}\">Next →</a>"]
     else
       nav_links
     end
@@ -121,10 +151,10 @@ defmodule FrothWeb.PodcastController do
 
     conn
     |> put_resp_content_type("text/html")
-    |> send_resp(200, page("Podcasts — #{total} total", """
-    <nav><a href="/api">← API root</a> · <a href="/api/voices">Voices</a> · <a href="/api/podcasts/new">Create</a></nav>
-    <h1>Podcasts</h1>
-    <p>#{total} podcasts. Showing #{offset + 1}–#{min(offset + limit, total)}.</p>
+    |> send_resp(200, page("Episodes — #{total} total", """
+    <nav><a href="#{bp}">← Voice</a> · <a href="#{bp}/voices">Voices</a> · <a href="#{bp}/new">Create</a></nav>
+    <h1>Episodes</h1>
+    <p>#{total} episodes. Showing #{offset + 1}–#{min(offset + limit, total)}.</p>
     <table>
       <thead>
         <tr><th>ID</th><th>Label</th><th>Status</th><th>Speakers</th><th>Created</th></tr>
@@ -137,22 +167,38 @@ defmodule FrothWeb.PodcastController do
     """))
   end
 
-  # ── Show Podcast ──────────────────────────────────────
+  # ── Show Episode ──────────────────────────────────────
 
   def show(conn, %{"id" => id}) do
+    bp = base_path(conn)
+    ep = podcasts_path(conn)
+    
     case Repo.get(Froth.Podcast.Script, id) do
       nil ->
         conn
         |> put_resp_content_type("text/html")
         |> put_status(404)
         |> send_resp(404, page("Not Found", """
-        <nav><a href="/api/podcasts">← All podcasts</a></nav>
-        <h1>Podcast ##{h(id)} not found.</h1>
-        <p>Try <a href="/api/podcasts">browsing all podcasts</a>
-        or <a href="/api/podcasts/new">creating a new one</a>.</p>
+        <nav><a href="#{ep}">← All episodes</a></nav>
+        <h1>Episode ##{h(id)} not found.</h1>
+        <p>Try <a href="#{ep}">browsing all episodes</a>
+        or <a href="#{bp}/new">creating a new one</a>.</p>
         """))
 
       script ->
+        audio_section = if script.audio_url do
+          """
+          <h2>Audio</h2>
+          <audio controls preload="metadata" src="#{h(script.audio_url)}" style="width:100%;max-width:40rem;"></audio>
+          <p><a href="#{h(script.audio_url)}" download>Download MP3</a></p>
+          """
+        else
+          case script.status do
+            "queued" -> "<p><em>Audio is being generated...</em></p>"
+            _ -> ""
+          end
+        end
+
         lines = (script.script || [])
         |> Enum.map(fn seg ->
           "<li><strong>#{h(seg["speaker"])}</strong>: #{h(seg["text"])}</li>"
@@ -161,27 +207,29 @@ defmodule FrothWeb.PodcastController do
 
         conn
         |> put_resp_content_type("text/html")
-        |> send_resp(200, page("Podcast ##{script.id} — #{h(script.label)}", """
-        <nav><a href="/api/podcasts">← All podcasts</a> · <a href="/api/voices">Voices</a></nav>
-        <h1 property="name">#{h(script.label || "Podcast ##{script.id}")}</h1>
-        <dl>
-          <dt>Status</dt><dd><code>#{h(script.status)}</code></dd>
-          <dt>Batch</dt><dd><code>#{h(script.batch_id)}</code></dd>
-          <dt>Chat ID</dt><dd>#{script.chat_id}</dd>
-          <dt>Created</dt><dd>#{format_time(script.inserted_at)}</dd>
-        </dl>
-        <h2>Script</h2>
-        <ol>#{lines}</ol>
+        |> send_resp(200, page("Episode ##{script.id} — #{h(script.label)}", """
+        <nav><a href="#{ep}">← All episodes</a> · <a href="#{bp}/voices">Voices</a> · <a href="#{bp}/new">Create</a></nav>
+        <article vocab="https://schema.org/" typeof="PodcastEpisode">
+          <h1 property="name">#{h(script.label || "Episode ##{script.id}")}</h1>
+          #{audio_section}
+          <dl>
+            <dt>Status</dt><dd><code>#{h(script.status)}</code></dd>
+            <dt>Batch</dt><dd><code>#{h(script.batch_id)}</code></dd>
+            <dt>Chat ID</dt><dd>#{script.chat_id}</dd>
+            <dt>Created</dt><dd property="dateCreated">#{format_time(script.inserted_at)}</dd>
+          </dl>
+          <h2>Script</h2>
+          <ol>#{lines}</ol>
+        </article>
         """))
     end
   end
 
   # ── New (the form) ────────────────────────────────────
-  # The form IS the API documentation.
-  # The form IS the client library.
-  # The form IS the affordance.
 
   def new(conn, _params) do
+    bp = base_path(conn)
+    ep = podcasts_path(conn)
     voices = Froth.VoiceClone.all()
     voice_options = voices
     |> Enum.map(fn v -> "<option value=\"#{h(v.name)}\">#{h(v.name)}#{if v.character, do: " (#{h(v.character)})", else: ""}</option>" end)
@@ -189,49 +237,26 @@ defmodule FrothWeb.PodcastController do
 
     conn
     |> put_resp_content_type("text/html")
-    |> send_resp(200, page("Create Podcast", """
-    <nav><a href="/api">← API root</a> · <a href="/api/podcasts">Podcasts</a> · <a href="/api/voices">Voices</a></nav>
-    <h1>Create Podcast</h1>
-    <form method="POST" action="/api/podcasts">
-      <input type="hidden" name="_csrf_token" value="#{Plug.CSRFProtection.get_csrf_token()}" />
-
+    |> send_resp(200, page("Create Episode", """
+    <nav><a href="#{bp}">← Voice</a> · <a href="#{ep}">Episodes</a> · <a href="#{bp}/voices">Voices</a></nav>
+    <h1>Create Episode</h1>
+    <form method="POST" action="#{ep}">
       <fieldset>
         <legend>Script</legend>
         <p>One segment per row. Add more by submitting and editing.</p>
-        <div id="segments">
-          <div class="segment">
-            <label>Speaker:
-              <select name="speaker[]">
-                #{voice_options}
-              </select>
-            </label>
-            <label>Text:
-              <textarea name="text[]" rows="2" cols="60" placeholder="That's the whole thing."></textarea>
-            </label>
-          </div>
-          <div class="segment">
-            <label>Speaker:
-              <select name="speaker[]">
-                #{voice_options}
-              </select>
-            </label>
-            <label>Text:
-              <textarea name="text[]" rows="2" cols="60" placeholder=""></textarea>
-            </label>
-          </div>
-          <div class="segment">
-            <label>Speaker:
-              <select name="speaker[]">
-                #{voice_options}
-              </select>
-            </label>
-            <label>Text:
-              <textarea name="text[]" rows="2" cols="60" placeholder=""></textarea>
-            </label>
-          </div>
+        <div class="segment">
+          <label>Speaker: <select name="speaker[]">#{voice_options}</select></label>
+          <label>Text: <textarea name="text[]" rows="2" cols="60" placeholder="That's the whole thing."></textarea></label>
+        </div>
+        <div class="segment">
+          <label>Speaker: <select name="speaker[]">#{voice_options}</select></label>
+          <label>Text: <textarea name="text[]" rows="2" cols="60"></textarea></label>
+        </div>
+        <div class="segment">
+          <label>Speaker: <select name="speaker[]">#{voice_options}</select></label>
+          <label>Text: <textarea name="text[]" rows="2" cols="60"></textarea></label>
         </div>
       </fieldset>
-
       <fieldset>
         <legend>Options</legend>
         <label>Label: <input type="text" name="label" value="" placeholder="Nikolai on the railgun" size="40" /></label><br>
@@ -240,26 +265,21 @@ defmodule FrothWeb.PodcastController do
         <label>Language: <input type="text" name="language" value="English" size="20" /></label><br>
         <label>Model: <input type="text" name="model" value="minimax/speech-2.8-hd" size="30" /></label>
       </fieldset>
-
-      <button type="submit">Generate Podcast</button>
+      <button type="submit">Generate Episode</button>
     </form>
     """))
   end
 
   # ── Create (POST) ─────────────────────────────────────
-  # Accepts both form-encoded (from the HTML form) and JSON.
 
   def create(conn, %{"speaker" => speakers, "text" => texts} = params) when is_list(speakers) do
-    # Form submission — parallel arrays
     script = Enum.zip(speakers, texts)
     |> Enum.reject(fn {_, text} -> String.trim(text) == "" end)
     |> Enum.map(fn {speaker, text} -> {String.to_atom(speaker), text} end)
-
     do_create(conn, script, params)
   end
 
   def create(conn, %{"script" => script_data} = params) when is_list(script_data) do
-    # JSON submission
     script = Enum.map(script_data, fn seg ->
       {String.to_atom(seg["speaker"] || seg["voice"]), seg["text"] || seg["line"]}
     end)
@@ -267,21 +287,24 @@ defmodule FrothWeb.PodcastController do
   end
 
   def create(conn, _params) do
+    bp = base_path(conn)
     conn
     |> put_resp_content_type("text/html")
     |> put_status(400)
     |> send_resp(400, page("Error", """
-    <nav><a href="/api/podcasts/new">← Try again</a></nav>
+    <nav><a href="#{bp}/new">← Try again</a></nav>
     <h1>Missing script.</h1>
     <p>Submit a script with speaker/text pairs.
-    <a href="/api/podcasts/new">Use the form</a> or POST JSON.</p>
+    <a href="#{bp}/new">Use the form</a> or POST JSON.</p>
     """))
   end
 
   defp do_create(conn, script, params) when length(script) > 0 do
+    ep = podcasts_path(conn)
+    bp = base_path(conn)
     chat_id = to_int(params["chat_id"], -1003690254489)
     label = params["label"]
-    label = if is_binary(label) and String.trim(label) != "", do: label, else: "Podcast"
+    label = if is_binary(label) and String.trim(label) != "", do: label, else: "Episode"
 
     case Froth.Podcast.generate(script,
       chat_id: chat_id,
@@ -300,13 +323,13 @@ defmodule FrothWeb.PodcastController do
         id = if script_record, do: script_record.id, else: batch_id
 
         conn
-        |> put_resp_header("location", "/api/podcasts/#{id}")
+        |> put_resp_header("location", "#{ep}/#{id}")
         |> put_resp_content_type("text/html")
         |> put_status(303)
         |> send_resp(303, page("Created", """
-        <nav><a href="/api/podcasts/#{id}">→ View podcast ##{id}</a></nav>
-        <h1>Podcast queued.</h1>
-        <p>Redirecting to <a href="/api/podcasts/#{id}">/api/podcasts/#{id}</a>...</p>
+        <nav><a href="#{ep}/#{id}">→ View episode ##{id}</a></nav>
+        <h1>Episode queued.</h1>
+        <p>Redirecting to <a href="#{ep}/#{id}">#{ep}/#{id}</a>...</p>
         """))
 
       {:error, reason} ->
@@ -314,7 +337,7 @@ defmodule FrothWeb.PodcastController do
         |> put_resp_content_type("text/html")
         |> put_status(422)
         |> send_resp(422, page("Error", """
-        <nav><a href="/api/podcasts/new">← Try again</a></nav>
+        <nav><a href="#{bp}/new">← Try again</a></nav>
         <h1>Generation failed.</h1>
         <pre>#{h(inspect(reason))}</pre>
         """))
@@ -322,19 +345,18 @@ defmodule FrothWeb.PodcastController do
   end
 
   defp do_create(conn, _script, _params) do
+    bp = base_path(conn)
     conn
     |> put_resp_content_type("text/html")
     |> put_status(400)
     |> send_resp(400, page("Error", """
-    <nav><a href="/api/podcasts/new">← Try again</a></nav>
+    <nav><a href="#{bp}/new">← Try again</a></nav>
     <h1>Empty script.</h1>
-    <p>Add at least one segment with text. <a href="/api/podcasts/new">Use the form</a>.</p>
+    <p>Add at least one segment with text. <a href="#{bp}/new">Use the form</a>.</p>
     """))
   end
 
   # ── HTML scaffold ─────────────────────────────────────
-  # No framework. No build step. No CDN. The style is inline
-  # because the document should be self-contained.
 
   defp page(title, body) do
     """
@@ -379,6 +401,8 @@ defmodule FrothWeb.PodcastController do
         ol { margin: 1rem 0 1rem 1.5rem; }
         li { margin: 0.3rem 0; }
         p { margin: 0.5rem 0; }
+        audio { display: block; margin: 0.5rem 0; }
+        article { margin: 1rem 0; }
         footer { margin-top: 2rem; padding-top: 0.5rem; border-top: 1px solid #ddd;
           font-size: 0.75rem; color: #999; }
       </style>
@@ -386,7 +410,7 @@ defmodule FrothWeb.PodcastController do
     <body>
       #{body}
       <footer>
-        <a href="/api">API root</a> · Froth Podcast Engine ·
+        <a href="/froth/voice">Voice</a> · Froth ·
         "A REST API should be entered with no prior knowledge beyond the initial URI
         and set of standardized media types." — Roy Fielding
       </footer>
@@ -419,6 +443,4 @@ defmodule FrothWeb.PodcastController do
     end
   end
   defp to_int(v, _default) when is_float(v), do: round(v)
-
-  
 end

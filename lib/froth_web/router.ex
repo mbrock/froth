@@ -37,7 +37,7 @@ defmodule FrothWeb.Router do
     live "/wiki", WikiLive, :index
     live "/wiki/:slug", WikiLive, :show
     get "/media/:chat_id/:message_id", MediaController, :show
-    live "/voice", VoiceLive, :index
+    # live "/voice", VoiceLive, :index  # replaced by /froth/voice controller
     live "/bot-context", BotContextLive, :index
     live "/telemetry", TelemetryLive, :index
     live "/chat-stats", ChatStatsLive, :index
@@ -74,9 +74,19 @@ defmodule FrothWeb.Router do
     get "/news", NewsController, :show
   end
 
-  # REST API — HATEOAS-compliant podcast generation
-  # "A REST API should be entered with no prior knowledge
-  # beyond the initial URI." — Roy Fielding
+  # Voice — HTML hypermedia for podcast generation
+  scope "/froth/voice", FrothWeb do
+    pipe_through :api
+
+    get "/", PodcastController, :root
+    get "/voices", PodcastController, :voices
+    get "/new", PodcastController, :new
+    get "/episodes", PodcastController, :index
+    get "/episodes/:id", PodcastController, :show
+    post "/episodes", PodcastController, :create
+  end
+
+  # Legacy /api redirect
   scope "/api", FrothWeb do
     pipe_through :api
 
