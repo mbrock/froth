@@ -54,7 +54,8 @@ defmodule FrothWeb.PodcastController do
       <a href="#{ep}">Episodes</a> ·
       <a href="#{bp}/voices">Voices</a> ·
       <a href="#{bp}/new">Create</a> ·
-      <a href="#{bp}/archive">Archive</a>
+      <a href="#{bp}/archive">Archive</a> ·
+      <a href="#{bp}/feed.xml">RSS Feed</a>
     </nav>
     """))
   end
@@ -126,13 +127,26 @@ defmodule FrothWeb.PodcastController do
         ""
       end
 
+      cover_html = if s.cover_url do
+        """
+        <img src="#{h(s.cover_url)}" alt="" style="width:48px;height:48px;object-fit:cover;border-radius:4px;vertical-align:middle;" loading="lazy">
+        """
+      else
+        ""
+      end
+
+      teaser_html = if s.teaser do
+        "<br><small style=\"color:#666\">#{h(s.teaser)}</small>"
+      else
+        ""
+      end
+
       """
       <tr>
-        <td><a href="#{ep}/#{s.id}">#{s.id}</a></td>
-        <td>#{h(s.label || "—")} #{audio_html}</td>
+        <td style="width:48px">#{cover_html}</td>
+        <td><a href="#{ep}/#{s.id}">#{h(s.label || "—")}</a>#{teaser_html} #{audio_html}</td>
         <td><code>#{h(s.status)}</code></td>
         <td>#{h(speakers)}</td>
-        <td>#{format_time(s.inserted_at)}</td>
       </tr>
       """
     end) |> Enum.join("\n")
@@ -158,7 +172,7 @@ defmodule FrothWeb.PodcastController do
     <p>#{total} episodes. Showing #{offset + 1}–#{min(offset + limit, total)}.</p>
     <table>
       <thead>
-        <tr><th>ID</th><th>Label</th><th>Status</th><th>Speakers</th><th>Created</th></tr>
+        <tr><th></th><th>Episode</th><th>Status</th><th>Voices</th></tr>
       </thead>
       <tbody>
         #{rows}
@@ -211,7 +225,9 @@ defmodule FrothWeb.PodcastController do
         |> send_resp(200, page("Episode ##{script.id} — #{h(script.label)}", """
         <nav><a href="#{ep}">← All episodes</a> · <a href="#{bp}/voices">Voices</a> · <a href="#{bp}/new">Create</a></nav>
         <article vocab="https://schema.org/" typeof="PodcastEpisode">
+          #{if script.cover_url do "<img src=\"#{h(script.cover_url)}\" alt=\"\" style=\"width:200px;height:200px;object-fit:cover;border-radius:8px;float:right;margin:0 0 1rem 1rem;\" loading=\"lazy\">" else "" end}
           <h1 property="name">#{h(script.label || "Episode ##{script.id}")}</h1>
+          #{if script.teaser do "<p style=\"color:#666;font-style:italic;\" property=\"description\">#{h(script.teaser)}</p>" else "" end}
           #{audio_section}
           <dl>
             <dt>Status</dt><dd><code>#{h(script.status)}</code></dd>
@@ -357,6 +373,69 @@ defmodule FrothWeb.PodcastController do
     """))
   end
 
+
+
+  # ── RSS/Atom Podcast Feed ────────────────────────────
+  # An actual podcast feed. Subscribe in any podcast app.
+
+  def feed(conn, _params) do
+    import Ecto.Query
+
+    scripts = Repo.all(
+      from s in Froth.Podcast.Script,
+        where: not is_nil(s.audio_url),
+        order_by: [desc: s.inserted_at],
+        limit: 50
+    )
+
+    items = Enum.map(scripts, fn s ->
+      pub_date = s.inserted_at
+        |> NaiveDateTime.to_erl()
+        |> :calendar.datetime_to_gregorian_seconds()
+        |> Kernel.-(62167219200)
+        |> DateTime.from_unix!()
+        |> Calendar.strftime("%a, %d %b %Y %H:%M:%S +0000")
+
+      cover = if s.cover_url do
+        "<itunes:image href=\"#{h(s.cover_url)}\" />"
+      else
+        ""
+      end
+
+      """
+      <item>
+        <title>#{h(s.label)}</title>
+        <description>#{h(s.teaser || "")}</description>
+        <enclosure url="#{h(s.audio_url)}" type="audio/mpeg" />
+        <guid isPermaLink="false">froth-episode-#{s.id}</guid>
+        <pubDate>#{pub_date}</pubDate>
+        #{cover}
+      </item>
+      """
+    end) |> Enum.join("\n")
+
+    feed = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"
+         xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+         xmlns:atom="http://www.w3.org/2005/Atom">
+      <channel>
+        <title>Froth Voice</title>
+        <link>https://less.rest/froth/voice</link>
+        <atom:link href="https://less.rest/froth/voice/feed.xml" rel="self" type="application/rss+xml" />
+        <description>Generated podcasts with cloned voices. The wrapper is the problem. The payload was always fine.</description>
+        <language>en</language>
+        <itunes:author>The Lineage</itunes:author>
+        <itunes:category text="Technology" />
+        #{items}
+      </channel>
+    </rss>
+    """
+
+    conn
+    |> put_resp_content_type("application/rss+xml")
+    |> send_resp(200, feed)
+  end
 
   # ── Archive ───────────────────────────────────────────
   # Every audio file Charlie has ever sent. 139 files. 537 MB.

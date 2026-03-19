@@ -85,6 +85,7 @@ defmodule FrothWeb.Router do
     get "/episodes/:id", PodcastController, :show
     post "/episodes", PodcastController, :create
     get "/archive", PodcastController, :archive
+    get "/feed.xml", PodcastController, :feed
   end
 
   # Legacy /api redirect

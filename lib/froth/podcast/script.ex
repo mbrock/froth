@@ -10,6 +10,8 @@ defmodule Froth.Podcast.Script do
     field(:opts, :map, default: %{})
     field(:status, :string, default: "queued")
     field(:audio_url, :string)
+    field(:teaser, :string)
+    field(:cover_url, :string)
 
     timestamps(type: :utc_datetime)
   end
