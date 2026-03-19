@@ -79,3 +79,30 @@ Words: 635 with timestamps
 Output: 15.3MB MP4, 1080x1920
 
 Created: 2026-03-19
+
+## IMPORTANT: Two-pass rendering
+
+The concat demuxer with static images produces ~1 frame
+per scene. The ASS filter needs actual frames at 24fps
+to render word-by-word timing. Use two passes:
+
+1. Generate a 24fps slideshow video first:
+   For each scene, use -loop 1 on the image with
+   -r 24 and -t duration to create a real video segment.
+   Then concat the segments with -c copy.
+
+2. Overlay ASS on the slideshow + audio:
+   ffmpeg -y -i slideshow.mp4 -i podcast.mp3 \
+     -vf "ass=subs.ass" \
+     -c:v libx264 -preset fast -crf 23 \
+     -c:a aac -b:a 192k -shortest output.mp4
+
+## Font dependency
+
+The ASS filter requires the font to be installed in
+the system font cache. JetBrains Mono must be in
+~/.local/share/fonts/ and fc-cache must be refreshed.
+libass does NOT error on missing fonts — it silently
+renders empty glyphs. Always verify with pixel diff.
+
+Updated: 2026-03-19
