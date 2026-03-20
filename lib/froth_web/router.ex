@@ -26,6 +26,7 @@ defmodule FrothWeb.Router do
   scope "/froth", FrothWeb do
     pipe_through :browser
 
+    get "/objects/*key", ObjectStoreController, :show
     get "/summaries", SummariesController, :index
     live "/", AnalysesLive, :index
     live "/analyses", AnalysesLive, :index
@@ -64,10 +65,26 @@ defmodule FrothWeb.Router do
     post "/debug", MiniDebugController, :create
   end
 
+  scope "/froth", FrothWeb do
+    put "/objects/*key", ObjectStoreController, :put
+  end
+
   scope "/", FrothWeb do
     pipe_through :browser
 
     live "/jbo", JboLive, :index
+  end
+
+  # Embed player
+  scope "/embed", FrothWeb do
+    get "/:batch_id", EmbedController, :show
+    get "/:batch_id/audio", EmbedController, :audio
+  end
+
+  # Reel preview
+  scope "/reel", FrothWeb do
+    get "/", ReelController, :index
+    get "/:id", ReelController, :show
   end
 
   scope "/", FrothWeb do
