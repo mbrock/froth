@@ -693,12 +693,12 @@
             
             // Find current word and speaker
             let wordIdx = -1;
-            for (let i = 0; i < data.words.length; i++) {
-              if (seconds >= data.words[i].start - 0.05) wordIdx = i;
-              if (data.words[i].start > seconds + 0.3) break;
+            for (let i = 0; i < window.FrothVideo.data.words.length; i++) {
+              if (seconds >= window.FrothVideo.data.words[i].start - 0.05) wordIdx = i;
+              if (window.FrothVideo.data.words[i].start > seconds + 0.3) break;
             }
             
-            const word = wordIdx >= 0 ? data.words[wordIdx] : null;
+            const word = wordIdx >= 0 ? window.FrothVideo.data.words[wordIdx] : null;
             const speaker = word ? (word.speaker || '') : '';
             const isWordActive = word && seconds >= word.start && seconds <= word.end + 0.08;
             
