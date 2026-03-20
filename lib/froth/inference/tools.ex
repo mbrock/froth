@@ -286,6 +286,24 @@ defmodule Froth.Inference.Tools do
         "required" => ["task_id"],
         "additionalProperties" => false
       }
+    },
+    %{
+      "name" => "yield",
+      "description" =>
+        "Pause this cycle and wait for I/O. Call this after subscribing to one or more tasks " <>
+          "with subscribe_task. The cycle will end cleanly and you will be woken up " <>
+          "when a subscribed task completes. This saves inference cost by not polling. " <>
+          "Do NOT call task_output or list_tasks after subscribing — just yield.",
+      "input_schema" => %{
+        "type" => "object",
+        "properties" => %{
+          "reason" => %{
+            "type" => "string",
+            "description" => "Optional note about what you're waiting for."
+          }
+        },
+        "additionalProperties" => false
+      }
     }
   ]
 
@@ -303,6 +321,7 @@ defmodule Froth.Inference.Tools do
   def label("task_output"), do: "task output"
   def label("stop_task"), do: "stop task"
   def label("subscribe_task"), do: "subscribe"
+  def label("yield"), do: "yield"
   def label(name) when is_binary(name), do: name
   def label(_), do: "tool"
 
@@ -468,6 +487,10 @@ defmodule Froth.Inference.Tools do
 
             {:ok, msg}
         end
+
+      "yield" ->
+        reason = input["reason"] || "Waiting for subscribed tasks."
+        {:yield, reason}
 
       _ ->
         {:error, "unknown tool: #{name}"}

@@ -293,6 +293,7 @@ defmodule Froth.Telegram.Bot do
 
     state =
       state
+      |> maybe_set_crash_error(reason)
       |> commit_stream_usage()
       |> maybe_append_cycle_footer()
       |> maybe_send_silent_cycle_fallback()
@@ -737,6 +738,13 @@ defmodule Froth.Telegram.Bot do
 
           _ ->
             {Tools.execute(name, input, chat_id, bot_id: bc.id, session_id: bc.session_id), state}
+        end
+
+      # Convert {:yield, reason} to {:ok, reason} for clean tool results
+      result =
+        case result do
+          {:yield, reason} -> {:ok, "Yielding: #{reason}"}
+          other -> other
         end
 
       state =
@@ -1542,6 +1550,28 @@ defmodule Froth.Telegram.Bot do
     else
       "I hit a tool error and stopped before replying.\n\n#{line}"
     end
+  end
+
+  defp maybe_set_crash_error(state, :normal), do: state
+  defp maybe_set_crash_error(state, :shutdown), do: state
+  defp maybe_set_crash_error(state, {:shutdown, _}), do: state
+
+  defp maybe_set_crash_error(%{last_tool_error: nil} = state, reason) do
+    put_last_tool_error(state, extract_crash_message(reason))
+  end
+
+  defp maybe_set_crash_error(state, _reason), do: state
+
+  defp extract_crash_message({:error, {:http_error, status, %{"error" => %{"message" => msg}}}}) do
+    "API error (#{status}): #{msg}"
+  end
+
+  defp extract_crash_message({:error, reason}) do
+    "Agent error: #{inspect(reason, limit: 5, printable_limit: 300)}"
+  end
+
+  defp extract_crash_message(reason) do
+    "Agent crashed: #{inspect(reason, limit: 5, printable_limit: 300)}"
   end
 
   # Handles hot code reload where in-memory struct instances may predate new fields.

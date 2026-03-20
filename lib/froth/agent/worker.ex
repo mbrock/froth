@@ -275,7 +275,14 @@ defmodule Froth.Agent.Worker do
        when length(invocations) == length(results) do
     api_results = results |> Enum.reverse() |> Enum.map(&ToolResult.to_api/1)
     worker = persist_message(worker, :user, api_results)
-    {:noreply, %{worker | phase: :continuing}, {:continue, :think}}
+
+    has_yield = Enum.any?(invocations, fn {_ref, %ToolUse{name: name}} -> name == "yield" end)
+
+    if has_yield do
+      {:stop, :normal, %{worker | phase: :done}}
+    else
+      {:noreply, %{worker | phase: :continuing}, {:continue, :think}}
+    end
   end
 
   defp maybe_tools_done(worker), do: {:noreply, worker}
