@@ -62,7 +62,7 @@ defmodule FrothWeb.ToolLive do
 
     {:noreply,
      socket
-     |> assign(:loop_status, :stopped)
+     |> assign(:loop_status, :stopping)
      |> assign(:live_thinking, "")
      |> assign(:live_text, "")}
   end
@@ -173,11 +173,11 @@ defmodule FrothWeb.ToolLive do
         id="tool-loop-viewer"
         phx-hook="ToolScroll"
         data-follow-mode={follow_mode(@loop_status)}
-        class="min-h-screen bg-black text-zinc-100 text-[14px] font-mono flex flex-col"
+        class="min-h-screen bg-black text-zinc-100 text-[13px] font-mono flex flex-col leading-tight"
       >
-        <div id="tool-feed" class="flex-1 px-3 py-3">
+        <div id="tool-feed" class="flex-1 px-2 py-2">
           <%= for {item, idx} <- Enum.with_index(timeline_items(assigns)) do %>
-            <div class={[idx > 0 && "mt-3 pt-3 border-t border-zinc-900/80"]}>
+            <div class={[idx > 0 && "mt-2 pt-2 border-t border-zinc-900/60"]}>
               <%= cond do %>
                 <% item.kind == :thinking -> %>
                   <div class="pl-1 whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-400/80 italic">
@@ -219,6 +219,12 @@ defmodule FrothWeb.ToolLive do
                       </span>
                     </div>
 
+                    <div
+                      :if={item.narration}
+                      class="text-[12px] italic leading-relaxed text-amber-200/70 mb-1"
+                    >
+                      {item.narration}
+                    </div>
                     <pre
                       :if={item.code}
                       class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-100"
@@ -261,7 +267,7 @@ defmodule FrothWeb.ToolLive do
             </div>
 
             <button
-              :if={can_stop?(@loop_status)}
+              :if={can_stop?(@loop_status, @cycle_id)}
               id="loop-stop"
               phx-click="stop"
               class="min-h-9 px-3 text-[12px] text-red-200/90 border border-red-500/35 rounded-sm hover:bg-red-500/10 transition-colors"
@@ -276,7 +282,7 @@ defmodule FrothWeb.ToolLive do
               Refresh
             </button>
             <button
-              :if={@loop_status in [:done, :stopped, :error, :not_found]}
+              :if={@loop_status in [:done, :stopped, :stopping, :error, :not_found]}
               id="loop-close"
               phx-click="close"
               class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
@@ -394,6 +400,7 @@ defmodule FrothWeb.ToolLive do
         name: name,
         status: "executing",
         code: get_in(block, ["input", "code"]),
+        narration: get_in(block, ["input", "narration"]),
         preview: safe_input_preview(block["input"])
       })
       |> ensure_tool_entry(tool_use_id)
@@ -511,6 +518,7 @@ defmodule FrothWeb.ToolLive do
       status: "pending",
       code: nil,
       preview: nil,
+      narration: nil,
       queue_idx: nil,
       queue_total: nil,
       active: false,
@@ -903,19 +911,26 @@ defmodule FrothWeb.ToolLive do
     |> Enum.reject(&(&1 == ""))
   end
 
-  defp can_stop?(status) when status in [:running, :thinking], do: true
-  defp can_stop?(_), do: false
+  defp can_stop?(status, cycle_id)
+       when is_binary(cycle_id) and status not in [:stopped, :stopping, :not_found],
+       do: true
 
-  defp show_dock_spinner?(loop_status), do: loop_status in [:running, :thinking, :loading]
+  defp can_stop?(_status, _cycle_id), do: false
+
+  defp show_dock_spinner?(loop_status),
+    do: loop_status in [:running, :thinking, :loading, :stopping]
 
   defp follow_mode(loop_status),
-    do: if(loop_status in [:running, :thinking], do: "always", else: "smart")
+    do: if(loop_status in [:running, :thinking, :stopping], do: "always", else: "smart")
 
   defp dock_text(:loading, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} loading..."
   defp dock_text(:running, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} running..."
 
   defp dock_text(:thinking, cycle_id) when is_binary(cycle_id),
     do: "cycle #{cycle_id} thinking..."
+
+  defp dock_text(:stopping, cycle_id) when is_binary(cycle_id),
+    do: "cycle #{cycle_id} stop requested..."
 
   defp dock_text(:done, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} complete"
   defp dock_text(:stopped, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} stopped"

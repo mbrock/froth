@@ -167,6 +167,11 @@ defmodule Froth.Inference.Tools do
             "type" => "string",
             "description" =>
               "Optional eval session ID. All variables declared in this session are persisted and visible to later evals with the same session_id. If omitted, a new random session is created."
+          },
+          "narration" => %{
+            "type" => "string",
+            "description" =>
+              "Optional prose narration of what this code does and why, in Aristotelian practical syllogism format (premise → premise → therefore action). Automatically sent as italics to the chat so observers can follow along."
           }
         },
         "required" => ["code"],
@@ -191,6 +196,11 @@ defmodule Froth.Inference.Tools do
             "type" => "string",
             "description" =>
               "Working directory for the command. Defaults to the Froth project root."
+          },
+          "narration" => %{
+            "type" => "string",
+            "description" =>
+              "Optional prose narration of what this command does and why, in Aristotelian practical syllogism format. Automatically sent as italics to the chat."
           }
         },
         "required" => ["command"],
@@ -411,13 +421,26 @@ defmodule Froth.Inference.Tools do
           Froth.Tasks.Shell.send_signal(task_id, signal)
           {:ok, "Sent SIG#{signal} to #{task_id}."}
         else
-          task = Froth.Tasks.get(task_id)
+          cond do
+            Froth.Tasks.Eval.alive?(task_id) ->
+              Froth.Tasks.Eval.stop_eval(task_id)
+              Froth.Tasks.stop(task_id)
+              {:ok, "Stopped task #{task_id}."}
 
-          if task && task.status in ["pending", "running"] do
-            Froth.Tasks.stop(task_id)
-            {:ok, "Stopped task #{task_id}."}
-          else
-            {:error, "Task #{task_id} is not running."}
+            Froth.Tasks.Video.alive?(task_id) ->
+              Froth.Tasks.Video.stop_video(task_id)
+              Froth.Tasks.stop(task_id)
+              {:ok, "Stopped task #{task_id}."}
+
+            true ->
+              task = Froth.Tasks.get(task_id)
+
+              if task && task.status in ["pending", "running"] do
+                Froth.Tasks.stop(task_id)
+                {:ok, "Stopped task #{task_id}."}
+              else
+                {:error, "Task #{task_id} is not running."}
+              end
           end
         end
 
@@ -1231,7 +1254,7 @@ defmodule Froth.Inference.Tools do
         join: l in Froth.TaskTelegramLink,
         on: l.task_id == t.task_id,
         where:
-          l.bot_id == ^bot_id and l.chat_id == ^chat_id and t.type in ["eval", "shell"] and
+          l.bot_id == ^bot_id and l.chat_id == ^chat_id and t.type in ["eval", "shell", "video"] and
             t.inserted_at >= ^window_from and t.inserted_at <= ^window_to,
         order_by: [asc: t.inserted_at],
         distinct: t.task_id

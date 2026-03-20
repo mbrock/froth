@@ -316,7 +316,8 @@ defmodule Froth.Telegram.Bot do
          cycle_tool_calls: 0,
          cycle_send_message_calls: 0,
          cycle_limit_hit?: false,
-         cycle_suppressed?: false
+         cycle_suppressed?: false,
+         mid_cycle_messages: []
      }}
   end
 
@@ -349,6 +350,7 @@ defmodule Froth.Telegram.Bot do
   @impl true
   def handle_call({:execute, %ToolUse{} = tool_use, context}, _from, state) do
     {result, state} = execute_tool_call(state, tool_use, context)
+    {result, state} = maybe_inject_mid_cycle_messages(result, state)
     {:reply, result, state}
   end
 
@@ -497,8 +499,10 @@ defmodule Froth.Telegram.Bot do
         active_cycle_id: state.cycle && state.cycle.id
       })
 
-      BotAdapter.send_message(bc.session_id, chat_id, "(busy, try again in a moment)")
-      state
+      # Buffer the message for mid-loop injection
+      mid = Map.get(state, :mid_cycle_messages, [])
+      buffered = %{text: text, time: DateTime.utc_now()}
+      %{state | mid_cycle_messages: mid ++ [buffered]}
     else
       BotAdapter.send_typing(bc.session_id, chat_id)
 
@@ -571,7 +575,8 @@ defmodule Froth.Telegram.Bot do
           cycle_tool_calls: 0,
           cycle_send_message_calls: 0,
           cycle_limit_hit?: false,
-          cycle_suppressed?: false
+          cycle_suppressed?: false,
+          mid_cycle_messages: []
       }
     end
   end
@@ -651,7 +656,8 @@ defmodule Froth.Telegram.Bot do
             cycle_tool_calls: 0,
             cycle_send_message_calls: 0,
             cycle_limit_hit?: false,
-            cycle_suppressed?: false
+            cycle_suppressed?: false,
+            mid_cycle_messages: []
         }
       else
         state
@@ -699,6 +705,7 @@ defmodule Froth.Telegram.Bot do
 
           "elixir_eval" ->
             state = maybe_send_control_prompt(state, cycle_id, chat_id, reply_to)
+            state = maybe_send_narration(state, input, chat_id, reply_to)
 
             result =
               Tools.execute(
@@ -714,6 +721,7 @@ defmodule Froth.Telegram.Bot do
 
           "run_shell" ->
             state = maybe_send_control_prompt(state, cycle_id, chat_id, reply_to)
+            state = maybe_send_narration(state, input, chat_id, reply_to)
 
             result =
               Tools.execute(
@@ -787,6 +795,31 @@ defmodule Froth.Telegram.Bot do
 
   defp maybe_send_control_prompt(state, _cycle_id, _chat_id, _reply_to), do: state
 
+  defp maybe_send_narration(state, %{"narration" => narration}, chat_id, reply_to)
+       when is_binary(narration) and narration != "" do
+    bc = state.bot_config
+    BotAdapter.send_italic(bc.session_id, chat_id, reply_to, narration)
+    state
+  end
+
+  defp maybe_send_narration(state, _input, _chat_id, _reply_to), do: state
+
+  defp maybe_inject_mid_cycle_messages(result, %{mid_cycle_messages: [_ | _] = msgs} = state) do
+    injection = msgs
+    |> Enum.map(fn %{text: text} -> "[Message received during tool execution: " <> text <> "]" end)
+    |> Enum.join("\n")
+    new_result = case result do
+      {:ok, text} when is_binary(text) -> {:ok, text <> "\n\n" <> injection}
+      {:ok, blocks} when is_list(blocks) -> {:ok, blocks ++ [%{"type" => "text", "text" => injection}]}
+      other -> other
+    end
+    {new_result, %{state | mid_cycle_messages: []}}
+  end
+
+  defp maybe_inject_mid_cycle_messages(result, state), do: {result, state}
+
+
+
   defp maybe_track_task_from_result(state, cycle_id, {:ok, result}) when is_binary(cycle_id) do
     case extract_task_id(result) do
       task_id when is_binary(task_id) ->
@@ -824,6 +857,11 @@ defmodule Froth.Telegram.Bot do
       String.starts_with?(task_id, "shell:") ->
         if Froth.Tasks.Shell.alive?(task_id) do
           _ = Froth.Tasks.Shell.send_signal(task_id, "TERM")
+        end
+
+      String.starts_with?(task_id, "video:") ->
+        if Froth.Tasks.Video.alive?(task_id) do
+          _ = Froth.Tasks.Video.stop_video(task_id)
         end
 
       true ->
