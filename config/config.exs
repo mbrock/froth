@@ -98,6 +98,8 @@ config :froth, Oban,
 # and Lennart are managed by `Froth.Telegram.Bots`.
 config :froth, Froth.Telegram.Bot, []
 
+config :libcluster, topologies: []
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

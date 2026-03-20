@@ -1,6 +1,7 @@
 defmodule FrothWeb.UserSocket do
   use Phoenix.Socket
 
+  channel "compute:workers:*", FrothWeb.ComputeWorkerChannel
   channel "room:*", FrothWeb.RoomChannel
   channel "scene:*", FrothWeb.SceneChannel
 

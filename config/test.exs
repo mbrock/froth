@@ -14,10 +14,16 @@ config :froth, FrothWeb.Endpoint,
   secret_key_base: "1CpDXRLldzzMCm6v4GsM7sbwpewK6Go06KwWR9gg3cR0CgPaYZ3dlyCrLQX9RflA",
   server: false
 
+config :froth, Oban,
+  testing: :manual,
+  plugins: false,
+  queues: false
+
 # No agent bots in test
 config :froth, Froth.Telegram.Bot, []
 
 config :froth, :jbo_dictionary_preload, false
+config :froth, Froth.Telemetry.Store, enabled: false
 
 # Print only warnings and errors during test
 config :logger, level: :warning

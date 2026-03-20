@@ -1,10 +1,10 @@
 #!/bin/bash
-# Run Elixir code on the running froth@igloo node.
+# Run Elixir code on the running local froth node.
 # Usage: bin/rpc 'IO.puts("hello")'
 #    or: echo 'IO.puts("hello")' | bin/rpc
 set -e
 COOKIE="${ERLANG_COOKIE:-$(cat ~/.erlang.cookie 2>/dev/null)}"
-NODE="${RPC_NODE:-froth@igloo}"
+NODE="${RPC_NODE:-froth@$(hostname -s)}"
 
 if [ $# -gt 0 ]; then
   CODE="$1"

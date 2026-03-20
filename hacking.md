@@ -37,6 +37,7 @@ Two things live under one roof:
 - `Froth.Repo` — Ecto/Postgres
 - `Oban` — background job queue
 - `Finch` (as `Froth.Finch`) — HTTP connection pool
+- `Froth.Browser.Supervisor` — Chromium orchestration (Registry + DynamicSupervisor)
 - `Phoenix.PubSub` (as `Froth.PubSub`)
 - `Froth.Telegram` — supervisor for TDLib sessions (Registry + Cnode + DynamicSupervisor)
 - `Froth.Telegram.Bots` — bot runtimes
@@ -318,6 +319,80 @@ SPARQL endpoint directly instead of loading RDF into the app process. Defaults
 to `http://localhost:3030/kg/sparql` for the host-run app and can be overridden
 with `FROTH_SPARQL_ENDPOINT`.
 
+## Browser Orchestration (`Froth.Browser`)
+
+Supervised Chromium leases over CDP. The initial slice is one browser process
+per lease, with `checkout/1`, `navigate/3`, `eval/3`, `click/3`, `type/4`,
+`screenshot/2`, and `release/1`. Runtime configuration lives under
+`Froth.Browser` and uses `FROTH_BROWSER_EXECUTABLE` when Chromium is not on
+`PATH`.
+
+Browser launch profiles:
+
+- `headless_bulk` — current Linux worker default
+- `headless_gpu` — headless, but leaves GPU enabled for media experiments
+- `headful_debug` — visible Chrome for the witness/debug node
+- `headful_benchmark` — visible Chrome with muted audio for timing runs
+
+Set `FROTH_BROWSER_PROFILE` per node to choose the default.
+
+For the current three-node render fleet:
+
+- `igloo` — `headless_bulk` or `headless_gpu`
+- `swa` — `headless_bulk`
+- `Mikaels-Mac-mini` — `headful_debug`
+
+## Video Rendering (`Froth.Video`)
+
+Pure HTML composition plus deterministic frame rendering through
+`Froth.Browser`. `compose/4` returns a self-contained HTML episode exposing a
+`window.FrothVideo.renderAt(seconds)` contract; `record/2` steps that renderer
+frame-by-frame, captures PNGs, then muxes the original audio with `ffmpeg`.
+Long renders now go through the compute fabric: `record_task/2` and
+`from_podcast/2` create `video:` tasks under `Froth.Tasks`, but those tasks in
+turn fan out frame-batch leases through `Froth.Compute` using
+`worker_type=browser_render`. The direct `record/2` path remains available as a
+simple single-browser local render core.
+
+Frame-batch specs and artifacts now flow through `Froth.ObjectStore` instead of
+coordinator-local file paths, so a renderer on another node can fetch the HTML
+spec, render its assigned batch, upload a `.tar.gz` of frame PNGs, and let the
+coordinator hydrate those batches back into a local mux directory.
+
+Remote worker nodes now execute browser batches without their own Postgres
+connection: `Froth.Video.ComputeWorker` can lease/heartbeat/complete work by
+RPCing back to the coordinator node that spawned it.
+
+## Distributed execution fabric
+
+The next-level abstraction above browser/video is documented in
+`talents/distributed-execution-fabric.md`: durable jobs, leased workers,
+immutable artifacts, and reducer-owned commits. Browser rendering should become
+one specialization of that general compute fabric.
+
+The initial implementation now lives in `Froth.Compute` with durable
+`compute_jobs`, `compute_tasks`, and `compute_artifacts` tables plus a
+`FrothWeb.ComputeWorkerChannel` / `FrothWeb.ComputePresence` worker roll-call.
+Workers join `compute:workers:<worker_type>`, request leases, heartbeat, and
+complete or fail work against lease tokens.
+
+## Object Store (`Froth.ObjectStore`)
+
+A tiny shared blob store used by the compute/video pipeline. In `:local` mode
+objects are written directly under a configured root dir and served at
+`/froth/objects/*key`. In `:proxy` mode writes and reads go over HTTP to
+another Froth node exposing the same routes.
+
+Useful env vars:
+
+- `FROTH_NODE_ROLE=full|worker`
+- `FROTH_HTTP_IP=<tailnet IPv4>` for exposing igloo's `/froth/objects` route to workers
+- `FROTH_OBJECT_STORE_MODE=local|proxy`
+- `FROTH_OBJECT_STORE_ROOT_DIR=/path/to/store`
+- `FROTH_OBJECT_STORE_PUBLIC_BASE=http://igloo:4000/froth/objects`
+- `FROTH_OBJECT_STORE_INTERNAL_BASE=http://igloo:4000/froth/objects`
+- `FROTH_OBJECT_STORE_TOKEN=...`
+
 ## Database tables
 
 - `telegram_sessions` — TDLib session configs
@@ -334,13 +409,14 @@ with `FROTH_SPARQL_ENDPOINT`.
 Runs as a systemd user service on `igloo`.
 
 - `bin/serve` — start the server
+- `bin/serve_worker` — start a minimal worker-only node
 - `bin/deploy` — build and deploy
 - `bin/restart` — restart the service
 - `bin/logs` — view logs (`-f` to follow, `--since "5 min ago"`)
-- `bin/rpc` — run Elixir code on the live `froth@igloo` node
+- `bin/rpc` — run Elixir code on the live local `froth@<hostname>` node
 - `bin/build_tdlib_cnode` — compile the C node
 
-Live node is `froth@igloo`. After `mix compile`, reload modules with:
+Live node is `froth@<hostname>` for the current host. After `mix compile`, reload modules with:
 ```elixir
 :code.purge(Module); :code.load_file(Module)
 ```
@@ -348,6 +424,34 @@ Warning: `:code.purge` kills processes running old code.
 
 `bin/rpc` uses `Froth.RPC.eval/2` which sets group_leader for IO routing.
 Use heredoc (`cat <<'EOF' | bin/rpc`) to avoid shell escaping issues.
+
+## Cluster
+
+Froth uses `libcluster` plus `Cluster.Strategy.Epmd` for the tailnet. The
+default static peers are `froth@igloo`, `froth@swa`, and
+`froth@Mikaels-Mac-mini`, matching the actual short hostname returned by the
+Mac Mini on March 20, 2026 when started with `--sname froth`.
+
+- Worker nodes can default to a coordinator-only star by setting
+  `FROTH_NODE_ROLE=worker` and `FROTH_COORDINATOR_NODE=froth@igloo`
+- Override peers with `FROTH_CLUSTER_NODES="froth@igloo,froth@swa,..."`
+- Disable clustering with `FROTH_CLUSTER_NODES="off"`
+- Target a non-local node for RPC with `RPC_NODE=froth@swa`
+- The tracked `bin/serve` and `bin/serve_worker` wrappers pass
+  `-kernel connect_all false prevent_overlapping_partitions false` so the
+  compute fleet can stay in a coordinator/worker star instead of forcing a full
+  mesh between worker nodes.
+
+All nodes in the cluster must share the same Erlang cookie.
+
+Practical fleet setup:
+
+- `igloo` runs `FROTH_NODE_ROLE=full`, binds `FROTH_HTTP_IP` to its Tailscale
+  IPv4, and uses `FROTH_OBJECT_STORE_MODE=local`.
+- `swa` and `mikaels-mac-mini-2` run `FROTH_NODE_ROLE=worker`,
+  `FROTH_COORDINATOR_NODE=froth@igloo`,
+  `FROTH_OBJECT_STORE_MODE=proxy`, and point both object-store bases at
+  `http://igloo:4000/froth/objects`.
 
 ## Design
 

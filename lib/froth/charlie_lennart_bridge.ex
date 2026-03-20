@@ -11,8 +11,14 @@ defmodule Froth.CharlieLennartBridge do
   require Logger
 
   @charlie_topic "telegram:charlie"
-  @bot_user_ids [6789382533, 8044965953, 8396222696, 8507666754,
-                 8526337359, 8534404418]
+  @bot_user_ids [
+    6_789_382_533,
+    8_044_965_953,
+    8_396_222_696,
+    8_507_666_754,
+    8_526_337_359,
+    8_534_404_418
+  ]
 
   def start_link(_opts \\ []) do
     GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
@@ -24,8 +30,12 @@ defmodule Froth.CharlieLennartBridge do
     {:ok, %{forwarded: 0}}
   end
 
-  def handle_info({:telegram_update, %{"@type" => "updateNewMessage", "message" => msg} = update}, state) do
+  def handle_info(
+        {:telegram_update, %{"@type" => "updateNewMessage", "message" => msg} = update},
+        state
+      ) do
     sender_id = get_in(msg, ["sender_id", "user_id"])
+
     if sender_id in @bot_user_ids do
       forward_to_lennart(update)
       {:noreply, %{state | forwarded: state.forwarded + 1}}
@@ -34,7 +44,10 @@ defmodule Froth.CharlieLennartBridge do
     end
   end
 
-  def handle_info({:telegram_update, %{"@type" => "updateMessageSendSucceeded", "message" => msg}}, state) do
+  def handle_info(
+        {:telegram_update, %{"@type" => "updateMessageSendSucceeded", "message" => msg}},
+        state
+      ) do
     forward_to_lennart(%{"@type" => "updateNewMessage", "message" => msg})
     {:noreply, %{state | forwarded: state.forwarded + 1}}
   end

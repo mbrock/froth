@@ -4,17 +4,13 @@ defmodule Mix.Tasks.Froth.Top do
 
   use Mix.Task
 
-  @default_node "froth@igloo"
-
   @impl Mix.Task
   def run(args) do
     {opts, _, _} = OptionParser.parse(args, strict: [interval: :integer, count: :integer])
     interval = Keyword.get(opts, :interval, 500)
     count = Keyword.get(opts, :count, 10)
 
-    node =
-      System.get_env("RPC_NODE", @default_node)
-      |> String.to_atom()
+    node = Froth.Cluster.rpc_target_node()
 
     cookie =
       case System.get_env("ERLANG_COOKIE") do

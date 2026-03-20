@@ -34,13 +34,53 @@ Visit [`localhost:4000`](http://localhost:4000).
 
 ### RPC
 
-Run code on the live `froth@<hostname>` node:
+Run code on the live local `froth@<hostname>` node:
 
 ```bash
 bin/rpc 'node()'
 bin/rpc 'Froth.Telegram.list_sessions()'
 echo 'IO.puts("hello")' | bin/rpc
 ```
+
+Set `RPC_NODE=froth@swa` to target a different host explicitly.
+
+## Cluster
+
+Froth uses `libcluster` with the EPMD strategy over Tailscale short hostnames.
+By default the static cluster peers are `froth@igloo`, `froth@swa`, and
+`froth@Mikaels-Mac-mini`. On March 20, 2026 the Mac Mini's actual Erlang short
+node name is still derived from its local hostname, so that mixed-case host is
+the one the cluster uses today.
+
+You can override or disable that at boot:
+
+```bash
+export FROTH_NODE_ROLE="full"       # use "worker" on render-only nodes
+export FROTH_COORDINATOR_NODE="froth@igloo"
+export FROTH_CLUSTER_NODES="froth@igloo,froth@swa,froth@Mikaels-Mac-mini"
+export FROTH_HTTP_IP="100.64.48.44" # bind igloo to its tailnet IP for object-store access
+# or disable clustering entirely
+export FROTH_CLUSTER_NODES="off"
+```
+
+For worker nodes, the simplest setup is a star topology: set
+`FROTH_NODE_ROLE=worker`, leave `FROTH_CLUSTER_NODES` unset (or `default`), and
+let the worker connect only to `FROTH_COORDINATOR_NODE`.
+
+The tracked `bin/serve` and `bin/serve_worker` scripts also boot distributed
+Erlang with `connect_all=false` and `prevent_overlapping_partitions=false` so
+that coordinator/worker stars stay stable even when workers do not resolve each
+other directly.
+
+All cluster members need the same Erlang cookie. Worker-only nodes can run the
+minimal boot path with:
+
+```bash
+/srv/froth/bin/serve_worker
+```
+
+The tracked `froth-worker.service` unit uses that entrypoint for systemd user
+services on nodes such as `swa`.
 
 ## TDLib (Telegram) C Node
 

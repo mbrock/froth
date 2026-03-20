@@ -10,8 +10,6 @@ defmodule Mix.Tasks.Froth.Summarize do
 
   use Mix.Task
 
-  @default_node "froth@igloo"
-
   @impl Mix.Task
   def run(args) do
     {opts, _positional, invalid} =
@@ -124,9 +122,7 @@ defmodule Mix.Tasks.Froth.Summarize do
   end
 
   defp connect! do
-    node =
-      System.get_env("RPC_NODE", @default_node)
-      |> String.to_atom()
+    node = Froth.Cluster.rpc_target_node()
 
     cookie =
       case System.get_env("ERLANG_COOKIE") do

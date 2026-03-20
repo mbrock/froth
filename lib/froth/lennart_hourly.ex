@@ -6,7 +6,7 @@ defmodule Froth.LennartHourly do
   use GenServer
   require Logger
 
-  @chat_id -1003690254489
+  @chat_id -1_003_690_254_489
   @interval :timer.hours(1)
 
   def start_link(_opts \\ []) do
@@ -33,16 +33,16 @@ defmodule Froth.LennartHourly do
     # Send via mbrockman user session — user messages bypass bot privacy mode.
     # Bot-to-bot messages are invisible on Telegram. User-to-bot are not.
     case Froth.Telegram.call("mbrockman", %{
-      "@type" => "sendMessage",
-      "chat_id" => @chat_id,
-      "input_message_content" => %{
-        "@type" => "inputMessageText",
-        "text" => %{
-          "@type" => "formattedText",
-          "text" => prompt
-        }
-      }
-    }) do
+           "@type" => "sendMessage",
+           "chat_id" => @chat_id,
+           "input_message_content" => %{
+             "@type" => "inputMessageText",
+             "text" => %{
+               "@type" => "formattedText",
+               "text" => prompt
+             }
+           }
+         }) do
       {:ok, _} -> Logger.info("LennartHourly: sent ping")
       {:error, reason} -> Logger.error("LennartHourly: failed — #{inspect(reason)}")
     end

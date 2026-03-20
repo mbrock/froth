@@ -199,6 +199,14 @@ defmodule Froth.Telemetry do
     [:froth, :tasks, :shell_signal],
     [:froth, :tasks, :shell_exited],
     [:froth, :tasks, :shell_unexpected_message],
+    [:froth, :tasks, :video_started],
+    [:froth, :tasks, :video_crashed],
+    [:froth, :browser, :instance, :started],
+    [:froth, :browser, :instance, :stopped],
+    [:froth, :browser, :cdp, :request],
+    [:froth, :browser, :cdp, :event],
+    [:froth, :browser, :session, :navigated],
+    [:froth, :browser, :session, :screenshot],
     [:froth, :replicate, :using_version],
     [:froth, :replicate, :readme_fetched],
     [:froth, :replicate, :readme_not_found],
@@ -258,7 +266,10 @@ defmodule Froth.Telemetry do
 
   def attach_handlers do
     Froth.Telemetry.Logger.attach(@all_events)
-    Froth.Telemetry.Store.attach(@all_events)
+
+    if telemetry_store_enabled?() do
+      Froth.Telemetry.Store.attach(@all_events)
+    end
 
     Froth.Telemetry.Broadcaster.attach(
       @anthropic_events ++
@@ -268,5 +279,11 @@ defmodule Froth.Telemetry do
         @http_events ++
         @llm_events
     )
+  end
+
+  defp telemetry_store_enabled? do
+    :froth
+    |> Application.get_env(Froth.Telemetry.Store, [])
+    |> Keyword.get(:enabled, true)
   end
 end

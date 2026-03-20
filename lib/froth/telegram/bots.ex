@@ -67,7 +67,10 @@ defmodule Froth.Telegram.Bots do
   end
 
   def cast(bot_id, message) when is_binary(bot_id) do
-    GenServer.cast(via(bot_id), message)
+    case Registry.lookup(@registry, bot_id) do
+      [{pid, _}] -> GenServer.cast(pid, message)
+      [] -> :ok
+    end
   end
 
   defp auto_start_bots do

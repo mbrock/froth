@@ -42,7 +42,8 @@ defmodule Froth.Telegram.Bot do
     control_prompt_cycles: MapSet.new(),
     cycle_replied?: false,
     debounce_timer: nil,
-    debounce_msg: nil
+    debounce_msg: nil,
+    mid_cycle_messages: []
   ]
 
   @telegram_text_limit 4096
@@ -805,20 +806,29 @@ defmodule Froth.Telegram.Bot do
   defp maybe_send_narration(state, _input, _chat_id, _reply_to), do: state
 
   defp maybe_inject_mid_cycle_messages(result, %{mid_cycle_messages: [_ | _] = msgs} = state) do
-    injection = msgs
-    |> Enum.map(fn %{text: text} -> "[Message received during tool execution: " <> text <> "]" end)
-    |> Enum.join("\n")
-    new_result = case result do
-      {:ok, text} when is_binary(text) -> {:ok, text <> "\n\n" <> injection}
-      {:ok, blocks} when is_list(blocks) -> {:ok, blocks ++ [%{"type" => "text", "text" => injection}]}
-      other -> other
-    end
+    injection =
+      msgs
+      |> Enum.map(fn %{text: text} ->
+        "[Message received during tool execution: " <> text <> "]"
+      end)
+      |> Enum.join("\n")
+
+    new_result =
+      case result do
+        {:ok, text} when is_binary(text) ->
+          {:ok, text <> "\n\n" <> injection}
+
+        {:ok, blocks} when is_list(blocks) ->
+          {:ok, blocks ++ [%{"type" => "text", "text" => injection}]}
+
+        other ->
+          other
+      end
+
     {new_result, %{state | mid_cycle_messages: []}}
   end
 
   defp maybe_inject_mid_cycle_messages(result, state), do: {result, state}
-
-
 
   defp maybe_track_task_from_result(state, cycle_id, {:ok, result}) when is_binary(cycle_id) do
     case extract_task_id(result) do

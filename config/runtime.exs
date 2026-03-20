@@ -8,6 +8,35 @@ if config_env() in [:dev, :test] do
   )
 end
 
+node_role =
+  case System.get_env("FROTH_NODE_ROLE", "full") |> String.trim() |> String.downcase() do
+    "worker" -> :worker
+    _ -> :full
+  end
+
+endpoint_http =
+  [port: String.to_integer(System.get_env("PORT", "4000"))]
+  |> then(fn http ->
+    case System.get_env("FROTH_HTTP_IP") do
+      nil ->
+        http
+
+      value ->
+        case value
+             |> String.trim()
+             |> String.split(".", trim: true)
+             |> Enum.map(&Integer.parse/1) do
+          [{a, ""}, {b, ""}, {c, ""}, {d, ""}] ->
+            Keyword.put(http, :ip, {a, b, c, d})
+
+          _ ->
+            http
+        end
+    end
+  end)
+
+config :froth, :node_role, node_role
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration
@@ -28,7 +57,8 @@ if System.get_env("PHX_SERVER") do
   config :froth, FrothWeb.Endpoint, server: true
 end
 
-config :froth, FrothWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
+config :froth, FrothWeb.Endpoint, http: endpoint_http
+config :froth, Froth.Telemetry.Store, enabled: node_role != :worker
 
 config :froth, Froth.Replicate, api_token: System.get_env("REPLICATE_API_TOKEN")
 
@@ -38,6 +68,51 @@ config :froth, Froth.Replicate, api_token: System.get_env("REPLICATE_API_TOKEN")
 config :froth, Froth.Dataset,
   endpoint: System.get_env("FROTH_SPARQL_ENDPOINT", "http://localhost:3030/kg/sparql"),
   query_opts: [request_method: :post, protocol_version: "1.1"]
+
+config :froth, Froth.Browser,
+  executable: System.get_env("FROTH_BROWSER_EXECUTABLE"),
+  profile:
+    (case System.get_env("FROTH_BROWSER_PROFILE") do
+       nil -> :headless_bulk
+       value -> value
+     end),
+  tmp_dir: System.get_env("FROTH_BROWSER_TMP_DIR", Path.expand("tmp/browser")),
+  artifact_dir:
+    System.get_env("FROTH_BROWSER_ARTIFACT_DIR", Path.expand("tmp/browser-artifacts")),
+  launch_timeout_ms:
+    (case System.get_env("FROTH_BROWSER_LAUNCH_TIMEOUT_MS") do
+       nil -> 15_000
+       value -> String.to_integer(value)
+     end),
+  command_timeout_ms:
+    (case System.get_env("FROTH_BROWSER_COMMAND_TIMEOUT_MS") do
+       nil -> 10_000
+       value -> String.to_integer(value)
+     end),
+  navigation_timeout_ms:
+    (case System.get_env("FROTH_BROWSER_NAVIGATION_TIMEOUT_MS") do
+       nil -> 15_000
+       value -> String.to_integer(value)
+     end)
+
+config :froth, Froth.Video,
+  render_dir: System.get_env("FROTH_VIDEO_RENDER_DIR", Path.expand("tmp/video-renders")),
+  compute_worker_count:
+    (case System.get_env("FROTH_VIDEO_COMPUTE_WORKER_COUNT") do
+       nil -> 2
+       value -> String.to_integer(value)
+     end)
+
+config :froth, Froth.ObjectStore,
+  mode:
+    (case System.get_env("FROTH_OBJECT_STORE_MODE", "local") do
+       "proxy" -> :proxy
+       _ -> :local
+     end),
+  root_dir: System.get_env("FROTH_OBJECT_STORE_ROOT_DIR", Path.expand("tmp/object-store")),
+  public_base: System.get_env("FROTH_OBJECT_STORE_PUBLIC_BASE"),
+  internal_base: System.get_env("FROTH_OBJECT_STORE_INTERNAL_BASE"),
+  write_token: System.get_env("FROTH_OBJECT_STORE_TOKEN")
 
 config :froth, Froth.Summarizer,
   recent_context_chunk_size:
@@ -185,6 +260,8 @@ config :froth, Froth.Telegram,
   tgcalls_plugin:
     System.get_env("TELEGRAM_TGCALLS_PLUGIN") || System.get_env("FROTH_TGCALLS_PLUGIN")
 
+config :libcluster, topologies: Froth.Cluster.topologies()
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
@@ -210,8 +287,6 @@ if config_env() == :prod do
       """
 
   host = System.get_env("PHX_HOST") || "example.com"
-
-  config :froth, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :froth, FrothWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],

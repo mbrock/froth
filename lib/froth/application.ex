@@ -8,36 +8,8 @@ defmodule Froth.Application do
   @impl true
   def start(_type, _args) do
     children =
-      [
-        FrothWeb.Telemetry,
-        Froth.Repo,
-        Froth.Telemetry.Store,
-        {Oban, Application.fetch_env!(:froth, Oban)},
-        {Finch, name: Froth.Finch},
-        Froth.Jbo.Dictionary,
-        {Phoenix.PubSub, name: Froth.PubSub},
-        Froth.Telegram,
-        Froth.Telegram.Bots,
-        Froth.RegionalNews,
-        {Registry, keys: :unique, name: Froth.Agent.Registry},
-        {Task.Supervisor, name: Froth.Agent.TaskSupervisor}
-      ] ++
-        Enum.map(Application.fetch_env!(:froth, Froth.Telegram.Bot), fn bot_opts ->
-          {Froth.Telegram.Bot, bot_opts}
-        end) ++
-        [
-          {Registry, keys: :unique, name: Froth.Codex.SessionRegistry},
-          {DynamicSupervisor, name: Froth.Codex.SessionSupervisor, strategy: :one_for_one},
-          {Registry, keys: :unique, name: Froth.Tasks.Registry},
-          Froth.Tasks.EvalSessions,
-          {DynamicSupervisor, name: Froth.Tasks.Supervisor, strategy: :one_for_one},
-          {Task.Supervisor, name: Froth.TaskSupervisor},
-          {DNSCluster, query: Application.get_env(:froth, :dns_cluster_query) || :ignore},
-          # Start a worker by calling: Froth.Worker.start_link(arg)
-          # {Froth.Worker, arg},
-          # Start to serve requests, typically the last entry
-          FrothWeb.Endpoint
-        ]
+      (shared_children() ++ node_role_children())
+      |> Enum.reject(&is_nil/1)
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -70,6 +42,66 @@ defmodule Froth.Application do
           :socket.close(sock)
         end
     end
+  end
+
+  defp cluster_supervisor_child do
+    topologies = Application.get_env(:libcluster, :topologies, [])
+
+    if topologies == [] do
+      nil
+    else
+      {Cluster.Supervisor, [topologies, [name: Froth.ClusterSupervisor]]}
+    end
+  end
+
+  defp shared_children do
+    [
+      FrothWeb.Telemetry,
+      {Finch, name: Froth.Finch},
+      Froth.Browser.Supervisor,
+      {Phoenix.PubSub, name: Froth.PubSub},
+      FrothWeb.ComputePresence,
+      {Task.Supervisor, name: Froth.TaskSupervisor},
+      cluster_supervisor_child()
+    ]
+  end
+
+  defp node_role_children do
+    case node_role() do
+      :worker ->
+        []
+
+      _ ->
+        [
+          Froth.Repo,
+          Froth.Telemetry.Store,
+          {Oban, Application.fetch_env!(:froth, Oban)},
+          Froth.Jbo.Dictionary,
+          Froth.Telegram,
+          Froth.Telegram.Bots,
+          Froth.RegionalNews,
+          {Registry, keys: :unique, name: Froth.Agent.Registry},
+          {Task.Supervisor, name: Froth.Agent.TaskSupervisor}
+        ] ++
+          Enum.map(Application.fetch_env!(:froth, Froth.Telegram.Bot), fn bot_opts ->
+            {Froth.Telegram.Bot, bot_opts}
+          end) ++
+          [
+            {Registry, keys: :unique, name: Froth.Codex.SessionRegistry},
+            {DynamicSupervisor, name: Froth.Codex.SessionSupervisor, strategy: :one_for_one},
+            {Registry, keys: :unique, name: Froth.Tasks.Registry},
+            Froth.Tasks.EvalSessions,
+            {DynamicSupervisor, name: Froth.Tasks.Supervisor, strategy: :one_for_one},
+            # Start a worker by calling: Froth.Worker.start_link(arg)
+            # {Froth.Worker, arg},
+            # Start to serve requests, typically the last entry
+            FrothWeb.Endpoint
+          ]
+    end
+  end
+
+  defp node_role do
+    Application.get_env(:froth, :node_role, :full)
   end
 
   # Tell Phoenix to update the endpoint configuration

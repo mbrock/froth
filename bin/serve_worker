@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Wrapper for worker nodes: sources asdf if available and runs a minimal BEAM.
+set -euo pipefail
+
+export HOME="${HOME:-$(eval echo ~$(whoami))}"
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.asdf/shims:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
+
+if [ -f "$HOME/.asdf/asdf.sh" ]; then
+  # shellcheck disable=SC1090
+  . "$HOME/.asdf/asdf.sh"
+fi
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+APP_ROOT="${FROTH_APP_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}"
+
+cd "$APP_ROOT"
+epmd -daemon
+exec elixir --erl "-kernel connect_all false prevent_overlapping_partitions false" --sname froth -S mix run --no-halt

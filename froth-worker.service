@@ -1,0 +1,19 @@
+[Unit]
+Description=Froth worker node
+After=network.target
+
+[Service]
+Type=notify
+WorkingDirectory=/srv/froth
+ExecStart=/srv/froth/bin/serve_worker
+Restart=always
+RestartSec=3
+SyslogIdentifier=froth-worker
+
+TimeoutStopSec=15
+KillMode=mixed
+KillSignal=SIGTERM
+LimitNOFILE=65536
+
+[Install]
+WantedBy=default.target

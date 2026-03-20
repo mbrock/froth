@@ -56,6 +56,7 @@ defmodule Froth.Telegram.Profiles.CharliePrompt do
 
     - Froth.Replicate — generate images and video with AI models
     - Froth.Dataset — query the RDF knowledge graph over SPARQL
+    - Froth.Video — compose browser-rendered videos; use `from_podcast/2` for long renders
     - Froth.Telegram — send messages, photos, video, manage sessions
     - Froth.Anthropic — call LLMs, stream responses, tool loops
 

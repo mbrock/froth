@@ -1,7 +1,7 @@
 defmodule FrothWeb.EmbedController do
   @moduledoc """
   Embeddable podcast player and audio endpoint.
-  
+
   Endpoints:
     GET /embed/:batch_id        — embeddable HTML player (audio + transcript)
     GET /embed/:batch_id/audio  — raw MP3 audio file
@@ -9,13 +9,11 @@ defmodule FrothWeb.EmbedController do
   """
   use FrothWeb, :controller
 
-  @audio_dir Path.expand("priv/static/audio/hourly", Application.app_dir(:froth, ""))
-
   def show(conn, %{"batch_id" => batch_id}) do
     batch_id = sanitize(batch_id)
     audio_url = "/embed/#{batch_id}/audio"
     reel_url = "/reel/#{batch_id}"
-    
+
     # Check if reel exists
     reel_dir = Path.join(Application.app_dir(:froth, "priv"), "reels")
     has_reel = File.exists?(Path.join(reel_dir, "#{batch_id}.html"))
@@ -31,7 +29,7 @@ defmodule FrothWeb.EmbedController do
 
   def audio(conn, %{"batch_id" => batch_id}) do
     batch_id = sanitize(batch_id)
-    
+
     # Try persistent location first, then /tmp
     path = find_audio(batch_id)
 
@@ -53,13 +51,17 @@ defmodule FrothWeb.EmbedController do
     tmp = "/tmp/podcast_#{batch_id}_final.mp3"
 
     cond do
-      File.exists?(persistent) -> persistent
+      File.exists?(persistent) ->
+        persistent
+
       File.exists?(tmp) ->
         # Persist it for future use
         File.mkdir_p!(audio_dir())
         File.cp!(tmp, persistent)
         persistent
-      true -> nil
+
+      true ->
+        nil
     end
   end
 
@@ -72,11 +74,12 @@ defmodule FrothWeb.EmbedController do
   end
 
   defp embed_html(batch_id, audio_url, reel_url, has_reel) do
-    reel_link = if has_reel do
-      ~s(<a href="#{reel_url}" target="_blank" class="reel-link">Watch Reel</a>)
-    else
-      ""
-    end
+    reel_link =
+      if has_reel do
+        ~s(<a href="#{reel_url}" target="_blank" class="reel-link">Watch Reel</a>)
+      else
+        ""
+      end
 
     """
     <!doctype html>

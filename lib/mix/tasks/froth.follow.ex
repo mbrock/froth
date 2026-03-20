@@ -4,7 +4,6 @@ defmodule Mix.Tasks.Froth.Follow do
 
   use Mix.Task
 
-  @default_node "froth@igloo"
   @handler_id "froth-follow"
 
   @dim "\e[2m"
@@ -15,9 +14,7 @@ defmodule Mix.Tasks.Froth.Follow do
 
   @impl Mix.Task
   def run(args) do
-    node =
-      System.get_env("RPC_NODE", @default_node)
-      |> String.to_atom()
+    node = Froth.Cluster.rpc_target_node()
 
     cookie =
       case System.get_env("ERLANG_COOKIE") do

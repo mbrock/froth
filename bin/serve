@@ -3,8 +3,12 @@
 set -euo pipefail
 
 export HOME="${HOME:-$(eval echo ~$(whoami))}"
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.asdf/shims:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
 . "$HOME/.asdf/asdf.sh"
 
-cd /srv/froth
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+APP_ROOT="${FROTH_APP_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}"
+
+cd "$APP_ROOT"
 epmd -daemon
-exec elixir --sname froth -S mix phx.server
+exec elixir --erl "-kernel connect_all false prevent_overlapping_partitions false" --sname froth -S mix phx.server
