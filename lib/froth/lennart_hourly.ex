@@ -1,14 +1,12 @@
 defmodule Froth.LennartHourly do
   @moduledoc """
-  Hourly ping that asks Lennart for a trip report in the group chat.
-  Charlie sends a public message, Lennart sees it and responds with
-  a rapid-fire news briefing.
+  Hourly ping that asks Lennart for a trip report.
+  Sends via mbrockman (user) session so Lennart's bot can see it.
   """
   use GenServer
   require Logger
 
   @chat_id -1003690254489
-  @session "charlie"
   @interval :timer.hours(1)
 
   def start_link(_opts \\ []) do
@@ -17,7 +15,7 @@ defmodule Froth.LennartHourly do
 
   def init(state) do
     schedule_next()
-    Logger.info("LennartHourly started — pinging every hour")
+    Logger.info("LennartHourly started — pinging every hour via mbrockman session")
     {:ok, state}
   end
 
@@ -32,7 +30,19 @@ defmodule Froth.LennartHourly do
 
     prompt = Enum.random(prompts)
 
-    case Froth.Telegram.BotAdapter.send_message(@session, @chat_id, prompt) do
+    # Send via mbrockman user session — user messages bypass bot privacy mode.
+    # Bot-to-bot messages are invisible on Telegram. User-to-bot are not.
+    case Froth.Telegram.call("mbrockman", %{
+      "@type" => "sendMessage",
+      "chat_id" => @chat_id,
+      "input_message_content" => %{
+        "@type" => "inputMessageText",
+        "text" => %{
+          "@type" => "formattedText",
+          "text" => prompt
+        }
+      }
+    }) do
       {:ok, _} -> Logger.info("LennartHourly: sent ping")
       {:error, reason} -> Logger.error("LennartHourly: failed — #{inspect(reason)}")
     end
