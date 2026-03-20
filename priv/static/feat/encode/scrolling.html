@@ -539,198 +539,267 @@
         sceneReadyWithFallback.finally(() => { window.FrothVideo.ready = true; });
       })();
 
-        // === TALKING HEADS ===
+        
+
+        // === SKELETON MESH TALKING HEADS ===
+        // Using the FF7-style bone tree format from primitive_characters.js
+        // with jaw bones driven by word timing data
         (function() {
           const canvas = document.getElementById('heads-canvas');
           if (!canvas || typeof THREE === 'undefined') return;
           
-          const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+          const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: false });
           renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
           renderer.setClearColor(0x000000, 0);
+          
+          const scene3d = new THREE.Scene();
+          const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+          camera.position.set(0, 13, 28);
+          camera.lookAt(0, 12, 0);
+          
+          // PS1-style flat lighting
+          scene3d.add(new THREE.AmbientLight(0xffffff, 0.6));
+          const key = new THREE.DirectionalLight(0xffd080, 0.8);
+          key.position.set(2, 3, 4);
+          scene3d.add(key);
+          const rim = new THREE.DirectionalLight(0x4466aa, 0.3);
+          rim.position.set(-3, 1, -2);
+          scene3d.add(rim);
+          
+          function createGeometry(shape, size) {
+            switch(shape) {
+              case 'box': return new THREE.BoxGeometry(size[0], size[1], size[2] || size[0]);
+              case 'sphere': return new THREE.SphereGeometry(size[0], 6, 4);
+              case 'cylinder': return new THREE.CylinderGeometry(size[0], size[1], size[2], 6);
+              case 'cone': return new THREE.ConeGeometry(size[0], size[1], 6);
+              default: return new THREE.BoxGeometry(1, 1, 1);
+            }
+          }
+          
+          function buildBone(name, bone, boneMap) {
+            const group = new THREE.Group();
+            group.name = name;
+            if (bone.position) group.position.set(...bone.position);
+            if (bone.rotation) group.rotation.set(...bone.rotation);
+            group.userData.basePosition = group.position.clone();
+            group.userData.baseRotation = group.rotation.clone();
+            
+            if (bone.shape) {
+              const geo = createGeometry(bone.shape, bone.size);
+              const mat = new THREE.MeshLambertMaterial({ 
+                color: bone.color || 0x888888, flatShading: true 
+              });
+              group.add(new THREE.Mesh(geo, mat));
+            }
+            boneMap[name] = group;
+            if (bone.children) {
+              for (const [cn, cb] of Object.entries(bone.children)) {
+                group.add(buildBone(cn, cb, boneMap));
+              }
+            }
+            return group;
+          }
+          
+          function buildSkeleton(skeleton, boneMap) {
+            const root = new THREE.Group();
+            for (const [name, bone] of Object.entries(skeleton)) {
+              root.add(buildBone(name, bone, boneMap));
+            }
+            return root;
+          }
+          
+          function interpolateKeyframes(keyframes, t) {
+            if (!keyframes || keyframes.length === 0) return null;
+            let prev = keyframes[0], next = keyframes[keyframes.length - 1];
+            for (let i = 0; i < keyframes.length - 1; i++) {
+              if (t >= keyframes[i].t && t <= keyframes[i + 1].t) {
+                prev = keyframes[i]; next = keyframes[i + 1]; break;
+              }
+            }
+            const range = next.t - prev.t;
+            const f = range > 0 ? (t - prev.t) / range : 0;
+            const result = {};
+            if (prev.rotation && next.rotation) {
+              result.rotation = prev.rotation.map((v, j) => v + (next.rotation[j] - v) * f);
+            }
+            if (prev.position && next.position) {
+              result.position = prev.position.map((v, j) => v + (next.position[j] - v) * f);
+            }
+            return result;
+          }
+          
+          // Character definitions — FF7 skeleton with jaw bone
+          function createHost(name, suitColor, skinColor, hairColor) {
+            return {
+              name,
+              skeleton: {
+                hips: {
+                  position: [0, 8.5, 0],
+                  shape: 'box', size: [3, 1.8, 1.6], color: 0x1a1a2e,
+                  children: {
+                    spine: {
+                      position: [0, 2.5, 0],
+                      shape: 'box', size: [3.2, 3.2, 1.8], color: suitColor,
+                      children: {
+                        shoulder_l: {
+                          position: [2.2, 1.5, 0],
+                          shape: 'box', size: [1.2, 0.8, 1.2], color: suitColor,
+                          children: {
+                            arm_upper_l: {
+                              position: [0.8, -0.5, 0], rotation: [0, 0, 0.4],
+                              shape: 'box', size: [0.8, 2.5, 0.8], color: suitColor
+                            }
+                          }
+                        },
+                        shoulder_r: {
+                          position: [-2.2, 1.5, 0],
+                          shape: 'box', size: [1.2, 0.8, 1.2], color: suitColor,
+                          children: {
+                            arm_upper_r: {
+                              position: [-0.8, -0.5, 0], rotation: [0, 0, -0.4],
+                              shape: 'box', size: [0.8, 2.5, 0.8], color: suitColor
+                            }
+                          }
+                        },
+                        neck: {
+                          position: [0, 2.2, 0],
+                          shape: 'cylinder', size: [0.4, 0.4, 0.6], color: skinColor,
+                          children: {
+                            head: {
+                              position: [0, 1.0, 0],
+                              shape: 'sphere', size: [1.2], color: skinColor,
+                              children: {
+                                hair: {
+                                  position: [0, 0.5, -0.1],
+                                  shape: 'sphere', size: [1.25], color: hairColor
+                                },
+                                eye_l: {
+                                  position: [-0.35, 0.15, 1.0],
+                                  shape: 'sphere', size: [0.12], color: 0x1a1a1a
+                                },
+                                eye_r: {
+                                  position: [0.35, 0.15, 1.0],
+                                  shape: 'sphere', size: [0.12], color: 0x1a1a1a
+                                },
+                                jaw: {
+                                  position: [0, -0.5, 0.3],
+                                  shape: 'box', size: [0.9, 0.5, 0.7], color: skinColor
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              idleAnim: {
+                duration: 3.0,
+                keyframes: {
+                  spine: [
+                    { t: 0.0, rotation: [0, 0, 0] },
+                    { t: 0.5, rotation: [0.02, 0, 0.01] },
+                    { t: 1.0, rotation: [0, 0, 0] }
+                  ],
+                  head: [
+                    { t: 0.0, rotation: [0, 0, 0] },
+                    { t: 0.3, rotation: [0.03, 0.02, 0] },
+                    { t: 0.7, rotation: [-0.02, -0.01, 0] },
+                    { t: 1.0, rotation: [0, 0, 0] }
+                  ]
+                }
+              }
+            };
+          }
+          
+          // Build the two hosts
+          const lexDef = createHost('Lex', 0x16213e, 0xdeb887, 0x2c1810);
+          const darioDef = createHost('Dario', 0x2d3436, 0xc4956a, 0x1a1008);
+          
+          const lexBones = {};
+          const lexGroup = buildSkeleton(lexDef.skeleton, lexBones);
+          lexGroup.scale.setScalar(0.45);
+          lexGroup.position.set(-5.5, 0, 0);
+          lexGroup.rotation.y = 0.35; // face right
+          scene3d.add(lexGroup);
+          
+          const darioBones = {};
+          const darioGroup = buildSkeleton(darioDef.skeleton, darioBones);
+          darioGroup.scale.setScalar(0.45);
+          darioGroup.position.set(5.5, 0, 0);
+          darioGroup.rotation.y = -0.35; // face left
+          scene3d.add(darioGroup);
+          
+          const hosts = {
+            lex: { group: lexGroup, bones: lexBones, anim: lexDef.idleAnim, jawTarget: 0, jawCurrent: 0 },
+            dario: { group: darioGroup, bones: darioBones, anim: darioDef.idleAnim, jawTarget: 0, jawCurrent: 0 }
+          };
           
           function resize() {
             const w = canvas.clientWidth;
             const h = canvas.clientHeight;
+            if (w === 0 || h === 0) return;
             renderer.setSize(w, h, false);
             camera.aspect = w / h;
             camera.updateProjectionMatrix();
           }
           
-          const scene = new THREE.Scene();
-          const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
-          camera.position.set(0, 0.3, 4);
-          camera.lookAt(0, 0.1, 0);
-          
-          // Lighting
-          const ambient = new THREE.AmbientLight(0x404050, 0.6);
-          scene.add(ambient);
-          const keyLight = new THREE.DirectionalLight(0xffeedd, 1.2);
-          keyLight.position.set(2, 3, 4);
-          scene.add(keyLight);
-          const rimLight = new THREE.DirectionalLight(0x4466aa, 0.4);
-          rimLight.position.set(-3, 1, -2);
-          scene.add(rimLight);
-          
-          // Materials
-          const skinA = new THREE.MeshStandardMaterial({ 
-            color: 0xd4a574, roughness: 0.7, metalness: 0.05 
-          });
-          const skinB = new THREE.MeshStandardMaterial({ 
-            color: 0xc89b6e, roughness: 0.7, metalness: 0.05 
-          });
-          const eyeWhite = new THREE.MeshStandardMaterial({ 
-            color: 0xf0f0f0, roughness: 0.3, metalness: 0.0 
-          });
-          const eyePupil = new THREE.MeshStandardMaterial({ 
-            color: 0x1a1a2e, roughness: 0.5, metalness: 0.1 
-          });
-          const lipMat = new THREE.MeshStandardMaterial({ 
-            color: 0xb85555, roughness: 0.6, metalness: 0.0 
-          });
-          
-          function createHead(skin, facingRight) {
-            const group = new THREE.Group();
-            
-            // Cranium (slightly elongated sphere)
-            const cranium = new THREE.Mesh(
-              new THREE.SphereGeometry(0.5, 16, 12),
-              skin
-            );
-            cranium.scale.set(0.85, 1.0, 0.9);
-            group.add(cranium);
-            
-            // Nose
-            const nose = new THREE.Mesh(
-              new THREE.ConeGeometry(0.08, 0.2, 6),
-              skin
-            );
-            nose.position.set(0, -0.05, 0.45);
-            nose.rotation.x = -0.3;
-            group.add(nose);
-            
-            // Eyes
-            const eyeGeo = new THREE.SphereGeometry(0.08, 8, 8);
-            const pupilGeo = new THREE.SphereGeometry(0.04, 8, 8);
-            
-            const leftEye = new THREE.Mesh(eyeGeo, eyeWhite);
-            leftEye.position.set(-0.17, 0.1, 0.38);
-            group.add(leftEye);
-            
-            const leftPupil = new THREE.Mesh(pupilGeo, eyePupil);
-            leftPupil.position.set(-0.17, 0.1, 0.46);
-            group.add(leftPupil);
-            
-            const rightEye = new THREE.Mesh(eyeGeo, eyeWhite);
-            rightEye.position.set(0.17, 0.1, 0.38);
-            group.add(rightEye);
-            
-            const rightPupil = new THREE.Mesh(pupilGeo, eyePupil);
-            rightPupil.position.set(0.17, 0.1, 0.46);
-            group.add(rightPupil);
-            
-            // Jaw (lower face that opens)
-            const jaw = new THREE.Group();
-            const jawMesh = new THREE.Mesh(
-              new THREE.SphereGeometry(0.35, 12, 8, 0, Math.PI * 2, Math.PI * 0.5, Math.PI * 0.5),
-              skin
-            );
-            jawMesh.scale.set(0.85, 0.6, 0.9);
-            jaw.add(jawMesh);
-            
-            // Lower lip
-            const lowerLip = new THREE.Mesh(
-              new THREE.TorusGeometry(0.12, 0.03, 6, 12, Math.PI),
-              lipMat
-            );
-            lowerLip.position.set(0, -0.02, 0.28);
-            lowerLip.rotation.x = 0.2;
-            jaw.add(lowerLip);
-            
-            jaw.position.set(0, -0.15, 0);
-            group.add(jaw);
-            
-            // Upper lip (stays with cranium)
-            const upperLip = new THREE.Mesh(
-              new THREE.TorusGeometry(0.12, 0.025, 6, 12, Math.PI),
-              lipMat
-            );
-            upperLip.position.set(0, -0.15, 0.32);
-            upperLip.rotation.x = Math.PI + 0.2;
-            group.add(upperLip);
-            
-            // Neck
-            const neck = new THREE.Mesh(
-              new THREE.CylinderGeometry(0.18, 0.22, 0.4, 8),
-              skin
-            );
-            neck.position.set(0, -0.55, -0.05);
-            group.add(neck);
-            
-            // Face direction
-            const dir = facingRight ? 0.35 : -0.35;
-            group.rotation.y = dir;
-            
-            return { group, jaw, facingRight, targetJaw: 0, currentJaw: 0 };
-          }
-          
-          // Create two heads
-          const lexHead = createHead(skinA, false);  // Lex faces right (toward Dario)
-          lexHead.group.position.set(-1.1, -0.3, 0);
-          scene.add(lexHead.group);
-          
-          const darioHead = createHead(skinB, true);  // Dario faces left (toward Lex)
-          darioHead.group.position.set(1.1, -0.3, 0);
-          scene.add(darioHead.group);
-          
-          const heads = { lex: lexHead, dario: darioHead };
-          
-          // Animation state
-          let currentSpeaker = '';
-          let lastSeconds = 0;
+          const fvData = window.FrothVideo.data;
           
           function updateHeads(seconds) {
-            lastSeconds = seconds;
-            
             // Find current word and speaker
             let wordIdx = -1;
-            for (let i = 0; i < window.FrothVideo.data.words.length; i++) {
-              if (seconds >= window.FrothVideo.data.words[i].start - 0.05) wordIdx = i;
-              if (window.FrothVideo.data.words[i].start > seconds + 0.3) break;
+            for (let i = 0; i < fvData.words.length; i++) {
+              if (seconds >= fvData.words[i].start - 0.05) wordIdx = i;
+              if (fvData.words[i].start > seconds + 0.3) break;
             }
             
-            const word = wordIdx >= 0 ? window.FrothVideo.data.words[wordIdx] : null;
-            const speaker = word ? (word.speaker || '') : '';
-            const isWordActive = word && seconds >= word.start && seconds <= word.end + 0.08;
+            const word = wordIdx >= 0 ? fvData.words[wordIdx] : null;
+            const speaker = word ? (word.speaker || '').toLowerCase() : '';
+            const isActive = word && seconds >= word.start && seconds <= word.end + 0.08;
             
-            // Set jaw targets
-            Object.keys(heads).forEach(name => {
-              const head = heads[name];
-              head.targetJaw = (name === speaker && isWordActive) ? 0.25 + Math.sin(seconds * 18) * 0.1 : 0;
-            });
+            // Jaw targets
+            for (const [name, host] of Object.entries(hosts)) {
+              host.jawTarget = (name === speaker && isActive) ? 
+                0.35 + Math.sin(seconds * 22) * 0.15 : 0;
+            }
             
-            // Animate
-            const t = seconds;
-            Object.keys(heads).forEach(name => {
-              const head = heads[name];
-              
+            // Animate each host
+            for (const [name, host] of Object.entries(hosts)) {
               // Smooth jaw
-              head.currentJaw += (head.targetJaw - head.currentJaw) * 0.3;
-              head.jaw.rotation.x = head.currentJaw;
+              host.jawCurrent += (host.jawTarget - host.jawCurrent) * 0.35;
+              if (host.bones.jaw) {
+                host.bones.jaw.rotation.x = host.bones.jaw.userData.baseRotation.x + host.jawCurrent;
+              }
+              
+              // Idle animation
+              const anim = host.anim;
+              const t = ((seconds % anim.duration) / anim.duration);
+              for (const [boneName, keyframes] of Object.entries(anim.keyframes)) {
+                const bone = host.bones[boneName];
+                if (!bone) continue;
+                const vals = interpolateKeyframes(keyframes, t);
+                if (vals && vals.rotation) {
+                  bone.rotation.set(
+                    bone.userData.baseRotation.x + vals.rotation[0],
+                    bone.userData.baseRotation.y + vals.rotation[1],
+                    bone.userData.baseRotation.z + vals.rotation[2]
+                  );
+                }
+              }
               
               // Idle bob
-              const bobPhase = name === 'lex' ? 0 : 1.5;
-              const bob = Math.sin(t * 0.8 + bobPhase) * 0.015;
-              const sway = Math.sin(t * 0.5 + bobPhase * 0.7) * 0.02;
-              head.group.position.y = -0.3 + bob;
+              const phase = name === 'lex' ? 0 : 1.7;
+              const bob = Math.sin(seconds * 0.8 + phase) * 0.08;
+              host.group.position.y = bob;
               
-              // Subtle head turn toward/away when speaking
-              const baseRot = head.facingRight ? 0.35 : -0.35;
-              const speakingTurn = (name === speaker) ? 0 : (head.facingRight ? 0.08 : -0.08);
-              const listenNod = (name !== speaker && isWordActive) ? Math.sin(t * 1.2) * 0.03 : 0;
-              head.group.rotation.y = baseRot + speakingTurn + sway;
-              head.group.rotation.x = listenNod;
-              head.group.rotation.z = Math.sin(t * 0.3 + bobPhase) * 0.01;
-            });
+              // Subtle lean toward active speaker
+              const isSpeaking = name === speaker && isActive;
+              const baseY = name === 'lex' ? 0.35 : -0.35;
+              const lean = isSpeaking ? 0 : (name === 'lex' ? 0.05 : -0.05);
+              host.group.rotation.y += (baseY + lean - host.group.rotation.y) * 0.05;
+            }
           }
           
           // Hook into renderAt
@@ -738,16 +807,14 @@
           window.FrothVideo.renderAt = function(seconds) {
             const result = origRenderAt(seconds);
             updateHeads(seconds);
-            renderer.render(scene, camera);
+            renderer.render(scene3d, camera);
             return result;
           };
           
           resize();
           window.addEventListener('resize', resize);
-          
-          // Initial render
           updateHeads(0);
-          renderer.render(scene, camera);
+          renderer.render(scene3d, camera);
         })();
 
     </script>
