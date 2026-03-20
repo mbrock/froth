@@ -25,6 +25,7 @@ defmodule Froth.Telegram.Charlie do
       model: @default_model,
       system_prompt_fun: &CharliePrompt.system_prompt/2,
       name_triggers: [
+        "charkie",
         "charlie",
         "calling all robots",
         "calling all the robots",
