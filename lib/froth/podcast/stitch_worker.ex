@@ -138,6 +138,12 @@ defmodule Froth.Podcast.StitchWorker do
 
     send_progress(bot_token, chat_id, "#{label} — uploading #{duration_str}...")
     Froth.Telegram.send_audio("charlie", chat_id, output_path, caption: label)
+
+    # Copy to static directory for HTTP serving (less.rest/audio/hourly/{batch_id}.mp3)
+    static_dir = "/home/mbrock/froth/priv/static/audio/hourly"
+    File.mkdir_p!(static_dir)
+    File.cp!(output_path, Path.join(static_dir, "#{batch_id}.mp3"))
+
     send_progress(bot_token, chat_id, "#{label} — done. #{total} segments, #{duration_str}.")
 
     # Cleanup
