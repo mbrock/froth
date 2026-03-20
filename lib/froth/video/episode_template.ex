@@ -8,10 +8,10 @@ defmodule Froth.Video.EpisodeTemplate do
     font = Keyword.get(opts, :font, "EB Garamond")
     word_size = Keyword.get(opts, :word_size, "5vh")
     transition_ms = Keyword.get(opts, :transition_ms, 1200)
-    phrase_gap_ms = Keyword.get(opts, :phrase_gap_ms, 400)
+    speakers = Keyword.get(opts, :speakers, [])
 
     normalized_words = normalize_words(words)
-    phrases = group_into_phrases(normalized_words, phrase_gap_ms / 1000.0)
+    words_with_speakers = assign_speakers(normalized_words, speakers)
     normalized_scenes = normalize_scenes(scenes, duration_s)
 
     ken_burns_directions = [
@@ -39,8 +39,7 @@ defmodule Froth.Video.EpisodeTemplate do
         title: title,
         duration_s: duration_s,
         transition_ms: transition_ms,
-        words: normalized_words,
-        phrases: phrases,
+        words: words_with_speakers,
         scenes: scenes_with_kb
       }
       |> Jason.encode!()
@@ -105,47 +104,78 @@ defmodule Froth.Video.EpisodeTemplate do
             transition: none;
           }
 
-          #phrase-display {
+          #transcript {
             position: absolute;
-            bottom: 14vh;
+            bottom: 0;
             left: 0;
             right: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            padding: 3vh 8vw;
+            height: 45vh;
+            overflow: hidden;
             z-index: 10;
+            padding: 0 6vw 8vh;
+            mask-image: linear-gradient(
+              to bottom,
+              transparent 0%,
+              black 25%,
+              black 80%,
+              transparent 100%
+            );
+            -webkit-mask-image: linear-gradient(
+              to bottom,
+              transparent 0%,
+              black 25%,
+              black 80%,
+              transparent 100%
+            );
           }
 
-          #phrase-display .phrase-line {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 0.25em;
-            line-height: 1.3;
+          #transcript-inner {
+            transition: transform 0.6s cubic-bezier(0.25, 0.1, 0.25, 1.0);
           }
 
-          #phrase-display .phrase-word {
+          .speaker-block {
+            margin-bottom: 1.5vh;
+          }
+
+          .speaker-label {
+            font-size: 2vh;
+            font-weight: 400;
+            font-variant: small-caps;
+            letter-spacing: 0.15em;
+            color: rgba(255, 255, 255, 0.35);
+            margin-bottom: 0.5vh;
+            text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+          }
+
+          .speaker-text {
+            line-height: 1.4;
+          }
+
+          .word {
             font-size: var(--word-size);
             font-weight: 500;
             font-style: italic;
-            color: rgba(255, 255, 255, 0.3);
+            color: rgba(255, 255, 255, 0.2);
             letter-spacing: 0.01em;
-            transition: color 0.12s ease, font-weight 0.12s ease;
+            transition: color 0.15s ease;
             text-shadow: 0 2px 12px rgba(0,0,0,0.9), 0 0 40px rgba(0,0,0,0.7);
+            display: inline;
           }
 
-          #phrase-display .phrase-word.active {
-            color: #ffffff;
-            font-weight: 700;
+          .word.active {
+            color: #ffd700;
             font-style: normal;
           }
 
-          #phrase-display .phrase-word.spoken {
+          .word.spoken {
             color: rgba(255, 255, 255, 0.55);
             font-style: normal;
+          }
+
+          .word-space {
+            display: inline;
+            width: 0.35em;
+            font-size: var(--word-size);
           }
 
           #title-overlay {
@@ -191,7 +221,6 @@ defmodule Froth.Video.EpisodeTemplate do
             z-index: 20;
           }
 
-          /* Play button for preview mode */
           #play-overlay {
             position: absolute;
             inset: 0;
@@ -204,7 +233,7 @@ defmodule Froth.Video.EpisodeTemplate do
           }
           #play-overlay.hidden { display: none; }
           #play-overlay::after {
-            content: '▶';
+            content: '\u25b6';
             font-size: 10vh;
             color: rgba(255,255,255,0.7);
             text-shadow: 0 2px 20px rgba(0,0,0,0.5);
@@ -216,7 +245,7 @@ defmodule Froth.Video.EpisodeTemplate do
           <div id="scenes"></div>
           <div id="vignette"></div>
           <div id="title-overlay">#{html_escape(title)}</div>
-          <div id="phrase-display"></div>
+          <div id="transcript"><div id="transcript-inner"></div></div>
           <div id="play-overlay"></div>
           <div id="debug">
             <span id="debug-time">0.00</span>
@@ -232,7 +261,8 @@ defmodule Froth.Video.EpisodeTemplate do
             if (recording) document.body.classList.add("recording");
 
             const scenesRoot = document.getElementById("scenes");
-            const phraseDisplay = document.getElementById("phrase-display");
+            const transcript = document.getElementById("transcript");
+            const transcriptInner = document.getElementById("transcript-inner");
             const debugTimeEl = document.getElementById("debug-time");
             const debugWordCountEl = document.getElementById("debug-word-count");
             const audioEl = document.getElementById("episode-audio");
@@ -242,6 +272,7 @@ defmodule Froth.Video.EpisodeTemplate do
               playOverlay.classList.add("hidden");
             }
 
+            // Build scene elements
             const sceneEls = data.scenes.map((scene, i) => {
               const el = document.createElement("div");
               el.className = "scene";
@@ -250,87 +281,115 @@ defmodule Froth.Video.EpisodeTemplate do
               return el;
             });
 
-            const sceneReady = Promise.all(
-              data.scenes.map((scene) => {
-                return new Promise((resolve) => {
-                  const img = new Image();
-                  img.onload = () => resolve(true);
-                  img.onerror = () => resolve(false);
-                  img.src = scene.src;
-                });
-              })
+            // Build transcript: group words by speaker into blocks
+            const wordEls = [];
+            let currentSpeaker = null;
+            let currentBlock = null;
+            let currentText = null;
+
+            data.words.forEach((w, i) => {
+              const speaker = w.speaker || "";
+              if (speaker !== currentSpeaker) {
+                currentSpeaker = speaker;
+                currentBlock = document.createElement("div");
+                currentBlock.className = "speaker-block";
+                if (speaker) {
+                  const label = document.createElement("div");
+                  label.className = "speaker-label";
+                  label.textContent = speaker;
+                  currentBlock.appendChild(label);
+                }
+                currentText = document.createElement("div");
+                currentText.className = "speaker-text";
+                currentBlock.appendChild(currentText);
+                transcriptInner.appendChild(currentBlock);
+              }
+              if (i > 0 && w.speaker === data.words[i-1].speaker) {
+                const space = document.createTextNode(" ");
+                currentText.appendChild(space);
+              }
+              const span = document.createElement("span");
+              span.className = "word";
+              span.dataset.wordIndex = i;
+              span.textContent = w.text;
+              currentText.appendChild(span);
+              wordEls.push(span);
+            });
+
+            // Preload images
+            const imageReady = Promise.all(
+              data.scenes.map((scene, i) => new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => resolve(true);
+                img.onerror = () => resolve(false);
+                setTimeout(() => resolve(false), 8000);
+                img.src = scene.src;
+              }))
             );
 
             const sceneReadyWithFallback = Promise.race([
-              sceneReady,
-              new Promise((resolve) => window.setTimeout(resolve, recording ? 5000 : 3000))
+              imageReady,
+              new Promise(resolve => setTimeout(() => resolve([]), 10000))
             ]);
 
-            function findWordIndex(seconds) {
-              let low = 0;
-              let high = data.words.length - 1;
-              while (low <= high) {
-                const mid = Math.floor((low + high) / 2);
-                const word = data.words[mid];
-                if (seconds < word.start) { high = mid - 1; }
-                else if (seconds >= word.end) { low = mid + 1; }
-                else { return mid; }
+            function findCurrentWord(seconds) {
+              let best = -1;
+              for (let i = 0; i < data.words.length; i++) {
+                const w = data.words[i];
+                if (seconds >= w.start - 0.05) best = i;
+                if (w.start > seconds + 0.3) break;
               }
-              return -1;
+              return best;
             }
 
-            function findPhrase(seconds) {
-              for (let i = 0; i < data.phrases.length; i++) {
-                const p = data.phrases[i];
-                if (seconds >= p.start - 0.15 && seconds < p.end + 0.4) return i;
-              }
-              for (let i = 0; i < data.phrases.length; i++) {
-                if (data.phrases[i].start > seconds) return i;
-              }
-              return data.phrases.length - 1;
-            }
+            let lastWordIdx = -1;
 
-            let currentPhraseIndex = -1;
+            function renderAt(seconds) {
+              const safeSeconds = Math.max(0, Math.min(seconds, data.duration_s));
+              const wordIdx = findCurrentWord(safeSeconds);
 
-            function renderPhrase(phraseIdx, currentWordIdx) {
-              if (phraseIdx < 0 || phraseIdx >= data.phrases.length) {
-                phraseDisplay.innerHTML = '';
-                currentPhraseIndex = -1;
-                return;
-              }
-
-              const phrase = data.phrases[phraseIdx];
-
-              if (phraseIdx !== currentPhraseIndex) {
-                currentPhraseIndex = phraseIdx;
-                const line = document.createElement("div");
-                line.className = "phrase-line";
-                phrase.word_indices.forEach(wi => {
-                  const span = document.createElement("span");
-                  span.className = "phrase-word";
-                  span.dataset.wordIndex = wi;
-                  const text = data.words[wi].text;
-                  // Preserve original case for serif typography
-                  span.textContent = text;
-                  line.appendChild(span);
+              // Update word highlights
+              if (wordIdx !== lastWordIdx) {
+                wordEls.forEach((el, i) => {
+                  if (i === wordIdx) {
+                    el.classList.add("active");
+                    el.classList.remove("spoken");
+                  } else if (i < wordIdx) {
+                    el.classList.remove("active");
+                    el.classList.add("spoken");
+                  } else {
+                    el.classList.remove("active");
+                    el.classList.remove("spoken");
+                  }
                 });
-                phraseDisplay.innerHTML = '';
-                phraseDisplay.appendChild(line);
+
+                // Scroll to active word
+                if (wordIdx >= 0 && wordEls[wordIdx]) {
+                  const el = wordEls[wordIdx];
+                  const containerH = transcript.offsetHeight;
+                  const targetY = el.offsetTop - containerH * 0.6;
+                  transcriptInner.style.transform = `translateY(${-Math.max(0, targetY)}px)`;
+                }
+                lastWordIdx = wordIdx;
               }
 
-              const spans = phraseDisplay.querySelectorAll('.phrase-word');
-              spans.forEach(span => {
-                const wi = parseInt(span.dataset.wordIndex);
-                span.classList.toggle('active', wi === currentWordIdx);
-                span.classList.toggle('spoken', wi < currentWordIdx && wi !== currentWordIdx);
+              // Update scenes
+              sceneEls.forEach((el, index) => {
+                const scene = data.scenes[index];
+                el.style.opacity = opacityForScene(scene, index, safeSeconds).toFixed(4);
+                el.style.transform = kenBurnsTransform(scene, safeSeconds);
               });
+
+              debugTimeEl.textContent = safeSeconds.toFixed(2);
+              debugWordCountEl.textContent = `${data.words.length} words`;
+
+              return { seconds: safeSeconds, word: wordIdx >= 0 ? data.words[wordIdx].text : null };
             }
 
             function kenBurnsTransform(scene, seconds) {
               const duration = scene.end - scene.start;
               const progress = Math.max(0, Math.min(1, (seconds - scene.start) / duration));
               const kb = scene.ken_burns || "zoom-in";
-              // Ease-in-out for smoother motion
               const ease = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
 
               switch(kb) {
@@ -355,37 +414,16 @@ defmodule Froth.Video.EpisodeTemplate do
               const transition = data.transition_ms / 1000;
               const next = data.scenes[index + 1];
               if (seconds < scene.start || seconds >= scene.end) return 0;
-              // Fade in
               const fadeInEnd = scene.start + transition * 0.5;
               let opacity = 1;
               if (seconds < fadeInEnd && index > 0) {
                 opacity = Math.min(1, (seconds - scene.start) / (transition * 0.5));
               }
-              // Fade out into next scene
               if (!next) return opacity;
               const fadeStart = Math.max(scene.start, next.start - transition);
               if (seconds < fadeStart) return opacity;
               const progress = (seconds - fadeStart) / Math.max(next.start - fadeStart, 0.0001);
               return Math.max(0, Math.min(1, (1 - progress) * opacity));
-            }
-
-            function renderAt(seconds) {
-              const safeSeconds = Math.max(0, Math.min(seconds, data.duration_s));
-              const wordIdx = findWordIndex(safeSeconds);
-              const phraseIdx = findPhrase(safeSeconds);
-
-              renderPhrase(phraseIdx, wordIdx);
-
-              sceneEls.forEach((el, index) => {
-                const scene = data.scenes[index];
-                el.style.opacity = opacityForScene(scene, index, safeSeconds).toFixed(4);
-                el.style.transform = kenBurnsTransform(scene, safeSeconds);
-              });
-
-              debugTimeEl.textContent = safeSeconds.toFixed(2);
-              debugWordCountEl.textContent = `${data.phrases.length} phrases`;
-
-              return { seconds: safeSeconds, word: wordIdx >= 0 ? data.words[wordIdx].text : null };
             }
 
             let rafId = null;
@@ -406,7 +444,6 @@ defmodule Froth.Video.EpisodeTemplate do
               });
             }
 
-            // Click anywhere to play in preview mode
             playOverlay.addEventListener("click", () => playPreview());
 
             if (audioEl) {
@@ -424,6 +461,23 @@ defmodule Froth.Video.EpisodeTemplate do
       </body>
     </html>
     """
+  end
+
+  # Assign speaker names to words by matching timestamps to script segments
+  defp assign_speakers(words, []), do: Enum.map(words, &Map.put(&1, :speaker, ""))
+
+  defp assign_speakers(words, speakers) when is_list(speakers) do
+    # speakers is a list of %{speaker: "name", start: float, end: float}
+    Enum.map(words, fn word ->
+      speaker =
+        Enum.find_value(speakers, "", fn seg ->
+          if word.start >= seg.start - 0.1 and word.start <= seg.end + 0.1 do
+            seg.speaker
+          end
+        end)
+
+      Map.put(word, :speaker, speaker)
+    end)
   end
 
   defp group_into_phrases(words, gap_threshold) do

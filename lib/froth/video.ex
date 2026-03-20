@@ -15,7 +15,7 @@ defmodule Froth.Video do
   alias Froth.Video.{ComputeRenderer, EpisodeTemplate, RenderSupport}
 
   @default_scene_concurrency 4
-  @default_scene_model "black-forest-labs/flux-1.1-pro"
+  @default_scene_model "black-forest-labs/flux-2-pro"
   @default_transcription_model "victor-upmeet/whisperx"
   @default_transcription_language "en"
   @default_bot_id "charlie"
@@ -399,14 +399,45 @@ defmodule Froth.Video do
   end
 
   defp compose_options(script, duration_s, opts) do
+    speakers = extract_speaker_segments(script)
+
     [
       title: script.label || Keyword.get(opts, :title, "Podcast"),
       duration_s: duration_s,
-      font: Keyword.get(opts, :font, "JetBrains Mono"),
-      word_size: Keyword.get(opts, :word_size, "7vh"),
-      transition_ms: Keyword.get(opts, :transition_ms, 800)
+      font: Keyword.get(opts, :font, "EB Garamond"),
+      word_size: Keyword.get(opts, :word_size, "5vh"),
+      transition_ms: Keyword.get(opts, :transition_ms, 800),
+      speakers: speakers
     ]
   end
+
+  defp extract_speaker_segments(%{script: rows}) when is_list(rows) do
+    # Estimate segment timings by distributing words across the script duration.
+    # Each row has speaker + text. We estimate time per word and accumulate.
+    total_words =
+      rows
+      |> Enum.map(fn r -> (r["text"] || "") |> String.split(~r/\s+/, trim: true) |> length() end)
+      |> Enum.sum()
+
+    if total_words == 0 do
+      []
+    else
+      {segments, _} =
+        Enum.map_reduce(rows, 0.0, fn row, cursor ->
+          text = row["text"] || ""
+          speaker = row["speaker"] || ""
+          wc = text |> String.split(~r/\s+/, trim: true) |> length()
+          # Rough estimate: 2.5 words per second for podcast speech
+          duration = max(wc / 2.5, 0.5)
+          seg = %{speaker: speaker, start: cursor, end: cursor + duration}
+          {seg, cursor + duration}
+        end)
+
+      segments
+    end
+  end
+
+  defp extract_speaker_segments(_), do: []
 
   defp record_options(audio_path, batch_id, duration_s, opts) do
     opts
@@ -441,10 +472,11 @@ defmodule Froth.Video do
 
   defp scene_prompt(description, label) do
     [
-      "Portrait 9:16 illustration for a podcast video.",
-      "Cinematic composition, bold contrast, emotionally legible scene, no text overlay.",
-      label,
-      description
+      "Vertical 9:16 photograph, editorial quality, dramatic lighting.",
+      "Single dominant subject, shallow depth of field, rich color grading.",
+      "No text, no watermarks, no overlays, no UI elements.",
+      "Topic: #{label}.",
+      "Scene: #{description}"
     ]
     |> Enum.reject(&is_nil/1)
     |> Enum.join(" ")

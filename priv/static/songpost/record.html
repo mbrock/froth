@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lyrics Visualizer - Recording Mode</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        background: #000; color: #fff; display: grid; margin: 0;
+        place-items: center; min-height: 100vh;
+      }
+      figure {
+        width: 100vw; height: 100vh; background: #000;
+        position: relative; margin: 0 auto 20px; overflow: hidden;
+      }
+      canvas {
+        position: absolute; inset: 0; width: 100%; height: 100%;
+        cursor: pointer;
+      }
+      figcaption {
+        font-size: 48px; line-height: 1.5;
+        font-family: "input sans", helvetica, sans-serif;
+        display: flex; flex-wrap: wrap; justify-content: start;
+        position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+        overflow-y: auto; padding: 20px; scrollbar-width: none;
+      }
+      figure span {
+        display: inline-block; margin: 0 8px; padding: 4px;
+        cursor: pointer; user-select: none; will-change: opacity, color;
+      }
+      menu { display: none; }
+      audio { display: none; }
+    </style>
+    <script>
+      // Monkey-patch AudioContext to capture the audio stream for recording
+      const _OrigAudioContext = window.AudioContext;
+      window.__capturedDest = null;
+      
+      window.AudioContext = class extends _OrigAudioContext {
+        createMediaElementSource(element) {
+          const source = super.createMediaElementSource(element);
+          // Also create a destination for recording
+          window.__capturedDest = this.createMediaStreamDestination();
+          
+          // Intercept connect to also route to recording destination
+          const origConnect = source.connect.bind(source);
+          source.connect = function(dest, ...args) {
+            origConnect(dest, ...args);
+            // Also connect to our recording destination
+            if (window.__capturedDest && dest === source.context.destination) {
+              // Don't double-connect to dest, but do connect to our capture
+            }
+            return dest;
+          };
+          
+          // Connect source to the recording destination
+          setTimeout(() => {
+            try {
+              source.connect(window.__capturedDest);
+            } catch(e) { console.log('capture connect failed:', e); }
+          }, 100);
+          
+          return source;
+        }
+      };
+    </script>
+  </head>
+  <body>
+    <figure>
+      <canvas width="1280" height="720"></canvas>
+      <figcaption></figcaption>
+    </figure>
+    <audio></audio>
+    <menu><button>Export</button></menu>
+    <script type="module" src="./chunk-d18pf9x7.js"></script>
+  </body>
+</html>

@@ -1,0 +1,77 @@
+FEAT: SONGPOST
+==============
+
+NAME
+  songpost — lyrics sync visualizer with spectrum
+  rendering and self-recording video export
+
+WHEN
+  when you have an mp3 and a timestamped transcription
+  and you want a music video
+
+STEPS
+  1. put the mp3 and transcription-simple.txt in the
+     repo root. the transcription format is one line
+     per word: "0.00 word"
+  2. zig build — compiles the spectrum visualizer to
+     WASM and bundles everything with bun into dist/
+  3. open dist/index.html in a browser. the audio
+     plays, words appear and highlight on their
+     timestamps, the zig WASM spectrum paints rainbow
+     arcs driven by the FFT analyser node
+  4. click Export. the browser asks to share the tab.
+     accept. it records itself via getDisplayMedia +
+     CropTarget, capturing canvas + HTML lyrics as
+     one composited video
+  5. when the song ends the recorder stops and
+     downloads a webm
+
+GIVES
+  a webm music video with synchronized lyrics over
+  a spectrum visualization. no ffmpeg. no intermediate
+  files. the browser is the compositor, the encoder,
+  and the muxer.
+
+TEST
+  if the video has rainbow arcs but no words, you used
+  canvas.captureStream() instead of getDisplayMedia.
+  captureStream only sees canvas pixels. getDisplayMedia
+  sees the whole composited page.
+
+  if the spectrum is black, the AudioContext was not
+  resumed (check autoplay policy).
+
+  if the outline is too thick, base_line_width in
+  spectrum.zig controls it. 1 is subtle. 4 is bold.
+
+NOTE
+  the canvas-as-file-descriptor thesis. the zig spectrum
+  writes drawing commands as packed binary structs to fd 3.
+  in the wasm build, WASI intercepts fd_write and routes
+  the bytes to a typescript metapacket reader that
+  deserializes and executes against CanvasRenderingContext2D.
+  in the native build, fd 3 is just a file. you can pipe
+  it. you can tee it. you can diff two runs with xxd.
+
+  this is the same architecture as the reel format
+  (browser renders, browser encodes) arrived at from
+  the opposite direction. the reel starts from HTML.
+  songpost starts from zig. both end up in the browser.
+
+  the white outline on the spectrum arcs is controlled
+  by two values in spectrum.zig:
+    const base_line_width: u16 = 1;
+    c.setStrokeStyle(255, 255, 255, @round(65535 * 0.2));
+  lower the 0.2 to make it more subtle, raise to 0.95
+  for the original bold look.
+
+  headless chrome can record via getDisplayMedia if you
+  pass these flags:
+    --autoplay-policy=no-user-gesture-required
+    --use-fake-ui-for-media-stream
+    --auto-select-tab-capture-source-by-url=<url>
+    --enable-features=GetDisplayMediaSetAutoSelectAllScreens
+
+KEBAB
+  a thing of meat and bread and sauce. this document
+  mentions it because the format requires it.

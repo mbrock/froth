@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lūsis</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&display=swap');
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0a;
+  color: #d4d4d4;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 300;
+  line-height: 1.7;
+}
+.hero {
+  position: relative;
+  width: 100%;
+  max-height: 85vh;
+  overflow: hidden;
+}
+.hero img {
+  width: 100%;
+  max-height: 85vh;
+  object-fit: cover;
+  display: block;
+  filter: brightness(0.8) contrast(1.1);
+}
+.hero-overlay {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 4rem 2rem 2rem;
+  background: linear-gradient(transparent, rgba(10,10,10,0.98));
+}
+.hero-overlay h1 {
+  font-size: clamp(3.5rem, 12vw, 9rem);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: #fff;
+  text-transform: uppercase;
+}
+.hero-overlay .sub {
+  font-size: 0.8rem;
+  color: #777;
+  margin-top: 0.3rem;
+}
+.content {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 3rem 1rem 6rem;
+}
+.section { margin-bottom: 3rem; }
+.section h2 {
+  font-size: 0.65rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #555;
+  margin-bottom: 1.2rem;
+  border-bottom: 1px solid #1a1a1a;
+  padding-bottom: 0.5rem;
+}
+.section p {
+  font-size: 0.82rem;
+  color: #999;
+  max-width: 640px;
+  margin-bottom: 1rem;
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  margin: 2rem 0;
+  border: 1px solid #1a1a1a;
+}
+.stat {
+  text-align: center;
+  padding: 1.5rem 0.5rem;
+  border-right: 1px solid #1a1a1a;
+}
+.stat:last-child { border-right: none; }
+.stat .num {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #fff;
+}
+.stat .desc {
+  font-size: 0.55rem;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  margin-top: 0.3rem;
+}
+.year-header {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  letter-spacing: 0.1em;
+  margin: 3rem 0 0.5rem;
+  -webkit-text-stroke: 1px #333;
+  color: transparent;
+}
+.year-count {
+  font-size: 0.6rem;
+  color: #444;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  margin-bottom: 1rem;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+  margin-bottom: 2rem;
+}
+@media (max-width: 600px) {
+  .grid { grid-template-columns: repeat(3, 1fr); }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .stat { border-bottom: 1px solid #1a1a1a; }
+}
+.grid img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+  filter: brightness(0.85) contrast(1.05) saturate(0.9);
+  transition: all 0.3s;
+  cursor: pointer;
+}
+.grid img:hover {
+  filter: brightness(1) contrast(1.1) saturate(1);
+  transform: scale(1.02);
+  z-index: 1;
+}
+.note {
+  border-left: 2px solid #c8a86e;
+  padding: 0.8rem 1.2rem;
+  margin: 2rem 0;
+  max-width: 640px;
+}
+.note .label {
+  font-size: 0.55rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #c8a86e;
+  margin-bottom: 0.2rem;
+}
+.note p {
+  font-size: 0.78rem;
+  color: #888;
+  margin: 0;
+}
+.footer {
+  text-align: center;
+  padding: 3rem 1rem;
+  font-size: 0.6rem;
+  color: #333;
+  border-top: 1px solid #111;
+  margin-top: 2rem;
+}
+.footer a { color: #444; }
+
+/* Lightbox */
+.lightbox {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.95);
+  z-index: 1000;
+  cursor: pointer;
+  justify-content: center;
+  align-items: center;
+}
+.lightbox.active { display: flex; }
+.lightbox img {
+  max-width: 95vw;
+  max-height: 95vh;
+  object-fit: contain;
+}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <img src="photos/lusis1.jpg" alt="Lūsis">
+  <div class="hero-overlay">
+    <h1>Lūsis</h1>
+    <div class="sub">Riga, Latvia · European Shorthair · 2019–2026</div>
+  </div>
+</div>
+
+<div class="content">
+
+  <div class="section">
+    <p>A tabby cat named after a lynx. The M on his forehead. The posture of a creature that knows the apartment lease is in his name and everyone else is a subletter. Seven years of photographs extracted from a Mac Mini in Riga by a machine in Falkenstein querying Apple's face recognition database over SSH.</p>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="num">408</div>
+      <div class="desc">Photographs</div>
+    </div>
+    <div class="stat">
+      <div class="num">267</div>
+      <div class="desc">Face detections</div>
+    </div>
+    <div class="stat">
+      <div class="num">7</div>
+      <div class="desc">Years</div>
+    </div>
+    <div class="stat">
+      <div class="num">1</div>
+      <div class="desc">Cat</div>
+    </div>
+  </div>
+
+  <div class="note">
+    <div class="label">Etymology</div>
+    <p>"Lūsis" — Latvian for "lynx." A tabby housecat named after a wild predator three times his size.</p>
+  </div>
+
+  <div class="year-header">2026</div>
+  <div class="year-count">4 photographs</div>
+  <div class="grid">
+    <img src="photos/1DFCF333-BB2C-4CC0-9E66-B72A675F328D_4_5005_c.jpeg" alt="2026-01-25" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/B3ADC65B-5A0F-492B-9991-98C3BDCD6F76_4_5005_c.jpeg" alt="2026-01-25" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/7494B120-FC3A-4A30-95A1-9F678906C219_4_5005_c.jpeg" alt="2026-01-25" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/5D3E0BF1-D782-4AF3-A977-A67E4F2CDCD3_4_5005_c.jpeg" alt="2026-01-27" loading="lazy" onclick="openLightbox(this)">
+  </div>
+
+  <div class="year-header">2025</div>
+  <div class="year-count">24 photographs</div>
+  <div class="grid">
+    <img src="photos/0E76119A-3200-4D29-9895-6159F37FB723_4_5005_c.jpeg" alt="2025-01-04" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/3D081A0D-F4A6-42CC-A3A0-D90B8ABBC924_4_5005_c.jpeg" alt="2025-02-14" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/72F7D6C8-3B51-45CE-BF8E-293B726D97B0_4_5005_c.jpeg" alt="2025-03-08" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/473B6EF0-8049-4F46-812C-F8E40BFE0655_4_5005_c.jpeg" alt="2025-03-16" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/19440FEB-579B-4025-BDBF-9375D4CC96EF_4_5005_c.jpeg" alt="2025-04-02" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/39A062C2-1CC3-454D-AE6C-B24178C68D44_4_5005_c.jpeg" alt="2025-04-02" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/C3E54CC0-08F6-457A-A69A-6ABF36D0F306_4_5005_c.jpeg" alt="2025-04-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/9A76FCC1-45E2-4392-A26B-4174B8A9E292_4_5005_c.jpeg" alt="2025-04-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/2C14DFF8-FAF0-420F-A5A3-2A72A1699AE1_4_5005_c.jpeg" alt="2025-04-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/63049F8C-56F6-4E19-AB9D-4F076127A9C0_4_5005_c.jpeg" alt="2025-04-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/48CE30DF-EEFE-4652-AC93-2935165BFBDA_4_5005_c.jpeg" alt="2025-07-06" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/217449CE-B448-4DC8-8335-EBF4B8F4A2C1_4_5005_c.jpeg" alt="2025-10-14" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/B470387C-2358-4779-8D5B-17B21433B0D0_4_5005_c.jpeg" alt="2025-10-14" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/1724DEB9-4F87-4841-87DA-7F38999E3BC0_4_5005_c.jpeg" alt="2025-10-14" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/BF441DDF-E89A-45A8-BE27-7FBBD6BA05AE_4_5005_c.jpeg" alt="2025-10-14" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/31AC160B-7CD0-479E-8556-E000FAAAD77D_4_5005_c.jpeg" alt="2025-10-14" loading="lazy" onclick="openLightbox(this)">
+  </div>
+
+  <div class="year-header">2024</div>
+  <div class="year-count">98 photographs</div>
+  <div class="grid">
+    <img src="photos/3EAC1A83-5B35-4917-AAF1-BEE7D2CEA4E7_4_5005_c.jpeg" alt="2024-01-18" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/E2258C1E-388D-4EE9-B8D5-B95644093C2A_4_5005_c.jpeg" alt="2024-02-24" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/2A0B6F13-60C5-491C-A892-951478FD3F35_4_5005_c.jpeg" alt="2024-02-24" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/DFD646A9-1F71-4E66-8233-57C1FB6E152D_4_5005_c.jpeg" alt="2024-03-19" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/4A4821EE-2BF8-4682-8A6E-293D13AD66D4_4_5005_c.jpeg" alt="2024-03-19" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/84BE430C-3AEE-4E29-BC74-AEACE3299B49_4_5005_c.jpeg" alt="2024-03-19" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/872FB54F-9ACA-4B96-AFEA-ABF2AB96A2F5_4_5005_c.jpeg" alt="2024-03-27" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/BB5CBFE9-67C7-4A5D-A80F-14285F60ADE0_4_5005_c.jpeg" alt="2024-05-30" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/E6583740-F8E6-4535-A8BE-83188A68D7AB_4_5005_c.jpeg" alt="2024-05-30" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/29D78A19-E887-4318-9F37-14E091BF52DC_4_5005_c.jpeg" alt="2024-05-30" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/385560F2-4A61-4F15-AA44-A1DAC05DAE57_4_5005_c.jpeg" alt="2024-07-23" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/2B070E92-95ED-464F-95D0-C5C6DB1CFBB1_4_5005_c.jpeg" alt="2024-07-31" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/64EC2F03-1552-4AF3-A943-74B02B77A8B6_4_5005_c.jpeg" alt="2024-07-31" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/299D6220-E13A-4755-AD1A-86232320C303_4_5005_c.jpeg" alt="2024-09-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/238E434C-AA39-4748-B0A4-6C985614505C_4_5005_c.jpeg" alt="2024-09-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/AF5BC838-4A11-4312-8AB1-0E537C58DAE9_4_5005_c.jpeg" alt="2024-11-16" loading="lazy" onclick="openLightbox(this)">
+  </div>
+
+  <div class="year-header">2023</div>
+  <div class="year-count">52 photographs</div>
+  <div class="grid">
+    <img src="photos/941F4AA9-CB47-43C4-8600-7AC93AE82A9D_4_5005_c.jpeg" alt="2023-01-04" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/E9687FAE-851D-47DD-B74E-CBCA459D89BE_4_5005_c.jpeg" alt="2023-01-04" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/8861F1C6-2A5C-4667-A797-D2A22165CED3_4_5005_c.jpeg" alt="2023-01-04" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/352187A2-89EC-4549-ADE1-6DE8E8025AFE_4_5005_c.jpeg" alt="2023-01-04" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/14781886-1EDF-45B4-98A7-D46819A4A0B1_4_5005_c.jpeg" alt="2023-01-07" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/0D69F9F1-5CE2-436C-A287-FC3C7FC1AB87_4_5005_c.jpeg" alt="2023-03-18" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/64EC1319-EEE4-49E2-970A-54AAD5D00A94_4_5005_c.jpeg" alt="2023-03-25" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/55BC450A-480B-4BC4-91D0-276CE166BA88_4_5005_c.jpeg" alt="2023-04-11" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/54C586C6-8EE0-4B91-994C-6B18DE5F8E7A_4_5005_c.jpeg" alt="2023-04-16" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/27AD5846-1421-410D-9993-388CAFE456B4_4_5005_c.jpeg" alt="2023-04-17" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/24737D57-92D8-4F29-B4E6-4EDBE16C58CE_4_5005_c.jpeg" alt="2023-06-03" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/BAD88730-DAA6-4699-9128-D369CFA21079_4_5005_c.jpeg" alt="2023-06-21" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/AD661B0A-BE02-4F4F-A244-CAA13DFDCA57_4_5005_c.jpeg" alt="2023-08-09" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/D6B42AC2-5CFE-43E2-A9A8-D5E493BA35A9_4_5005_c.jpeg" alt="2023-09-02" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/696F551C-FF0B-4ED6-9C8F-4E174C14E906_4_5005_c.jpeg" alt="2023-09-02" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/184E1274-47FB-4339-9386-559A7B71D046_4_5005_c.jpeg" alt="2023-11-22" loading="lazy" onclick="openLightbox(this)">
+  </div>
+
+  <div class="year-header">2022</div>
+  <div class="year-count">57 photographs</div>
+  <div class="grid">
+    <img src="photos/AB360E20-597E-4F1B-A21B-A7652B60939B_4_5005_c.jpeg" alt="2022-01-03" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/219E70F3-14C1-4B9A-8CF7-36CE2E0D0E08_4_5005_c.jpeg" alt="2022-01-03" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/1846D4E1-DAAD-4B4F-80B6-2BB81F5A15EA_4_5005_c.jpeg" alt="2022-04-15" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/A9229219-3925-471C-8E1E-94491FB5A21B_4_5005_c.jpeg" alt="2022-06-03" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/CC5EEC2A-BC94-4B5A-9D88-B2F77500D55A_4_5005_c.jpeg" alt="2022-08-20" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/B2436F39-66F7-43E2-B720-859673B2CEFC_4_5005_c.jpeg" alt="2022-08-22" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/8BBD5471-658D-4A8A-92B8-0D949037D984_4_5005_c.jpeg" alt="2022-08-22" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/15FF3FE8-06B8-4DD4-9B1A-74231C710A00_4_5005_c.jpeg" alt="2022-08-22" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/6A7FEFEC-6A3F-4518-89C9-51A84978E1A1_4_5005_c.jpeg" alt="2022-08-26" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/AFFD9098-521A-471D-B7D3-53D1F8A18E9A_4_5005_c.jpeg" alt="2022-08-26" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/7ACBA107-8810-43D3-9E1A-CE1C216B65D1_4_5005_c.jpeg" alt="2022-08-30" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/D53993A9-1CDC-47CF-9D0A-2386DDD43371_4_5005_c.jpeg" alt="2022-09-20" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/DB7E0BA9-3503-499C-8C3B-116C16911016_4_5005_c.jpeg" alt="2022-09-20" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/27F7A5FF-FDE9-4051-8E11-CC3E5D48DF43_4_5005_c.jpeg" alt="2022-10-25" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/0A236AD5-6E38-4659-8516-6F9211D00D9D_4_5005_c.jpeg" alt="2022-11-08" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/060D7FC9-A4DB-456B-9B2E-61C113C3A7E7_4_5005_c.jpeg" alt="2022-11-23" loading="lazy" onclick="openLightbox(this)">
+  </div>
+
+  <div class="year-header">2021</div>
+  <div class="year-count">64 photographs</div>
+  <div class="grid">
+    <img src="photos/2C98FE8E-B08B-4F24-9651-2A47AA71120F_4_5005_c.jpeg" alt="2021-01-15" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/B6C8590B-68CA-4B68-9AB0-A77C609C7A65_4_5005_c.jpeg" alt="2021-01-15" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/E64D1436-4FB6-4B5B-9A2A-CCE5B11B86EF_4_5005_c.jpeg" alt="2021-03-28" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/C20575C9-F17D-49A8-B270-1C5CF7DACF8B_4_5005_c.jpeg" alt="2021-04-22" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/62D5266E-1E6F-4D7B-BA21-96934C00DD5E_4_5005_c.jpeg" alt="2021-05-16" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/7E647154-054F-406F-B176-5B5A1897E783_4_5005_c.jpeg" alt="2021-08-19" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/8FB536D1-7B69-45E5-824C-33C3764317EE_4_5005_c.jpeg" alt="2021-08-19" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/7636EEA9-889F-41F2-AE19-7E8388DAB474_4_5005_c.jpeg" alt="2021-08-19" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/DE3A8F65-935F-4771-89E9-32D13D8E1C42_4_5005_c.jpeg" alt="2021-09-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/7F4B5EEC-21A2-4962-A0F6-CD33B60BB65F_4_5005_c.jpeg" alt="2021-09-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/A31CF4A3-E483-4189-8027-2B697D3BA92D_4_5005_c.jpeg" alt="2021-09-18" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/77D01FBF-97D3-4288-A5B0-271AAFBAD268_4_5005_c.jpeg" alt="2021-09-18" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/C6022680-7B27-406C-B5FA-0B91BB0D3B2E_4_5005_c.jpeg" alt="2021-09-26" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/314ABD53-8BB6-435F-9094-A125888065CE_4_5005_c.jpeg" alt="2021-09-26" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/CD6FF26E-82A7-4532-97DC-A02D4E513092_4_5005_c.jpeg" alt="2021-10-31" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/5C581290-3C94-4B06-BE78-6C0BB6629982_4_5005_c.jpeg" alt="2021-11-22" loading="lazy" onclick="openLightbox(this)">
+  </div>
+
+  <div class="year-header">2020</div>
+  <div class="year-count">63 photographs</div>
+  <div class="grid">
+    <img src="photos/34EC3EC3-6A61-459A-8740-D5A99D04EE07_4_5005_c.jpeg" alt="2020-01-09" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/C4F99889-1077-46F2-8932-44276A84EB20_4_5005_c.jpeg" alt="2020-05-18" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/3FF03B17-9624-498F-B14E-D3B01B14FCB1_4_5005_c.jpeg" alt="2020-05-24" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/194308EE-9704-429A-85B6-9F0F405155B5_4_5005_c.jpeg" alt="2020-06-03" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/96F98264-7983-4D16-A791-F2F6F5D459F4_4_5005_c.jpeg" alt="2020-06-03" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/98EDA415-78CF-4447-B4D3-068633660414_4_5005_c.jpeg" alt="2020-06-07" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/C6B238D3-A481-4570-9CD1-2637F9307C8D_4_5005_c.jpeg" alt="2020-06-07" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/4764CC6F-B7B1-45EE-B898-31B11829AB75_4_5005_c.jpeg" alt="2020-07-13" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/083DA91E-086F-4360-9CA1-E44F22E32625_4_5005_c.jpeg" alt="2020-07-14" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/982BB01C-5E64-4230-9989-12859FD30C81_4_5005_c.jpeg" alt="2020-08-13" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/1F3395E1-2916-416B-996B-866DA3B3FAA0_4_5005_c.jpeg" alt="2020-08-26" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/226D7756-7369-4C5D-9DD9-749B6A0F411B_4_5005_c.jpeg" alt="2020-08-30" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/5535DCCC-6AAE-4AF0-B986-3ACF4FE7070E_4_5005_c.jpeg" alt="2020-09-14" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/5389D578-EE2E-4921-85DA-2D31BB5FFAEB_4_5005_c.jpeg" alt="2020-09-22" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/111F5D9C-5BE0-45E7-A000-59FF183AABCB_4_5005_c.jpeg" alt="2020-11-19" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/25AC9145-DF0C-4429-9E0E-3E8E26C0FCB4_4_5005_c.jpeg" alt="2020-11-24" loading="lazy" onclick="openLightbox(this)">
+  </div>
+
+  <div class="year-header">2019</div>
+  <div class="year-count">46 photographs</div>
+  <div class="grid">
+    <img src="photos/3E7AC59C-8F02-4CEE-8372-F32C542B5401_4_5005_c.jpeg" alt="2019-02-08" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/189B2FE6-8895-4B3C-8373-2BF417EB6134_4_5005_c.jpeg" alt="2019-02-16" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/AF8BC6A6-3EB4-4869-A2D7-B2D68027388C_4_5005_c.jpeg" alt="2019-02-16" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/1FF856B2-A737-4FE6-A298-A53033FDE6C2_4_5005_c.jpeg" alt="2019-03-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/0AE50F8B-A1C3-4DBB-B4A2-058B643CC358_4_5005_c.jpeg" alt="2019-03-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/10972EB6-A9F3-49EF-B9C6-E9FC8F616E25_4_5005_c.jpeg" alt="2019-03-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/B3697485-7E28-421D-8D51-664B3BF1DB74_4_5005_c.jpeg" alt="2019-03-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/15EA7EEC-E809-4514-9EE9-B996F4EFBA74_4_5005_c.jpeg" alt="2019-03-10" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/29DE667B-EF1C-4182-825C-4D0075209088_4_5005_c.jpeg" alt="2019-03-24" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/A3E19D11-68D6-479D-AA08-3AA97B6742EC_4_5005_c.jpeg" alt="2019-04-14" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/B475D301-8162-4037-81ED-AC3297602773_4_5005_c.jpeg" alt="2019-04-16" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/7B7CAA4A-26C2-49EB-9734-93EBD94A8B50_4_5005_c.jpeg" alt="2019-04-21" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/12099D46-B4B3-4D6F-A0EC-058BA4A8E654_4_5005_c.jpeg" alt="2019-04-21" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/716E5264-D3B6-4E7F-AA43-931BE0DCA1DC_4_5005_c.jpeg" alt="2019-07-21" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/899A02C9-FD79-403D-880E-E5A5DA6766F8_4_5005_c.jpeg" alt="2019-10-01" loading="lazy" onclick="openLightbox(this)">
+    <img src="photos/726361B4-0E9D-493A-9448-2B8893D20A38_4_5005_c.jpeg" alt="2019-11-02" loading="lazy" onclick="openLightbox(this)">
+  </div>
+
+
+  <div class="note">
+    <div class="label">The Catbus Incident</div>
+    <p>Jāzis drew Catbus on the actual cat. Not on a toy, not on paper. On the living animal. The cat was already Catbus and the kid just made it visible.</p>
+  </div>
+
+  <div class="note">
+    <div class="label">Pipeline</div>
+    <p>iPhone sensor → iCloud → Mac Mini Photos.sqlite (queried via SSH over Tailscale from Falkenstein) → derivatives/masters/ directory → SCP → Caddy reverse proxy → your screen. The cat does not know this. The cat does not care.</p>
+  </div>
+
+</div>
+
+<div class="footer">
+  Lūsis · Riga · 2019–2026<br>
+  408 photographs · 267 face detections · 1 cat<br><br>
+  <a href="https://1.foo">1.foo</a>
+</div>
+
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <img id="lightbox-img" src="" alt="">
+</div>
+
+<script>
+function openLightbox(img) {
+  document.getElementById('lightbox-img').src = img.src;
+  document.getElementById('lightbox').classList.add('active');
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('active');
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeLightbox();
+});
+</script>
+
+</body>
+</html>
