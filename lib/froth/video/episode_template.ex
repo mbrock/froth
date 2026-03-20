@@ -153,9 +153,8 @@ defmodule Froth.Video.EpisodeTemplate do
 
           .word {
             font-size: var(--word-size);
-            font-weight: 500;
-            font-style: italic;
-            color: rgba(255, 255, 255, 0.2);
+            font-weight: 400;
+            color: rgba(255, 255, 255, 0.18);
             letter-spacing: 0.01em;
             transition: color 0.15s ease;
             text-shadow: 0 2px 12px rgba(0,0,0,0.9), 0 0 40px rgba(0,0,0,0.7);
@@ -164,12 +163,10 @@ defmodule Froth.Video.EpisodeTemplate do
 
           .word.active {
             color: #ffd700;
-            font-style: normal;
           }
 
           .word.spoken {
-            color: rgba(255, 255, 255, 0.55);
-            font-style: normal;
+            color: rgba(255, 255, 255, 0.5);
           }
 
           .word-space {
@@ -238,6 +235,46 @@ defmodule Froth.Video.EpisodeTemplate do
             color: rgba(255,255,255,0.7);
             text-shadow: 0 2px 20px rgba(0,0,0,0.5);
           }
+
+          #progress-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: rgba(255, 255, 255, 0.08);
+            z-index: 25;
+            cursor: pointer;
+          }
+
+          #progress-fill {
+            height: 100%;
+            background: rgba(255, 215, 0, 0.6);
+            width: 0%;
+            transition: width 0.3s linear;
+          }
+
+          #pause-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0);
+            font-size: 8vh;
+            color: rgba(255, 255, 255, 0.6);
+            z-index: 25;
+            pointer-events: none;
+            transition: transform 0.15s ease, opacity 0.3s ease;
+            opacity: 0;
+            text-shadow: 0 2px 20px rgba(0,0,0,0.5);
+          }
+
+          #pause-indicator.show {
+            transform: translate(-50%, -50%) scale(1);
+            opacity: 1;
+          }
+
+          #video { cursor: pointer; }
+
         </style>
       </head>
       <body>
@@ -247,6 +284,8 @@ defmodule Froth.Video.EpisodeTemplate do
           <div id="title-overlay">#{html_escape(title)}</div>
           <div id="transcript"><div id="transcript-inner"></div></div>
           <div id="play-overlay"></div>
+          <div id="progress-bar"><div id="progress-fill"></div></div>
+          <div id="pause-indicator">❚❚</div>
           <div id="debug">
             <span id="debug-time">0.00</span>
             <span id="debug-word-count">0</span>
@@ -444,16 +483,72 @@ defmodule Froth.Video.EpisodeTemplate do
               });
             }
 
-            playOverlay.addEventListener("click", () => playPreview());
+            const progressBar = document.getElementById("progress-bar");
+            const progressFill = document.getElementById("progress-fill");
+            const pauseIndicator = document.getElementById("pause-indicator");
+
+            let isPlaying = false;
+            let pauseTimeout = null;
+
+            function showPauseIndicator(icon) {
+              pauseIndicator.textContent = icon;
+              pauseIndicator.classList.add("show");
+              clearTimeout(pauseTimeout);
+              pauseTimeout = setTimeout(() => pauseIndicator.classList.remove("show"), 600);
+            }
+
+            function togglePlayPause() {
+              if (!audioEl) return;
+              if (audioEl.paused) {
+                playOverlay.classList.add("hidden");
+                audioEl.play().then(() => {
+                  isPlaying = true;
+                  if (rafId) window.cancelAnimationFrame(rafId);
+                  rafId = window.requestAnimationFrame(previewTick);
+                  showPauseIndicator("\u25b6");
+                });
+              } else {
+                audioEl.pause();
+                isPlaying = false;
+                showPauseIndicator("\u275a\u275a");
+              }
+            }
+
+            // Click anywhere on video to play/pause
+            document.getElementById("video").addEventListener("click", (e) => {
+              if (e.target.closest("#progress-bar")) return;
+              togglePlayPause();
+            });
+
+            // Progress bar: click to seek
+            progressBar.addEventListener("click", (e) => {
+              if (!audioEl) return;
+              const rect = progressBar.getBoundingClientRect();
+              const pct = (e.clientX - rect.left) / rect.width;
+              audioEl.currentTime = pct * data.duration_s;
+              renderAt(audioEl.currentTime);
+            });
+
+            // Update progress bar in the tick
+            const origTick = previewTick;
+            previewTick = function() {
+              if (!audioEl) return;
+              renderAt(audioEl.currentTime || 0);
+              const pct = ((audioEl.currentTime || 0) / data.duration_s * 100).toFixed(2);
+              progressFill.style.width = pct + "%";
+              if (!audioEl.paused) rafId = window.requestAnimationFrame(previewTick);
+            };
 
             if (audioEl) {
               audioEl.addEventListener("ended", () => {
+                isPlaying = false;
                 document.dispatchEvent(new CustomEvent("playback-ended"));
                 playOverlay.classList.remove("hidden");
+                progressFill.style.width = "100%";
               });
             }
 
-            window.FrothVideo = { data, ready: false, renderAt, playPreview };
+            window.FrothVideo = { data, ready: false, renderAt, playPreview: togglePlayPause };
             renderAt(0);
             sceneReadyWithFallback.finally(() => { window.FrothVideo.ready = true; });
           })();
