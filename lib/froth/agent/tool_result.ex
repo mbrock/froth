@@ -19,11 +19,22 @@ defmodule Froth.Agent.ToolResult do
   end
 
   def to_api(%__MODULE__{} = result) do
-    content = stringify(result.content)
+    content = normalize_content(result.content)
     map = %{"type" => "tool_result", "tool_use_id" => result.tool_use_id, "content" => content}
     if result.is_error, do: Map.put(map, "is_error", true), else: map
   end
 
-  defp stringify(content) when is_binary(content), do: content
-  defp stringify(content), do: inspect(content, limit: :infinity, printable_limit: :infinity)
+  defp normalize_content(content) when is_binary(content), do: content
+
+  defp normalize_content(content) when is_map(content) do
+    Map.new(content, fn {key, value} ->
+      {to_string(key), normalize_content(value)}
+    end)
+  end
+
+  defp normalize_content(content) when is_list(content),
+    do: Enum.map(content, &normalize_content/1)
+
+  defp normalize_content(content),
+    do: inspect(content, limit: :infinity, printable_limit: :infinity)
 end

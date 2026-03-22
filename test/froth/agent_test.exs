@@ -146,6 +146,52 @@ defmodule Froth.Agent.WorkerTest do
       wait_for_exit(pid)
     end
 
+    test "preserves structured tool results on the second call" do
+      executor =
+        start_executor(fn %ToolUse{input: %{"text" => text}}, _context ->
+          [
+            %{"type" => "text", "text" => "echoed: #{text}"},
+            %{
+              type: "image",
+              source: %{
+                type: "base64",
+                media_type: "image/png",
+                data: "aGVsbG8="
+              }
+            }
+          ]
+        end)
+
+      {pid, _cycle} =
+        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+
+      assert_receive {:api_call, 1, body}, 5000
+
+      messages = body["messages"]
+      last_message = List.last(messages)
+      assert last_message["role"] == "user"
+
+      [tool_result] = last_message["content"]
+
+      assert tool_result == %{
+               "type" => "tool_result",
+               "tool_use_id" => "toolu_01723uR8LLoYDLV4oqbtHEd4",
+               "content" => [
+                 %{"type" => "text", "text" => "echoed: test message"},
+                 %{
+                   "type" => "image",
+                   "source" => %{
+                     "type" => "base64",
+                     "media_type" => "image/png",
+                     "data" => "aGVsbG8="
+                   }
+                 }
+               ]
+             }
+
+      wait_for_exit(pid)
+    end
+
     test "persists all messages including tool results" do
       executor =
         start_executor(fn %ToolUse{input: %{"text" => text}}, _context -> "echoed: #{text}" end)
