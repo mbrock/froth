@@ -315,7 +315,7 @@ defmodule Froth.Video.EpisodeTemplate do
             const sceneEls = data.scenes.map((scene, i) => {
               const el = document.createElement("div");
               el.className = "scene";
-              el.style.backgroundImage = `url('${scene.src}')`;
+              el.style.backgroundImage = `url('${scene.url}')`;
               scenesRoot.appendChild(el);
               return el;
             });
@@ -362,7 +362,7 @@ defmodule Froth.Video.EpisodeTemplate do
                 img.onload = () => resolve(true);
                 img.onerror = () => resolve(false);
                 setTimeout(() => resolve(false), 8000);
-                img.src = scene.src;
+                img.src = scene.url;
               }))
             );
 
