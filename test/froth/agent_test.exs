@@ -3,6 +3,7 @@ defmodule Froth.Agent.WorkerTest do
 
   import Ecto.Query
   alias Froth.Agent.{Config, Cycle, Event, Message, Worker, ToolUse}
+  alias Froth.LLM.Message, as: LLMMessage
   alias Froth.Repo
 
   defmodule TestExecutor do
@@ -246,7 +247,10 @@ defmodule Froth.Agent.WorkerTest do
       all = Enum.to_list(stream)
 
       assert_receive {:llm_call, api_messages, opts}
-      assert [%{"role" => "user", "content" => "hello"}] = api_messages
+
+      assert [%LLMMessage{role: :user, content: [%{"type" => "text", "text" => "hello"}]}] =
+               api_messages
+
       assert opts[:provider] == :openai
       assert opts[:model] == "gpt-5-mini"
 

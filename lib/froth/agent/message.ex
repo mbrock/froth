@@ -1,6 +1,8 @@
 defmodule Froth.Agent.Message do
   use Ecto.Schema
 
+  alias Froth.LLM.Message, as: LLMMessage
+
   @type t :: %__MODULE__{
           id: String.t() | nil,
           role: :user | :agent,
@@ -31,6 +33,14 @@ defmodule Froth.Agent.Message do
 
   def to_api(%__MODULE__{role: :agent, content: content}) do
     %{"role" => "assistant", "content" => unwrap(content)}
+  end
+
+  def to_llm_message(%__MODULE__{role: :user, content: content}) do
+    LLMMessage.user(unwrap(content))
+  end
+
+  def to_llm_message(%__MODULE__{role: :agent, content: content}) do
+    LLMMessage.assistant(unwrap(content))
   end
 
   def wrap(value) when is_map(value), do: value

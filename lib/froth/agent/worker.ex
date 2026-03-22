@@ -179,7 +179,7 @@ defmodule Froth.Agent.Worker do
     api_messages =
       worker.head_id
       |> Agent.load_messages()
-      |> Enum.map(&Message.to_api/1)
+      |> Enum.map(&Message.to_llm_message/1)
 
     cycle_id = worker.cycle.id
 
