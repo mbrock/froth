@@ -18,7 +18,8 @@ Four stages. Each independent. All in Froth.Video.
     {:ok, words} = Froth.Video.transcribe(audio_url)
     # => [%{word: "So", start: 0.268, end: 0.488}, ...]
 
-Uses victor-upmeet/whisperx on Replicate.
+Uses vaibhavs10/incredibly-fast-whisper on Replicate (always warm)
+   Previously: victor-upmeet/whisperx (cold start issues).
 Input must be a publicly accessible URL.
 
 ### 2. GENERATE SCENES

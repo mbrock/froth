@@ -29,7 +29,8 @@ highlighting, fast cuts.
 
 2. WHISPERX TRANSCRIPTION (Froth.Video.transcribe)
    - Input: public MP3 URL
-   - Model: victor-upmeet/whisperx on Replicate
+   - Model: vaibhavs10/incredibly-fast-whisper on Replicate (29M runs, always warm)
+   - AVOID: victor-upmeet/whisperx (cold start downloads 360MB model)
    - Output: word-level timestamps
    - Returns [{word, start, end}, ...]
    - REQUIRED for the compose step (word-by-word highlighting)
