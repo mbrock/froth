@@ -1,6 +1,7 @@
 defmodule Froth.LLM.Providers.GeminiTest do
   use ExUnit.Case, async: true
 
+  alias Froth.LLM.Message
   alias Froth.LLM.Providers.Gemini
   alias Froth.LLM.Request
   alias Froth.LLM.Store
@@ -14,26 +15,20 @@ defmodule Froth.LLM.Providers.GeminiTest do
       system: "system prompt",
       max_tokens: 1024,
       messages: [
-        %{"role" => "user", "content" => "hello"},
-        %{
-          "role" => "assistant",
-          "content" => [
-            %{"type" => "text", "text" => "working"},
-            %{
-              "type" => "tool_use",
-              "id" => "call_1",
-              "name" => "froth_echo",
-              "input" => %{"text" => "hi"},
-              "extra_content" => %{"google" => %{"thought_signature" => "sig_123"}}
-            }
-          ]
-        },
-        %{
-          "role" => "user",
-          "content" => [
-            %{"type" => "tool_result", "tool_use_id" => "call_1", "content" => "echoed: hi"}
-          ]
-        }
+        Message.user("hello"),
+        Message.assistant([
+          %{"type" => "text", "text" => "working"},
+          %{
+            "type" => "tool_use",
+            "id" => "call_1",
+            "name" => "froth_echo",
+            "input" => %{"text" => "hi"},
+            "extra_content" => %{"google" => %{"thought_signature" => "sig_123"}}
+          }
+        ]),
+        Message.user([
+          %{"type" => "tool_result", "tool_use_id" => "call_1", "content" => "echoed: hi"}
+        ])
       ],
       tools: [
         %{

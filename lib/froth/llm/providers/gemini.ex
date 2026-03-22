@@ -3,7 +3,7 @@ defmodule Froth.LLM.Providers.Gemini do
 
   @behaviour Froth.LLM.Provider
 
-  alias Froth.LLM.{Edit, Request, Store}
+  alias Froth.LLM.{Edit, Message, Request, Store}
 
   @impl true
   def build_request(%Request{} = request) do
@@ -126,15 +126,44 @@ defmodule Froth.LLM.Providers.Gemini do
     contents
   end
 
-  defp encode_message(%{"role" => "system"}, tool_uses), do: {[], tool_uses}
+  defp encode_message(message, tool_uses) do
+    case Message.normalize(message) do
+      {:ok, %Message{} = normalized} -> encode_normalized_message(normalized, tool_uses)
+      :error -> encode_raw_message(message, tool_uses)
+    end
+  end
 
-  defp encode_message(%{"role" => role, "parts" => parts} = message, tool_uses)
+  defp encode_normalized_message(%Message{role: :system}, tool_uses), do: {[], tool_uses}
+
+  defp encode_normalized_message(%Message{role: :user} = message, tool_uses) do
+    {parts, tool_uses} = encode_user_parts(Message.content_blocks(message), tool_uses)
+
+    if parts == [] do
+      {[], tool_uses}
+    else
+      {[%{"role" => "user", "parts" => parts}], tool_uses}
+    end
+  end
+
+  defp encode_normalized_message(%Message{role: :assistant} = message, tool_uses) do
+    {parts, tool_uses} = encode_model_parts(Message.content_blocks(message), tool_uses)
+
+    if parts == [] do
+      {[], tool_uses}
+    else
+      {[%{"role" => "model", "parts" => parts}], tool_uses}
+    end
+  end
+
+  defp encode_raw_message(%{"role" => "system"}, tool_uses), do: {[], tool_uses}
+
+  defp encode_raw_message(%{"role" => role, "parts" => parts} = message, tool_uses)
        when role in ["user", "model"] and is_list(parts) do
     {parts, tool_uses} = normalize_gemini_parts(parts, tool_uses)
     {[Map.put(message, "parts", parts)], tool_uses}
   end
 
-  defp encode_message(%{"role" => "user", "content" => content}, tool_uses) do
+  defp encode_raw_message(%{"role" => "user", "content" => content}, tool_uses) do
     {parts, tool_uses} = encode_user_parts(content, tool_uses)
 
     if parts == [] do
@@ -144,7 +173,7 @@ defmodule Froth.LLM.Providers.Gemini do
     end
   end
 
-  defp encode_message(%{"role" => "assistant", "content" => content}, tool_uses) do
+  defp encode_raw_message(%{"role" => "assistant", "content" => content}, tool_uses) do
     {parts, tool_uses} = encode_model_parts(content, tool_uses)
 
     if parts == [] do
@@ -154,11 +183,11 @@ defmodule Froth.LLM.Providers.Gemini do
     end
   end
 
-  defp encode_message(message, tool_uses) when is_map(message) do
+  defp encode_raw_message(message, tool_uses) when is_map(message) do
     {[message], tool_uses}
   end
 
-  defp encode_message(_message, tool_uses), do: {[], tool_uses}
+  defp encode_raw_message(_message, tool_uses), do: {[], tool_uses}
 
   defp encode_user_parts(content, tool_uses) when is_binary(content) do
     {[%{"text" => content}], tool_uses}

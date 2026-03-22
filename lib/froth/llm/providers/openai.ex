@@ -3,7 +3,7 @@ defmodule Froth.LLM.Providers.OpenAI do
 
   @behaviour Froth.LLM.Provider
 
-  alias Froth.LLM.{Edit, Request, Store}
+  alias Froth.LLM.{Edit, Message, Request, Store}
 
   @impl true
   def build_request(%Request{} = request) do
@@ -137,39 +137,21 @@ defmodule Froth.LLM.Providers.OpenAI do
     Enum.flat_map(messages, &encode_message/1)
   end
 
-  defp encode_message(%{"role" => "system", "content" => content}) do
-    [%{"role" => "system", "content" => normalize_text_content(content)}]
+  defp encode_message(message) do
+    case Message.normalize(message) do
+      {:ok, %Message{} = normalized} -> encode_normalized_message(normalized)
+      :error when is_map(message) -> [message]
+      :error -> []
+    end
   end
 
-  defp encode_message(%{"role" => "user", "content" => content}) do
-    encode_user_content(content)
+  defp encode_normalized_message(%Message{role: :system} = message) do
+    [%{"role" => "system", "content" => Message.text_content(message)}]
   end
 
-  defp encode_message(%{"role" => "assistant", "content" => content}) do
-    text = assistant_text_content(content)
-    tool_calls = assistant_tool_calls(content)
-
-    message =
-      %{"role" => "assistant"}
-      |> maybe_put("content", text, &(is_binary(&1) and &1 != ""))
-      |> maybe_put("tool_calls", tool_calls, &non_empty_list?/1)
-
-    [
-      if(Map.has_key?(message, "content") or Map.has_key?(message, "tool_calls"),
-        do: message,
-        else: Map.put(message, "content", "")
-      )
-    ]
-  end
-
-  defp encode_message(message) when is_map(message), do: [message]
-
-  defp encode_user_content(content) when is_binary(content) do
-    [%{"role" => "user", "content" => content}]
-  end
-
-  defp encode_user_content(content) when is_list(content) do
-    text = normalize_text_content(content)
+  defp encode_normalized_message(%Message{role: :user} = message) do
+    text = Message.text_content(message)
+    tool_results = Message.tool_results(message)
 
     text_messages =
       if text == "" do
@@ -179,9 +161,9 @@ defmodule Froth.LLM.Providers.OpenAI do
       end
 
     tool_messages =
-      content
+      tool_results
       |> Enum.flat_map(fn
-        %{"type" => "tool_result", "tool_use_id" => tool_use_id, "content" => tool_content}
+        %{"tool_use_id" => tool_use_id, "content" => tool_content}
         when is_binary(tool_use_id) ->
           [
             %{
@@ -198,8 +180,21 @@ defmodule Froth.LLM.Providers.OpenAI do
     text_messages ++ tool_messages
   end
 
-  defp encode_user_content(content) do
-    [%{"role" => "user", "content" => normalize_text_content(content)}]
+  defp encode_normalized_message(%Message{role: :assistant} = message) do
+    text = Message.text_content(message)
+    tool_calls = assistant_tool_calls(Message.tool_uses(message))
+
+    encoded =
+      %{"role" => "assistant"}
+      |> maybe_put("content", text, &(is_binary(&1) and &1 != ""))
+      |> maybe_put("tool_calls", tool_calls, &non_empty_list?/1)
+
+    [
+      if(Map.has_key?(encoded, "content") or Map.has_key?(encoded, "tool_calls"),
+        do: encoded,
+        else: Map.put(encoded, "content", "")
+      )
+    ]
   end
 
   defp normalize_text_content(content) when is_binary(content), do: content
@@ -221,17 +216,6 @@ defmodule Froth.LLM.Providers.OpenAI do
   defp normalize_text_content(content) do
     to_string(content)
   end
-
-  defp assistant_text_content(content) when is_list(content) do
-    content
-    |> Enum.flat_map(fn
-      %{"type" => "text", "text" => text} when is_binary(text) -> [text]
-      _ -> []
-    end)
-    |> Enum.join("")
-  end
-
-  defp assistant_text_content(content), do: normalize_text_content(content)
 
   defp assistant_tool_calls(content) when is_list(content) do
     Enum.flat_map(content, fn

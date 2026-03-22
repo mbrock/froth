@@ -2,6 +2,7 @@ defmodule Froth.GeminiTest do
   use ExUnit.Case, async: false
 
   alias Froth.Gemini
+  alias Froth.LLM.Message
   alias Froth.LLM.Request
   alias Froth.LLM.Providers.Gemini, as: GeminiProvider
 
@@ -46,7 +47,7 @@ defmodule Froth.GeminiTest do
 
     assert {:ok, result} =
              Gemini.stream_single(
-               [%{"role" => "user", "content" => "hello"}],
+               [Message.user("hello")],
                fn _event -> :ok end
              )
 
@@ -56,7 +57,9 @@ defmodule Froth.GeminiTest do
                      %Request{
                        provider: GeminiProvider,
                        model: "gemini-3-flash-preview",
-                       messages: [%{"role" => "user", "content" => "hello"}],
+                       messages: [
+                         %Message{role: :user, content: [%{"type" => "text", "text" => "hello"}]}
+                       ],
                        endpoint: endpoint
                      }}
 

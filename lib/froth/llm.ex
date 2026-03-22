@@ -4,7 +4,7 @@ defmodule Froth.LLM do
   import Ecto.Query, only: [from: 2]
 
   alias Froth.ApiKey
-  alias Froth.LLM.{Edit, Request, Store}
+  alias Froth.LLM.{Edit, Message, Request, Store}
   alias Froth.LLM.Transport.SSE
   alias Froth.Telemetry.Span
 
@@ -12,7 +12,8 @@ defmodule Froth.LLM do
   @type on_edit :: (Edit.t() -> any())
   @type provider_ref :: atom() | String.t() | module() | nil
 
-  @spec stream_single(list(map()), on_event(), keyword()) :: {:ok, map()} | {:error, term()}
+  @spec stream_single(list(map() | Message.t()), on_event(), keyword()) ::
+          {:ok, map()} | {:error, term()}
   def stream_single(api_messages, on_event, opts \\ [])
       when is_list(api_messages) and is_function(on_event, 1) and is_list(opts) do
     case Application.get_env(:froth, :llm_stream_single_fun) do

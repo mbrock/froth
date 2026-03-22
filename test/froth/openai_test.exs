@@ -1,6 +1,7 @@
 defmodule Froth.OpenAITest do
   use ExUnit.Case, async: false
 
+  alias Froth.LLM.Message
   alias Froth.LLM.Request
   alias Froth.LLM.Providers.OpenAI, as: OpenAIProvider
   alias Froth.OpenAI
@@ -46,7 +47,7 @@ defmodule Froth.OpenAITest do
 
     assert {:ok, result} =
              OpenAI.stream_single(
-               [%{"role" => "user", "content" => "hello"}],
+               [Message.user("hello")],
                fn _event -> :ok end
              )
 
@@ -57,7 +58,9 @@ defmodule Froth.OpenAITest do
                        provider: OpenAIProvider,
                        endpoint: "https://api.openai.com/v1/chat/completions",
                        model: "gpt-5-mini",
-                       messages: [%{"role" => "user", "content" => "hello"}],
+                       messages: [
+                         %Message{role: :user, content: [%{"type" => "text", "text" => "hello"}]}
+                       ],
                        provider_options: %{
                          "include_usage" => true,
                          "reasoning_effort" => nil

@@ -1,9 +1,11 @@
 defmodule Froth.LLM.Request do
   @moduledoc false
 
+  alias Froth.LLM.Message
+
   @type t :: %__MODULE__{
           provider: module(),
-          messages: list(map()),
+          messages: list(map() | Message.t()),
           model: String.t() | nil,
           system: String.t() | nil,
           max_tokens: pos_integer() | nil,
