@@ -3,7 +3,7 @@ defmodule Froth.OpenAI do
 
   alias Froth.LLM
   alias Froth.LLM.Client
-  alias Froth.LLM.Providers.OpenAICompat
+  alias Froth.LLM.Providers.OpenAI, as: OpenAIProvider
   alias Froth.LLM.Request
 
   @default_max_tokens 16_384
@@ -30,7 +30,7 @@ defmodule Froth.OpenAI do
     else
       {:ok,
        %Request{
-         provider: OpenAICompat,
+         provider: OpenAIProvider,
          messages: api_messages,
          model: Keyword.get(overrides, :model, Keyword.get(cfg, :model, @default_model)),
          system: system_prompt(Keyword.get(overrides, :system, Keyword.get(cfg, :system, ""))),

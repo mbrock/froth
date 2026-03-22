@@ -3,12 +3,12 @@ defmodule Froth.Gemini do
 
   alias Froth.LLM
   alias Froth.LLM.Client
-  alias Froth.LLM.Providers.OpenAICompat
+  alias Froth.LLM.Providers.Gemini, as: GeminiProvider
   alias Froth.LLM.Request
 
   @default_max_tokens 16_384
   @default_model "gemini-3-flash-preview"
-  @endpoint "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+  @endpoint "https://generativelanguage.googleapis.com/v1beta/models"
 
   def stream_single(api_messages, on_event, opts \\ [])
       when is_list(api_messages) and is_function(on_event, 1) do
@@ -30,20 +30,38 @@ defmodule Froth.Gemini do
     else
       {:ok,
        %Request{
-         provider: OpenAICompat,
+         provider: GeminiProvider,
          messages: api_messages,
          model: Keyword.get(overrides, :model, Keyword.get(cfg, :model, @default_model)),
          system: system_prompt(Keyword.get(overrides, :system, Keyword.get(cfg, :system, ""))),
          max_tokens:
            Keyword.get(overrides, :max_tokens, Keyword.get(cfg, :max_tokens, @default_max_tokens)),
          tools: Keyword.get(overrides, :tools, Keyword.get(cfg, :tools, [])),
-         headers: [{"authorization", "Bearer #{api_key}"}],
-         endpoint: Keyword.get(overrides, :endpoint, Keyword.get(cfg, :endpoint, @endpoint)),
+         headers: [],
+         endpoint:
+           Keyword.get(
+             overrides,
+             :endpoint,
+             Keyword.get(
+               cfg,
+               :endpoint,
+               build_endpoint(@endpoint, request_model(overrides, cfg), api_key)
+             )
+           ),
          provider_options: %{
            "reasoning_effort" => Keyword.get(overrides, :effort, Keyword.get(cfg, :effort))
          }
        }}
     end
+  end
+
+  defp build_endpoint(base, model, api_key) when is_binary(base) and is_binary(model) do
+    base = String.trim_trailing(base, "/")
+    "#{base}/#{model}:streamGenerateContent?alt=sse&key=#{api_key}"
+  end
+
+  defp request_model(overrides, cfg) do
+    Keyword.get(overrides, :model, Keyword.get(cfg, :model, @default_model))
   end
 
   defp system_prompt(system) when is_binary(system) do
