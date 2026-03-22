@@ -5,6 +5,7 @@ defmodule Froth.GeminiTest do
   alias Froth.LLM.Message
   alias Froth.LLM.Request
   alias Froth.LLM.Providers.Gemini, as: GeminiProvider
+  alias Froth.LLM.Providers.GeminiInteractions
 
   setup do
     original_config = Application.get_env(:froth, Gemini, [])
@@ -65,5 +66,77 @@ defmodule Froth.GeminiTest do
 
     assert endpoint ==
              "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse&key=test-key-not-real"
+  end
+
+  test "stream_single/3 uses the interactions provider for multimodal requests" do
+    test_pid = self()
+
+    Application.put_env(:froth, Gemini,
+      api_key: "test-key-not-real",
+      model: "gemini-3-pro-image-preview"
+    )
+
+    Application.put_env(:froth, :llm_stream_fun, fn request, _on_event, _opts ->
+      send(test_pid, {:llm_request, request})
+
+      {:ok,
+       %{
+         text: "",
+         content: [
+           %{
+             "type" => "image",
+             "source" => %{
+               "type" => "base64",
+               "media_type" => "image/png",
+               "data" => "aGVsbG8="
+             }
+           }
+         ],
+         stop_reason: "stop",
+         usage: %{},
+         model: request.model,
+         message_id: "resp_test"
+       }}
+    end)
+
+    assert {:ok, result} =
+             Gemini.stream_single(
+               [
+                 Message.user([
+                   %{
+                     "type" => "image",
+                     "source" => %{
+                       "type" => "base64",
+                       "media_type" => "image/png",
+                       "data" => "aGVsbG8="
+                     }
+                   },
+                   %{"type" => "text", "text" => "Describe this image."}
+                 ])
+               ],
+               fn _event -> :ok end,
+               response_modalities: [:image]
+             )
+
+    assert result.content == [
+             %{
+               "type" => "image",
+               "source" => %{
+                 "type" => "base64",
+                 "media_type" => "image/png",
+                 "data" => "aGVsbG8="
+               }
+             }
+           ]
+
+    assert_received {:llm_request,
+                     %Request{
+                       provider: GeminiInteractions,
+                       response_modalities: [:image],
+                       endpoint: endpoint
+                     }}
+
+    assert endpoint ==
+             "https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse&key=test-key-not-real"
   end
 end
