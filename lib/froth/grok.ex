@@ -3,7 +3,7 @@ defmodule Froth.Grok do
 
   alias Froth.LLM
   alias Froth.LLM.Client
-  alias Froth.LLM.Providers.OpenAICompat
+  alias Froth.LLM.Providers.{XAIChat, XAIResponses}
   alias Froth.LLM.Request
 
   @default_max_tokens 16_384
@@ -40,9 +40,9 @@ defmodule Froth.Grok do
 
       {provider, endpoint} =
         if has_builtin_tools do
-          {Froth.LLM.Providers.XAIResponses, @responses_endpoint}
+          {XAIResponses, @responses_endpoint}
         else
-          {OpenAICompat, @chat_endpoint}
+          {XAIChat, @chat_endpoint}
         end
 
       {:ok,

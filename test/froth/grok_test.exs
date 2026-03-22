@@ -3,6 +3,7 @@ defmodule Froth.GrokTest do
 
   alias Froth.Grok
   alias Froth.LLM.Message
+  alias Froth.LLM.Providers.XAIChat
   alias Froth.LLM.Providers.XAIResponses
   alias Froth.LLM.Request
 
@@ -58,6 +59,57 @@ defmodule Froth.GrokTest do
                      %Request{
                        provider: XAIResponses,
                        endpoint: "https://api.x.ai/v1/responses",
+                       model: "grok-4-1-fast-non-reasoning",
+                       messages: [
+                         %Message{role: :user, content: [%{"type" => "text", "text" => "hello"}]}
+                       ]
+                     }}
+  end
+
+  test "stream_single/3 uses the xAI chat provider when built-in tools are absent" do
+    test_pid = self()
+
+    Application.put_env(:froth, Grok,
+      api_key: "test-key-not-real",
+      model: "grok-4-1-fast-non-reasoning"
+    )
+
+    Application.put_env(:froth, :llm_stream_fun, fn request, _on_event, _opts ->
+      send(test_pid, {:llm_request, request})
+
+      {:ok,
+       %{
+         text: "hello",
+         content: [%{"type" => "text", "text" => "hello"}],
+         stop_reason: "stop",
+         usage: %{},
+         model: request.model,
+         message_id: "resp_test"
+       }}
+    end)
+
+    assert {:ok, result} =
+             Grok.stream_single(
+               [Message.user("hello")],
+               fn _event -> :ok end,
+               tools: [
+                 %{
+                   "name" => "froth_echo",
+                   "description" => "Echo text back.",
+                   "input_schema" => %{
+                     "type" => "object",
+                     "properties" => %{"text" => %{"type" => "string"}}
+                   }
+                 }
+               ]
+             )
+
+    assert result.text == "hello"
+
+    assert_received {:llm_request,
+                     %Request{
+                       provider: XAIChat,
+                       endpoint: "https://api.x.ai/v1/chat/completions",
                        model: "grok-4-1-fast-non-reasoning",
                        messages: [
                          %Message{role: :user, content: [%{"type" => "text", "text" => "hello"}]}
