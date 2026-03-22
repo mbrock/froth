@@ -74,4 +74,60 @@ defmodule Froth.LLM.Providers.AnthropicTest do
              }
            ]
   end
+
+  test "build_request preserves neutral image and document source blocks" do
+    request = %Request{
+      provider: Anthropic,
+      headers: [{"x-api-key", "test"}],
+      model: "claude-opus-4-6",
+      system: "system prompt",
+      max_tokens: 1024,
+      messages: [
+        Message.user([
+          %{
+            "type" => "image",
+            "source" => %{
+              "type" => "url",
+              "url" => "https://example.test/cat.jpg"
+            }
+          },
+          %{
+            "type" => "document",
+            "source" => %{
+              "type" => "base64",
+              "media_type" => "application/pdf",
+              "data" => "JVBERi0xLjQK"
+            }
+          },
+          %{"type" => "text", "text" => "Compare the image and the PDF."}
+        ])
+      ]
+    }
+
+    {:ok, %{body: body}} = Anthropic.build_request(request)
+
+    assert body["messages"] == [
+             %{
+               "role" => "user",
+               "content" => [
+                 %{
+                   "type" => "image",
+                   "source" => %{
+                     "type" => "url",
+                     "url" => "https://example.test/cat.jpg"
+                   }
+                 },
+                 %{
+                   "type" => "document",
+                   "source" => %{
+                     "type" => "base64",
+                     "media_type" => "application/pdf",
+                     "data" => "JVBERi0xLjQK"
+                   }
+                 },
+                 %{"type" => "text", "text" => "Compare the image and the PDF."}
+               ]
+             }
+           ]
+  end
 end

@@ -70,4 +70,56 @@ defmodule Froth.LLM.Providers.OpenAITest do
              "extra_content" => %{"google" => %{"thought_signature" => "sig_123"}}
            }
   end
+
+  test "build_request encodes neutral image blocks into OpenAI image_url parts" do
+    request = %Request{
+      provider: OpenAI,
+      endpoint: "https://example.test/v1/chat/completions",
+      headers: [{"authorization", "Bearer test"}],
+      model: "gpt-5-mini",
+      messages: [
+        Message.user([
+          %{"type" => "text", "text" => "What is in these images?"},
+          %{
+            "type" => "image",
+            "source" => %{
+              "type" => "base64",
+              "media_type" => "image/png",
+              "data" => "aGVsbG8="
+            }
+          },
+          %{
+            "type" => "image",
+            "source" => %{
+              "type" => "url",
+              "url" => "https://example.test/cat.png"
+            },
+            "extra_content" => %{"openai" => %{"detail" => "high"}}
+          }
+        ])
+      ]
+    }
+
+    {:ok, %{body: body}} = OpenAI.build_request(request)
+
+    assert body["messages"] == [
+             %{
+               "role" => "user",
+               "content" => [
+                 %{"type" => "text", "text" => "What is in these images?"},
+                 %{
+                   "type" => "image_url",
+                   "image_url" => %{"url" => "data:image/png;base64,aGVsbG8="}
+                 },
+                 %{
+                   "type" => "image_url",
+                   "image_url" => %{
+                     "url" => "https://example.test/cat.png",
+                     "detail" => "high"
+                   }
+                 }
+               ]
+             }
+           ]
+  end
 end

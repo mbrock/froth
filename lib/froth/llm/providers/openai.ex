@@ -150,14 +150,14 @@ defmodule Froth.LLM.Providers.OpenAI do
   end
 
   defp encode_normalized_message(%Message{role: :user} = message) do
-    text = Message.text_content(message)
+    content = encode_user_content(Message.content_blocks(message))
     tool_results = Message.tool_results(message)
 
-    text_messages =
-      if text == "" do
+    user_messages =
+      if is_nil(content) do
         []
       else
-        [%{"role" => "user", "content" => text}]
+        [%{"role" => "user", "content" => content}]
       end
 
     tool_messages =
@@ -177,7 +177,7 @@ defmodule Froth.LLM.Providers.OpenAI do
           []
       end)
 
-    text_messages ++ tool_messages
+    user_messages ++ tool_messages
   end
 
   defp encode_normalized_message(%Message{role: :assistant} = message) do
@@ -216,6 +216,80 @@ defmodule Froth.LLM.Providers.OpenAI do
   defp normalize_text_content(content) do
     to_string(content)
   end
+
+  defp encode_user_content(blocks) when is_list(blocks) do
+    blocks =
+      Enum.reject(blocks, fn
+        %{"type" => "tool_result"} -> true
+        _ -> false
+      end)
+
+    case encode_user_content_parts(blocks) do
+      [] ->
+        nil
+
+      parts ->
+        if Enum.all?(parts, &(&1["type"] == "text")) do
+          Enum.map_join(parts, "", &Map.get(&1, "text", ""))
+        else
+          parts
+        end
+    end
+  end
+
+  defp encode_user_content(_blocks), do: nil
+
+  defp encode_user_content_parts(blocks) when is_list(blocks) do
+    Enum.flat_map(blocks, fn
+      %{"type" => "text", "text" => text} when is_binary(text) ->
+        [%{"type" => "text", "text" => text}]
+
+      %{"type" => "image", "source" => source} = block when is_map(source) ->
+        case openai_image_part(source, block) do
+          nil -> []
+          part -> [part]
+        end
+
+      %{"type" => "image_url"} = part ->
+        [part]
+
+      %{"text" => text} when is_binary(text) ->
+        [%{"type" => "text", "text" => text}]
+
+      _ ->
+        []
+    end)
+  end
+
+  defp openai_image_part(source, block) when is_map(source) and is_map(block) do
+    url =
+      cond do
+        is_binary(source["url"]) and String.trim(source["url"]) != "" ->
+          source["url"]
+
+        is_binary(source["uri"]) and String.trim(source["uri"]) != "" ->
+          source["uri"]
+
+        is_binary(source["data"]) and String.trim(source["data"]) != "" ->
+          media_type = source["media_type"] || source["mime_type"] || "image/jpeg"
+          "data:#{media_type};base64,#{source["data"]}"
+
+        true ->
+          nil
+      end
+
+    if is_binary(url) and url != "" do
+      %{"type" => "image_url", "image_url" => %{"url" => url}}
+      |> maybe_put_detail(block)
+    end
+  end
+
+  defp maybe_put_detail(part, %{"extra_content" => %{"openai" => %{"detail" => detail}}})
+       when is_binary(detail) and detail != "" do
+    put_in(part, ["image_url", "detail"], detail)
+  end
+
+  defp maybe_put_detail(part, _block), do: part
 
   defp assistant_tool_calls(content) when is_list(content) do
     Enum.flat_map(content, fn
