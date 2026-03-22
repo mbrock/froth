@@ -1,8 +1,80 @@
 defmodule Froth.LLM.Providers.XAIResponsesTest do
   use ExUnit.Case, async: true
 
+  alias Froth.LLM.Message
   alias Froth.LLM.Providers.XAIResponses
+  alias Froth.LLM.Request
   alias Froth.LLM.Store
+
+  test "build_request encodes normalized messages and built-in tools" do
+    request = %Request{
+      provider: XAIResponses,
+      endpoint: "https://example.test/v1/responses",
+      headers: [{"authorization", "Bearer test"}],
+      model: "grok-4-1-fast-non-reasoning",
+      system: "system prompt",
+      max_tokens: 1024,
+      messages: [
+        Message.user("hello"),
+        Message.assistant([
+          %{"type" => "text", "text" => "working"},
+          %{
+            "type" => "tool_use",
+            "id" => "call_1",
+            "name" => "froth_echo",
+            "input" => %{"text" => "hi"}
+          }
+        ]),
+        Message.user([
+          %{"type" => "tool_result", "tool_use_id" => "call_1", "content" => "echoed: hi"}
+        ])
+      ],
+      tools: [
+        %{"type" => "web_search"},
+        %{
+          "name" => "froth_echo",
+          "description" => "Echo text back.",
+          "input_schema" => %{
+            "type" => "object",
+            "properties" => %{"text" => %{"type" => "string"}}
+          }
+        }
+      ],
+      provider_options: %{"reasoning_effort" => "low"}
+    }
+
+    {:ok, %{body: body}} = XAIResponses.build_request(request)
+
+    assert body["model"] == "grok-4-1-fast-non-reasoning"
+    assert body["max_output_tokens"] == 1024
+    assert body["reasoning"] == %{"effort" => "low"}
+
+    assert body["input"] == [
+             %{"role" => "system", "content" => "system prompt"},
+             %{"role" => "user", "content" => "hello"},
+             %{"role" => "assistant", "content" => "working"},
+             %{
+               "type" => "function_call",
+               "call_id" => "call_1",
+               "name" => "froth_echo",
+               "arguments" => ~s({"text":"hi"})
+             },
+             %{"type" => "function_call_output", "call_id" => "call_1", "output" => "echoed: hi"}
+           ]
+
+    assert body["tools"] == [
+             %{"type" => "web_search"},
+             %{
+               "type" => "function",
+               "name" => "froth_echo",
+               "description" => "Echo text back.",
+               "parameters" => %{
+                 "type" => "object",
+                 "properties" => %{"text" => %{"type" => "string"}}
+               }
+             }
+           ]
+  end
 
   test "correlates function call argument deltas by xai item id" do
     store = Store.new()
