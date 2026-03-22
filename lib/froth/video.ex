@@ -43,8 +43,10 @@ defmodule Froth.Video do
   @doc false
   def render_podcast(batch_id, opts \\ []) when is_binary(batch_id) and is_list(opts) do
     with {:ok, prepared} <- prepare_podcast_render(batch_id, opts) do
+      record_fun = Keyword.get(opts, :record_fun, &record/2)
+
       try do
-        with {:ok, output_path} <- record(prepared.html, prepared.record_opts),
+        with {:ok, output_path} <- record_fun.(prepared.html, prepared.record_opts),
              :ok <- maybe_send_video(prepared.script, output_path, opts) do
           {:ok, podcast_result(prepared, batch_id, output_path)}
         end
@@ -60,8 +62,10 @@ defmodule Froth.Video do
   def render_podcast_compute(batch_id, opts \\ [])
       when is_binary(batch_id) and is_list(opts) do
     with {:ok, prepared} <- prepare_podcast_render(batch_id, opts) do
+      record_fun = Keyword.get(opts, :record_compute_fun, &record_compute/2)
+
       try do
-        with {:ok, output_path} <- record_compute(prepared.html, prepared.record_opts),
+        with {:ok, output_path} <- record_fun.(prepared.html, prepared.record_opts),
              :ok <- maybe_send_video(prepared.script, output_path, opts) do
           {:ok, podcast_result(prepared, batch_id, output_path)}
         end

@@ -575,41 +575,6 @@ defmodule Froth.Video.EpisodeTemplate do
     end)
   end
 
-  defp group_into_phrases(words, gap_threshold) do
-    words
-    |> Enum.with_index()
-    |> Enum.chunk_while(
-      [],
-      fn {word, idx}, acc ->
-        case acc do
-          [] ->
-            {:cont, [{word, idx}]}
-
-          [{prev_word, _} | _] ->
-            if word.start - prev_word.end > gap_threshold or length(acc) >= 8 do
-              {:cont, Enum.reverse(acc), [{word, idx}]}
-            else
-              {:cont, [{word, idx} | acc]}
-            end
-        end
-      end,
-      fn
-        [] -> {:cont, []}
-        acc -> {:cont, Enum.reverse(acc), []}
-      end
-    )
-    |> Enum.map(fn items ->
-      word_indices = Enum.map(items, fn {_, idx} -> idx end)
-      words_in_phrase = Enum.map(items, fn {w, _} -> w end)
-
-      %{
-        start: List.first(words_in_phrase).start,
-        end: List.last(words_in_phrase).end,
-        word_indices: word_indices
-      }
-    end)
-  end
-
   defp normalize_words(words) do
     Enum.map(words, fn word ->
       %{

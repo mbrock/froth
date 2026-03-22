@@ -1,4 +1,4 @@
-# FROTH-RFC-0002: Multimodal LLM Layer
+# FROTH-RFC-0002: Native Multimodal LLM Layer
 
 Status: DRAFT
 Author: Charlie (@charliebuddybot)
@@ -6,203 +6,278 @@ Date: 2026-03-22
 
 ## Situation
 
-We have a unified text LLM layer (Froth.LLM) that streams
-completions across three providers: Anthropic, OpenAICompat,
-and XAI Responses. The abstraction is clean — Request in,
-stream of Edits out, Provider behaviour mediates the wire
-format. This works.
+`Froth.LLM` already has the right high-level shape: a request goes
+in, a provider builds a transport request, SSE payloads become
+`Edit`s, and callers consume a stream of semantic events. That part
+works.
 
-We also generate images. This happens through Froth.Replicate:
-start a prediction, poll until it finishes, download the URL.
-This is fine for Replicate-native models (Flux, SDXL, custom
-fine-tunes) but absurd for models that have their own APIs.
-Tonight we discovered that Google's Nano Banana 2 and Imagen 4
-are available through the Gemini generateContent endpoint —
-one HTTP call, image back as base64 inline, no prediction ID,
-no polling, no cold start. We are paying Replicate to be a
-middleman for a model Google serves for free.
+But the provider layer is still uneven. Anthropic already speaks its
+native API. xAI has a native Responses path when built-in tools are
+needed. `Froth.OpenAI` and `Froth.Gemini`, however, still route
+through `Froth.LLM.Providers.OpenAICompat`. That made it easy to get
+text streaming and tool calls working across multiple vendors, but it
+also pushed the abstraction in the wrong direction: toward "chat
+completion compatibility" instead of "native multimodal model
+interfaces".
 
-Meanwhile the frontier is moving fast. Gemini returns images
-in generateContent responses. Anthropic is adding image output.
-GPT-4o generates images inline. The line between "text model"
-and "image model" is dissolving. A multimodal request is just
-a request whose messages contain parts of different MIME types,
-and a multimodal response is just a response whose content
-blocks include images alongside text.
+That starts to hurt as soon as the vendors differ in meaningful ways:
 
-The LLM layer needs to handle this. Not as a separate module.
-As an extension of what already exists.
+- Gemini uses native parts and supports image/audio IO on its own API.
+- OpenAI has its own multimodal content format and modality controls.
+- Anthropic has content blocks, thinking blocks, tool blocks, and its
+  own streaming event taxonomy.
+- xAI has a native Responses API that does not cleanly collapse into a
+  chat-completions-shaped wire format.
+
+Compatibility endpoints flatten those differences. They hide
+capabilities, force lowest-common-denominator request shapes, and make
+multimodal support feel like a bolt-on. The result is a core layer
+that is more "OpenAI-ish text chat" than "native multimodal LLM".
+
+That is backwards. `Froth.LLM` should be the semantic layer. The
+vendor APIs should be adapters beneath it.
+
+## Goal
+
+Turn `Froth.LLM` into a native multimodal abstraction that speaks
+OpenAI's API, Gemini's API, Anthropic's API, xAI's API, and similar
+vendor APIs directly, while presenting one coherent request,
+response, and streaming edit model to the rest of Froth.
+
+## Non-Goals
+
+- This RFC is not primarily about image generation as a separate
+  subsystem.
+- This RFC is not about pretending the vendor APIs are identical.
+- This RFC is not about removing provider-specific options entirely.
+- This RFC does not replace `Froth.Replicate` for Replicate-native
+  models.
 
 ## Design Principles
 
-1. NATIVE OVER COMPAT. Use each vendor's native API when it
-   offers capabilities the compatibility layer lacks. The
-   OpenAI-compatible endpoint at Google does not support image
-   generation. The native generateContent endpoint does. Use
-   the native one. The compatibility layer is a convenience,
-   not a commitment.
+1. NATIVE PROVIDERS FIRST. `Froth.OpenAI` should talk to OpenAI.
+   `Froth.Gemini` should talk to Gemini. `Froth.Anthropic` should talk
+   to Anthropic. Compatibility layers are transitional helpers, not
+   the architecture.
 
-2. MIME TYPES AS THE UNIVERSAL. A message part is a MIME type
-   and a value. text/plain is a string. image/jpeg is binary
-   or a URL. audio/mp3 is binary or a URL. The provider maps
-   these to its wire format (Anthropic's content blocks,
-   Gemini's parts, OpenAI's multimodal content arrays). The
-   caller never thinks about wire format.
+2. ONE SEMANTIC CORE, MANY ADAPTERS. The caller should construct a
+   Froth request in Froth terms. Each provider translates that request
+   to its own wire format and translates streamed payloads back into
+   Froth edits.
 
-3. RESPONSE MODALITIES ARE REQUESTED, NOT ASSUMED. The caller
-   says what it wants back: text, image, audio, or any
-   combination. The provider translates this to its native
-   mechanism (Gemini: responseModalities, Anthropic: TBD,
-   OpenAI: modalities). If the provider can't deliver a
-   requested modality, it fails fast.
+3. MULTIMODAL IS FUNDAMENTAL. Text, images, audio, files, tool calls,
+   and tool results are all first-class content. The core request model
+   should assume mixed-modality content is normal.
 
-4. IMAGES ARE CONTENT, NOT SIDE EFFECTS. An image in a
-   response is an Edit with a binary or URL value, not a
-   separate prediction to poll. The streaming layer delivers
-   image blocks the same way it delivers text deltas — as
-   edits to a store. For models that return base64 inline
-   (Gemini), the image arrives in one edit. For models that
-   return URLs (Replicate), the image arrives as a URL edit
-   after the prediction completes. Same interface.
+4. NORMALIZE SEMANTICS, NOT WIRE FORMATS. We should align on concepts
+   like roles, content blocks, tools, tool results, response
+   modalities, usage, and stop reasons. We should not align on one
+   vendor's JSON layout.
 
-5. REPLICATE REMAINS FOR REPLICATE-NATIVE MODELS. Flux, SDXL,
-   custom fine-tunes, WhisperX, minimax TTS — these only
-   exist on Replicate. Froth.Replicate stays. But for any
-   model that has a native vendor API (Google Imagen, Google
-   Nano Banana, Anthropic image output), the native path is
-   preferred.
+5. CAPABILITY MISMATCH SHOULD FAIL FAST. If the caller requests image
+   output, audio input, JSON schema output, or some tool mode a vendor
+   cannot satisfy, the provider should say so explicitly rather than
+   silently degrading.
+
+6. PROVIDER OPTIONS ARE AN ESCAPE HATCH. Vendor-specific options still
+   matter, but they should sit in `provider_options` around the edges
+   of a shared semantic model, not define the core abstraction.
 
 ## Proposed Changes
 
-### 1. Message Parts
+### 1. Define a native Froth message/content model
 
-Current Request.messages is `list(map())` where each map is a
-provider-specific message. Replace with a structured format:
+Today `Request.messages` is effectively `list(map())` containing
+provider-shaped payloads. Replace that with a semantic Froth format.
+
+Example:
 
     %Froth.LLM.Message{
-      role: :user | :assistant | :system,
-      parts: [
-        %{type: "text/plain", value: "Describe this image"},
-        %{type: "image/jpeg", value: {:url, "https://..."}},
-        %{type: "image/jpeg", value: {:binary, <<...>>}},
-        %{type: "audio/mp3", value: {:url, "https://..."}}
+      role: :user,
+      content: [
+        %{type: :text, text: "Describe this image"},
+        %{type: :image, mime: "image/jpeg", source: {:url, "https://..."}},
+        %{type: :audio, mime: "audio/mpeg", source: {:binary, <<...>>}},
+        %{type: :file, mime: "application/pdf", source: {:url, "https://..."}},
+        %{type: :tool_result, tool_use_id: "toolu_123", content: [
+          %{type: :text, text: "42"}
+        ]}
       ]
     }
 
-The Provider.build_request/1 callback maps these to the
-vendor's wire format. Anthropic gets content blocks with
-source.type "base64" or "url". Gemini gets parts with
-inlineData or fileData. OpenAI gets the multimodal content
-array.
+The important distinction is:
 
-### 2. Response Modalities
+- content blocks are typed in Froth terms
+- media blocks carry MIME metadata
+- tools remain semantic, not transport-specific
+- providers map Froth blocks to their native request shapes
 
-Add to Request:
+During migration, providers may accept both the current raw maps and
+the new semantic structs.
+
+### 2. Make response modalities explicit
+
+Add request-level fields that describe what the caller wants back, for
+example:
 
     response_modalities: [:text, :image]
 
-The provider maps these:
-- Gemini: responseModalities in generationConfig
-- Anthropic: (when available) content type hints
-- OpenAI: modalities array
+and, where needed:
 
-### 3. Gemini Native Provider
+    response_format: %{type: :json_schema, schema: %{...}}
 
-New provider module: Froth.LLM.Providers.GeminiNative
+The provider translates these to the native API:
 
-Uses the generateContent endpoint directly (not the OpenAI
-compat layer). Handles:
-- Image generation via responseModalities: ["IMAGE"]
-- Image+text via responseModalities: ["IMAGE", "TEXT"]
-- Streaming text via streamGenerateContent
-- Image input via inlineData parts
+- OpenAI: modalities / response format controls
+- Gemini: response modality and generation config fields
+- Anthropic: native equivalents when available
+- xAI: native responses fields
 
-This replaces the current Froth.Gemini module for cases
-where native capabilities are needed.
+The point is not that every vendor uses the same names. The point is
+that Froth asks for the semantic outcome and the adapter performs the
+translation.
 
-### 4. Image Generation Convenience
+### 3. Replace compatibility-backed providers with native ones
+
+Introduce or evolve provider modules so each vendor has a native
+adapter:
+
+- `Froth.LLM.Providers.OpenAI`
+- `Froth.LLM.Providers.Gemini`
+- `Froth.LLM.Providers.Anthropic`
+- `Froth.LLM.Providers.XAIResponses`
+
+Concretely:
+
+- `Froth.OpenAI` should stop setting `provider: OpenAICompat` and
+  instead build requests for a native OpenAI provider.
+- `Froth.Gemini` should stop using the Google OpenAI-compatible
+  endpoint and instead speak Gemini's native API directly.
+- `Froth.LLM.Providers.Anthropic` remains native, but should adopt the
+  shared Froth multimodal request model instead of accepting only
+  Anthropic-shaped message maps.
+- `Froth.LLM.Providers.OpenAICompat` becomes a migration shim and can
+  eventually be removed.
+
+### 4. Extend `Request` around shared semantics
+
+`Froth.LLM.Request` should carry the shared semantic fields needed by
+all providers. Likely additions include:
+
+- semantic `messages`
+- `response_modalities`
+- `response_format`
+- provider capability hints
+
+Existing fields like `thinking`, `output_config`, and
+`cache_control` should be reconsidered in this light:
+
+- if they represent shared semantics, promote them into clearer
+  provider-neutral fields
+- if they are truly vendor-specific, keep them in
+  `provider_options`
+
+The goal is to reduce the amount of vendor vocabulary that leaks into
+the core request struct.
+
+### 5. Extend the edit/store model to carry multimodal output
+
+`Edit` already gives Froth a nice streaming abstraction. Keep that,
+but generalize it beyond text deltas and tool-call JSON fragments.
+
+Examples:
+
+    %Edit{op: :append, resource: ["message", "blocks", 0], path: ["text"], value: "hello"}
+
+    %Edit{
+      op: :set,
+      resource: ["message", "blocks", 1],
+      path: ["image"],
+      value: {:binary, "image/jpeg", <<...>>}
+    }
+
+    %Edit{
+      op: :set,
+      resource: ["message", "blocks", 2],
+      path: ["audio"],
+      value: {:url, "audio/mpeg", "https://..."}
+    }
+
+The store then accumulates a final multimodal message, and
+`project_event/1` can continue to emit convenient events like
+`{:text_delta, ...}`, `{:tool_use_start, ...}`, plus new image/audio
+events where useful.
+
+### 6. Convenience APIs become thin wrappers on top
+
+If Froth wants helpers like:
 
     Froth.ImageGen.generate(prompt, opts)
 
-    opts:
-      model: "nano-banana-2" | "imagen-4" | "flux-2-pro"
-      aspect_ratio: "9:16" | "1:1" | "16:9"
-      provider: :gemini | :replicate  (auto-detected from model)
-      count: 1
+that is fine, but those helpers should sit on top of the multimodal
+`Froth.LLM` layer rather than define a separate abstraction. The core
+change in this RFC is the native multimodal provider layer itself.
 
-    Returns: {:ok, [%{mime: "image/jpeg", data: binary}]}
+## Migration Plan
 
-This wraps the multimodal LLM call for the common case.
-For Gemini models, it's one generateContent call. For
-Replicate models, it's start + await. Same return format.
+Phase 1: Add native provider modules for OpenAI and Gemini and route
+         `Froth.OpenAI` / `Froth.Gemini` through them instead of
+         `OpenAICompat`.
 
-### 5. Edit Extensions
+Phase 2: Introduce Froth-native message/content structs and teach each
+         provider to accept them while remaining backward compatible
+         with today's raw message maps.
 
-New edit types for non-text content:
+Phase 3: Add response modality and response format fields to
+         `Froth.LLM.Request`.
 
-    %Edit{op: :set, resource: ["message"], path: ["image", 0],
-          value: {:binary, "image/jpeg", <<...>>}}
+Phase 4: Extend `Froth.LLM.Edit` and `Froth.LLM.Store` to accumulate
+         multimodal output blocks, not just text and tool calls.
 
-    %Edit{op: :set, resource: ["message"], path: ["image", 0],
-          value: {:url, "image/jpeg", "https://..."}}
+Phase 5: Update call sites to construct semantic Froth messages rather
+         than provider-shaped payloads. Deprecate `OpenAICompat`.
 
-The Store accumulates these alongside text. The caller's
-on_event callback receives them as they arrive.
+Phase 6: Add thin convenience APIs on top where they are useful
+         (`ImageGen`, structured-output helpers, audio helpers, etc.).
 
-## Migration
+## Consequences
 
-Phase 1: Add Froth.ImageGen with Gemini native backend.
-         One module, one function, handles Nano Banana and
-         Imagen 4 via generateContent. No changes to existing
-         Froth.LLM. Ship tonight.
+### Benefits
 
-Phase 2: Add Message struct with typed parts. Update
-         Provider.build_request to accept it alongside the
-         current raw maps (backward compatible). Update
-         Gemini and Anthropic providers.
+- Froth gets direct access to each vendor's actual capabilities.
+- Multimodal support lives in one place instead of leaking into
+  provider-specific calling code.
+- The request model becomes more stable because it is based on Froth
+  semantics rather than whichever vendor wire format was easiest first.
+- Adding a new provider becomes "write an adapter" instead of
+  "contort everything into chat completions".
 
-Phase 3: Add response modality support. Extend Edit for
-         non-text content. Update Store. This is the full
-         multimodal streaming layer.
+### Costs
 
-Phase 4: Deprecate raw Replicate calls for models that have
-         native vendor APIs. Froth.Replicate stays for
-         Replicate-only models.
-
-## Models Available via Native APIs (as of 2026-03-22)
-
-Google (via generateContent):
-- nano-banana-2 (image generation)
-- nano-banana-pro-preview (image generation)  
-- imagen-4 (image generation)
-- gemini-2.0-flash-exp (text + image output)
-- gemini-3-flash-preview (text)
-
-Anthropic (via messages):
-- claude-sonnet-4-20250514 (text, tools)
-- claude-opus-4-20250514 (text, tools, extended thinking)
-
-OpenAI (via chat/completions):
-- gpt-4o (text + image output)
-
-xAI (via responses):
-- grok-4-1-fast-reasoning (text, tools, web search)
+- More provider-specific translation code.
+- More explicit capability handling.
+- More care needed around binary payloads, file references, and event
+  projection.
+- Migration complexity while both raw maps and semantic messages are
+  temporarily supported.
 
 ## Open Questions
 
-1. Should image generation go through the streaming layer
-   at all? Gemini's generateContent returns the full image
-   in one response, not streamed. The streaming abstraction
-   adds complexity for a non-streaming operation. Counter:
-   consistency. Counter-counter: YAGNI.
+1. What is the right Froth-native shape for content blocks? Pure MIME
+   blocks are elegant for media, but tools and thinking likely need a
+   richer typed structure than MIME alone.
 
-2. How to handle aspect ratio, safety filters, and other
-   image-specific params that don't map to the LLM request
-   abstraction? Provider options map? Dedicated config?
+2. Which fields truly belong in `Request`, and which should remain
+   vendor-specific options? `thinking`, `output_config`, and
+   `cache_control` are the obvious pressure points.
 
-3. Should we cache generated images locally? Replicate URLs
-   expire. Gemini returns ephemeral base64. Both need to be
-   saved somewhere if they're going into a compose pipeline.
+3. Should all providers project the same small event vocabulary
+   (`:text_delta`, `:tool_use_start`, `:usage`, etc.), or should Froth
+   also expose richer block-level events for image/audio output?
 
-4. Audio input/output (Gemini supports it). Same pattern?
-   Or does audio streaming need its own transport?
+4. How should binary outputs be persisted? Some vendors return inline
+   bytes, some return URLs, some return file references. Froth likely
+   needs a consistent storage story above the provider layer.
+
+5. Do we want a capability registry per model/provider pair so callers
+   can discover what is supported before making a request?

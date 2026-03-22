@@ -30,7 +30,8 @@ defmodule Froth.Video.SelfEncoder do
   end
 
   defp canvas_encoder_js(fps, force) do
-    guard = if force, do: "// Force encode mode", else: "if (params.get('encode') !== '1') return;"
+    guard =
+      if force, do: "// Force encode mode", else: "if (params.get('encode') !== '1') return;"
 
     ~s"""
     <script>

@@ -8,6 +8,7 @@ defmodule Froth.Tasks.VideoTest do
   alias Froth.ObjectStore
   alias Froth.{Repo, Task}
   alias Froth.Podcast.Script
+  alias Froth.Video.RenderSupport
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
@@ -102,6 +103,8 @@ defmodule Froth.Tasks.VideoTest do
                fps: 4,
                compute_workers: 2,
                frames_per_batch: 2,
+               worker_offers: fake_worker_offers(),
+               start_worker_fun: &fake_batch_worker/4,
                label: "batched compute render"
              )
 
@@ -203,6 +206,7 @@ defmodule Froth.Tasks.VideoTest do
                duration_s: 1.0,
                fps: 4,
                send_video?: false,
+               record_fun: &fake_record/2,
                scene_count: 1,
                scenes: [%{src: scene}]
              )
@@ -212,5 +216,149 @@ defmodule Froth.Tasks.VideoTest do
     assert result.scene_count == 1
     assert File.exists?(result.output_path)
     File.rm(result.output_path)
+  end
+
+  defp fake_worker_offers do
+    [
+      %{
+        node: node(),
+        hostname: "test-host",
+        slots: 2,
+        browser_profile: "test",
+        visible: false,
+        headful: false,
+        gpu: false
+      }
+    ]
+  end
+
+  defp fake_batch_worker(spec, job_id, render_id, opts) do
+    Elixir.Task.async(fn ->
+      worker_id = "test-#{render_id}-#{spec.worker_index}"
+      run_fake_batches(job_id, render_id, worker_id, opts)
+    end)
+  end
+
+  defp run_fake_batches(job_id, render_id, worker_id, opts) do
+    worker_type = Keyword.get(opts, :worker_type, "browser_render")
+    lease_seconds = Keyword.get(opts, :lease_seconds, 120)
+
+    case Compute.request_lease(worker_type, worker_id,
+           job_id: job_id,
+           lease_seconds: lease_seconds
+         ) do
+      {:ok, nil} ->
+        :ok
+
+      {:ok, task} ->
+        with {:ok, archive_key, archive_url} <-
+               store_fake_batch_archive(render_id, task.payload || %{}),
+             {:ok, _task} <-
+               Compute.complete_task(task.id, task.lease_token, worker_id, %{
+                 metadata: %{"frames_rendered" => batch_frame_count(task.payload || %{})},
+                 artifacts: [
+                   %{
+                     kind: "frame_batch_archive",
+                     uri: archive_url,
+                     metadata: %{
+                       "key" => archive_key,
+                       "from_frame" => task.payload["from_frame"],
+                       "to_frame" => task.payload["to_frame"],
+                       "worker_id" => worker_id,
+                       "node" => Atom.to_string(node())
+                     }
+                   }
+                 ]
+               }) do
+          run_fake_batches(job_id, render_id, worker_id, opts)
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp store_fake_batch_archive(render_id, payload) do
+    from_frame = payload["from_frame"] || 0
+    to_frame = payload["to_frame"] || from_frame
+    basename = frame_batch_basename(from_frame, to_frame)
+
+    with {:ok, temp_dir} <- temp_dir("video-test-batch"),
+         :ok <- write_fake_frames(temp_dir, from_frame, to_frame),
+         {:ok, archive_path} <- create_archive(temp_dir, basename, from_frame, to_frame) do
+      key = "video/#{render_id}/batches/#{basename}.tar.gz"
+
+      try do
+        case ObjectStore.put_file(key, archive_path, content_type: "application/gzip") do
+          {:ok, %{url: url}} -> {:ok, key, url}
+          {:error, reason} -> {:error, reason}
+        end
+      after
+        File.rm_rf(temp_dir)
+      end
+    end
+  end
+
+  defp write_fake_frames(frames_dir, from_frame, to_frame) do
+    source_png = Path.expand("priv/static/icons/icon-192.png")
+
+    Enum.reduce_while(from_frame..to_frame, :ok, fn frame_index, :ok ->
+      destination = RenderSupport.frame_path(frames_dir, frame_index)
+
+      case File.cp(source_png, destination) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp create_archive(frames_dir, basename, from_frame, to_frame) do
+    archive_path = Path.join(frames_dir, "#{basename}.tar.gz")
+
+    files =
+      Enum.map(from_frame..to_frame, fn frame_index ->
+        RenderSupport.frame_path(frames_dir, frame_index) |> Path.basename()
+      end)
+
+    case System.cmd("tar", ["-czf", archive_path, "-C", frames_dir | files],
+           stderr_to_stdout: true
+         ) do
+      {_output, 0} -> {:ok, archive_path}
+      {output, code} -> {:error, {:tar_failed, code, output}}
+    end
+  end
+
+  defp temp_dir(prefix) do
+    path = Path.join(System.tmp_dir!(), "#{prefix}-#{System.unique_integer([:positive])}")
+
+    case File.mkdir_p(path) do
+      :ok -> {:ok, path}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp frame_batch_basename(from_frame, to_frame) do
+    "#{pad_frame(from_frame)}-#{pad_frame(to_frame)}"
+  end
+
+  defp batch_frame_count(payload) do
+    from_frame = payload["from_frame"] || 0
+    to_frame = payload["to_frame"] || from_frame
+    to_frame - from_frame + 1
+  end
+
+  defp pad_frame(frame_index) do
+    frame_index
+    |> Integer.to_string()
+    |> String.pad_leading(6, "0")
+  end
+
+  defp fake_record(_html, opts) do
+    output_path = Keyword.fetch!(opts, :output_path)
+
+    with :ok <- File.mkdir_p(Path.dirname(output_path)),
+         :ok <- File.write(output_path, "fake mp4") do
+      {:ok, output_path}
+    end
   end
 end
