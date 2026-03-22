@@ -2,6 +2,7 @@ defmodule Froth.AnthropicTest do
   use Froth.AnthropicCase, async: false
 
   alias Froth.Anthropic
+  alias Froth.LLM.Message
 
   describe "stream_single/3 with simple text fixture" do
     test "returns text and usage" do
@@ -100,6 +101,62 @@ defmodule Froth.AnthropicTest do
                },
                %{"type" => "text"}
              ] = content_blocks
+    end
+  end
+
+  describe "shared message normalization" do
+    test "encodes Froth.LLM.Message structs before sending Anthropic requests" do
+      pid = self()
+
+      Application.put_env(
+        :froth,
+        :sse_stream_fun,
+        Froth.SSEReplay.recording_stream_fun("simple_reply", pid)
+      )
+
+      messages = [
+        Message.user("hello"),
+        Message.assistant([
+          %{
+            "type" => "tool_use",
+            "id" => "call_1",
+            "name" => "froth_echo",
+            "input" => %{"text" => "hi"}
+          }
+        ]),
+        Message.user([
+          %{"type" => "tool_result", "tool_use_id" => "call_1", "content" => "echoed: hi"}
+        ])
+      ]
+
+      assert {:ok, _result} = Anthropic.stream_single(messages, fn _event -> :ok end)
+
+      assert_received {:api_call, 0, body}
+
+      assert body["messages"] == [
+               %{"role" => "user", "content" => [%{"type" => "text", "text" => "hello"}]},
+               %{
+                 "role" => "assistant",
+                 "content" => [
+                   %{
+                     "type" => "tool_use",
+                     "id" => "call_1",
+                     "name" => "froth_echo",
+                     "input" => %{"text" => "hi"}
+                   }
+                 ]
+               },
+               %{
+                 "role" => "user",
+                 "content" => [
+                   %{
+                     "type" => "tool_result",
+                     "tool_use_id" => "call_1",
+                     "content" => "echoed: hi"
+                   }
+                 ]
+               }
+             ]
     end
   end
 

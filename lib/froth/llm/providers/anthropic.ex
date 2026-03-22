@@ -3,7 +3,7 @@ defmodule Froth.LLM.Providers.Anthropic do
 
   @behaviour Froth.LLM.Provider
 
-  alias Froth.LLM.{Edit, Request, Store}
+  alias Froth.LLM.{Edit, Message, Request, Store}
 
   @api_url "https://api.anthropic.com/v1/messages"
 
@@ -13,7 +13,7 @@ defmodule Froth.LLM.Providers.Anthropic do
       %{
         "model" => request.model,
         "max_tokens" => request.max_tokens,
-        "messages" => request.messages,
+        "messages" => encode_messages(request.messages),
         "stream" => true
       }
       |> maybe_put("system", request.system, &present_string?/1)
@@ -402,6 +402,31 @@ defmodule Froth.LLM.Providers.Anthropic do
 
   def project_event(_edit), do: nil
 
+  def encode_messages(messages) when is_list(messages) do
+    Enum.flat_map(messages, &encode_message/1)
+  end
+
+  defp encode_message(message) do
+    case Message.normalize(message) do
+      {:ok, %Message{role: :system}} ->
+        []
+
+      {:ok, %Message{role: role} = normalized} ->
+        [
+          %{
+            "role" => encode_role(role),
+            "content" => Message.content_blocks(normalized)
+          }
+        ]
+
+      :error when is_map(message) ->
+        [message]
+
+      :error ->
+        []
+    end
+  end
+
   def blocks_to_content(blocks) when is_map(blocks) do
     blocks
     |> Enum.sort_by(fn {idx, _} -> idx end)
@@ -453,6 +478,8 @@ defmodule Froth.LLM.Providers.Anthropic do
 
   defp maybe_merge(_resource, _path, _value, _raw), do: nil
 
+  defp encode_role(:user), do: "user"
+  defp encode_role(:assistant), do: "assistant"
   defp present_string?(value), do: is_binary(value) and String.trim(value) != ""
   defp non_empty_list?(value), do: is_list(value) and value != []
 end

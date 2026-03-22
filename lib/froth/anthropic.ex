@@ -2,11 +2,11 @@ defmodule Froth.Anthropic do
   @moduledoc false
 
   alias Froth.LLM
+  alias Froth.LLM.Message
   alias Froth.LLM.Providers.Anthropic, as: AnthropicProvider
   alias Froth.LLM.Request
   alias Froth.Telemetry.Span
 
-  @api_url "https://api.anthropic.com/v1/messages"
   @anthropic_version "2023-06-01"
   @default_max_tokens 16_384
 
@@ -29,7 +29,7 @@ defmodule Froth.Anthropic do
   """
 
   @type on_event :: (term() -> any())
-  @type api_message :: map()
+  @type api_message :: map() | Message.t()
 
   def default_system_prompt, do: String.trim(@default_system_prompt)
 
@@ -42,8 +42,8 @@ defmodule Froth.Anthropic do
       when is_list(api_messages) and is_function(on_event, 1) do
     with {:ok, config} <- build_config(opts) do
       parent_id = Keyword.get(opts, :parent_id)
-      body = build_request_body(config, api_messages)
       request = build_llm_request(config, api_messages, parent_id)
+      {:ok, transport_request} = AnthropicProvider.build_request(request)
 
       meta = %{
         mode: :stream_single,
@@ -55,7 +55,7 @@ defmodule Froth.Anthropic do
       Span.span([:froth, :anthropic, :request], parent_id, meta, fn span_id ->
         request = %{request | parent_id: span_id}
 
-        case stream_sse_events(request, @api_url, config.headers, body, on_event, span_id) do
+        case stream_sse_events(request, transport_request, on_event, span_id) do
           {:ok, result} ->
             stop_meta = %{
               ok: true,
@@ -143,22 +143,6 @@ defmodule Froth.Anthropic do
     end
   end
 
-  # -- Request body --
-
-  defp build_request_body(config, api_messages) do
-    %{
-      "model" => config.model,
-      "max_tokens" => config.max_tokens,
-      "messages" => api_messages,
-      "stream" => true
-    }
-    |> maybe_put_cache_control(config.cache_control)
-    |> maybe_put_system(config.system)
-    |> maybe_put_thinking(config.thinking)
-    |> maybe_put_output_config(config.output_config)
-    |> maybe_put_tools(config.tools)
-  end
-
   defp build_llm_request(config, api_messages, parent_id) do
     %Request{
       provider: AnthropicProvider,
@@ -188,38 +172,11 @@ defmodule Froth.Anthropic do
     Span.execute([:froth, :http, :sse, type], parent_id, %{data: data})
   end
 
-  # -- Helpers --
-
-  defp maybe_put_system(body, system) when is_binary(system) do
-    system = String.trim(system)
-    if system == "", do: body, else: Map.put(body, "system", system)
-  end
-
-  defp maybe_put_cache_control(body, cache_control) when is_map(cache_control),
-    do: Map.put(body, "cache_control", cache_control)
-
-  defp maybe_put_cache_control(body, _cache_control), do: body
-
-  defp maybe_put_thinking(body, thinking) when is_map(thinking),
-    do: Map.put(body, "thinking", thinking)
-
-  defp maybe_put_thinking(body, _thinking), do: body
-
-  defp maybe_put_output_config(body, output_config) when is_map(output_config),
-    do: Map.put(body, "output_config", output_config)
-
-  defp maybe_put_output_config(body, _output_config), do: body
-
   defp merge_effort_into_output_config(output_config, effort) when is_binary(effort) do
     (output_config || %{}) |> Map.put("effort", effort)
   end
 
   defp merge_effort_into_output_config(output_config, _effort), do: output_config
-
-  defp maybe_put_tools(body, tools) when is_list(tools) and tools != [],
-    do: Map.put(body, "tools", tools)
-
-  defp maybe_put_tools(body, _tools), do: body
 
   defp normalize_max_tokens(max_tokens, _default) when is_integer(max_tokens) and max_tokens > 0,
     do: max_tokens
@@ -272,26 +229,29 @@ defmodule Froth.Anthropic do
 
   # -- HTTP / SSE --
 
-  defp stream_sse_events(request, url, headers, body, on_event, parent_id) do
+  defp stream_sse_events(request, transport_request, on_event, parent_id) do
     wrapped_on_event = wrap_on_event_with_telemetry(on_event, parent_id)
 
     case Application.get_env(:froth, :sse_stream_fun) do
       fun when is_function(fun, 4) ->
-        fun.(url, headers, body, wrapped_on_event)
+        fun.(
+          transport_request.url,
+          transport_request.headers,
+          transport_request.body,
+          wrapped_on_event
+        )
 
       _ ->
-        do_req_stream_sse_events(request, body, wrapped_on_event, parent_id)
+        do_req_stream_sse_events(request, transport_request, wrapped_on_event, parent_id)
     end
   end
 
-  defp do_req_stream_sse_events(%Request{} = request, body, on_event, parent_id) do
-    {:ok, transport_request} = AnthropicProvider.build_request(request)
-
+  defp do_req_stream_sse_events(%Request{} = request, transport_request, on_event, parent_id) do
     http_meta = %{
       method: :post,
       url: transport_request.url,
       headers: transport_request.headers,
-      body: body,
+      body: transport_request.body,
       stream: true
     }
 
