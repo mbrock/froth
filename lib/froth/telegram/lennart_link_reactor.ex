@@ -1,16 +1,23 @@
 defmodule Froth.Telegram.LennartLinkReactor do
   @moduledoc """
-  Lennart reacts to any link posted by a human in the group chat.
+  Lennart responds to any external link posted by a human.
 
   Subscribes to Charlie's TDLib update stream (which sees everything),
-  detects URLs in human messages, and sends a reaction from the agentbot
-  session. Excludes *.foo domains to avoid noise from internal links.
+  detects URLs in human messages, and forwards the message to Lennart's
+  Bot process as a synthetic mention — triggering a full agent cycle
+  where Lennart can use x_search and web_search to actually look up
+  the content and respond.
+
+  The forwarded update has "lennart" prepended to the text so it passes
+  the Bot's name_trigger check. The actual agent context comes from
+  chat history, not from the update text, so this injection is safe.
+
+  Excludes *.foo domains to avoid noise from internal links.
   """
   use GenServer
   require Logger
 
   @charlie_topic "telegram:charlie"
-  @lennart_session "agentbot"
   @group_chat_id -1003690254489
 
   # Known human user IDs
@@ -20,7 +27,7 @@ defmodule Froth.Telegram.LennartLinkReactor do
     6_071_676_050   # Patty
   ]
 
-  # Match URLs but we'll filter out *.foo domains after
+  # Match URLs
   @url_re ~r{https?://[^\s<>]+}
 
   # Internal domains to ignore
@@ -32,12 +39,12 @@ defmodule Froth.Telegram.LennartLinkReactor do
 
   def init(_state) do
     Phoenix.PubSub.subscribe(Froth.PubSub, @charlie_topic)
-    Logger.info("LennartLinkReactor: online")
-    {:ok, %{reacted: 0}}
+    Logger.info("LennartLinkReactor: online — links trigger Lennart agent cycles")
+    {:ok, %{forwarded: 0}}
   end
 
   def handle_info(
-        {:telegram_update, %{"@type" => "updateNewMessage", "message" => msg}},
+        {:telegram_update, %{"@type" => "updateNewMessage", "message" => msg} = _update},
         state
       ) do
     sender_id = get_in(msg, ["sender_id", "user_id"])
@@ -45,8 +52,8 @@ defmodule Froth.Telegram.LennartLinkReactor do
     text = get_text(msg)
 
     if sender_id in @human_user_ids and chat_id == @group_chat_id and has_external_link?(text) do
-      react(chat_id, msg["id"])
-      {:noreply, %{state | reacted: state.reacted + 1}}
+      forward_to_lennart(msg)
+      {:noreply, %{state | forwarded: state.forwarded + 1}}
     else
       {:noreply, state}
     end
@@ -68,13 +75,28 @@ defmodule Froth.Telegram.LennartLinkReactor do
     end
   end
 
-  defp react(chat_id, message_id) do
-    Froth.Telegram.send(@lennart_session, %{
-      "@type" => "setMessageReactions",
-      "chat_id" => chat_id,
-      "message_id" => message_id,
-      "reaction_types" => [%{"@type" => "reactionTypeEmoji", "emoji" => "👀"}],
-      "is_big" => false
-    })
+  defp forward_to_lennart(msg) do
+    # Inject "lennart" into the text so Bot's name_trigger check passes.
+    # The agent reads real chat history for context, not this modified text.
+    injected_msg =
+      put_in(
+        msg,
+        ["content", "text", "text"],
+        "lennart " <> (get_text(msg) || "")
+      )
+
+    update = %{
+      "@type" => "updateNewMessage",
+      "message" => injected_msg
+    }
+
+    case Registry.lookup(Froth.Telegram.BotRegistry, "lennart") do
+      [{pid, _}] ->
+        send(pid, {:telegram_update, update})
+        Logger.info("LennartLinkReactor: forwarded link to Lennart as synthetic mention")
+
+      [] ->
+        Logger.warning("LennartLinkReactor: Lennart bot not found in registry")
+    end
   end
 end
