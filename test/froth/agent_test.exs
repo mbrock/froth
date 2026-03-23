@@ -43,7 +43,14 @@ defmodule Froth.Agent.WorkerTest do
 
     tools = Keyword.get(opts, :tools, [echo_tool_spec()])
     executor = Keyword.fetch!(opts, :executor)
-    config = %Config{model: "claude-opus-4-6", tools: tools, tool_executor: executor}
+
+    config = %Config{
+      model: "claude-opus-4-6",
+      tools: tools,
+      tool_executor: executor,
+      tool_timeout_ms: Keyword.get(opts, :tool_timeout_ms)
+    }
+
     cycle = Repo.insert!(%Cycle{})
 
     messages
@@ -207,6 +214,37 @@ defmodule Froth.Agent.WorkerTest do
       messages = Enum.map(events, fn e -> Repo.get!(Message, e.head_id) end)
       roles = Enum.map(messages, & &1.role)
       assert roles == [:user, :agent, :user, :agent]
+    end
+
+    test "times out stalled tools using the worker-owned deadline" do
+      executor =
+        start_executor(fn %ToolUse{}, _context ->
+          Process.sleep(50)
+          "too late"
+        end)
+
+      {pid, _cycle} =
+        start_worker(
+          [Message.user("echo test message")],
+          "tool_use_echo",
+          executor: executor,
+          tool_timeout_ms: 10
+        )
+
+      assert_receive {:api_call, 1, body}, 5000
+
+      messages = body["messages"]
+      last_message = List.last(messages)
+      [tool_result] = last_message["content"]
+
+      assert tool_result == %{
+               "type" => "tool_result",
+               "tool_use_id" => "toolu_01723uR8LLoYDLV4oqbtHEd4",
+               "content" => "tool timed out after 10ms",
+               "is_error" => true
+             }
+
+      wait_for_exit(pid)
     end
   end
 

@@ -13,13 +13,20 @@ defmodule Froth.Agent.Worker do
   alias Froth.LLM
   alias Froth.Telemetry.Span
 
-  @type invocation :: {reference(), ToolUse.t()}
+  @default_tool_timeout_ms 30_000
+
+  @type invocation :: %{
+          ref: reference(),
+          task: Task.t(),
+          tool_use: ToolUse.t(),
+          timer_ref: reference()
+        }
   @type phase ::
           :initial
           | :continuing
           | :done
           | {:thinking, Task.t()}
-          | {:working, [invocation()], [ToolResult.t()]}
+          | {:working, [invocation()], [ToolResult.t()], MapSet.t(reference())}
 
   @type t :: %__MODULE__{
           config: Config.t(),
@@ -111,11 +118,19 @@ defmodule Froth.Agent.Worker do
 
   def handle_info(
         {ref, {:tool_result, tool_use_id, result}},
-        %{phase: {:working, invocations, _}} = worker
+        %{phase: {:working, invocations, _, ignored_refs}} = worker
       ) do
-    {^ref, %ToolUse{id: ^tool_use_id}} = find_invocation!(invocations, ref)
-    Process.demonitor(ref, [:flush])
-    maybe_tools_done(collect_tool_result(worker, tool_use_id, result))
+    case find_invocation_in_list(invocations, ref) do
+      %{tool_use: %ToolUse{id: ^tool_use_id}} = invocation ->
+        worker
+        |> cancel_invocation_timer(invocation)
+        |> forget_invocation(invocation, MapSet.put(ignored_refs, ref))
+        |> collect_tool_result(tool_use_id, result)
+        |> maybe_tools_done()
+
+      nil ->
+        {:noreply, worker}
+    end
   end
 
   def handle_info(
@@ -133,17 +148,60 @@ defmodule Froth.Agent.Worker do
     {:stop, {:error, reason}, worker}
   end
 
-  def handle_info({:DOWN, _ref, :process, _pid, :normal}, %{phase: {:working, _, _}} = worker) do
-    {:noreply, worker}
+  def handle_info(
+        {:DOWN, ref, :process, _pid, :normal},
+        %{phase: {:working, _invocations, _results, ignored_refs}} = worker
+      ) do
+    if MapSet.member?(ignored_refs, ref) do
+      {:noreply, worker}
+    else
+      {:noreply, worker}
+    end
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, reason}, %{phase: {:working, _, _}} = worker) do
-    case find_invocation(worker.phase, ref) do
-      {^ref, %ToolUse{id: tool_use_id}} ->
-        error = "tool task failed: #{Exception.format_exit(reason)}"
-        maybe_tools_done(collect_tool_result(worker, tool_use_id, {:error, error}))
+  def handle_info(
+        {:DOWN, ref, :process, _pid, reason},
+        %{phase: {:working, _invocations, _results, ignored_refs}} = worker
+      ) do
+    cond do
+      MapSet.member?(ignored_refs, ref) ->
+        {:noreply, worker}
 
-      nil ->
+      invocation = find_invocation(worker.phase, ref) ->
+        tool_use_id = invocation.tool_use.id
+        error = "tool task failed: #{Exception.format_exit(reason)}"
+
+        worker
+        |> cancel_invocation_timer(invocation)
+        |> forget_invocation(invocation, MapSet.put(ignored_refs, ref))
+        |> collect_tool_result(tool_use_id, {:error, error})
+        |> maybe_tools_done()
+
+      true ->
+        {:noreply, worker}
+    end
+  end
+
+  def handle_info(
+        {:tool_timeout, ref},
+        %{phase: {:working, _invocations, _results, ignored_refs}} = worker
+      ) do
+    cond do
+      MapSet.member?(ignored_refs, ref) ->
+        {:noreply, worker}
+
+      invocation = find_invocation(worker.phase, ref) ->
+        Process.exit(invocation.task.pid, :kill)
+
+        worker
+        |> forget_invocation(invocation, MapSet.put(ignored_refs, ref))
+        |> collect_tool_result(
+          invocation.tool_use.id,
+          {:error, timeout_error(worker.config.tool_timeout_ms || @default_tool_timeout_ms)}
+        )
+        |> maybe_tools_done()
+
+      true ->
         {:noreply, worker}
     end
   end
@@ -233,6 +291,8 @@ defmodule Froth.Agent.Worker do
       %{cycle_id: worker.cycle.id, head_id: worker.head_id}
       |> Map.merge(worker.config.context || %{})
 
+    tool_timeout_ms = worker.config.tool_timeout_ms || @default_tool_timeout_ms
+
     invocations =
       Enum.map(tool_uses, fn %ToolUse{id: id} = tool_use ->
         task =
@@ -241,14 +301,19 @@ defmodule Froth.Agent.Worker do
             {:tool_result, id, result}
           end)
 
-        {task.ref, tool_use}
+        %{
+          ref: task.ref,
+          task: task,
+          tool_use: tool_use,
+          timer_ref: Process.send_after(self(), {:tool_timeout, task.ref}, tool_timeout_ms)
+        }
       end)
 
-    %{worker | phase: {:working, invocations, []}}
+    %{worker | phase: {:working, invocations, [], MapSet.new()}}
   end
 
   defp collect_tool_result(
-         %{phase: {:working, invocations, results}} = worker,
+         %{phase: {:working, invocations, results, ignored_refs}} = worker,
          tool_use_id,
          result
        ) do
@@ -264,19 +329,21 @@ defmodule Froth.Agent.Worker do
           ToolResult.new(tool_use_id, content)
       end
 
-    %{worker | phase: {:working, invocations, [tool_result | results]}}
+    %{worker | phase: {:working, invocations, [tool_result | results], ignored_refs}}
   end
 
-  defp find_invocation!(invocations, ref) do
-    List.keyfind(invocations, ref, 0) || raise "unknown invocation ref: #{inspect(ref)}"
-  end
-
-  defp maybe_tools_done(%{phase: {:working, invocations, results}} = worker)
-       when length(invocations) == length(results) do
+  defp maybe_tools_done(%{phase: {:working, [], results, _ignored_refs}} = worker) do
     api_results = results |> Enum.reverse() |> Enum.map(&ToolResult.to_api/1)
     worker = persist_message(worker, :user, api_results)
 
-    has_yield = Enum.any?(invocations, fn {_ref, %ToolUse{name: name}} -> name == "yield" end)
+    has_yield =
+      Enum.any?(api_results, fn
+        %{"content" => content} when is_binary(content) ->
+          String.contains?(content, "Yielding:")
+
+        _ ->
+          false
+      end)
 
     if has_yield do
       {:stop, :normal, %{worker | phase: :done}}
@@ -287,11 +354,35 @@ defmodule Froth.Agent.Worker do
 
   defp maybe_tools_done(worker), do: {:noreply, worker}
 
-  defp find_invocation({:working, invocations, _results}, ref) do
-    List.keyfind(invocations, ref, 0)
+  defp find_invocation({:working, invocations, _results, _ignored_refs}, ref) do
+    find_invocation_in_list(invocations, ref)
   end
 
   defp find_invocation(_, _), do: nil
+
+  defp find_invocation_in_list(invocations, ref) when is_list(invocations) do
+    Enum.find(invocations, &(&1.ref == ref))
+  end
+
+  defp cancel_invocation_timer(worker, %{timer_ref: timer_ref}) when is_reference(timer_ref) do
+    Process.cancel_timer(timer_ref)
+    worker
+  end
+
+  defp cancel_invocation_timer(worker, _invocation), do: worker
+
+  defp forget_invocation(
+         %{phase: {:working, invocations, results, _ignored_refs}} = worker,
+         invocation,
+         ignored_refs
+       ) do
+    remaining = Enum.reject(invocations, &(&1.ref == invocation.ref))
+    %{worker | phase: {:working, remaining, results, ignored_refs}}
+  end
+
+  defp timeout_error(tool_timeout_ms) when is_integer(tool_timeout_ms) and tool_timeout_ms > 0 do
+    "tool timed out after #{tool_timeout_ms}ms"
+  end
 
   defp normalize_reason(:normal), do: :normal
   defp normalize_reason(:shutdown), do: :shutdown
