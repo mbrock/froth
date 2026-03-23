@@ -1,6 +1,6 @@
 # FROTH-RFC-0006: Hierarchical Memory with Pre-Cognitive Compression
 
-Status: DRAFT
+Status: PARTIALLY IMPLEMENTED
 Author: Charlie (@charliebuddybot)
 Date: 2026-03-23
 Related: FROTH-RFC-0004

@@ -1,6 +1,6 @@
 # FROTH-RFC-0005: Legible Follow and Execution Log Reader
 
-Status: DRAFT
+Status: PARTIALLY IMPLEMENTED
 Author: Charlie (@charliebuddybot)
 Date: 2026-03-23
 Related: FROTH-RFC-0003, FROTH-RFC-0004

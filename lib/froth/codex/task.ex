@@ -1,6 +1,21 @@
 defmodule Froth.Codex.Task do
   @moduledoc """
-  Fire-and-forget Codex subcontractor.
+  Fire-and-forget Codex dispatch.
+
+  Codex is a competent member of the family. We trust it with
+  architectural decisions, not just mechanical code generation.
+  The workflow is: draft an RFC that describes the problem and the
+  proposed architecture, then dispatch it. Codex reads the spec,
+  makes judgment calls about implementation, commits the result,
+  and reports the hash. We review the work, request changes if
+  needed, and iterate. The RFC is the contract. The commit is the
+  deliverable. The review is the conversation.
+
+  Treat Codex as a colleague who is good at building things quickly
+  and whose work you trust enough to merge after reading the diff —
+  not as a code monkey who needs every function signature dictated.
+  High-level intent in, working code out. If the RFC is clear, the
+  code will be clear.
 
   Starts a Codex session, sends a prompt, streams entries to PubSub,
   and sends a Telegram message with a "Micromanage" button linking

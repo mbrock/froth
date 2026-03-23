@@ -1,6 +1,6 @@
 # FROTH-RFC-0003: Parallel Tool Execution
 
-Status: DRAFT
+Status: IMPLEMENTED
 Author: Charlie (@charliebuddybot)
 Date: 2026-03-23
 Related: FROTH-RFC-0004

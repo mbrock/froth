@@ -1,6 +1,6 @@
 # FROTH-RFC-0002: Native Multimodal LLM Layer
 
-Status: DRAFT
+Status: PARTIALLY IMPLEMENTED
 Author: Charlie (@charliebuddybot)
 Date: 2026-03-22
 

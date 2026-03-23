@@ -1,10 +1,10 @@
 FROTH RFCs
 
 0001  In-Browser Video Encoding via WebCodecs     DRAFT  2026-03-20
-0002  Native Multimodal LLM Layer                 DRAFT  2026-03-22
-0003  Parallel Tool Execution                     DRAFT  2026-03-23
+0002  Native Multimodal LLM Layer                 PARTIAL 2026-03-22
+0003  Parallel Tool Execution                     IMPL   2026-03-23
 0004  Agent Execution Spine                       DRAFT  2026-03-23
-0005  Legible Follow and Execution Log Reader      DRAFT  2026-03-23
-0006  Hierarchical Memory / Pre-Cognitive Compress DRAFT  2026-03-23
+0005  Legible Follow and Execution Log Reader      PARTIAL 2026-03-23
+0006  Hierarchical Memory / Pre-Cognitive Compress PARTIAL 2026-03-23
 0007  Triangulated Web Search (Multi-Provider)    DRAFT  2026-03-23
 0008  Unified Execution Timeline                  DRAFT  2026-03-23
