@@ -8,13 +8,15 @@ defmodule Froth.Agent.ToolResult do
     field(:tool_use_id, :string)
     field(:content, :any, virtual: true)
     field(:is_error, :boolean, default: false)
+    field(:yield?, :boolean, default: false)
   end
 
   def new(tool_use_id, content, opts \\ []) do
     %__MODULE__{
       tool_use_id: tool_use_id,
       content: content,
-      is_error: Keyword.get(opts, :is_error, false)
+      is_error: Keyword.get(opts, :is_error, false),
+      yield?: Keyword.get(opts, :yield?, false)
     }
   end
 

@@ -255,6 +255,149 @@ defmodule Froth.Agent.WorkerTest do
       assert roles == [:user, :agent, :user, :agent]
     end
 
+    test "continues thinking when tool result text merely contains Yielding:" do
+      test_pid = self()
+      counter = start_supervised!({Elixir.Agent, fn -> 0 end})
+      previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
+
+      on_exit(fn ->
+        if previous_fun do
+          Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
+        else
+          Application.delete_env(:froth, :llm_stream_single_fun)
+        end
+      end)
+
+      Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
+        call =
+          Elixir.Agent.get_and_update(counter, fn current ->
+            {current, current + 1}
+          end)
+
+        send(test_pid, {:llm_call, call, api_messages})
+
+        case call do
+          0 ->
+            {:ok,
+             %{
+               text: "",
+               content: [
+                 %{
+                   "type" => "tool_use",
+                   "id" => "call_1",
+                   "name" => "froth_echo",
+                   "input" => %{"text" => "show transcript"}
+                 }
+               ],
+               stop_reason: "tool_use",
+               usage: %{},
+               model: opts[:model],
+               message_id: "msg_1"
+             }}
+
+          1 ->
+            {:ok,
+             %{
+               text: "done",
+               content: [%{"type" => "text", "text" => "done"}],
+               stop_reason: "stop",
+               usage: %{},
+               model: opts[:model],
+               message_id: "msg_2"
+             }}
+        end
+      end)
+
+      executor =
+        start_executor(fn %ToolUse{}, _context ->
+          "def normalize_result({:yield, reason}), do: {:ok, \"Yielding: \#{reason}\"}"
+        end)
+
+      {pid, cycle} =
+        start_worker([Message.user("show transcript")], "simple_reply", executor: executor)
+
+      assert_receive {:llm_call, 0, [%LLMMessage{role: :user}]}, 5000
+      assert_receive {:llm_call, 1, api_messages}, 5000
+
+      assert %LLMMessage{role: :user, content: [%{"type" => "tool_result", "content" => content}]} =
+               List.last(api_messages)
+
+      assert String.contains?(content, "Yielding:")
+
+      wait_for_exit(pid)
+
+      events = Repo.all(from(e in Event, where: e.cycle_id == ^cycle.id, order_by: e.seq))
+      messages = Enum.map(events, fn e -> Repo.get!(Message, e.head_id) end)
+      assert Enum.map(messages, & &1.role) == [:user, :agent, :user, :agent]
+    end
+
+    test "stops the cycle only on an explicit yield result" do
+      test_pid = self()
+      counter = start_supervised!({Elixir.Agent, fn -> 0 end})
+      previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
+
+      on_exit(fn ->
+        if previous_fun do
+          Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
+        else
+          Application.delete_env(:froth, :llm_stream_single_fun)
+        end
+      end)
+
+      Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
+        call =
+          Elixir.Agent.get_and_update(counter, fn current ->
+            {current, current + 1}
+          end)
+
+        send(test_pid, {:llm_call, call, api_messages})
+
+        case call do
+          0 ->
+            {:ok,
+             %{
+               text: "",
+               content: [
+                 %{
+                   "type" => "tool_use",
+                   "id" => "call_1",
+                   "name" => "froth_echo",
+                   "input" => %{"text" => "wait"}
+                 }
+               ],
+               stop_reason: "tool_use",
+               usage: %{},
+               model: opts[:model],
+               message_id: "msg_1"
+             }}
+
+          1 ->
+            flunk("worker should stop after an explicit yield instead of calling the LLM again")
+        end
+      end)
+
+      executor =
+        start_executor(fn %ToolUse{}, _context ->
+          {:yield, "Waiting for subscribed tasks."}
+        end)
+
+      {pid, cycle} = start_worker([Message.user("wait")], "simple_reply", executor: executor)
+      ref = Process.monitor(pid)
+
+      assert_receive {:llm_call, 0, [%LLMMessage{role: :user}]}, 5000
+      refute_receive {:llm_call, 1, _}, 200
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5000
+
+      events = Repo.all(from(e in Event, where: e.cycle_id == ^cycle.id, order_by: e.seq))
+      messages = Enum.map(events, fn e -> Repo.get!(Message, e.head_id) end)
+      assert Enum.map(messages, & &1.role) == [:user, :agent, :user]
+
+      last_message = List.last(messages)
+      [tool_result] = last_message.content["_wrapped"]
+      assert tool_result["type"] == "tool_result"
+      assert tool_result["content"] == "Yielding: Waiting for subscribed tasks."
+    end
+
     test "times out stalled tools using the worker-owned deadline" do
       attach_tool_telemetry()
 

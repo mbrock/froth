@@ -328,6 +328,9 @@ defmodule Froth.Agent.Worker do
        ) do
     tool_result =
       case result do
+        {:yield, reason} ->
+          ToolResult.new(tool_use_id, format_yield_reason(reason), yield?: true)
+
         {:ok, content} ->
           ToolResult.new(tool_use_id, content)
 
@@ -342,17 +345,9 @@ defmodule Froth.Agent.Worker do
   end
 
   defp maybe_tools_done(%{phase: {:working, [], results, _ignored_refs}} = worker) do
+    has_yield = Enum.any?(results, & &1.yield?)
     api_results = results |> Enum.reverse() |> Enum.map(&ToolResult.to_api/1)
     worker = persist_message(worker, :user, api_results)
-
-    has_yield =
-      Enum.any?(api_results, fn
-        %{"content" => content} when is_binary(content) ->
-          String.contains?(content, "Yielding:")
-
-        _ ->
-          false
-      end)
 
     if has_yield do
       {:stop, :normal, %{worker | phase: :done}}
@@ -362,6 +357,11 @@ defmodule Froth.Agent.Worker do
   end
 
   defp maybe_tools_done(worker), do: {:noreply, worker}
+
+  defp format_yield_reason(reason) when is_binary(reason), do: "Yielding: #{reason}"
+
+  defp format_yield_reason(reason),
+    do: "Yielding: #{inspect(reason, limit: :infinity, printable_limit: :infinity)}"
 
   defp find_invocation({:working, invocations, _results, _ignored_refs}, ref) do
     find_invocation_in_list(invocations, ref)

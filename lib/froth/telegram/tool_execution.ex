@@ -128,6 +128,6 @@ defmodule Froth.Telegram.ToolExecution do
 
   defp maybe_send_narration(_input, _session_id, _chat_id, _reply_to), do: :ok
 
-  defp normalize_result({:yield, reason}), do: {:ok, "Yielding: #{reason}"}
+  defp normalize_result({:yield, reason}), do: {:yield, reason}
   defp normalize_result(result), do: result
 end
