@@ -22,9 +22,11 @@ defmodule Froth.Analyzer.XPostWorker do
     else
       Froth.Analyzer.with_reactions(chat_id, message_id, fn ->
         prompt =
-          "Analyze this X post. Describe what it contains (text, images, video if any), the context, and key points. Be concise but thorough: #{url}"
+          "Look up this X post and describe what it actually contains " <>
+            "(text, images, video if any), the context, and key points. " <>
+            "Use x_search to fetch the real content. Be concise but thorough: #{url}"
 
-        case API.grok(prompt, model: "grok-4-1-fast-non-reasoning") do
+        case API.grok_search(prompt) do
           {:ok, analysis_text} ->
             save(chat_id, message_id, analysis_text, url)
 
@@ -41,7 +43,7 @@ defmodule Froth.Analyzer.XPostWorker do
       type: "xpost",
       chat_id: chat_id,
       message_id: message_id,
-      agent: "grok-4-1-fast-non-reasoning",
+      agent: "grok-search",
       analysis_text: analysis_text,
       metadata: %{"post_url" => url},
       generated_at: DateTime.utc_now() |> DateTime.truncate(:second),
