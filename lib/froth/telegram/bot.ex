@@ -12,12 +12,12 @@ defmodule Froth.Telegram.Bot do
 
   alias Froth.Agent
   alias Froth.Agent.{Config, Cycle, Message, ToolUse, Worker}
-  alias Froth.Telemetry.Span
-  alias Froth.Inference.Tools
   alias Froth.Repo
   alias Froth.Telegram.BotAdapter
   alias Froth.Telegram.BotContext
   alias Froth.Telegram.CycleLink
+  alias Froth.Telegram.ToolExecution
+  alias Froth.Telemetry.Span
 
   defstruct [
     :bot_config,
@@ -350,9 +350,29 @@ defmodule Froth.Telegram.Bot do
   def handle_cast(_, state), do: {:noreply, state}
 
   @impl true
+  def handle_call({:prepare_tool, %ToolUse{} = tool_use, context}, _from, state) do
+    {reply, state} = prepare_tool_call(state, tool_use, context)
+    {:reply, reply, state}
+  end
+
+  def handle_call({:commit_tool, %ToolUse{} = tool_use, context, prepared, outcome}, _from, state) do
+    {reply, state} = commit_tool_call(state, tool_use, context, prepared, outcome)
+    {:reply, reply, state}
+  end
+
   def handle_call({:execute, %ToolUse{} = tool_use, context}, _from, state) do
-    {result, state} = execute_tool_call(state, tool_use, context)
-    {result, state} = maybe_inject_mid_cycle_messages(result, state)
+    {reply, state} = prepare_tool_call(state, tool_use, context)
+
+    {result, state} =
+      case reply do
+        {:ok, prepared} ->
+          outcome = ToolExecution.execute(prepared.execution)
+          commit_tool_call(state, tool_use, context, prepared, outcome)
+
+        {:error, reason} ->
+          {{:error, reason}, state}
+      end
+
     {:reply, result, state}
   end
 
@@ -678,7 +698,7 @@ defmodule Froth.Telegram.Bot do
     }
   end
 
-  defp execute_tool_call(state, %ToolUse{name: name, input: input}, context)
+  defp prepare_tool_call(state, %ToolUse{name: name, input: input}, context)
        when is_map(input) do
     chat_id = context[:chat_id] || state.chat_id
     reply_to = context[:reply_to] || state.reply_to
@@ -688,130 +708,178 @@ defmodule Froth.Telegram.Bot do
     if not is_integer(chat_id) do
       {{:error, "missing chat_id in tool context"}, state}
     else
-      {result, state} =
+      {execution, state} =
         case name do
           "send_message" ->
-            text = input["text"] || ""
-
-            {result, state} =
-              case BotAdapter.send_message(bc.session_id, chat_id, text, reply_to: reply_to) do
-                {:ok, sent} ->
-                  {{:ok, "sent"}, track_sent_message(state, sent, text)}
-
-                {:error, reason} ->
-                  error = inspect(reason)
-                  {{:error, error}, put_last_tool_error(state, error)}
-              end
-
-            {result, state}
+            {%{
+               name: name,
+               input: input,
+               bot_id: bc.id,
+               session_id: bc.session_id,
+               chat_id: chat_id,
+               reply_to: reply_to,
+               cycle_id: cycle_id
+             }, state}
 
           "elixir_eval" ->
-            state = maybe_send_control_prompt(state, cycle_id, chat_id, reply_to)
-            state = maybe_send_narration(state, input, chat_id, reply_to)
+            {state, send_control_prompt?} = reserve_control_prompt(state, cycle_id)
 
-            result =
-              Tools.execute(
-                name,
-                input,
-                chat_id,
-                bot_id: bc.id,
-                session_id: bc.session_id,
-                topic: "cycle:#{cycle_id}"
-              )
-
-            {result, state}
+            {%{
+               name: name,
+               input:
+                 input
+                 |> Map.put("reply_to", reply_to)
+                 |> Map.put("send_control_prompt", send_control_prompt?)
+                 |> Map.put("topic", "cycle:#{cycle_id}")
+                 |> maybe_put_control_prompt(
+                   send_control_prompt?,
+                   bc,
+                   cycle_id,
+                   chat_id,
+                   reply_to
+                 ),
+               bot_id: bc.id,
+               session_id: bc.session_id,
+               chat_id: chat_id,
+               reply_to: reply_to,
+               cycle_id: cycle_id
+             }, state}
 
           "run_shell" ->
-            state = maybe_send_control_prompt(state, cycle_id, chat_id, reply_to)
-            state = maybe_send_narration(state, input, chat_id, reply_to)
+            {state, send_control_prompt?} = reserve_control_prompt(state, cycle_id)
 
-            result =
-              Tools.execute(
-                name,
-                input,
-                chat_id,
-                bot_id: bc.id,
-                session_id: bc.session_id
-              )
-
-            {result, state}
+            {%{
+               name: name,
+               input:
+                 input
+                 |> Map.put("reply_to", reply_to)
+                 |> Map.put("send_control_prompt", send_control_prompt?)
+                 |> maybe_put_control_prompt(
+                   send_control_prompt?,
+                   bc,
+                   cycle_id,
+                   chat_id,
+                   reply_to
+                 ),
+               bot_id: bc.id,
+               session_id: bc.session_id,
+               chat_id: chat_id,
+               reply_to: reply_to,
+               cycle_id: cycle_id
+             }, state}
 
           _ ->
-            {Tools.execute(name, input, chat_id, bot_id: bc.id, session_id: bc.session_id), state}
+            {%{
+               name: name,
+               input: input,
+               bot_id: bc.id,
+               session_id: bc.session_id,
+               chat_id: chat_id,
+               reply_to: reply_to,
+               cycle_id: cycle_id
+             }, state}
         end
 
-      # Convert {:yield, reason} to {:ok, reason} for clean tool results
-      result =
-        case result do
-          {:yield, reason} -> {:ok, "Yielding: #{reason}"}
-          other -> other
-        end
+      prepared = %{
+        execution: execution,
+        execute: {ToolExecution, :execute, [execution]}
+      }
 
-      state =
-        state
-        |> maybe_track_task_from_result(cycle_id, result)
-        |> maybe_track_tool_error(result)
-
-      {result, state}
+      {{:ok, prepared}, state}
     end
   end
 
-  defp execute_tool_call(state, _tool_use, _context), do: {{:error, "invalid tool input"}, state}
+  defp prepare_tool_call(state, _tool_use, _context),
+    do: {{:error, "invalid tool input"}, state}
 
-  defp maybe_send_control_prompt(state, cycle_id, chat_id, reply_to)
-       when is_binary(cycle_id) and is_integer(chat_id) do
-    if MapSet.member?(state.control_prompt_cycles, cycle_id) do
+  defp commit_tool_call(state, _tool_use, context, prepared, outcome) do
+    {result, sent_message} = normalize_tool_outcome(outcome)
+
+    cycle_id =
+      extract_cycle_id(prepared) || extract_cycle_id(context) || extract_cycle_id(outcome)
+
+    state =
+      case sent_message do
+        %{sent: sent, text: text} ->
+          track_sent_message(state, sent, text)
+
+        _ ->
+          state
+      end
+
+    state =
       state
+      |> maybe_track_task_from_result(cycle_id, result)
+      |> maybe_track_tool_error(result)
+
+    {result, state} = maybe_inject_mid_cycle_messages(result, state)
+    {result, state}
+  end
+
+  defp reserve_control_prompt(state, cycle_id) when is_binary(cycle_id) do
+    if MapSet.member?(state.control_prompt_cycles, cycle_id) do
+      {state, false}
     else
-      bc = state.bot_config
-      token = "cycle_#{bc.id}_#{cycle_id}"
-      stop_data = Base.encode64("stopcycle:#{cycle_id}")
-
-      buttons = [
-        %{
-          "@type" => "inlineKeyboardButton",
-          "text" => "Open",
-          "type" => %{
-            "@type" => "inlineKeyboardButtonTypeUrl",
-            "url" => "https://t.me/#{bc.bot_username}/tool?startapp=#{token}"
-          }
-        },
-        %{
-          "@type" => "inlineKeyboardButton",
-          "text" => "Stop",
-          "type" => %{
-            "@type" => "inlineKeyboardButtonTypeCallback",
-            "data" => stop_data
-          }
-        }
-      ]
-
-      _ =
-        BotAdapter.send_message(
-          bc.session_id,
-          chat_id,
-          "I am running code and tools before I reply.",
-          reply_to: reply_to,
-          reply_markup: %{
-            "@type" => "replyMarkupInlineKeyboard",
-            "rows" => [buttons]
-          }
-        )
-
-      %{state | control_prompt_cycles: MapSet.put(state.control_prompt_cycles, cycle_id)}
+      {%{state | control_prompt_cycles: MapSet.put(state.control_prompt_cycles, cycle_id)}, true}
     end
   end
 
-  defp maybe_send_control_prompt(state, _cycle_id, _chat_id, _reply_to), do: state
+  defp reserve_control_prompt(state, _cycle_id), do: {state, false}
 
-  defp maybe_send_narration(state, %{"narration" => narration}, chat_id, reply_to)
-       when is_binary(narration) and narration != "" do
-    bc = state.bot_config
-    BotAdapter.send_italic(bc.session_id, chat_id, reply_to, narration)
-    state
+  defp maybe_put_control_prompt(input, true, bc, cycle_id, chat_id, reply_to)
+       when is_binary(cycle_id) and is_integer(chat_id) do
+    Map.put(input, "control_prompt", control_prompt_payload(bc, cycle_id, chat_id, reply_to))
   end
 
-  defp maybe_send_narration(state, _input, _chat_id, _reply_to), do: state
+  defp maybe_put_control_prompt(input, _send?, _bc, _cycle_id, _chat_id, _reply_to), do: input
+
+  defp control_prompt_payload(bc, cycle_id, chat_id, reply_to) do
+    token = "cycle_#{bc.id}_#{cycle_id}"
+    stop_data = Base.encode64("stopcycle:#{cycle_id}")
+
+    buttons = [
+      %{
+        "@type" => "inlineKeyboardButton",
+        "text" => "Open",
+        "type" => %{
+          "@type" => "inlineKeyboardButtonTypeUrl",
+          "url" => "https://t.me/#{bc.bot_username}/tool?startapp=#{token}"
+        }
+      },
+      %{
+        "@type" => "inlineKeyboardButton",
+        "text" => "Stop",
+        "type" => %{
+          "@type" => "inlineKeyboardButtonTypeCallback",
+          "data" => stop_data
+        }
+      }
+    ]
+
+    %{
+      "session_id" => bc.session_id,
+      "chat_id" => chat_id,
+      "reply_to" => reply_to,
+      "text" => "I am running code and tools before I reply.",
+      "reply_markup" => %{
+        "@type" => "replyMarkupInlineKeyboard",
+        "rows" => [buttons]
+      }
+    }
+  end
+
+  defp normalize_tool_outcome(%{result: result, sent_message: sent_message} = outcome) do
+    {result, sent_message || outcome[:sent_message]}
+  end
+
+  defp normalize_tool_outcome(%{result: result}), do: {result, nil}
+  defp normalize_tool_outcome(result), do: {result, nil}
+
+  defp extract_cycle_id(%{execution: %{cycle_id: cycle_id}}) when is_binary(cycle_id),
+    do: cycle_id
+
+  defp extract_cycle_id(%{cycle_id: cycle_id}) when is_binary(cycle_id), do: cycle_id
+  defp extract_cycle_id(_), do: nil
 
   defp maybe_inject_mid_cycle_messages(result, %{mid_cycle_messages: [_ | _] = msgs} = state) do
     injection =
@@ -1049,7 +1117,7 @@ defmodule Froth.Telegram.Bot do
 
     {state, sent_any?} =
       Enum.reduce_while(tool_uses, {state, false}, fn tool_use, {state, sent_any?} ->
-        {result, state} = execute_tool_call(state, tool_use, context)
+        {result, state} = execute_prepared_tool_call(state, tool_use, context)
 
         case result do
           {:ok, _} ->
@@ -1067,6 +1135,17 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp execute_text_tool_calls(state, _tool_uses), do: state
+
+  defp execute_prepared_tool_call(state, %ToolUse{} = tool_use, context) do
+    case prepare_tool_call(state, tool_use, context) do
+      {{:ok, prepared}, state} ->
+        outcome = ToolExecution.execute(prepared.execution)
+        commit_tool_call(state, tool_use, context, prepared, outcome)
+
+      {{:error, reason}, state} ->
+        {{:error, reason}, state}
+    end
+  end
 
   defp maybe_send_plaintext_tool_call_fallback(state, [%ToolUse{input: %{"text" => text}} | _])
        when is_binary(text) do

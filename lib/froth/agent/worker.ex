@@ -297,7 +297,7 @@ defmodule Froth.Agent.Worker do
       Enum.map(tool_uses, fn %ToolUse{id: id} = tool_use ->
         task =
           Task.Supervisor.async_nolink(Froth.Agent.TaskSupervisor, fn ->
-            result = GenServer.call(worker.config.tool_executor, {:execute, tool_use, context})
+            result = execute_tool(worker.config.tool_executor, tool_use, context)
             {:tool_result, id, result}
           end)
 
@@ -383,6 +383,38 @@ defmodule Froth.Agent.Worker do
   defp timeout_error(tool_timeout_ms) when is_integer(tool_timeout_ms) and tool_timeout_ms > 0 do
     "tool timed out after #{tool_timeout_ms}ms"
   end
+
+  defp execute_tool(tool_executor, %ToolUse{} = tool_use, context) do
+    case GenServer.call(tool_executor, {:prepare_tool, tool_use, context}, :infinity) do
+      {:ok, prepared} ->
+        outcome = run_prepared_tool(prepared)
+
+        GenServer.call(
+          tool_executor,
+          {:commit_tool, tool_use, context, prepared, outcome},
+          :infinity
+        )
+
+      {:error, :unsupported} ->
+        GenServer.call(tool_executor, {:execute, tool_use, context}, :infinity)
+
+      {:error, "unsupported"} ->
+        GenServer.call(tool_executor, {:execute, tool_use, context}, :infinity)
+
+      {:error, _} = error ->
+        error
+
+      other ->
+        other
+    end
+  end
+
+  defp run_prepared_tool(%{execute: {module, function, args}})
+       when is_atom(module) and is_atom(function) and is_list(args) do
+    apply(module, function, args)
+  end
+
+  defp run_prepared_tool(_prepared), do: {:error, "invalid prepared tool"}
 
   defp normalize_reason(:normal), do: :normal
   defp normalize_reason(:shutdown), do: :shutdown

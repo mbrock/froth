@@ -11,8 +11,26 @@ defmodule Froth.Agent.WorkerTest do
 
     def start_link(fun), do: GenServer.start_link(__MODULE__, fun)
 
+    def execute(fun, tool_use, context), do: fun.(tool_use, context)
+
     @impl true
     def init(fun), do: {:ok, fun}
+
+    @impl true
+    def handle_call({:prepare_tool, tool_use, context}, _from, fun) do
+      {:reply, {:ok, %{execute: {__MODULE__, :execute, [fun, tool_use, context]}}}, fun}
+    end
+
+    @impl true
+    def handle_call({:commit_tool, _tool_use, _context, _prepared, outcome}, _from, fun) do
+      result =
+        case outcome do
+          %{result: result} -> result
+          other -> other
+        end
+
+      {:reply, result, fun}
+    end
 
     @impl true
     def handle_call({:execute, tool_use, context}, _from, fun) do
@@ -243,6 +261,94 @@ defmodule Froth.Agent.WorkerTest do
                "content" => "tool timed out after 10ms",
                "is_error" => true
              }
+
+      wait_for_exit(pid)
+    end
+
+    test "runs prepared tool executions in parallel outside the executor GenServer" do
+      test_pid = self()
+      counter = start_supervised!({Elixir.Agent, fn -> 0 end})
+
+      Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
+        call =
+          Elixir.Agent.get_and_update(counter, fn current ->
+            {current, current + 1}
+          end)
+
+        send(test_pid, {:llm_call, call, api_messages})
+
+        case call do
+          0 ->
+            {:ok,
+             %{
+               text: "",
+               content: [
+                 %{
+                   "type" => "tool_use",
+                   "id" => "call_1",
+                   "name" => "froth_echo",
+                   "input" => %{"text" => "first"}
+                 },
+                 %{
+                   "type" => "tool_use",
+                   "id" => "call_2",
+                   "name" => "froth_echo",
+                   "input" => %{"text" => "second"}
+                 }
+               ],
+               stop_reason: "tool_use",
+               usage: %{},
+               model: opts[:model],
+               message_id: "msg_1"
+             }}
+
+          1 ->
+            {:ok,
+             %{
+               text: "done",
+               content: [%{"type" => "text", "text" => "done"}],
+               stop_reason: "stop",
+               usage: %{},
+               model: opts[:model],
+               message_id: "msg_2"
+             }}
+        end
+      end)
+
+      executor =
+        start_executor(fn %ToolUse{id: id, input: %{"text" => text}}, _context ->
+          send(test_pid, {:tool_started, id, self(), text})
+
+          receive do
+            {:release, ^id} -> "echoed: #{text}"
+          end
+        end)
+
+      {pid, _cycle} =
+        start_worker([Message.user("run both")], "simple_reply", executor: executor)
+
+      assert_receive {:llm_call, 0, [%LLMMessage{role: :user}]}, 5000
+
+      started =
+        for _ <- 1..2 do
+          assert_receive {:tool_started, id, task_pid, _text}, 5000
+          {id, task_pid}
+        end
+
+      assert Enum.sort(Enum.map(started, &elem(&1, 0))) == ["call_1", "call_2"]
+
+      Enum.each(started, fn {id, task_pid} ->
+        send(task_pid, {:release, id})
+      end)
+
+      assert_receive {:llm_call, 1, api_messages}, 5000
+
+      assert %LLMMessage{role: :user, content: content} = List.last(api_messages)
+
+      assert content
+             |> Enum.filter(&(&1["type"] == "tool_result"))
+             |> Enum.map(& &1["tool_use_id"])
+             |> Enum.sort() == ["call_1", "call_2"]
 
       wait_for_exit(pid)
     end
