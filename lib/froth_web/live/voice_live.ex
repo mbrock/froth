@@ -5,7 +5,7 @@ defmodule FrothWeb.VoiceLive do
 
   alias Froth.{Qwen, Repo}
   alias Froth.Agent
-  alias Froth.Agent.{Config, Cycle, Message, Worker}
+  alias Froth.Agent.{Config, Message, Worker}
 
   @voice_system """
   You are a voice assistant. Keep responses concise and conversational — \
@@ -311,22 +311,7 @@ defmodule FrothWeb.VoiceLive do
 
   # -- Helpers -----------------------------------------------------------------
 
-  defp ensure_cycle(socket) do
-    if socket.assigns.cycle do
-      socket
-    else
-      cycle = Repo.insert!(%Cycle{})
-      Phoenix.PubSub.subscribe(Froth.PubSub, "cycle:#{cycle.id}")
-      assign(socket, cycle: cycle)
-    end
-  end
-
   defp start_agent_turn(socket, user_text) do
-    socket = ensure_cycle(socket)
-    cycle = socket.assigns.cycle
-
-    {_msg, head_id} = Agent.append_message(cycle, socket.assigns.head_id, :user, user_text)
-
     config = %Config{
       system: @voice_system,
       model: "claude-sonnet-4-6",
@@ -335,9 +320,23 @@ defmodule FrothWeb.VoiceLive do
       tools: []
     }
 
+    message =
+      Repo.insert!(%Message{
+        role: :user,
+        content: Message.wrap(user_text),
+        parent_id: socket.assigns.head_id
+      })
+
+    cycle = Agent.begin_cycle(message, config)
+
+    if socket.assigns.cycle do
+      Phoenix.PubSub.unsubscribe(Froth.PubSub, "cycle:#{socket.assigns.cycle.id}")
+    end
+
     if socket.assigns.tts, do: Qwen.send_event(socket.assigns.tts, %{type: "session.finish"})
 
     Phoenix.PubSub.subscribe(Froth.PubSub, socket.assigns.tts_topic)
+    Phoenix.PubSub.subscribe(Froth.PubSub, "cycle:#{cycle.id}")
 
     {:ok, tts} =
       Qwen.start_link(
@@ -359,7 +358,8 @@ defmodule FrothWeb.VoiceLive do
     Process.monitor(pid)
 
     assign(socket,
-      head_id: head_id,
+      cycle: cycle,
+      head_id: message.id,
       worker_pid: pid,
       tts: tts,
       responding: true,

@@ -2,9 +2,30 @@ defmodule Froth.Agent.WorkerTest do
   use Froth.AnthropicCase, async: false
 
   import Ecto.Query
+  alias Froth.ObjectStore
   alias Froth.Agent.{Config, Cycle, Event, Message, Worker, ToolUse}
   alias Froth.LLM.Message, as: LLMMessage
   alias Froth.Repo
+
+  setup do
+    root_dir =
+      Path.join(System.tmp_dir!(), "froth-agent-spine-#{System.unique_integer([:positive])}")
+
+    previous = Application.get_env(:froth, ObjectStore, [])
+
+    Application.put_env(:froth, ObjectStore,
+      mode: :local,
+      root_dir: root_dir,
+      public_base: "http://example.test/froth/objects"
+    )
+
+    on_exit(fn ->
+      Application.put_env(:froth, ObjectStore, previous)
+      File.rm_rf(root_dir)
+    end)
+
+    :ok
+  end
 
   defmodule TestExecutor do
     use GenServer
@@ -120,6 +141,21 @@ defmodule Froth.Agent.WorkerTest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
   end
 
+  defp cycle_message_events(cycle_id) do
+    Repo.all(
+      from(e in Event,
+        where: e.cycle_id == ^cycle_id and e.kind == "message.appended",
+        order_by: e.seq
+      )
+    )
+  end
+
+  defp cycle_messages(cycle_id) do
+    cycle_id
+    |> cycle_message_events()
+    |> Enum.map(fn event -> Repo.get!(Message, event.message_id || event.head_id) end)
+  end
+
   describe "simple reply (no tools)" do
     test "calls the LLM once and stops" do
       executor = start_executor(fn _, _ -> "ok" end)
@@ -145,9 +181,45 @@ defmodule Froth.Agent.WorkerTest do
       events = Repo.all(from(e in Event, where: e.cycle_id == ^cycle.id, order_by: e.seq))
       assert length(events) >= 2
 
-      messages = Enum.map(events, fn e -> Repo.get!(Message, e.head_id) end)
+      messages = cycle_messages(cycle.id)
       assert hd(messages).role == :user
       assert List.last(messages).role == :agent
+    end
+
+    test "records a durable cycle summary and llm execution events" do
+      executor = start_executor(fn _, _ -> "ok" end)
+
+      {pid, cycle} =
+        start_worker([Message.user("hello")], "simple_reply", tools: [], executor: executor)
+
+      wait_for_exit(pid)
+
+      cycle = Repo.get!(Cycle, cycle.id)
+
+      assert cycle.status == :completed
+      assert cycle.provider == "anthropic"
+      assert cycle.model == "claude-opus-4-6"
+      assert is_binary(cycle.root_span_id)
+      assert %DateTime{} = cycle.started_at
+      assert %DateTime{} = cycle.finished_at
+      assert is_binary(cycle.system_prompt_hash)
+      assert is_binary(cycle.toolset_hash)
+      assert cycle.config["model"] == "claude-opus-4-6"
+      assert cycle.config["provider"] == "anthropic"
+
+      kinds =
+        Repo.all(
+          from(e in Event,
+            where: e.cycle_id == ^cycle.id,
+            order_by: e.seq,
+            select: e.kind
+          )
+        )
+
+      assert "cycle.started" in kinds
+      assert "llm.requested" in kinds
+      assert "llm.completed" in kinds
+      assert "cycle.completed" in kinds
     end
   end
 
@@ -247,10 +319,7 @@ defmodule Froth.Agent.WorkerTest do
 
       wait_for_exit(pid)
 
-      events = Repo.all(from(e in Event, where: e.cycle_id == ^cycle.id, order_by: e.seq))
-      assert length(events) >= 4
-
-      messages = Enum.map(events, fn e -> Repo.get!(Message, e.head_id) end)
+      messages = cycle_messages(cycle.id)
       roles = Enum.map(messages, & &1.role)
       assert roles == [:user, :agent, :user, :agent]
     end
@@ -326,8 +395,7 @@ defmodule Froth.Agent.WorkerTest do
 
       wait_for_exit(pid)
 
-      events = Repo.all(from(e in Event, where: e.cycle_id == ^cycle.id, order_by: e.seq))
-      messages = Enum.map(events, fn e -> Repo.get!(Message, e.head_id) end)
+      messages = cycle_messages(cycle.id)
       assert Enum.map(messages, & &1.role) == [:user, :agent, :user, :agent]
     end
 
@@ -388,14 +456,25 @@ defmodule Froth.Agent.WorkerTest do
       refute_receive {:llm_call, 1, _}, 200
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5000
 
-      events = Repo.all(from(e in Event, where: e.cycle_id == ^cycle.id, order_by: e.seq))
-      messages = Enum.map(events, fn e -> Repo.get!(Message, e.head_id) end)
+      messages = cycle_messages(cycle.id)
       assert Enum.map(messages, & &1.role) == [:user, :agent, :user]
 
       last_message = List.last(messages)
       [tool_result] = last_message.content["_wrapped"]
       assert tool_result["type"] == "tool_result"
       assert tool_result["content"] == "Yielding: Waiting for subscribed tasks."
+
+      outcome =
+        Repo.one!(
+          from(e in Event,
+            where: e.cycle_id == ^cycle.id and e.kind == "control.outcome",
+            order_by: [desc: e.seq],
+            limit: 1
+          )
+        )
+
+      assert outcome.data["outcome"] == "yield"
+      assert outcome.data["reason"] == "Waiting for subscribed tasks."
     end
 
     test "times out stalled tools using the worker-owned deadline" do
@@ -469,7 +548,7 @@ defmodule Froth.Agent.WorkerTest do
       assert_receive {:telemetry_event, [:froth, :agent, :tool, :completed], measurements,
                       %{
                         cycle_id: ^cycle_id,
-                        result_type: :text,
+                        result_type: "text",
                         tool_name: "froth_echo",
                         tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"
                       }},
@@ -596,6 +675,41 @@ defmodule Froth.Agent.WorkerTest do
              |> Enum.sort() == ["call_1", "call_2"]
 
       wait_for_exit(pid)
+    end
+
+    test "stores large tool payloads out of line on execution events" do
+      executor =
+        start_executor(fn %ToolUse{}, _context ->
+          [
+            %{"type" => "text", "text" => "echoed"},
+            %{
+              "type" => "image",
+              "source" => %{
+                "type" => "base64",
+                "media_type" => "image/png",
+                "data" => String.duplicate("aGVsbG8=", 128)
+              }
+            }
+          ]
+        end)
+
+      {pid, cycle} =
+        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+
+      wait_for_exit(pid)
+
+      event =
+        Repo.one!(
+          from(e in Event,
+            where: e.cycle_id == ^cycle.id and e.kind == "tool.completed",
+            limit: 1
+          )
+        )
+
+      assert is_binary(event.blob_ref)
+      assert {:ok, path} = ObjectStore.local_path(event.blob_ref)
+      assert File.exists?(path)
+      assert event.data["result_type"] == "blocks"
     end
   end
 

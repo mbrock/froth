@@ -556,18 +556,13 @@ defmodule Froth.Telegram.Bot do
           user_content
         end
 
-      message = Repo.insert!(%Message{role: :user, content: Message.wrap(initial_content)})
-      cycle = Repo.insert!(%Cycle{})
-      Repo.insert!(%Agent.Event{cycle_id: cycle.id, head_id: message.id, seq: 0})
+      message =
+        Repo.insert!(%Message{
+          role: :user,
+          content: Message.wrap(initial_content)
+        })
 
-      Repo.insert!(%CycleLink{
-        cycle_id: cycle.id,
-        bot_id: bc.id,
-        chat_id: chat_id,
-        reply_to: reply_to
-      })
-
-      config = %Config{
+      base_config = %Config{
         system: resolve_system_prompt(chat_id, bc),
         model: bc.model,
         tools: resolve_tool_specs(bc),
@@ -583,11 +578,14 @@ defmodule Froth.Telegram.Bot do
         effort: bc.effort
       }
 
-      Phoenix.PubSub.subscribe(Froth.PubSub, "cycle:#{cycle.id}")
-      {:ok, pid} = Worker.start_link({cycle, config})
-      ref = Process.monitor(pid)
+      cycle = Agent.begin_cycle(message, base_config)
 
-      cycle_mono_start = System.monotonic_time()
+      Repo.insert!(%CycleLink{
+        cycle_id: cycle.id,
+        bot_id: bc.id,
+        chat_id: chat_id,
+        reply_to: reply_to
+      })
 
       session_span = Froth.Telegram.Session.span_id(bc.session_id)
 
@@ -598,6 +596,20 @@ defmodule Froth.Telegram.Bot do
           chat_id: chat_id,
           model: bc.model
         })
+
+      cycle =
+        Agent.update_cycle(cycle, %{
+          parent_span_id: cycle_span_id,
+          config: Map.put(cycle.config || %{}, "parent_span_id", cycle_span_id)
+        })
+
+      config = %{base_config | parent_span_id: cycle_span_id}
+
+      Phoenix.PubSub.subscribe(Froth.PubSub, "cycle:#{cycle.id}")
+      {:ok, pid} = Worker.start_link({cycle, config})
+      ref = Process.monitor(pid)
+
+      cycle_mono_start = System.monotonic_time()
 
       %{
         state
@@ -678,7 +690,7 @@ defmodule Froth.Telegram.Bot do
           )
         end
 
-        Process.exit(state.worker_pid, :kill)
+        Process.exit(state.worker_pid, {:shutdown, :cancelled})
 
         %{
           state
@@ -1655,11 +1667,12 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp infer_silent_cycle_reason(%{cycle: %Cycle{} = cycle}) do
-    cycle
-    |> Agent.latest_head_id()
-    |> Agent.load_messages()
-    |> List.last()
-    |> describe_silent_cycle_message()
+    Agent.describe_cycle_stop(cycle) ||
+      cycle
+      |> Agent.latest_head_id()
+      |> Agent.load_messages()
+      |> List.last()
+      |> describe_silent_cycle_message()
   end
 
   defp infer_silent_cycle_reason(_), do: nil

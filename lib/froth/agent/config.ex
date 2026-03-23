@@ -7,6 +7,7 @@ defmodule Froth.Agent.Config do
           tool_executor: GenServer.server(),
           tool_timeout_ms: pos_integer() | nil,
           context: map() | nil,
+          parent_span_id: String.t() | nil,
           thinking: map() | nil,
           effort: String.t() | nil
         }
@@ -18,6 +19,7 @@ defmodule Froth.Agent.Config do
     :tool_executor,
     :tool_timeout_ms,
     :context,
+    :parent_span_id,
     :thinking,
     :effort,
     tools: []

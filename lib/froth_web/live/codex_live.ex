@@ -221,61 +221,37 @@ defmodule FrothWeb.CodexLive do
           data-follow-mode={follow_mode(@active_turn_id)}
           class="flex min-h-screen flex-col bg-[radial-gradient(circle_at_top,rgba(20,20,40,0.55),rgba(5,5,8,1)_48%)] text-[13px] text-zinc-100"
         >
-          <header class="sticky top-0 z-30 border-b border-zinc-800/70 bg-zinc-950/90 backdrop-blur">
-            <div class="mx-auto w-full max-w-5xl px-3 py-2.5 md:px-5">
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0 space-y-0.5">
-                  <p class="text-[10px] uppercase tracking-[0.2em] text-cyan-300/80">Codex Live</p>
-                  <h1 class="truncate text-[12px] text-zinc-100">session {@session_id}</h1>
-                  <p class="truncate text-[11px] text-zinc-400">
-                    thread: {display_thread(@thread_id)}
-                  </p>
-                </div>
-
-                <div class="flex items-center gap-1.5">
-                  <span class={status_chip_class(@codex_status)}>
-                    {status_text(@codex_status)}
+          <header class="sticky top-0 z-30 border-b border-zinc-800/70 bg-zinc-950/95 backdrop-blur">
+            <div class="mx-auto w-full max-w-5xl px-3 py-1.5 md:px-5">
+              <div class="flex items-center justify-between gap-2 font-mono">
+                <div class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
+                  <span class={modeline_status_class(@codex_status)}>
+                    {modeline_status(@codex_status)}
                   </span>
-                  <button
-                    id="codex-close"
-                    phx-click="close"
-                    class="inline-flex min-h-8 items-center rounded-md border border-zinc-700 bg-zinc-900/75 px-2.5 text-[10px] uppercase tracking-[0.08em] text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
-                  >
-                    Close
-                  </button>
+                  <span class="text-zinc-500">Codex</span>
+                  <span :if={modeline_model(@runtime)} class="text-sky-300">
+                    {modeline_model(@runtime)}
+                  </span>
+                  <span :if={modeline_reasoning(@runtime)} class="text-amber-300/80">
+                    {modeline_reasoning(@runtime)}
+                  </span>
+                  <span :if={modeline_sandbox(@runtime)} class={modeline_sandbox_class(@runtime)}>
+                    {modeline_sandbox(@runtime)}
+                  </span>
+                  <span :if={modeline_tokens(@token_usage)} class="text-zinc-400">
+                    {modeline_tokens(@token_usage)}
+                  </span>
+                  <span :if={rate_limit_badge(@rate_limits)} class="text-zinc-500">
+                    {rate_limit_badge(@rate_limits)}
+                  </span>
                 </div>
-              </div>
-              <div class="mt-2 flex flex-wrap items-center gap-1.5">
-                <span
-                  :if={auth_badge(@auth)}
-                  class={auth_chip_class(@auth)}
+                <button
+                  id="codex-close"
+                  phx-click="close"
+                  class="shrink-0 rounded px-2 py-0.5 text-[10px] text-zinc-500 transition hover:text-zinc-200"
                 >
-                  {auth_badge(@auth)}
-                </span>
-                <span
-                  :for={badge <- runtime_badges(@runtime)}
-                  class={runtime_chip_class(badge)}
-                >
-                  {badge}
-                </span>
-                <span
-                  :if={is_binary(@active_turn_id)}
-                  class="inline-flex items-center rounded-md border border-cyan-800/70 bg-cyan-950/30 px-1.5 py-0.5 text-[10px] text-cyan-300"
-                >
-                  turn {short_id(@active_turn_id)}
-                </span>
-                <span
-                  :if={token_usage_badge(@token_usage)}
-                  class="inline-flex items-center rounded-md border border-zinc-700/90 bg-zinc-900/75 px-1.5 py-0.5 text-[10px] text-zinc-300"
-                >
-                  {token_usage_badge(@token_usage)}
-                </span>
-                <span
-                  :if={rate_limit_badge(@rate_limits)}
-                  class="inline-flex items-center rounded-md border border-zinc-700/90 bg-zinc-900/75 px-1.5 py-0.5 text-[10px] text-zinc-300"
-                >
-                  {rate_limit_badge(@rate_limits)}
-                </span>
+                  ✕
+                </button>
               </div>
             </div>
           </header>
@@ -511,27 +487,6 @@ defmodule FrothWeb.CodexLive do
   defp follow_mode(active_turn_id) when is_binary(active_turn_id), do: "always"
   defp follow_mode(_), do: "smart"
 
-  defp status_text(:booting), do: "booting"
-  defp status_text(:ready), do: "ready"
-  defp status_text(:error), do: "error"
-  defp status_text(_), do: "unknown"
-
-  defp status_chip_class(:ready),
-    do:
-      "inline-flex items-center rounded-md border border-emerald-700/70 bg-emerald-950/35 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-emerald-300"
-
-  defp status_chip_class(:booting),
-    do:
-      "inline-flex items-center rounded-md border border-cyan-700/70 bg-cyan-950/35 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-cyan-300"
-
-  defp status_chip_class(:error),
-    do:
-      "inline-flex items-center rounded-md border border-rose-700/70 bg-rose-950/35 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-rose-300"
-
-  defp status_chip_class(_),
-    do:
-      "inline-flex items-center rounded-md border border-zinc-700/90 bg-zinc-900/80 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-zinc-300"
-
   defp tool_status_chip_class("running"),
     do:
       "inline-flex items-center rounded-md border border-cyan-800/80 bg-cyan-950/35 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-cyan-300"
@@ -553,36 +508,6 @@ defmodule FrothWeb.CodexLive do
   defp tool_status_text("error"), do: "error"
   defp tool_status_text("done"), do: "done"
   defp tool_status_text(_), do: "update"
-
-  defp display_thread(thread_id) when is_binary(thread_id), do: short_id(thread_id)
-  defp display_thread(_), do: "none"
-
-  defp short_id(value) when is_binary(value), do: String.slice(value, 0, 12)
-  defp short_id(value), do: to_string(value)
-
-  defp token_usage_badge(token_usage) when is_map(token_usage) do
-    last_total =
-      get_in(token_usage, ["last", "totalTokens"]) || get_in(token_usage, [:last, :totalTokens])
-
-    total =
-      get_in(token_usage, ["total", "totalTokens"]) || get_in(token_usage, [:total, :totalTokens])
-
-    cond do
-      is_integer(last_total) and is_integer(total) ->
-        "tokens #{format_int(last_total)} turn · #{format_int(total)} total"
-
-      is_integer(last_total) ->
-        "tokens #{format_int(last_total)} turn"
-
-      is_integer(total) ->
-        "tokens #{format_int(total)} total"
-
-      true ->
-        nil
-    end
-  end
-
-  defp token_usage_badge(_), do: nil
 
   defp rate_limit_badge(rate_limits) when is_map(rate_limits) do
     primary_used =
@@ -607,128 +532,78 @@ defmodule FrothWeb.CodexLive do
 
   defp rate_limit_badge(_), do: nil
 
-  defp runtime_badges(runtime) when is_map(runtime) do
-    model = runtime_field(runtime, :model, "model")
-    provider = runtime_field(runtime, :model_provider, "model_provider")
-    reasoning = runtime_field(runtime, :reasoning_effort, "reasoning_effort")
-    approval = runtime_field(runtime, :approval_policy, "approval_policy")
-    sandbox = runtime_field(runtime, :sandbox, "sandbox")
-    personality = runtime_field(runtime, :personality, "personality")
+  # --- Modeline helpers (compact header) ---
 
-    []
-    |> maybe_add_badge(model, "model")
-    |> maybe_add_badge(provider, "provider")
-    |> maybe_add_badge(reasoning, "reasoning")
-    |> maybe_add_badge(approval, "approval")
-    |> maybe_add_badge(sandbox, "sandbox")
-    |> maybe_add_badge(personality, "persona")
-  end
+  defp modeline_status(:ready), do: "\u25cf"
+  defp modeline_status(:working), do: "\u25c9"
+  defp modeline_status(:error), do: "\u2715"
+  defp modeline_status(_), do: "\u25cb"
 
-  defp runtime_badges(_), do: []
+  defp modeline_status_class(:ready), do: "text-emerald-400"
+  defp modeline_status_class(:working), do: "text-amber-400 animate-pulse"
+  defp modeline_status_class(:error), do: "text-rose-400"
+  defp modeline_status_class(_), do: "text-zinc-500"
 
-  defp maybe_add_badge(badges, value, label) when is_list(badges) and is_binary(label) do
-    if is_binary(value) and value != "" do
-      badges ++ ["#{label} #{truncate(value, 36)}"]
-    else
-      badges
-    end
-  end
+  defp modeline_model(runtime) when is_map(runtime), do: runtime_field(runtime, :model, "model")
+  defp modeline_model(_), do: nil
 
-  defp runtime_chip_class(badge) when is_binary(badge) do
+  defp modeline_reasoning(runtime) when is_map(runtime),
+    do: runtime_field(runtime, :reasoning_effort, "reasoning_effort")
+
+  defp modeline_reasoning(_), do: nil
+
+  defp modeline_sandbox(runtime) when is_map(runtime) do
+    raw = runtime_field(runtime, :sandbox, "sandbox")
+
     cond do
-      String.starts_with?(badge, "model ") ->
-        "inline-flex items-center rounded-md border border-sky-800/80 bg-sky-950/35 px-1.5 py-0.5 text-[10px] text-sky-200"
-
-      String.starts_with?(badge, "provider ") ->
-        "inline-flex items-center rounded-md border border-indigo-800/80 bg-indigo-950/35 px-1.5 py-0.5 text-[10px] text-indigo-200"
-
-      true ->
-        "inline-flex items-center rounded-md border border-zinc-700/90 bg-zinc-900/75 px-1.5 py-0.5 text-[10px] text-zinc-300"
+      is_binary(raw) and String.contains?(raw, "dangerFullAccess") -> "yolo"
+      is_binary(raw) and String.contains?(raw, "danger") -> "yolo"
+      is_binary(raw) and String.contains?(raw, "workspace") -> "sandbox"
+      is_binary(raw) -> String.slice(raw, 0, 12)
+      true -> nil
     end
   end
 
-  defp runtime_chip_class(_),
-    do:
-      "inline-flex items-center rounded-md border border-zinc-700/90 bg-zinc-900/75 px-1.5 py-0.5 text-[10px] text-zinc-300"
+  defp modeline_sandbox(_), do: nil
+
+  defp modeline_sandbox_class(runtime) when is_map(runtime) do
+    raw = runtime_field(runtime, :sandbox, "sandbox")
+
+    if is_binary(raw) and (String.contains?(raw, "danger") or String.contains?(raw, "Full")) do
+      "text-rose-400/80"
+    else
+      "text-zinc-500"
+    end
+  end
+
+  defp modeline_sandbox_class(_), do: "text-zinc-500"
+
+  defp modeline_tokens(token_usage) when is_map(token_usage) do
+    last =
+      get_in(token_usage, ["last", "totalTokens"]) || get_in(token_usage, [:last, :totalTokens])
+
+    total =
+      get_in(token_usage, ["total", "totalTokens"]) || get_in(token_usage, [:total, :totalTokens])
+
+    cond do
+      is_integer(last) and is_integer(total) -> "#{format_k(last)}/#{format_k(total)}"
+      is_integer(total) -> format_k(total)
+      is_integer(last) -> format_k(last)
+      true -> nil
+    end
+  end
+
+  defp modeline_tokens(_), do: nil
+
+  defp format_k(n) when n >= 1_000_000, do: "#{Float.round(n / 1_000_000, 1)}M"
+  defp format_k(n) when n >= 1_000, do: "#{Float.round(n / 1_000, 1)}k"
+  defp format_k(n), do: "#{n}"
 
   defp runtime_field(runtime, atom_key, string_key) when is_map(runtime) do
     Map.get(runtime, atom_key) || Map.get(runtime, string_key)
   end
 
   defp runtime_field(_runtime, _atom_key, _string_key), do: nil
-
-  defp auth_badge(auth) when is_map(auth) do
-    authenticated = auth_field(auth, :authenticated, "authenticated") == true
-    account_type = auth_field(auth, :account_type, "account_type")
-    plan_type = auth_field(auth, :plan_type, "plan_type")
-    email = auth_field(auth, :email, "email")
-    requires_openai_auth = auth_field(auth, :requires_openai_auth, "requires_openai_auth") == true
-    probe_error = auth_field(auth, :probe_error, "probe_error")
-
-    cond do
-      authenticated ->
-        parts =
-          [account_type, plan_type, email]
-          |> Enum.filter(&(is_binary(&1) and &1 != ""))
-
-        if parts == [] do
-          "auth ok"
-        else
-          "auth " <> Enum.join(parts, " · ")
-        end
-
-      is_binary(probe_error) ->
-        "auth probe failed"
-
-      requires_openai_auth ->
-        "auth required"
-
-      true ->
-        "auth unknown"
-    end
-  end
-
-  defp auth_badge(_), do: nil
-
-  defp auth_chip_class(auth) when is_map(auth) do
-    authenticated = auth_field(auth, :authenticated, "authenticated") == true
-    probe_error = auth_field(auth, :probe_error, "probe_error")
-    requires_openai_auth = auth_field(auth, :requires_openai_auth, "requires_openai_auth") == true
-
-    cond do
-      authenticated ->
-        "inline-flex items-center rounded-md border border-emerald-700/70 bg-emerald-950/35 px-1.5 py-0.5 text-[10px] text-emerald-300"
-
-      is_binary(probe_error) ->
-        "inline-flex items-center rounded-md border border-rose-700/70 bg-rose-950/35 px-1.5 py-0.5 text-[10px] text-rose-300"
-
-      requires_openai_auth ->
-        "inline-flex items-center rounded-md border border-amber-700/70 bg-amber-950/35 px-1.5 py-0.5 text-[10px] text-amber-200"
-
-      true ->
-        "inline-flex items-center rounded-md border border-zinc-700/90 bg-zinc-900/75 px-1.5 py-0.5 text-[10px] text-zinc-300"
-    end
-  end
-
-  defp auth_chip_class(_),
-    do:
-      "inline-flex items-center rounded-md border border-zinc-700/90 bg-zinc-900/75 px-1.5 py-0.5 text-[10px] text-zinc-300"
-
-  defp auth_field(auth, atom_key, string_key) when is_map(auth) do
-    Map.get(auth, atom_key) || Map.get(auth, string_key)
-  end
-
-  defp auth_field(_auth, _atom_key, _string_key), do: nil
-
-  defp format_int(int) when is_integer(int) and int >= 0 do
-    int
-    |> Integer.to_string()
-    |> String.reverse()
-    |> String.replace(~r/(.{3})(?=.)/, "\\1,")
-    |> String.reverse()
-  end
-
-  defp format_int(int) when is_integer(int), do: Integer.to_string(int)
 
   defp entry_dom_id(%{id: id}) when is_binary(id), do: id
   defp entry_dom_id(_), do: "entry"

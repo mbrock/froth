@@ -172,6 +172,12 @@ defmodule FrothWeb.InferenceSessionsLive do
                     >
                       {format_number(summary.input_tokens)}in {format_number(summary.output_tokens)}out
                     </span>
+                    <span class={[
+                      "rounded border px-1.5 py-0.5 text-[10px]",
+                      cycle_status_class(summary.status)
+                    ]}>
+                      {summary.status}
+                    </span>
                     <span class="rounded border border-zinc-500/30 bg-zinc-500/10 px-1.5 py-0.5 text-[10px] text-zinc-300">
                       {summary.message_count} msgs
                     </span>
@@ -179,16 +185,27 @@ defmodule FrothWeb.InferenceSessionsLive do
                 </div>
 
                 <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-400">
+                  <span :if={summary.provider}>provider: {summary.provider}</span>
+                  <span :if={summary.model}>model: {summary.model}</span>
                   <span>bot: {summary.bot_id || "-"}</span>
                   <span>chat: {summary.chat_id}</span>
                   <span :if={summary.reply_to}>reply_to: {summary.reply_to}</span>
+                  <span :if={summary.llm_call_count && summary.llm_call_count > 0}>
+                    {summary.llm_call_count} llm
+                  </span>
+                  <span :if={summary.tool_call_count && summary.tool_call_count > 0}>
+                    {summary.tool_call_count} tools
+                  </span>
                   <span :if={summary.cache_read_input_tokens && summary.cache_read_input_tokens > 0}>
                     {format_number(summary.cache_read_input_tokens)}cache
+                  </span>
+                  <span :if={summary.cost_usd && summary.cost_usd > 0}>
+                    ${format_cost(summary.cost_usd)}
                   </span>
                 </div>
 
                 <div class="mt-1 text-[10px] text-zinc-600">
-                  {format_timestamp(summary.inserted_at)}
+                  {format_cycle_timestamp(summary)}
                 </div>
               </.link>
 
@@ -208,9 +225,23 @@ defmodule FrothWeb.InferenceSessionsLive do
                   <h2 class="font-mono text-[13px] text-white truncate">
                     {@selected_cycle.cycle_id}
                   </h2>
+                  <span class={[
+                    "rounded border px-1.5 py-0.5 text-[10px]",
+                    cycle_status_class(@selected_cycle.status)
+                  ]}>
+                    {@selected_cycle.status}
+                  </span>
                 </div>
 
                 <dl class="mt-3 grid grid-cols-1 gap-2 text-[12px] text-zinc-300 md:grid-cols-2">
+                  <div :if={@selected_cycle.provider}>
+                    <dt class="text-zinc-500">provider</dt>
+                    <dd class="font-mono">{@selected_cycle.provider}</dd>
+                  </div>
+                  <div :if={@selected_cycle.model}>
+                    <dt class="text-zinc-500">model</dt>
+                    <dd class="font-mono">{@selected_cycle.model}</dd>
+                  </div>
                   <div>
                     <dt class="text-zinc-500">bot</dt>
                     <dd class="font-mono">{@selected_cycle.bot_id || "-"}</dd>
@@ -227,13 +258,65 @@ defmodule FrothWeb.InferenceSessionsLive do
                     <dt class="text-zinc-500">created</dt>
                     <dd class="font-mono">{format_timestamp(@selected_cycle.inserted_at)}</dd>
                   </div>
+                  <div :if={@selected_cycle.started_at}>
+                    <dt class="text-zinc-500">started</dt>
+                    <dd class="font-mono">{format_timestamp(@selected_cycle.started_at)}</dd>
+                  </div>
+                  <div :if={@selected_cycle.finished_at}>
+                    <dt class="text-zinc-500">finished</dt>
+                    <dd class="font-mono">{format_timestamp(@selected_cycle.finished_at)}</dd>
+                  </div>
+                  <div :if={@selected_cycle.event_count}>
+                    <dt class="text-zinc-500">events</dt>
+                    <dd class="font-mono">{@selected_cycle.event_count}</dd>
+                  </div>
+                  <div :if={@selected_cycle.llm_call_count}>
+                    <dt class="text-zinc-500">llm calls</dt>
+                    <dd class="font-mono">{@selected_cycle.llm_call_count}</dd>
+                  </div>
+                  <div :if={@selected_cycle.tool_call_count}>
+                    <dt class="text-zinc-500">tool calls</dt>
+                    <dd class="font-mono">{@selected_cycle.tool_call_count}</dd>
+                  </div>
+                  <div :if={@selected_cycle.cost_usd && @selected_cycle.cost_usd > 0}>
+                    <dt class="text-zinc-500">cost</dt>
+                    <dd class="font-mono">${format_cost(@selected_cycle.cost_usd)}</dd>
+                  </div>
+                  <div :if={@selected_cycle.root_span_id}>
+                    <dt class="text-zinc-500">root span</dt>
+                    <dd class="font-mono">{@selected_cycle.root_span_id}</dd>
+                  </div>
+                  <div :if={@selected_cycle.parent_span_id}>
+                    <dt class="text-zinc-500">parent span</dt>
+                    <dd class="font-mono">{@selected_cycle.parent_span_id}</dd>
+                  </div>
+                  <div :if={@selected_cycle.system_prompt_hash}>
+                    <dt class="text-zinc-500">system hash</dt>
+                    <dd class="font-mono">
+                      {String.slice(@selected_cycle.system_prompt_hash, 0, 16)}...
+                    </dd>
+                  </div>
+                  <div :if={@selected_cycle.toolset_hash}>
+                    <dt class="text-zinc-500">toolset hash</dt>
+                    <dd class="font-mono">{String.slice(@selected_cycle.toolset_hash, 0, 16)}...</dd>
+                  </div>
                   <div :if={@selected_cycle.legacy_inference_session_id}>
                     <dt class="text-zinc-500">legacy session</dt>
                     <dd class="font-mono">{@selected_cycle.legacy_inference_session_id}</dd>
                   </div>
+                  <div :if={@selected_cycle.error}>
+                    <dt class="text-zinc-500">error</dt>
+                    <dd class="whitespace-pre-wrap break-words font-mono text-red-300">
+                      {@selected_cycle.error}
+                    </dd>
+                  </div>
                 </dl>
 
                 <.usage_panel :if={@aggregate_usage} usage={@aggregate_usage} />
+                <.resolved_config_panel
+                  :if={map_size(@selected_cycle.config || %{}) > 0}
+                  config={@selected_cycle.config}
+                />
               </div>
 
               <.api_messages_panel messages={@selected_messages} />
@@ -259,7 +342,7 @@ defmodule FrothWeb.InferenceSessionsLive do
       if selected do
         head_id = Agent.latest_head_id(%Cycle{id: selected_id})
         raw = Agent.load_messages(head_id)
-        usage = load_cycle_usage(selected_id)
+        usage = selected.aggregate_usage || load_cycle_usage(selected_id)
         {api_messages_for_view(raw), usage}
       else
         {[], nil}
@@ -302,14 +385,43 @@ defmodule FrothWeb.InferenceSessionsLive do
       chat_id: l.chat_id,
       reply_to: l.reply_to,
       legacy_inference_session_id: l.legacy_inference_session_id,
+      status: c.status,
+      provider: c.provider,
+      model: c.model,
+      root_span_id: c.root_span_id,
+      parent_span_id: c.parent_span_id,
+      config: c.config,
+      system_prompt_hash: c.system_prompt_hash,
+      system_prompt_ref: c.system_prompt_ref,
+      toolset_hash: c.toolset_hash,
+      cost_usd: c.cost_usd,
+      error: c.error,
       inserted_at: c.inserted_at,
+      started_at: c.started_at,
+      finished_at: c.finished_at,
+      aggregate_usage: c.usage,
       input_tokens: u.input_tokens,
       output_tokens: u.output_tokens,
       cache_read_input_tokens: u.cache_read_input_tokens,
       turn_count: u.turn_count,
-      message_count:
+      event_count:
         fragment(
           "(SELECT COUNT(*) FROM agent_events WHERE cycle_id = ?)",
+          l.cycle_id
+        ),
+      llm_call_count:
+        fragment(
+          "(SELECT COUNT(*) FROM agent_events WHERE cycle_id = ? AND kind = 'llm.completed')",
+          l.cycle_id
+        ),
+      tool_call_count:
+        fragment(
+          "(SELECT COUNT(*) FROM agent_events WHERE cycle_id = ? AND kind = 'tool.started')",
+          l.cycle_id
+        ),
+      message_count:
+        fragment(
+          "(SELECT COUNT(*) FROM agent_events WHERE cycle_id = ? AND kind = 'message.appended')",
           l.cycle_id
         )
     })
@@ -422,6 +534,19 @@ defmodule FrothWeb.InferenceSessionsLive do
   end
 
   defp format_timestamp(_), do: "-"
+
+  defp format_cycle_timestamp(summary) do
+    cond do
+      summary.finished_at ->
+        "finished #{format_timestamp(summary.finished_at)}"
+
+      summary.started_at ->
+        "started #{format_timestamp(summary.started_at)}"
+
+      true ->
+        format_timestamp(summary.inserted_at)
+    end
+  end
 
   attr :messages, :list, default: []
 
@@ -540,6 +665,21 @@ defmodule FrothWeb.InferenceSessionsLive do
       ),
       log: false
     )
+  end
+
+  attr :config, :map, required: true
+
+  defp resolved_config_panel(assigns) do
+    ~H"""
+    <details class="mt-3 rounded border border-white/10 bg-black/30">
+      <summary class="cursor-pointer select-none px-3 py-1.5 text-[11px] font-medium text-zinc-300">
+        Resolved config
+      </summary>
+      <div class="border-t border-white/10 px-3 py-2">
+        <pre class="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-black/35 p-2 font-mono text-[11px] leading-relaxed text-zinc-300">{pretty_json(@config)}</pre>
+      </div>
+    </details>
+    """
   end
 
   defp api_content_kind_label(content) when is_binary(content), do: "string"
@@ -694,6 +834,9 @@ defmodule FrothWeb.InferenceSessionsLive do
   defp format_usage_value(v) when is_binary(v), do: v
   defp format_usage_value(v), do: inspect(v)
 
+  defp format_cost(value) when is_float(value), do: :erlang.float_to_binary(value, decimals: 4)
+  defp format_cost(value), do: to_string(value)
+
   defp pretty_json(value) do
     case Jason.encode(value, pretty: true) do
       {:ok, encoded} -> encoded
@@ -704,4 +847,17 @@ defmodule FrothWeb.InferenceSessionsLive do
   defp api_role_class("user"), do: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
   defp api_role_class("assistant"), do: "border-sky-500/30 bg-sky-500/10 text-sky-300"
   defp api_role_class(_), do: "border-white/20 bg-white/5 text-zinc-300"
+
+  defp cycle_status_class(:completed),
+    do: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+
+  defp cycle_status_class(:running), do: "border-sky-500/30 bg-sky-500/10 text-sky-300"
+
+  defp cycle_status_class(:waiting_on_tools),
+    do: "border-amber-500/30 bg-amber-500/10 text-amber-300"
+
+  defp cycle_status_class(:failed), do: "border-red-500/30 bg-red-500/10 text-red-300"
+  defp cycle_status_class(:cancelled), do: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300"
+  defp cycle_status_class(:queued), do: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300"
+  defp cycle_status_class(_), do: "border-white/20 bg-white/5 text-zinc-300"
 end

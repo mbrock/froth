@@ -1,7 +1,14 @@
 defmodule Froth.Agent.ToolResult do
   use Ecto.Schema
 
-  @type t :: %__MODULE__{tool_use_id: String.t(), content: term(), is_error: boolean()}
+  @type t :: %__MODULE__{
+          tool_use_id: String.t(),
+          content: term(),
+          is_error: boolean(),
+          yield?: boolean(),
+          control_outcome: String.t() | nil,
+          control_data: map()
+        }
 
   @primary_key false
   embedded_schema do
@@ -9,14 +16,20 @@ defmodule Froth.Agent.ToolResult do
     field(:content, :any, virtual: true)
     field(:is_error, :boolean, default: false)
     field(:yield?, :boolean, default: false)
+    field(:control_outcome, :string, virtual: true)
+    field(:control_data, :map, virtual: true, default: %{})
   end
 
   def new(tool_use_id, content, opts \\ []) do
+    control_outcome = Keyword.get(opts, :control_outcome)
+
     %__MODULE__{
       tool_use_id: tool_use_id,
       content: content,
       is_error: Keyword.get(opts, :is_error, false),
-      yield?: Keyword.get(opts, :yield?, false)
+      yield?: Keyword.get(opts, :yield?, control_outcome == "yield"),
+      control_outcome: control_outcome,
+      control_data: Keyword.get(opts, :control_data, %{})
     }
   end
 

@@ -4,13 +4,17 @@ defmodule Froth.Agent do
   """
 
   import Ecto.Query
+
   alias Froth.Agent.{Config, Cycle, Event, Message, Worker}
-  alias Froth.Repo
+  alias Froth.{LLM, ObjectStore, Repo}
+
+  @payload_blob_threshold 8_000
+  @preview_string_limit 320
+  @preview_list_limit 8
 
   @spec run(Message.t(), Config.t()) :: {Cycle.t(), Enumerable.t()}
   def run(%Message{id: id} = message, %Config{} = config) when not is_nil(id) do
-    cycle = Repo.insert!(%Cycle{})
-    Repo.insert!(%Event{cycle_id: cycle.id, head_id: message.id, seq: 0})
+    cycle = begin_cycle(message, config)
 
     stream =
       Stream.resource(
@@ -42,12 +46,105 @@ defmodule Froth.Agent do
     {cycle, stream}
   end
 
+  @spec begin_cycle(Message.t(), Config.t()) :: Cycle.t()
+  def begin_cycle(%Message{id: id} = message, %Config{} = config) when not is_nil(id) do
+    cycle =
+      %Cycle{}
+      |> Cycle.changeset(cycle_snapshot_attrs(config))
+      |> Repo.insert!()
+
+    _event =
+      append_event(cycle, %{
+        kind: "message.appended",
+        head_id: message.id,
+        message_id: message.id,
+        data: message_event_data(message)
+      })
+
+    cycle
+  end
+
+  @spec update_cycle(Cycle.t(), map()) :: Cycle.t()
+  def update_cycle(%Cycle{} = cycle, attrs) when is_map(attrs) do
+    cycle
+    |> Cycle.changeset(normalize_cycle_attrs(attrs))
+    |> Repo.update!()
+  end
+
+  @doc false
+  @spec cycle_snapshot_attrs(Config.t()) :: map()
+  def cycle_snapshot_attrs(%Config{} = config), do: initial_cycle_attrs(config)
+
+  @spec append_event(Cycle.t(), map()) :: Event.t()
+  def append_event(%Cycle{id: cycle_id}, attrs) when is_map(attrs) and not is_nil(cycle_id) do
+    kind = fetch_string(attrs, :kind) || "message.appended"
+    data = Map.get(attrs, :data) || Map.get(attrs, "data") || %{}
+    {data, blob_ref} = maybe_offload_payload(cycle_id, kind, data)
+
+    %Event{}
+    |> Event.changeset(%{
+      cycle_id: cycle_id,
+      head_id: Map.get(attrs, :head_id) || Map.get(attrs, "head_id"),
+      message_id: Map.get(attrs, :message_id) || Map.get(attrs, "message_id"),
+      seq: next_event_seq(cycle_id),
+      kind: kind,
+      span_id: stringify_or_nil(Map.get(attrs, :span_id) || Map.get(attrs, "span_id")),
+      parent_span_id:
+        stringify_or_nil(Map.get(attrs, :parent_span_id) || Map.get(attrs, "parent_span_id")),
+      tool_use_id:
+        stringify_or_nil(Map.get(attrs, :tool_use_id) || Map.get(attrs, "tool_use_id")),
+      data: data,
+      blob_ref: blob_ref
+    })
+    |> Repo.insert!()
+  end
+
+  @spec merge_cycle_usage(Cycle.t(), map() | nil) :: Cycle.t()
+  def merge_cycle_usage(%Cycle{} = cycle, usage) when is_map(usage) do
+    aggregate = merge_usage_maps(cycle.usage || %{}, stringify_map(usage))
+    cost_usd = estimate_usage_cost_usd(aggregate, cycle.model)
+    update_cycle(cycle, %{usage: aggregate, cost_usd: cost_usd})
+  end
+
+  def merge_cycle_usage(%Cycle{} = cycle, _usage), do: cycle
+
+  @spec describe_cycle_stop(Cycle.t() | String.t()) :: String.t() | nil
+  def describe_cycle_stop(%Cycle{id: cycle_id}), do: describe_cycle_stop(cycle_id)
+
+  def describe_cycle_stop(cycle_id) when is_binary(cycle_id) do
+    cycle = Repo.get(Cycle, cycle_id)
+
+    outcome =
+      Repo.one(
+        from(e in Event,
+          where: e.cycle_id == ^cycle_id and e.kind == "control.outcome",
+          order_by: [desc: e.seq],
+          limit: 1,
+          select: e.data
+        )
+      )
+
+    cond do
+      is_map(outcome) ->
+        describe_control_outcome(outcome)
+
+      cycle && cycle.status == :failed && is_binary(cycle.error) && cycle.error != "" ->
+        cycle.error
+
+      cycle && cycle.status == :cancelled ->
+        "cycle cancelled"
+
+      true ->
+        nil
+    end
+  end
+
   @doc "Return the current head message ID for a cycle."
   @spec latest_head_id(Cycle.t()) :: String.t() | nil
   def latest_head_id(%Cycle{id: cycle_id}) do
     Repo.one(
       from(e in Event,
-        where: e.cycle_id == ^cycle_id,
+        where: e.cycle_id == ^cycle_id and not is_nil(e.head_id),
         order_by: [desc: e.seq],
         limit: 1,
         select: e.head_id
@@ -131,6 +228,197 @@ defmodule Froth.Agent do
 
   def extract_trace_entries(_), do: []
 
+  @doc "Append a message to the cycle, record an event, broadcast, return {message, updated_head_id}."
+  @spec append_message(Cycle.t(), String.t() | nil, :user | :agent, term(), map() | nil) ::
+          {Message.t(), String.t()}
+  def append_message(%Cycle{} = cycle, head_id, role, content, metadata \\ nil) do
+    saved =
+      Repo.insert!(%Message{
+        role: role,
+        content: Message.wrap(content),
+        metadata: metadata,
+        parent_id: head_id
+      })
+
+    event =
+      append_event(cycle, %{
+        kind: "message.appended",
+        head_id: saved.id,
+        message_id: saved.id,
+        data: message_event_data(saved)
+      })
+
+    Froth.broadcast("cycle:#{cycle.id}", {:event, event, saved})
+
+    {saved, saved.id}
+  end
+
+  defp initial_cycle_attrs(%Config{} = config) do
+    {provider, provider_module} = resolve_provider_details(config)
+    system_prompt = config.system || ""
+    system_prompt_hash = hash_binary(system_prompt)
+    system_prompt_ref = maybe_store_system_prompt(system_prompt, system_prompt_hash)
+    toolset_hash = hash_value(config.tools || [])
+
+    %{
+      status: :queued,
+      provider: provider,
+      model: config.model,
+      parent_span_id: config.parent_span_id,
+      config: %{
+        "provider" => provider,
+        "provider_module" => provider_module,
+        "model" => config.model,
+        "thinking" => stringify_map(config.thinking || %{}),
+        "effort" => config.effort,
+        "tool_timeout_ms" => config.tool_timeout_ms,
+        "tool_count" => length(config.tools || []),
+        "tool_specs" => safe_json(config.tools || []),
+        "context" => stringify_map(config.context || %{}),
+        "system_prompt_hash" => system_prompt_hash,
+        "system_prompt_ref" => system_prompt_ref
+      },
+      system_prompt_hash: system_prompt_hash,
+      system_prompt_ref: system_prompt_ref,
+      toolset_hash: toolset_hash,
+      usage: %{},
+      cost_usd: 0.0
+    }
+  end
+
+  defp normalize_cycle_attrs(attrs) do
+    attrs
+    |> Enum.reduce(%{}, fn
+      {:error, value}, acc ->
+        Map.put(acc, :error, error_string(value))
+
+      {"error", value}, acc ->
+        Map.put(acc, :error, error_string(value))
+
+      {key, value}, acc when key in [:config, "config"] and is_map(value) ->
+        Map.put(acc, :config, stringify_map(value))
+
+      {key, value}, acc when key in [:usage, "usage"] and is_map(value) ->
+        Map.put(acc, :usage, stringify_map(value))
+
+      {key, value}, acc when is_binary(key) ->
+        Map.put(acc, String.to_existing_atom(key), value)
+
+      {key, value}, acc ->
+        Map.put(acc, key, value)
+    end)
+  rescue
+    ArgumentError ->
+      attrs
+      |> Enum.reduce(%{}, fn
+        {"config", value}, acc when is_map(value) -> Map.put(acc, :config, stringify_map(value))
+        {"usage", value}, acc when is_map(value) -> Map.put(acc, :usage, stringify_map(value))
+        {"error", value}, acc -> Map.put(acc, :error, error_string(value))
+        {key, value}, acc when is_atom(key) -> Map.put(acc, key, value)
+        {_key, _value}, acc -> acc
+      end)
+  end
+
+  defp next_event_seq(cycle_id) do
+    Repo.one(
+      from(e in Event,
+        where: e.cycle_id == ^cycle_id,
+        select: coalesce(max(e.seq), -1) + 1
+      )
+    ) || 0
+  end
+
+  defp maybe_offload_payload(_cycle_id, _kind, nil), do: {%{}, nil}
+
+  defp maybe_offload_payload(cycle_id, kind, data) do
+    normalized = safe_json(data)
+    blob? = contains_blob?(normalized)
+
+    case Jason.encode(normalized) do
+      {:ok, encoded} when byte_size(encoded) > @payload_blob_threshold or blob? ->
+        preview = summarize_payload(normalized)
+
+        case ObjectStore.put_bytes(event_blob_key(cycle_id, kind), encoded,
+               content_type: "application/json"
+             ) do
+          {:ok, stored} -> {preview, stored.key}
+          {:error, _reason} -> {preview, nil}
+        end
+
+      _ ->
+        {normalized, nil}
+    end
+  end
+
+  defp maybe_store_system_prompt("", _hash), do: nil
+
+  defp maybe_store_system_prompt(system_prompt, hash)
+       when is_binary(system_prompt) and byte_size(system_prompt) > @payload_blob_threshold do
+    case ObjectStore.put_bytes(
+           "agent/system-prompts/#{hash}.txt",
+           system_prompt,
+           content_type: "text/plain"
+         ) do
+      {:ok, stored} -> stored.key
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp maybe_store_system_prompt(_system_prompt, _hash), do: nil
+
+  defp message_event_data(%Message{} = message) do
+    %{
+      "role" => to_string(message.role),
+      "content_kind" => message_content_kind(message.content),
+      "text_preview" => truncate(Message.extract_text(message), @preview_string_limit),
+      "metadata" => summarize_payload(message.metadata || %{})
+    }
+  end
+
+  defp message_content_kind(content) when is_binary(content), do: "text"
+  defp message_content_kind(%{"_wrapped" => value}), do: message_content_kind(value)
+  defp message_content_kind(content) when is_list(content), do: "#{length(content)} blocks"
+  defp message_content_kind(content) when is_map(content), do: "map"
+  defp message_content_kind(nil), do: "empty"
+  defp message_content_kind(_content), do: "value"
+
+  defp resolve_provider_details(%Config{} = config) do
+    provider =
+      cond do
+        is_atom(config.provider) and config.provider in [:anthropic, :openai, :grok, :gemini] ->
+          Atom.to_string(config.provider)
+
+        is_binary(config.provider) and String.trim(config.provider) != "" ->
+          normalize_provider_name(config.provider)
+
+        true ->
+          config.model
+          |> LLM.provider_name_for_model()
+          |> stringify_atom()
+      end
+
+    provider_module =
+      case LLM.resolve_client_module(config.provider, config.model) do
+        {:ok, module} -> Atom.to_string(module)
+        {:error, _reason} -> nil
+      end
+
+    {provider || provider_module, provider_module}
+  end
+
+  defp normalize_provider_name(provider) when is_binary(provider) do
+    trimmed = String.trim(provider)
+
+    cond do
+      trimmed == "" -> nil
+      String.downcase(trimmed) in ["claude", "anthropic"] -> "anthropic"
+      String.downcase(trimmed) in ["gpt", "openai"] -> "openai"
+      String.downcase(trimmed) in ["grok", "xai"] -> "grok"
+      String.downcase(trimmed) in ["gemini", "google"] -> "gemini"
+      true -> trimmed
+    end
+  end
+
   defp encode_tool_input(input) do
     case Jason.encode(input) do
       {:ok, json} -> json
@@ -152,41 +440,258 @@ defmodule Froth.Agent do
   defp tool_result_block_text(%{"type" => type}) when is_binary(type), do: "[#{type}]"
   defp tool_result_block_text(other), do: inspect(other, limit: 20, printable_limit: 300)
 
-  @doc "Append a message to the cycle, record an event, broadcast, return {message, updated_head_id}."
-  @spec append_message(Cycle.t(), String.t() | nil, :user | :agent, term(), map() | nil) ::
-          {Message.t(), String.t()}
-  def append_message(%Cycle{id: cycle_id}, head_id, role, content, metadata \\ nil) do
-    saved =
-      Repo.insert!(%Message{
-        role: role,
-        content: Message.wrap(content),
-        metadata: metadata,
-        parent_id: head_id
-      })
+  defp safe_json(map) when is_map(map) do
+    Map.new(map, fn {k, v} -> {to_string(k), safe_value(v)} end)
+  end
 
-    next_seq =
-      from(e in Event,
-        where: e.cycle_id == ^cycle_id,
-        select: 1 + coalesce(max(e.seq), -1)
-      )
+  defp safe_json(list) when is_list(list), do: Enum.map(list, &safe_value/1)
+  defp safe_json(nil), do: %{}
+  defp safe_json(other), do: %{"value" => safe_value(other)}
 
-    {1, [event]} =
-      Repo.insert_all(
-        Event,
-        [
-          %{
-            id: Ecto.ULID.generate(),
-            cycle_id: cycle_id,
-            head_id: saved.id,
-            seq: next_seq,
-            inserted_at: DateTime.utc_now()
-          }
-        ],
-        returning: true
-      )
+  defp safe_value(v) when is_binary(v), do: v
+  defp safe_value(v) when is_number(v), do: v
+  defp safe_value(v) when is_boolean(v), do: v
+  defp safe_value(v) when is_atom(v), do: to_string(v)
+  defp safe_value(v) when is_list(v), do: Enum.map(v, &safe_value/1)
+  defp safe_value(%{} = v), do: safe_json(v)
+  defp safe_value(v), do: inspect(v)
 
-    Froth.broadcast("cycle:#{cycle_id}", {:event, event, saved})
+  defp stringify_map(map) when is_map(map) do
+    Map.new(map, fn {key, value} ->
+      {to_string(key), stringify_value(value)}
+    end)
+  end
 
-    {saved, saved.id}
+  defp stringify_map(_value), do: %{}
+
+  defp stringify_value(value) when is_map(value), do: stringify_map(value)
+  defp stringify_value(value) when is_list(value), do: Enum.map(value, &stringify_value/1)
+  defp stringify_value(value) when is_atom(value), do: to_string(value)
+  defp stringify_value(value), do: value
+
+  defp summarize_payload(nil), do: %{}
+
+  defp summarize_payload(value) when is_binary(value) do
+    truncate(value, @preview_string_limit)
+  end
+
+  defp summarize_payload(value) when is_list(value) do
+    preview = value |> Enum.take(@preview_list_limit) |> Enum.map(&summarize_payload/1)
+
+    if length(value) > @preview_list_limit do
+      preview ++ [%{"truncated_items" => length(value) - @preview_list_limit}]
+    else
+      preview
+    end
+  end
+
+  defp summarize_payload(value) when is_map(value) do
+    value
+    |> Enum.map(fn {key, item} -> {to_string(key), summarize_entry(key, item)} end)
+    |> Map.new()
+  end
+
+  defp summarize_payload(value), do: safe_value(value)
+
+  defp summarize_entry(key, value)
+       when key in ["data", :data] and is_binary(value) and byte_size(value) > 128 do
+    %{"bytes" => byte_size(value), "sha256" => hash_binary(value), "stored" => true}
+  end
+
+  defp summarize_entry(_key, value), do: summarize_payload(value)
+
+  defp contains_blob?(value) when is_binary(value),
+    do: byte_size(value) > @preview_string_limit * 2
+
+  defp contains_blob?(value) when is_list(value) do
+    Enum.any?(value, &contains_blob?/1)
+  end
+
+  defp contains_blob?(value) when is_map(value) do
+    Enum.any?(value, fn
+      {key, inner} when key in ["data", :data] and is_binary(inner) and byte_size(inner) > 128 ->
+        true
+
+      {_key, inner} ->
+        contains_blob?(inner)
+    end)
+  end
+
+  defp contains_blob?(_value), do: false
+
+  defp event_blob_key(cycle_id, kind) do
+    safe_kind = String.replace(kind, ".", "-")
+    suffix = System.unique_integer([:positive])
+    "agent/cycles/#{cycle_id}/events/#{safe_kind}-#{suffix}.json"
+  end
+
+  defp truncate(nil, _limit), do: nil
+
+  defp truncate(value, limit) when is_binary(value) and byte_size(value) > limit do
+    binary_part(value, 0, limit) <> "..."
+  end
+
+  defp truncate(value, _limit), do: value
+
+  defp stringify_or_nil(nil), do: nil
+  defp stringify_or_nil(value), do: to_string(value)
+
+  defp stringify_atom(nil), do: nil
+  defp stringify_atom(value) when is_atom(value), do: Atom.to_string(value)
+  defp stringify_atom(value) when is_binary(value), do: value
+
+  defp hash_binary(binary) when is_binary(binary) do
+    :sha256
+    |> :crypto.hash(binary)
+    |> Base.encode16(case: :lower)
+  end
+
+  defp hash_value(value) do
+    value
+    |> canonical_term()
+    |> :erlang.term_to_binary()
+    |> hash_binary()
+  end
+
+  defp canonical_term(value) when is_map(value) do
+    value
+    |> Enum.map(fn {key, inner} -> {to_string(key), canonical_term(inner)} end)
+    |> Enum.sort()
+  end
+
+  defp canonical_term(value) when is_list(value), do: Enum.map(value, &canonical_term/1)
+  defp canonical_term(value), do: value
+
+  defp merge_usage_maps(left, right) when is_map(left) and is_map(right) do
+    Map.merge(left, right, fn _key, left_value, right_value ->
+      cond do
+        is_map(left_value) and is_map(right_value) ->
+          merge_usage_maps(left_value, right_value)
+
+        is_integer(left_value) and is_integer(right_value) ->
+          left_value + right_value
+
+        true ->
+          right_value
+      end
+    end)
+  end
+
+  defp merge_usage_maps(_left, right), do: right
+
+  defp estimate_usage_cost_usd(usage, model) when is_map(usage) and is_binary(model) do
+    case model_pricing_rates(model, prompt_over_200k?(usage)) do
+      nil ->
+        nil
+
+      rates ->
+        input_tokens = usage_int(usage["input_tokens"])
+        output_tokens = usage_int(usage["output_tokens"])
+        cache_creation_tokens = usage_int(usage["cache_creation_input_tokens"])
+        cache_read_tokens = usage_int(usage["cache_read_input_tokens"])
+
+        (input_tokens * rates.input +
+           output_tokens * rates.output +
+           cache_creation_tokens * rates.cache_write +
+           cache_read_tokens * rates.cache_read) / 1_000_000
+    end
+  end
+
+  defp estimate_usage_cost_usd(_usage, _model), do: nil
+
+  defp prompt_over_200k?(usage) when is_map(usage) do
+    total_input_tokens(usage) > 200_000
+  end
+
+  defp prompt_over_200k?(_usage), do: false
+
+  defp total_input_tokens(usage) when is_map(usage) do
+    usage_int(usage["input_tokens"]) +
+      usage_int(usage["cache_creation_input_tokens"]) +
+      usage_int(usage["cache_read_input_tokens"])
+  end
+
+  defp total_input_tokens(_usage), do: 0
+
+  defp usage_int(value) when is_integer(value) and value >= 0, do: value
+
+  defp usage_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} when n >= 0 -> n
+      _ -> 0
+    end
+  end
+
+  defp usage_int(_value), do: 0
+
+  # Source-of-truth rates (USD / MTok) from https://claude.com/pricing,
+  # synced in the existing Telegram runtime and reused here for cycle summaries.
+  defp model_pricing_rates(model, over_200k?) when is_binary(model) do
+    downcased = String.downcase(model)
+
+    cond do
+      String.contains?(downcased, "opus-4-6") ->
+        if over_200k? do
+          %{input: 10.0, output: 37.5, cache_write: 12.5, cache_read: 1.0}
+        else
+          %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
+        end
+
+      String.contains?(downcased, "sonnet-4-6") ->
+        if over_200k? do
+          %{input: 6.0, output: 22.5, cache_write: 7.5, cache_read: 0.6}
+        else
+          %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
+        end
+
+      String.contains?(downcased, "haiku-4-5") ->
+        if over_200k? do
+          %{input: 1.6, output: 8.0, cache_write: 2.0, cache_read: 0.16}
+        else
+          %{input: 0.8, output: 4.0, cache_write: 1.0, cache_read: 0.08}
+        end
+
+      true ->
+        nil
+    end
+  end
+
+  defp describe_control_outcome(%{"outcome" => "yield", "reason" => reason})
+       when is_binary(reason) and reason != "" do
+    "cycle yielded: #{reason}"
+  end
+
+  defp describe_control_outcome(%{
+         "outcome" => "assistant_stopped_without_reply",
+         "detail" => detail
+       })
+       when is_binary(detail) and detail != "" do
+    detail
+  end
+
+  defp describe_control_outcome(%{"outcome" => "waiting_on_subscription", "reason" => reason})
+       when is_binary(reason) and reason != "" do
+    reason
+  end
+
+  defp describe_control_outcome(%{"outcome" => "tool_error", "error" => error})
+       when is_binary(error) and error != "" do
+    error
+  end
+
+  defp describe_control_outcome(%{"outcome" => "cycle_error", "error" => error})
+       when is_binary(error) and error != "" do
+    error
+  end
+
+  defp describe_control_outcome(%{"outcome" => outcome}) when is_binary(outcome), do: outcome
+  defp describe_control_outcome(_outcome), do: nil
+
+  defp error_string(value) when is_binary(value), do: value
+  defp error_string(nil), do: nil
+  defp error_string(value), do: inspect(value)
+
+  defp fetch_string(attrs, key) when is_map(attrs) do
+    Map.get(attrs, key) || Map.get(attrs, to_string(key))
   end
 end

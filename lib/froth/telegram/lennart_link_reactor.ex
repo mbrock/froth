@@ -18,13 +18,16 @@ defmodule Froth.Telegram.LennartLinkReactor do
   require Logger
 
   @charlie_topic "telegram:charlie"
-  @group_chat_id -1003690254489
+  @group_chat_id -1_003_690_254_489
 
   # Known human user IDs
   @human_user_ids [
-    1_635_262_887,  # Daniel
-    362_441_422,    # Mikael
-    6_071_676_050   # Patty
+    # Daniel
+    1_635_262_887,
+    # Mikael
+    362_441_422,
+    # Patty
+    6_071_676_050
   ]
 
   # Match URLs
@@ -67,7 +70,9 @@ defmodule Froth.Telegram.LennartLinkReactor do
 
   defp has_external_link?(text) do
     case Regex.scan(@url_re, text) do
-      [] -> false
+      [] ->
+        false
+
       urls ->
         Enum.any?(urls, fn [url] ->
           not Regex.match?(@ignored_domain_re, url)
