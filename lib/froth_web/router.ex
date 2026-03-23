@@ -76,6 +76,13 @@ defmodule FrothWeb.Router do
   end
 
   # Embed player
+  # RFC viewer
+  scope "/rfc", FrothWeb do
+    pipe_through :browser
+    get "/", RfcController, :index
+    get "/:slug", RfcController, :show
+  end
+
   scope "/embed", FrothWeb do
     get "/:batch_id", EmbedController, :show
     get "/:batch_id/audio", EmbedController, :audio
