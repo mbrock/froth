@@ -308,6 +308,7 @@ defmodule Froth.Codex.Session do
            name: nil,
            topic: state.codex_topic,
            cwd: File.cwd!(),
+           
            request_timeout: @request_timeout_ms
          ) do
       {:ok, pid} ->
@@ -370,7 +371,7 @@ defmodule Froth.Codex.Session do
       params = %{
         "cwd" => File.cwd!(),
         "approvalPolicy" => "never",
-        "sandboxPolicy" => %{"type" => "dangerFullAccess"},
+        "sandbox" => "danger-full-access",
         "personality" => "friendly"
       }
 
