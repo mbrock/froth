@@ -12,6 +12,10 @@ defmodule Froth.Codex.Task do
         cwd: "/path/to/project",
         chat_id: chat_id
       )
+
+      Froth.Codex.Task.dispatch("rfc/froth-rfc0007.md",
+        chat_id: chat_id
+      )
   """
 
   alias Froth.Telemetry.Span
@@ -58,6 +62,48 @@ defmodule Froth.Codex.Task do
       collect_until_done(session_id)
     else
       {:ok, session_id}
+    end
+  end
+
+  @doc """
+  Dispatch an RFC to Codex for implementation.
+
+  Reads the RFC file, constructs a prompt that tells Codex to implement
+  the spec, commit when done, and report the commit hash. Returns
+  `{:ok, session_id}`.
+
+  The commit hash appears in the Codex session output. Charlie can
+  investigate the result however he feels like.
+
+  Options: same as `run/2`.
+  """
+  def dispatch(rfc_path, opts \\ []) when is_binary(rfc_path) do
+    cwd = Keyword.get(opts, :cwd, Path.join(System.user_home!(), "froth"))
+    full_path = Path.expand(rfc_path, cwd)
+
+    case File.read(full_path) do
+      {:ok, content} ->
+        prompt = """
+        Implement the following RFC. Read it carefully, then write the code.
+        When you are done, commit all changes with a descriptive message
+        that references the RFC number. After committing, print the commit
+        hash on a line by itself prefixed with COMMIT: so it can be parsed.
+
+        File: #{rfc_path}
+
+        ---
+        #{content}
+        ---
+
+        Work in #{cwd}. Do not ask clarifying questions. If the RFC is
+        ambiguous, make the simplest choice that satisfies the spec.
+        Commit when done. Print the commit hash.
+        """
+
+        run(prompt, Keyword.put(opts, :cwd, cwd))
+
+      {:error, reason} ->
+        {:error, {:file_read_failed, full_path, reason}}
     end
   end
 
