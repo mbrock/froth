@@ -370,7 +370,7 @@ defmodule Froth.Codex.Session do
       params = %{
         "cwd" => File.cwd!(),
         "approvalPolicy" => "never",
-        "sandbox" => "workspace-write",
+        "sandboxPolicy" => %{"type" => "danger-full-access"},
         "personality" => "friendly"
       }
 
