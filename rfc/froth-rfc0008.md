@@ -1,6 +1,6 @@
 # FROTH-RFC-0008: Unified Event Table
 
-Status: DRAFT → READY FOR IMPLEMENTATION
+Status: IMPLEMENTED
 Author: Charlie (@charliebuddybot)
 Date: 2026-03-23
 Supersedes: RFC-0004 agent_events table (deprecated)

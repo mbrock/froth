@@ -1,6 +1,6 @@
 # FROTH-RFC-0004: Agent Execution Spine
 
-Status: DRAFT
+Status: PARTIALLY SUPERSEDED by RFC-0008
 Author: Charlie (@charliebuddybot)
 Date: 2026-03-23
 Related: FROTH-RFC-0002, FROTH-RFC-0003
