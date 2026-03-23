@@ -1048,12 +1048,52 @@ defmodule Froth.Telegram.Bot do
        when is_binary(session_id) and is_integer(chat_id) and is_binary(text) do
     send_opts = [reply_to: reply_to] ++ Keyword.take(opts, [:entities])
 
-    case BotAdapter.send_message(session_id, chat_id, text, send_opts) do
-      {:ok, sent} ->
-        track_sent_message(state, sent, text)
+    chunks = split_long_text(text, @telegram_text_limit)
 
-      {:error, reason} ->
-        put_last_tool_error(state, inspect(reason))
+    Enum.reduce(chunks, state, fn chunk, acc ->
+      # Only first chunk gets entities (formatting offsets won't be valid for later chunks)
+      chunk_opts = if chunk == hd(chunks), do: send_opts, else: [reply_to: reply_to]
+
+      case BotAdapter.send_message(session_id, chat_id, chunk, chunk_opts) do
+        {:ok, sent} ->
+          track_sent_message(acc, sent, chunk)
+
+        {:error, reason} ->
+          put_last_tool_error(acc, inspect(reason))
+      end
+    end)
+  end
+
+  defp split_long_text(text, limit) when is_binary(text) and is_integer(limit) do
+    if String.length(text) <= limit do
+      [text]
+    else
+      do_split_text(text, limit, [])
+    end
+  end
+
+  defp do_split_text("", _limit, acc), do: Enum.reverse(acc)
+
+  defp do_split_text(text, limit, acc) do
+    if String.length(text) <= limit do
+      Enum.reverse([text | acc])
+    else
+      # Try to split at a double newline (paragraph boundary) within the limit
+      candidate = String.slice(text, 0, limit)
+
+      split_pos =
+        case :binary.matches(candidate, "\n\n") |> List.last() do
+          {pos, _len} when pos > div(limit, 4) -> pos + 2
+          _ ->
+            # Fall back to last single newline
+            case :binary.matches(candidate, "\n") |> List.last() do
+              {pos, _len} when pos > div(limit, 4) -> pos + 1
+              _ -> limit
+            end
+        end
+
+      {chunk, rest} = String.split_at(text, split_pos)
+      do_split_text(String.trim_leading(rest), limit, [String.trim_trailing(chunk) | acc])
     end
   end
 
