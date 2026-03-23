@@ -329,3 +329,63 @@ This does not solve the architecture. It stops the bleeding.
 - charlie_lore.md (the manually written lore file)
 - The Whale and the Hymnal (lore, 2026-03-13)
 - FROTH-RFC-0004 (execution spine, related persistence work)
+
+## Amendment: Narration-Based Cycle Trace Compression (2026-03-23)
+
+Implemented immediately after the transcript bloat diagnosis.
+
+### Changes Made
+
+1. **Narration required on tool calls** (inference/tools.ex):
+   `run_shell` and `elixir_eval` now require a `narration`
+   parameter — a sentence describing what the tool call does
+   and why. Previously optional, rarely used.
+
+2. **Narration extracted into trace entries** (agent.ex):
+   `extract_trace_entries` now pulls the narration field from
+   the tool_use input and includes it in the trace entry struct.
+
+3. **Cycle trace rendering uses narration** (bot_context_html.ex):
+   The `<call>` tag in cycle traces now renders the narration
+   text when available, falling back to a 300-character truncated
+   version of the input JSON. Previously rendered the full input
+   JSON — which for a 40-line shell command was 4KB of grep
+   pipelines and sed scripts.
+
+### Expected Impact
+
+A cycle trace that previously looked like:
+
+    <call tool="run_shell">
+      {"command":"journalctl --user -u froth --no-pager
+      --since '3 days ago' 2>&1 | grep -i -E
+      'summar.*error|summar.*fail|too.long|too.many.token
+      |context.*long|prompt.*long|max.*token|token.*limit
+      |summar.*exception' | tail -30","working_dir":"/home..."}
+    </call>
+    <return>
+      [500 chars of log output]
+    </return>
+
+Now looks like:
+
+    <call tool="run_shell">
+      Searching the Froth service logs for the actual summarizer
+      error that's been blocking generation since March 19.
+    </call>
+    <return>
+      [500 chars of log output]
+    </return>
+
+The call tag drops from ~4KB to ~100 bytes. For a cycle with
+10 tool calls, the savings are 30-40KB. For March 20's 91
+cycle-containing messages, the projected savings are 1.4MB —
+reducing the day's transcript from 3.2MB to ~1.8MB, well
+within the context window.
+
+The narration also serves double duty: it's sent to the chat
+as italicized text during execution (existing behavior), and
+it's now preserved in the cycle trace for future reference.
+The transcript becomes self-documenting — you can read the
+sequence of narrations and understand what happened without
+parsing shell commands or Elixir code.
