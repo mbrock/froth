@@ -19,17 +19,31 @@ defmodule FrothWeb.TelemetryLive do
       )
     end
 
-    follow_filter = Filter.new()
-    events = load_recent_events(follow_filter, nil)
-
     {:ok,
      assign(socket,
-       entries: events,
+       entries: [],
        filter_text: "",
-       follow_filter: follow_filter,
+       follow_filter: Filter.new(),
        paused: false,
        selected_entry_id: nil,
        view_mode: :smart
+     )}
+  end
+
+  @impl true
+  def handle_params(params, _uri, socket) do
+    follow_filter = filter_from_params(params)
+    filter_text = normalize_filter_value(params["q"])
+    view_mode = parse_view_mode(params["mode"])
+    events = load_recent_events(follow_filter, filter_text)
+
+    {:noreply,
+     assign(socket,
+       entries: events,
+       filter_text: filter_text || "",
+       follow_filter: follow_filter,
+       selected_entry_id: nil,
+       view_mode: view_mode
      )}
   end
 
@@ -56,20 +70,11 @@ defmodule FrothWeb.TelemetryLive do
 
   @impl true
   def handle_event("filter", %{"event" => event_prefix}, socket) do
-    follow_filter =
-      %{
-        socket.assigns.follow_filter
-        | event_prefix: normalize_filter_value(event_prefix)
-      }
-
-    events = load_recent_events(follow_filter, socket.assigns.filter_text)
-    {:noreply, assign(socket, follow_filter: follow_filter, entries: events)}
+    {:noreply, push_patch(socket, to: telemetry_path(socket, event: event_prefix))}
   end
 
   def handle_event("search", %{"q" => q}, socket) do
-    text = normalize_filter_value(q)
-    events = load_recent_events(socket.assigns.follow_filter, text)
-    {:noreply, assign(socket, filter_text: q || "", entries: events)}
+    {:noreply, push_patch(socket, to: telemetry_path(socket, q: q))}
   end
 
   def handle_event("toggle-pause", _, socket) do
@@ -77,21 +82,15 @@ defmodule FrothWeb.TelemetryLive do
   end
 
   def handle_event("filter-cycle", %{"cycle" => cycle_id}, socket) do
-    follow_filter = %{socket.assigns.follow_filter | cycle_id: normalize_filter_value(cycle_id)}
-    events = load_recent_events(follow_filter, socket.assigns.filter_text)
-    {:noreply, assign(socket, follow_filter: follow_filter, entries: events)}
+    {:noreply, push_patch(socket, to: telemetry_path(socket, cycle: cycle_id))}
   end
 
   def handle_event("filter-span", %{"span" => span_id}, socket) do
-    follow_filter = %{socket.assigns.follow_filter | span_id: normalize_filter_value(span_id)}
-    events = load_recent_events(follow_filter, socket.assigns.filter_text)
-    {:noreply, assign(socket, follow_filter: follow_filter, entries: events)}
+    {:noreply, push_patch(socket, to: telemetry_path(socket, span: span_id))}
   end
 
   def handle_event("clear-scope", _, socket) do
-    follow_filter = %{socket.assigns.follow_filter | cycle_id: nil, span_id: nil}
-    events = load_recent_events(follow_filter, socket.assigns.filter_text)
-    {:noreply, assign(socket, follow_filter: follow_filter, entries: events)}
+    {:noreply, push_patch(socket, to: telemetry_path(socket, cycle: nil, span: nil))}
   end
 
   def handle_event("select-entry", %{"id" => id}, socket) do
@@ -100,8 +99,7 @@ defmodule FrothWeb.TelemetryLive do
   end
 
   def handle_event("set-mode", %{"mode" => mode}, socket) do
-    view_mode = if mode == "raw", do: :raw, else: :smart
-    {:noreply, assign(socket, view_mode: view_mode)}
+    {:noreply, push_patch(socket, to: telemetry_path(socket, mode: mode))}
   end
 
   def handle_event("clear", _, socket) do
@@ -513,6 +511,46 @@ defmodule FrothWeb.TelemetryLive do
       trimmed -> trimmed
     end
   end
+
+  defp filter_from_params(params) do
+    Filter.new(
+      event_prefix: params["event"],
+      cycle_id: params["cycle"],
+      span_id: params["span"]
+    )
+  end
+
+  defp parse_view_mode("raw"), do: :raw
+  defp parse_view_mode(_), do: :smart
+
+  defp telemetry_path(socket, overrides) do
+    params =
+      %{
+        "event" => socket.assigns.follow_filter.event_prefix,
+        "cycle" => socket.assigns.follow_filter.cycle_id,
+        "span" => socket.assigns.follow_filter.span_id,
+        "q" => normalize_filter_value(socket.assigns.filter_text),
+        "mode" => mode_param(socket.assigns.view_mode)
+      }
+      |> merge_query_overrides(overrides)
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+      |> Map.new()
+
+    ~p"/froth/telemetry?#{params}"
+  end
+
+  defp merge_query_overrides(params, overrides) do
+    Enum.reduce(overrides, params, fn {key, value}, acc ->
+      Map.put(acc, to_string(key), normalize_query_value(key, value))
+    end)
+  end
+
+  defp normalize_query_value(:mode, value), do: mode_param(parse_view_mode(value))
+  defp normalize_query_value("mode", value), do: mode_param(parse_view_mode(value))
+  defp normalize_query_value(_key, value), do: normalize_filter_value(value)
+
+  defp mode_param(:raw), do: "raw"
+  defp mode_param(:smart), do: nil
 
   defp entry_json(entry) do
     %{

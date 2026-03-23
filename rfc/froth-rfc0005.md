@@ -86,6 +86,8 @@ The first implementation slice of this RFC is now in place:
   payload on demand
 - `TelemetryLive` can now pin the timeline to a cycle or span directly
   from an entry's expanded detail controls
+- `TelemetryLive` now keeps mode, search, and cycle/span scope in the
+  URL so a filtered view can be reloaded or shared
 - projector behavior is covered by focused tests, and the LiveView has
   integration coverage for smart/raw rendering
 
@@ -93,8 +95,8 @@ That means the shared semantic layer is no longer hypothetical.
 
 What is still not done:
 
-- URL-deep-linking and durable navigation state for cycle/span/task
-  pinning in the readers
+- richer durable navigation state for cycle/span/task pinning,
+  including saved views and task-level deep links
 - richer filtering beyond event-prefix, text, and first-pass
   cycle/span scope filters
 - a richer raw detail pane with linked navigation instead of a simple

@@ -85,8 +85,36 @@ defmodule FrothWeb.TelemetryLiveTest do
     |> element("#event-filter-cycle-#{matching_id}")
     |> render_click()
 
+    assert_patch(view, ~p"/froth/telemetry?cycle=01KMDKN3GHAC7B814PD3GB4THP")
     assert has_element?(view, "#telemetry-scope-filters", "cycle 01KMDKN3GHAC7B814PD3GB4THP")
     assert has_element?(view, "#event-#{matching_id}")
+    refute has_element?(view, "#event-#{other_id}")
+  end
+
+  test "query params restore a scoped raw view", %{conn: conn} do
+    matching_id =
+      insert_event(%{
+        event: "froth.llm.edit",
+        metadata: %{
+          "provider" => "anthropic",
+          "cycle_id" => "01KMDKN3GHAC7B814PD3GB4THP"
+        }
+      })
+
+    other_id =
+      insert_event(%{
+        event: "froth.llm.edit",
+        metadata: %{
+          "provider" => "openai",
+          "cycle_id" => "01OTHERCYCLE00000000000000"
+        }
+      })
+
+    {:ok, view, _html} =
+      live(conn, ~p"/froth/telemetry?cycle=01KMDKN3GHAC7B814PD3GB4THP&mode=raw")
+
+    assert has_element?(view, "#telemetry-scope-filters", "cycle 01KMDKN3GHAC7B814PD3GB4THP")
+    assert has_element?(view, "#event-#{matching_id}", "llm.edit")
     refute has_element?(view, "#event-#{other_id}")
   end
 
