@@ -24,6 +24,13 @@ defmodule FrothWeb.TelemetryLiveTest do
     assert has_element?(view, "#event-#{id}", "tool")
     assert has_element?(view, "#event-#{id}", "read_tool_transcript")
     assert has_element?(view, "#event-#{id}", "completed")
+
+    view
+    |> element("#event-#{id}")
+    |> render_click()
+
+    assert has_element?(view, "#event-detail-#{id}")
+    assert has_element?(view, "#event-json-#{id}", "\"tool_name\": \"read_tool_transcript\"")
   end
 
   test "raw mode reveals events hidden in smart mode", %{conn: conn} do

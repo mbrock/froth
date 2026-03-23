@@ -70,6 +70,34 @@ Concretely:
 - raw telemetry should remain available, but not be the default view
 - formatting logic should be shared, not duplicated between CLI and UI
 
+## Current Status
+
+The first implementation slice of this RFC is now in place:
+
+- `Froth.Follow.Entry`, `Froth.Follow.Projector`, and
+  `Froth.Follow.Renderer` exist
+- `mix froth.follow` now renders projected follow entries instead of
+  formatting raw telemetry inline
+- `TelemetryLive` now consumes the same projected entry model and has
+  `Smart` and `Raw` modes
+- `TelemetryLive` rows can now expand inline to show the raw projected
+  payload on demand
+- projector behavior is covered by focused tests, and the LiveView has
+  integration coverage for smart/raw rendering
+
+That means the shared semantic layer is no longer hypothetical.
+
+What is still not done:
+
+- cycle/span/task pinning in the readers
+- richer filtering beyond event-prefix and mode
+- a richer raw detail pane with linked navigation instead of a simple
+  inline payload expansion
+- a dedicated `FollowLive` tuned for execution-log reading rather than
+  a reused telemetry table
+- preference for future typed `agent_events` over inferred telemetry
+  when RFC-0004 lands
+
 ## Non-Goals
 
 - This RFC does not replace raw telemetry storage.

@@ -27,6 +27,7 @@ defmodule FrothWeb.TelemetryLive do
        filter_event: nil,
        filter_text: "",
        paused: false,
+       selected_entry_id: nil,
        view_mode: :smart
      )}
   end
@@ -67,6 +68,11 @@ defmodule FrothWeb.TelemetryLive do
 
   def handle_event("toggle-pause", _, socket) do
     {:noreply, assign(socket, paused: !socket.assigns.paused)}
+  end
+
+  def handle_event("select-entry", %{"id" => id}, socket) do
+    selected_entry_id = if socket.assigns.selected_entry_id == id, do: nil, else: id
+    {:noreply, assign(socket, selected_entry_id: selected_entry_id)}
   end
 
   def handle_event("set-mode", %{"mode" => mode}, socket) do
@@ -299,51 +305,74 @@ defmodule FrothWeb.TelemetryLive do
               </tr>
             </thead>
             <tbody id="events">
-              <tr
-                :for={entry <- visible_entries(@entries, @filter_event, @view_mode)}
-                id={"event-#{entry.id}"}
-                class="border-b border-zinc-900 hover:bg-zinc-900/50"
-              >
-                <td class="px-3 py-1.5 font-mono text-zinc-500 whitespace-nowrap">
-                  {format_time(entry.at)}
-                </td>
-                <%= if @view_mode == :raw do %>
-                  <td class={"px-3 py-1.5 font-mono whitespace-nowrap #{event_color(entry.event)}"}>
-                    {short_event(entry.event)}
-                  </td>
-                  <td class="px-3 py-1.5 font-mono text-zinc-600 whitespace-nowrap">
-                    <%= if sid = entry.span_id do %>
-                      <span class="text-zinc-500" title={"span: #{sid}"}>
-                        {String.slice(sid, 0, 8)}
-                      </span>
-                    <% end %>
-                    <%= if pid = entry.parent_id do %>
-                      <span class="text-zinc-600" title={"parent: #{pid}"}>
-                        ← {String.slice(to_string(pid), 0, 8)}
-                      </span>
-                    <% end %>
-                  </td>
-                  <td
-                    class="px-3 py-1.5 text-zinc-400 truncate max-w-lg"
-                    title={format_metadata(entry.metadata)}
-                  >
-                    {format_metadata(entry.metadata) || ""}
-                  </td>
-                <% else %>
-                  <td class={"px-3 py-1.5 font-mono whitespace-nowrap #{family_color(entry.family)}"}>
-                    {entry.family}
-                  </td>
+              <%= for entry <- visible_entries(@entries, @filter_event, @view_mode) do %>
+                <tr
+                  id={"event-#{entry.id}"}
+                  phx-click="select-entry"
+                  phx-value-id={entry.id}
+                  class={[
+                    "cursor-pointer border-b border-zinc-900 hover:bg-zinc-900/50",
+                    @selected_entry_id == to_string(entry.id) && "bg-zinc-900/60"
+                  ]}
+                >
                   <td class="px-3 py-1.5 font-mono text-zinc-500 whitespace-nowrap">
-                    {entry.scope || "-"}
+                    {format_time(entry.at)}
                   </td>
-                  <td class={"px-3 py-1.5 truncate max-w-sm #{summary_color(entry.level)}"}>
-                    {entry.summary}
-                  </td>
-                  <td class="px-3 py-1.5 text-zinc-400 truncate max-w-lg" title={entry.detail || ""}>
-                    {entry.detail || ""}
-                  </td>
+                  <%= if @view_mode == :raw do %>
+                    <td class={"px-3 py-1.5 font-mono whitespace-nowrap #{event_color(entry.event)}"}>
+                      {short_event(entry.event)}
+                    </td>
+                    <td class="px-3 py-1.5 font-mono text-zinc-600 whitespace-nowrap">
+                      <%= if sid = entry.span_id do %>
+                        <span class="text-zinc-500" title={"span: #{sid}"}>
+                          {String.slice(sid, 0, 8)}
+                        </span>
+                      <% end %>
+                      <%= if pid = entry.parent_id do %>
+                        <span class="text-zinc-600" title={"parent: #{pid}"}>
+                          ← {String.slice(to_string(pid), 0, 8)}
+                        </span>
+                      <% end %>
+                    </td>
+                    <td
+                      class="px-3 py-1.5 text-zinc-400 truncate max-w-lg"
+                      title={format_metadata(entry.metadata)}
+                    >
+                      {format_metadata(entry.metadata) || ""}
+                    </td>
+                  <% else %>
+                    <td class={"px-3 py-1.5 font-mono whitespace-nowrap #{family_color(entry.family)}"}>
+                      {entry.family}
+                    </td>
+                    <td class="px-3 py-1.5 font-mono text-zinc-500 whitespace-nowrap">
+                      {entry.scope || "-"}
+                    </td>
+                    <td class={"px-3 py-1.5 truncate max-w-sm #{summary_color(entry.level)}"}>
+                      {entry.summary}
+                    </td>
+                    <td class="px-3 py-1.5 text-zinc-400 truncate max-w-lg" title={entry.detail || ""}>
+                      {entry.detail || ""}
+                    </td>
+                  <% end %>
+                </tr>
+                <%= if @selected_entry_id == to_string(entry.id) do %>
+                  <tr id={"event-detail-#{entry.id}"} class="border-b border-zinc-900 bg-zinc-900/80">
+                    <td colspan="5" class="px-3 py-3">
+                      <div class="mb-2 flex items-center justify-between">
+                        <div class="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+                          Raw Event Payload
+                        </div>
+                        <div class="text-[11px] text-zinc-600">{entry.event}</div>
+                      </div>
+                      <pre
+                        id={"event-json-#{entry.id}"}
+                        phx-no-curly-interpolation
+                        class="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono text-[11px] leading-5 text-zinc-300"
+                      ><%= entry_json(entry) %></pre>
+                    </td>
+                  </tr>
                 <% end %>
-              </tr>
+              <% end %>
             </tbody>
           </table>
         </div>
@@ -357,5 +386,28 @@ defmodule FrothWeb.TelemetryLive do
     |> Enum.filter(fn entry ->
       (is_nil(prefix) or String.starts_with?(entry.event, prefix)) and Entry.visible?(entry, mode)
     end)
+  end
+
+  defp entry_json(entry) do
+    %{
+      id: entry.id,
+      event: entry.event,
+      family: entry.family,
+      kind: entry.kind,
+      level: entry.level,
+      scope: entry.scope,
+      summary: entry.summary,
+      detail: entry.detail,
+      duration_ms: entry.duration_ms,
+      cycle_id: entry.cycle_id,
+      span_id: entry.span_id,
+      parent_id: entry.parent_id,
+      tool_use_id: entry.tool_use_id,
+      message_id: entry.message_id,
+      measurements: entry.measurements,
+      metadata: entry.metadata
+    }
+    |> Jason.encode_to_iodata!()
+    |> Jason.Formatter.pretty_print()
   end
 end
