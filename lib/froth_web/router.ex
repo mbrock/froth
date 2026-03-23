@@ -40,6 +40,7 @@ defmodule FrothWeb.Router do
     get "/media/:chat_id/:message_id", MediaController, :show
     # live "/voice", VoiceLive, :index  # replaced by /froth/voice controller
     live "/bot-context", BotContextLive, :index
+    live "/follow", FollowLive, :index
     live "/telemetry", TelemetryLive, :index
     live "/chat-stats", ChatStatsLive, :index
     live "/chat-stats/:day", ChatStatsLive, :index
