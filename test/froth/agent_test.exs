@@ -99,6 +99,27 @@ defmodule Froth.Agent.WorkerTest do
     assert reason == :normal
   end
 
+  defp attach_tool_telemetry do
+    handler_id = "worker-test-telemetry-#{System.unique_integer([:positive])}"
+
+    :ok =
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:froth, :agent, :tool, :started],
+          [:froth, :agent, :tool, :completed],
+          [:froth, :agent, :tool, :failed],
+          [:froth, :agent, :tool, :timed_out]
+        ],
+        fn event_name, measurements, metadata, pid ->
+          send(pid, {:telemetry_event, event_name, measurements, metadata})
+        end,
+        self()
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+  end
+
   describe "simple reply (no tools)" do
     test "calls the LLM once and stops" do
       executor = start_executor(fn _, _ -> "ok" end)
@@ -235,6 +256,8 @@ defmodule Froth.Agent.WorkerTest do
     end
 
     test "times out stalled tools using the worker-owned deadline" do
+      attach_tool_telemetry()
+
       executor =
         start_executor(fn %ToolUse{}, _context ->
           Process.sleep(50)
@@ -255,12 +278,91 @@ defmodule Froth.Agent.WorkerTest do
       last_message = List.last(messages)
       [tool_result] = last_message["content"]
 
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :started], %{},
+                      %{tool_name: "froth_echo", tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"}},
+                     5000
+
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :timed_out], measurements,
+                      %{
+                        timeout_ms: 10,
+                        tool_name: "froth_echo",
+                        tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"
+                      }},
+                     5000
+
+      assert is_integer(measurements.duration)
+      assert measurements.duration > 0
+
       assert tool_result == %{
                "type" => "tool_result",
                "tool_use_id" => "toolu_01723uR8LLoYDLV4oqbtHEd4",
                "content" => "tool timed out after 10ms",
                "is_error" => true
              }
+
+      wait_for_exit(pid)
+    end
+
+    test "emits completed tool telemetry with duration and metadata" do
+      attach_tool_telemetry()
+
+      executor =
+        start_executor(fn %ToolUse{input: %{"text" => text}}, _context -> "echoed: #{text}" end)
+
+      {pid, _cycle} =
+        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :started], %{},
+                      %{
+                        cycle_id: cycle_id,
+                        tool_name: "froth_echo",
+                        tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4",
+                        input_keys: ["text"]
+                      }},
+                     5000
+
+      assert is_binary(cycle_id)
+
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :completed], measurements,
+                      %{
+                        cycle_id: ^cycle_id,
+                        result_type: :text,
+                        tool_name: "froth_echo",
+                        tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"
+                      }},
+                     5000
+
+      assert is_integer(measurements.duration)
+      assert measurements.duration > 0
+
+      wait_for_exit(pid)
+    end
+
+    test "emits failed tool telemetry when a tool returns an error result" do
+      attach_tool_telemetry()
+
+      executor =
+        start_executor(fn %ToolUse{}, _context ->
+          {:error, "echo failed"}
+        end)
+
+      {pid, _cycle} =
+        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :started], %{},
+                      %{tool_name: "froth_echo", tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"}},
+                     5000
+
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :failed], measurements,
+                      %{
+                        error: "echo failed",
+                        tool_name: "froth_echo",
+                        tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"
+                      }},
+                     5000
+
+      assert is_integer(measurements.duration)
+      assert measurements.duration > 0
 
       wait_for_exit(pid)
     end

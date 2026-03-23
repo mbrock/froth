@@ -56,7 +56,11 @@ defmodule Froth.Telemetry do
     [:froth, :agent, :cycle, :start],
     [:froth, :agent, :cycle, :stop],
     [:froth, :agent, :think, :start],
-    [:froth, :agent, :think, :stop]
+    [:froth, :agent, :think, :stop],
+    [:froth, :agent, :tool, :started],
+    [:froth, :agent, :tool, :completed],
+    [:froth, :agent, :tool, :failed],
+    [:froth, :agent, :tool, :timed_out]
   ]
 
   @telegram_events [

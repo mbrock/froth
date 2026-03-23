@@ -19,7 +19,8 @@ defmodule Froth.Agent.Worker do
           ref: reference(),
           task: Task.t(),
           tool_use: ToolUse.t(),
-          timer_ref: reference()
+          timer_ref: reference(),
+          started_at: integer()
         }
   @type phase ::
           :initial
@@ -122,6 +123,8 @@ defmodule Froth.Agent.Worker do
       ) do
     case find_invocation_in_list(invocations, ref) do
       %{tool_use: %ToolUse{id: ^tool_use_id}} = invocation ->
+        worker = emit_tool_result_event(worker, invocation, result)
+
         worker
         |> cancel_invocation_timer(invocation)
         |> forget_invocation(invocation, MapSet.put(ignored_refs, ref))
@@ -170,6 +173,7 @@ defmodule Froth.Agent.Worker do
       invocation = find_invocation(worker.phase, ref) ->
         tool_use_id = invocation.tool_use.id
         error = "tool task failed: #{Exception.format_exit(reason)}"
+        worker = emit_tool_failed_event(worker, invocation, error)
 
         worker
         |> cancel_invocation_timer(invocation)
@@ -192,6 +196,7 @@ defmodule Froth.Agent.Worker do
 
       invocation = find_invocation(worker.phase, ref) ->
         Process.exit(invocation.task.pid, :kill)
+        worker = emit_tool_timed_out_event(worker, invocation)
 
         worker
         |> forget_invocation(invocation, MapSet.put(ignored_refs, ref))
@@ -295,6 +300,9 @@ defmodule Froth.Agent.Worker do
 
     invocations =
       Enum.map(tool_uses, fn %ToolUse{id: id} = tool_use ->
+        started_at = System.monotonic_time()
+        emit_tool_started_event(worker, tool_use)
+
         task =
           Task.Supervisor.async_nolink(Froth.Agent.TaskSupervisor, fn ->
             result = execute_tool(worker.config.tool_executor, tool_use, context)
@@ -305,7 +313,8 @@ defmodule Froth.Agent.Worker do
           ref: task.ref,
           task: task,
           tool_use: tool_use,
-          timer_ref: Process.send_after(self(), {:tool_timeout, task.ref}, tool_timeout_ms)
+          timer_ref: Process.send_after(self(), {:tool_timeout, task.ref}, tool_timeout_ms),
+          started_at: started_at
         }
       end)
 
@@ -383,6 +392,103 @@ defmodule Froth.Agent.Worker do
   defp timeout_error(tool_timeout_ms) when is_integer(tool_timeout_ms) and tool_timeout_ms > 0 do
     "tool timed out after #{tool_timeout_ms}ms"
   end
+
+  defp emit_tool_started_event(worker, %ToolUse{} = tool_use) do
+    Span.execute(
+      [:froth, :agent, :tool, :started],
+      worker.cycle_span_id,
+      tool_event_meta(worker, tool_use)
+    )
+
+    worker
+  end
+
+  defp emit_tool_result_event(worker, invocation, {:error, reason}) do
+    emit_tool_failed_event(worker, invocation, format_tool_error(reason))
+  end
+
+  defp emit_tool_result_event(worker, invocation, result) do
+    Span.execute(
+      [:froth, :agent, :tool, :completed],
+      worker.cycle_span_id,
+      tool_event_meta(worker, invocation.tool_use, %{result_type: tool_result_type(result)}),
+      %{duration: tool_duration(invocation)}
+    )
+
+    worker
+  end
+
+  defp emit_tool_failed_event(worker, invocation, reason) do
+    Span.execute(
+      [:froth, :agent, :tool, :failed],
+      worker.cycle_span_id,
+      tool_event_meta(worker, invocation.tool_use, %{error: truncate_tool_detail(reason)}),
+      %{duration: tool_duration(invocation)}
+    )
+
+    worker
+  end
+
+  defp emit_tool_timed_out_event(worker, invocation) do
+    timeout_ms = worker.config.tool_timeout_ms || @default_tool_timeout_ms
+
+    Span.execute(
+      [:froth, :agent, :tool, :timed_out],
+      worker.cycle_span_id,
+      tool_event_meta(worker, invocation.tool_use, %{timeout_ms: timeout_ms}),
+      %{duration: tool_duration(invocation)}
+    )
+
+    worker
+  end
+
+  defp tool_event_meta(worker, %ToolUse{} = tool_use, extra_meta \\ %{}) do
+    Map.merge(
+      %{
+        cycle_id: worker.cycle.id,
+        head_id: worker.head_id,
+        tool_use_id: tool_use.id,
+        tool_name: tool_use.name,
+        input_keys: tool_input_keys(tool_use.input)
+      },
+      extra_meta
+    )
+  end
+
+  defp tool_input_keys(input) when is_map(input) do
+    input
+    |> Map.keys()
+    |> Enum.map(&to_string/1)
+    |> Enum.sort()
+  end
+
+  defp tool_input_keys(_), do: []
+
+  defp tool_duration(%{started_at: started_at}) when is_integer(started_at) do
+    System.monotonic_time() - started_at
+  end
+
+  defp tool_duration(_), do: 0
+
+  defp tool_result_type({:ok, content}), do: tool_result_type(content)
+  defp tool_result_type(content) when is_binary(content), do: :text
+  defp tool_result_type(content) when is_list(content), do: :blocks
+  defp tool_result_type(content) when is_map(content), do: :map
+  defp tool_result_type(content) when is_atom(content), do: content
+  defp tool_result_type(_content), do: :value
+
+  defp format_tool_error(reason) when is_binary(reason), do: reason
+  defp format_tool_error(reason), do: inspect(reason)
+
+  defp truncate_tool_detail(detail) when is_binary(detail) do
+    if String.length(detail) > 240 do
+      String.slice(detail, 0, 240) <> "..."
+    else
+      detail
+    end
+  end
+
+  defp truncate_tool_detail(detail), do: detail
 
   defp execute_tool(tool_executor, %ToolUse{} = tool_use, context) do
     case GenServer.call(tool_executor, {:prepare_tool, tool_use, context}, :infinity) do

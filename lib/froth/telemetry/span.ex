@@ -37,8 +37,8 @@ defmodule Froth.Telemetry.Span do
     end)
   end
 
-  def execute(event_name, parent_id, meta \\ %{}) do
-    :telemetry.execute(event_name, %{}, Map.put(meta, :parent_id, parent_id))
+  def execute(event_name, parent_id, meta \\ %{}, measurements \\ %{}) do
+    :telemetry.execute(event_name, measurements, Map.put(meta, :parent_id, parent_id))
   end
 
   def start_span(event_prefix, parent_id, meta) do
