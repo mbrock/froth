@@ -191,6 +191,7 @@ Raw event names should map into a smaller semantic vocabulary.
 Example families:
 
 - `cycle`
+- `control`
 - `think`
 - `tool`
 - `llm`
@@ -202,10 +203,13 @@ Example families:
 Example projections:
 
 - `froth.agent.cycle.start` -> `cycle started`
+- `froth.agent.cycle.stop` with structured outcome `yield` -> `cycle yielded`
+- `froth.agent.cycle.stop` with structured outcome `assistant_stopped_without_reply` -> `cycle stopped without reply`
 - `froth.agent.tool.started` -> `tool <name> started`
 - `froth.agent.tool.completed` -> `tool <name> completed`
 - `froth.agent.tool.failed` -> `tool <name> failed`
 - `froth.agent.tool.timed_out` -> `tool <name> timed out`
+- `froth.agent.control.reply_sent` -> `reply sent`
 - `froth.tasks.completed` -> `task <id> completed`
 - `froth.http.sse.text_delta` -> hidden in smart mode, visible in raw mode
 
@@ -284,6 +288,37 @@ consistent place. That lets both CLI and UI offer:
 - jump from a tool failure to related events
 - show only entries related to a given task or message
 
+### 6.5. Make control outcomes first-class in the reader
+
+The follow reader should not infer control flow from transcript text.
+
+A recent concrete bug made this obvious: a transcript tool returned a
+code snippet containing the string `Yielding:` and the runtime treated
+that text as a real yield signal. The CLI and LiveView should not
+repeat that mistake at the presentation layer.
+
+Instead, the projector should prefer explicit runtime outcomes such as:
+
+- `yield`
+- `reply_sent`
+- `assistant_stopped_without_reply`
+- `waiting_on_subscription`
+- `tool_error`
+- `cycle_error`
+
+Those outcomes should render as distinct summaries, for example:
+
+```text
+15:05:30.842  control        reply sent                  chat=-1003690254489
+15:05:34.339  tool transcript read_tool_transcript done 111ms
+15:05:34.460  cycle 01K...   cycle yielded              waiting on subscribed task
+15:05:34.461  cycle 01K...   stopped without reply      assistant requested tool and ended
+```
+
+The point is not just better wording. It is to make the reader report
+what the runtime actually decided, not what a human might guess from
+nearby text.
+
 ### 7. Build the LiveView on the same entries
 
 The future LiveView should not be another generic telemetry table.
@@ -351,6 +386,7 @@ This is important because the LiveView will want both:
 - implement smart/raw rendering
 - add semantic projections for current high-value families:
   - `agent`
+  - `control`
   - `tool`
   - `llm`
   - `tasks`
