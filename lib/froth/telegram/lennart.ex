@@ -21,7 +21,7 @@ defmodule Froth.Telegram.Lennart do
   @default_bot_id "lennart"
   @default_bot_username "barblebot"
   @default_session_id "agentbot"
-  @default_model "grok-4-1-fast-reasoning"
+  @default_model "grok-4.20-0309-reasoning"
 
   def default_config do
     cfg = Application.get_env(:froth, __MODULE__, [])
@@ -40,7 +40,7 @@ defmodule Froth.Telegram.Lennart do
       include_summaries: false,
       recent_message_limit: 250,
       max_tool_calls: 20,
-      effort: "medium"
+      effort: "high"
     }
   end
 
