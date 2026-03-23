@@ -5,3 +5,4 @@ FROTH RFCs
 0003  Parallel Tool Execution                     DRAFT  2026-03-23
 0004  Agent Execution Spine                       DRAFT  2026-03-23
 0005  Legible Follow and Execution Log Reader      DRAFT  2026-03-23
+0006  Hierarchical Memory / Pre-Cognitive Compress DRAFT  2026-03-23
