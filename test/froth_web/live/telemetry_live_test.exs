@@ -1,0 +1,70 @@
+defmodule FrothWeb.TelemetryLiveTest do
+  use FrothWeb.ConnCase, async: false
+
+  import Phoenix.LiveViewTest
+
+  alias Froth.Repo
+
+  test "smart mode renders projected semantic entries", %{conn: conn} do
+    id =
+      insert_event(%{
+        event: "froth.agent.tool.completed",
+        measurements: %{"duration_ms" => 56},
+        metadata: %{
+          "tool_name" => "read_tool_transcript",
+          "cycle_id" => "01KMDKN3GHAC7B814PD3GB4THP",
+          "result_type" => "text"
+        }
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/froth/telemetry")
+
+    assert has_element?(view, "#telemetry-table")
+    assert has_element?(view, "#telemetry-mode-smart")
+    assert has_element?(view, "#event-#{id}", "tool")
+    assert has_element?(view, "#event-#{id}", "read_tool_transcript")
+    assert has_element?(view, "#event-#{id}", "completed")
+  end
+
+  test "raw mode reveals events hidden in smart mode", %{conn: conn} do
+    id =
+      insert_event(%{
+        event: "froth.llm.edit",
+        metadata: %{
+          "provider" => "anthropic",
+          "op" => "append",
+          "resource_id" => "message/blocks/0"
+        }
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/froth/telemetry")
+
+    refute has_element?(view, "#event-#{id}")
+
+    view
+    |> element("#telemetry-mode-raw")
+    |> render_click()
+
+    assert has_element?(view, "#event-#{id}", "llm.edit")
+    assert has_element?(view, "#event-#{id}", "anthropic")
+  end
+
+  defp insert_event(attrs) do
+    id = Ecto.UUID.generate()
+    dumped_id = Ecto.UUID.dump!(id)
+
+    Repo.insert_all("telemetry_events", [
+      %{
+        id: dumped_id,
+        event: attrs[:event],
+        measurements: Map.get(attrs, :measurements, %{}),
+        metadata: Map.get(attrs, :metadata, %{}),
+        inserted_at: Map.get(attrs, :inserted_at, DateTime.utc_now()),
+        span_id: Map.get(attrs, :span_id),
+        parent_id: Map.get(attrs, :parent_id)
+      }
+    ])
+
+    id
+  end
+end

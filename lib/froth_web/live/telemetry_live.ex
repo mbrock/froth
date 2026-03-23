@@ -3,6 +3,8 @@ defmodule FrothWeb.TelemetryLive do
 
   import Ecto.Query
 
+  alias Froth.Follow.{Entry, Projector}
+
   @page_size 3000
   @max_events 5000
 
@@ -21,10 +23,11 @@ defmodule FrothWeb.TelemetryLive do
 
     {:ok,
      assign(socket,
-       events: events,
+       entries: events,
        filter_event: nil,
        filter_text: "",
-       paused: false
+       paused: false,
+       view_mode: :smart
      )}
   end
 
@@ -43,23 +46,9 @@ defmodule FrothWeb.TelemetryLive do
     if socket.assigns.paused do
       {:noreply, socket}
     else
-      event = %{
-        id: System.unique_integer([:positive]),
-        event: Enum.join(event_name, "."),
-        measurements: measurements,
-        metadata: clean_metadata(metadata),
-        inserted_at: DateTime.utc_now()
-      }
-
-      events = [event | socket.assigns.events] |> Enum.take(@max_events)
-
-      events =
-        case socket.assigns.filter_event do
-          nil -> events
-          _ -> events
-        end
-
-      {:noreply, assign(socket, events: events)}
+      entry = Projector.from_live(event_name, measurements, metadata)
+      entries = [entry | socket.assigns.entries] |> Enum.take(@max_events)
+      {:noreply, assign(socket, entries: entries)}
     end
   end
 
@@ -67,21 +56,26 @@ defmodule FrothWeb.TelemetryLive do
   def handle_event("filter", %{"event" => event_prefix}, socket) do
     filter = if event_prefix == "", do: nil, else: event_prefix
     events = load_recent_events(filter, nil)
-    {:noreply, assign(socket, filter_event: filter, filter_text: "", events: events)}
+    {:noreply, assign(socket, filter_event: filter, filter_text: "", entries: events)}
   end
 
   def handle_event("search", %{"q" => q}, socket) do
     text = if q == "", do: nil, else: q
     events = load_recent_events(socket.assigns.filter_event, text)
-    {:noreply, assign(socket, filter_text: q || "", events: events)}
+    {:noreply, assign(socket, filter_text: q || "", entries: events)}
   end
 
   def handle_event("toggle-pause", _, socket) do
     {:noreply, assign(socket, paused: !socket.assigns.paused)}
   end
 
+  def handle_event("set-mode", %{"mode" => mode}, socket) do
+    view_mode = if mode == "raw", do: :raw, else: :smart
+    {:noreply, assign(socket, view_mode: view_mode)}
+  end
+
   def handle_event("clear", _, socket) do
-    {:noreply, assign(socket, events: [])}
+    {:noreply, assign(socket, entries: [])}
   end
 
   defp load_recent_events(event_filter, text_filter) do
@@ -121,22 +115,10 @@ defmodule FrothWeb.TelemetryLive do
           )
       end
 
-    Froth.Repo.all(query, log: false)
+    query
+    |> Froth.Repo.all(log: false)
+    |> Enum.map(&Projector.from_row/1)
   end
-
-  defp clean_metadata(metadata) when is_map(metadata) do
-    metadata
-    |> Map.drop([:span_id, :parent_id])
-    |> Map.new(fn {k, v} -> {to_string(k), safe_value(v)} end)
-  end
-
-  defp clean_metadata(other), do: %{"value" => inspect(other)}
-
-  defp safe_value(v) when is_binary(v), do: v
-  defp safe_value(v) when is_number(v), do: v
-  defp safe_value(v) when is_boolean(v), do: v
-  defp safe_value(v) when is_atom(v), do: to_string(v)
-  defp safe_value(v), do: inspect(v, limit: 20, printable_limit: 200)
 
   defp event_color("froth.telegram." <> _), do: "text-blue-400"
   defp event_color("froth.agent." <> _), do: "text-purple-400"
@@ -207,6 +189,20 @@ defmodule FrothWeb.TelemetryLive do
     |> String.replace_prefix("froth.", "")
   end
 
+  defp family_color("telegram"), do: "text-blue-400"
+  defp family_color("cycle"), do: "text-sky-300"
+  defp family_color("think"), do: "text-cyan-300"
+  defp family_color("tool"), do: "text-emerald-300"
+  defp family_color("llm"), do: "text-fuchsia-300"
+  defp family_color("task"), do: "text-amber-300"
+  defp family_color("transport"), do: "text-zinc-500"
+  defp family_color(_), do: "text-zinc-300"
+
+  defp summary_color(:error), do: "text-red-300"
+  defp summary_color(:warn), do: "text-yellow-200"
+  defp summary_color(:info), do: "text-zinc-100"
+  defp summary_color(:debug), do: "text-zinc-400"
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -216,18 +212,46 @@ defmodule FrothWeb.TelemetryLive do
           <h1 class="text-xl font-semibold text-zinc-100">Telemetry Events</h1>
           <div class="flex items-center gap-2">
             <button
+              id="telemetry-mode-smart"
+              phx-click="set-mode"
+              phx-value-mode="smart"
+              class={"rounded px-3 py-1.5 text-xs font-medium " <>
+                if(@view_mode == :smart,
+                  do: "bg-zinc-100 text-zinc-900",
+                  else: "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                )}
+            >
+              Smart
+            </button>
+            <button
+              id="telemetry-mode-raw"
+              phx-click="set-mode"
+              phx-value-mode="raw"
+              class={"rounded px-3 py-1.5 text-xs font-medium " <>
+                if(@view_mode == :raw,
+                  do: "bg-zinc-100 text-zinc-900",
+                  else: "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                )}
+            >
+              Raw
+            </button>
+            <button
+              id="telemetry-toggle-pause"
               phx-click="toggle-pause"
               class={"rounded px-3 py-1.5 text-xs font-medium #{if @paused, do: "bg-amber-600 text-white", else: "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"}"}
             >
               {if @paused, do: "▶ Resume", else: "⏸ Pause"}
             </button>
             <button
+              id="telemetry-clear"
               phx-click="clear"
               class="rounded bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-600"
             >
               Clear
             </button>
-            <span class="text-xs text-zinc-500">{length(@events)} events</span>
+            <span class="text-xs text-zinc-500">
+              {length(visible_entries(@entries, @filter_event, @view_mode))} entries
+            </span>
           </div>
         </div>
 
@@ -244,8 +268,9 @@ defmodule FrothWeb.TelemetryLive do
           >
             {label}
           </button>
-          <form phx-change="search" class="ml-auto">
+          <form id="telemetry-search" phx-change="search" class="ml-auto">
             <input
+              id="telemetry-search-input"
               type="text"
               name="q"
               value={@filter_text}
@@ -257,45 +282,67 @@ defmodule FrothWeb.TelemetryLive do
         </div>
 
         <div class="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
-          <table class="w-full text-xs">
+          <table id="telemetry-table" class="w-full text-xs">
             <thead>
               <tr class="border-b border-zinc-800 text-left text-zinc-500">
                 <th class="px-3 py-2 w-20">Time</th>
-                <th class="px-3 py-2">Event</th>
-                <th class="px-3 py-2 w-24">Span</th>
-                <th class="px-3 py-2">Details</th>
+                <%= if @view_mode == :raw do %>
+                  <th class="px-3 py-2">Event</th>
+                  <th class="px-3 py-2 w-24">Span</th>
+                  <th class="px-3 py-2">Details</th>
+                <% else %>
+                  <th class="px-3 py-2 w-24">Family</th>
+                  <th class="px-3 py-2 w-28">Scope</th>
+                  <th class="px-3 py-2">Summary</th>
+                  <th class="px-3 py-2">Detail</th>
+                <% end %>
               </tr>
             </thead>
             <tbody id="events">
               <tr
-                :for={event <- visible_events(@events, @filter_event)}
-                id={"event-#{event.id}"}
+                :for={entry <- visible_entries(@entries, @filter_event, @view_mode)}
+                id={"event-#{entry.id}"}
                 class="border-b border-zinc-900 hover:bg-zinc-900/50"
               >
                 <td class="px-3 py-1.5 font-mono text-zinc-500 whitespace-nowrap">
-                  {format_time(event.inserted_at)}
+                  {format_time(entry.at)}
                 </td>
-                <td class={"px-3 py-1.5 font-mono whitespace-nowrap #{event_color(event.event)}"}>
-                  {short_event(event.event)}
-                </td>
-                <td class="px-3 py-1.5 font-mono text-zinc-600 whitespace-nowrap">
-                  <%= if sid = event[:span_id] || event.metadata["span_id"] do %>
-                    <span class="text-zinc-500" title={"span: #{sid}"}>
-                      {String.slice(sid, 0, 8)}
-                    </span>
-                  <% end %>
-                  <%= if pid = event[:parent_id] || event.metadata["parent_id"] do %>
-                    <span class="text-zinc-600" title={"parent: #{pid}"}>
-                      ← {String.slice(to_string(pid), 0, 8)}
-                    </span>
-                  <% end %>
-                </td>
-                <td
-                  class="px-3 py-1.5 text-zinc-400 truncate max-w-lg"
-                  title={format_metadata(event.metadata)}
-                >
-                  {format_metadata(event.metadata) || ""}
-                </td>
+                <%= if @view_mode == :raw do %>
+                  <td class={"px-3 py-1.5 font-mono whitespace-nowrap #{event_color(entry.event)}"}>
+                    {short_event(entry.event)}
+                  </td>
+                  <td class="px-3 py-1.5 font-mono text-zinc-600 whitespace-nowrap">
+                    <%= if sid = entry.span_id do %>
+                      <span class="text-zinc-500" title={"span: #{sid}"}>
+                        {String.slice(sid, 0, 8)}
+                      </span>
+                    <% end %>
+                    <%= if pid = entry.parent_id do %>
+                      <span class="text-zinc-600" title={"parent: #{pid}"}>
+                        ← {String.slice(to_string(pid), 0, 8)}
+                      </span>
+                    <% end %>
+                  </td>
+                  <td
+                    class="px-3 py-1.5 text-zinc-400 truncate max-w-lg"
+                    title={format_metadata(entry.metadata)}
+                  >
+                    {format_metadata(entry.metadata) || ""}
+                  </td>
+                <% else %>
+                  <td class={"px-3 py-1.5 font-mono whitespace-nowrap #{family_color(entry.family)}"}>
+                    {entry.family}
+                  </td>
+                  <td class="px-3 py-1.5 font-mono text-zinc-500 whitespace-nowrap">
+                    {entry.scope || "-"}
+                  </td>
+                  <td class={"px-3 py-1.5 truncate max-w-sm #{summary_color(entry.level)}"}>
+                    {entry.summary}
+                  </td>
+                  <td class="px-3 py-1.5 text-zinc-400 truncate max-w-lg" title={entry.detail || ""}>
+                    {entry.detail || ""}
+                  </td>
+                <% end %>
               </tr>
             </tbody>
           </table>
@@ -305,9 +352,10 @@ defmodule FrothWeb.TelemetryLive do
     """
   end
 
-  defp visible_events(events, nil), do: events
-
-  defp visible_events(events, prefix) do
-    Enum.filter(events, fn e -> String.starts_with?(e.event, prefix) end)
+  defp visible_entries(entries, prefix, mode) do
+    entries
+    |> Enum.filter(fn entry ->
+      (is_nil(prefix) or String.starts_with?(entry.event, prefix)) and Entry.visible?(entry, mode)
+    end)
   end
 end

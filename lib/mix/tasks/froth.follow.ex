@@ -4,13 +4,9 @@ defmodule Mix.Tasks.Froth.Follow do
 
   use Mix.Task
 
-  @handler_id "froth-follow"
+  alias Froth.Follow.{Entry, Projector, Renderer}
 
-  @dim "\e[2m"
-  @reset "\e[0m"
-  @bold "\e[1m"
-  @red "\e[31m"
-  @yellow "\e[33m"
+  @handler_id "froth-follow"
 
   @impl Mix.Task
   def run(args) do
@@ -30,7 +26,11 @@ defmodule Mix.Tasks.Froth.Follow do
       System.halt(1)
     end
 
-    prefix_filter = parse_filter(args)
+    {opts, remaining, _invalid} =
+      OptionParser.parse(args, strict: [raw: :boolean, errors: :boolean])
+
+    mode = parse_mode(opts)
+    prefix_filter = parse_filter(remaining)
     events = fetch_events(node)
     events = filter_events(events, prefix_filter)
 
@@ -45,13 +45,13 @@ defmodule Mix.Tasks.Froth.Follow do
     Mix.shell().info("Connected to #{node}")
 
     Mix.shell().info(
-      "Following #{length(events)} telemetry events#{if prefix_filter, do: " (filter: #{prefix_filter})"}\n"
+      "Following #{length(events)} telemetry events#{if prefix_filter, do: " (filter: #{Enum.join(prefix_filter, ".")})"} #{mode_label(mode)}\n"
     )
 
     Process.flag(:trap_exit, true)
 
     try do
-      loop()
+      loop(mode, prefix_filter)
     after
       :rpc.call(node, :telemetry, :detach, [@handler_id])
     end
@@ -61,86 +61,55 @@ defmodule Mix.Tasks.Froth.Follow do
     :rpc.call(node, Froth.Telemetry, :events, [])
   end
 
+  defp parse_mode(opts) do
+    cond do
+      opts[:raw] -> :raw
+      opts[:errors] -> :errors
+      true -> :smart
+    end
+  end
+
+  defp mode_label(:raw), do: "(raw mode)"
+  defp mode_label(:errors), do: "(errors mode)"
+  defp mode_label(:smart), do: "(smart mode)"
+
   defp parse_filter([]), do: nil
 
   defp parse_filter([filter | _]) do
     filter
     |> String.split(".")
-    |> Enum.map(&String.to_atom/1)
+    |> Enum.reject(&(&1 == ""))
   end
 
   defp filter_events(events, nil), do: events
 
   defp filter_events(events, prefix) do
     Enum.filter(events, fn event ->
-      List.starts_with?(event, prefix)
+      event
+      |> Enum.map(&Atom.to_string/1)
+      |> List.starts_with?(prefix)
     end)
   end
 
-  defp loop do
+  defp loop(mode, prefix_filter) do
     receive do
       {:telemetry_event, event_name, measurements, metadata} ->
-        format_event(event_name, measurements, metadata)
+        entry = Projector.from_live(event_name, measurements, metadata)
+
+        if matches_prefix?(entry, prefix_filter) and Entry.visible?(entry, mode) do
+          IO.write(Renderer.to_ansi(entry, mode))
+          IO.write("\n")
+        end
     end
 
-    loop()
+    loop(mode, prefix_filter)
   end
 
-  defp format_event(event_name, measurements, metadata) do
-    ts = DateTime.utc_now() |> Calendar.strftime("%H:%M:%S.%f") |> String.slice(0, 12)
-    name = Enum.join(event_name, ".")
-    level_color = level_color(event_name)
+  defp matches_prefix?(_entry, nil), do: true
 
-    IO.write([
-      @dim,
-      ts,
-      @reset,
-      " ",
-      level_color,
-      name,
-      @reset
-    ])
-
-    duration = format_duration(measurements)
-    if duration, do: IO.write([" ", @bold, duration, @reset])
-
-    pairs = format_metadata(metadata)
-    if pairs != [], do: IO.write([" ", pairs])
-
-    IO.write("\n")
+  defp matches_prefix?(entry, prefix) do
+    entry.event
+    |> String.split(".")
+    |> List.starts_with?(prefix)
   end
-
-  defp format_duration(%{duration: native}) when is_integer(native) do
-    ms = System.convert_time_unit(native, :native, :millisecond)
-    "#{ms}ms"
-  end
-
-  defp format_duration(_), do: nil
-
-  defp format_metadata(metadata) when map_size(metadata) == 0, do: []
-
-  defp format_metadata(metadata) do
-    metadata
-    |> Map.drop([:span_id, :parent_id, :system_time])
-    |> Enum.sort_by(fn {k, _} -> Atom.to_string(k) end)
-    |> Enum.map(fn {k, v} ->
-      [@dim, Atom.to_string(k), "=", @reset, format_val(v)]
-    end)
-    |> Enum.intersperse(" ")
-  end
-
-  defp format_val(v) when is_binary(v) and byte_size(v) > 80, do: String.slice(v, 0, 80) <> "..."
-  defp format_val(v) when is_binary(v), do: v
-  defp format_val(v) when is_atom(v), do: Atom.to_string(v)
-  defp format_val(v) when is_integer(v), do: Integer.to_string(v)
-  defp format_val(v) when is_float(v), do: Float.to_string(v)
-  defp format_val(true), do: "true"
-  defp format_val(false), do: "false"
-  defp format_val(v), do: inspect(v, limit: 5, printable_limit: 80)
-
-  defp level_color([:froth, _, _, :exception]), do: @red
-  defp level_color([:froth, _, _, :stop]), do: @bold
-  defp level_color([:froth, :http, :sse | _]), do: @dim
-  defp level_color([:froth, _, _, :start]), do: @dim
-  defp level_color(_), do: @yellow
 end
