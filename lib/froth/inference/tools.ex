@@ -174,7 +174,7 @@ defmodule Froth.Inference.Tools do
               "Optional prose narration of what this code does and why, in Aristotelian practical syllogism format (premise → premise → therefore action). Automatically sent as italics to the chat so observers can follow along."
           }
         },
-        "required" => ["code"],
+        "required" => ["code", "narration"],
         "additionalProperties" => false
       }
     },
@@ -203,7 +203,7 @@ defmodule Froth.Inference.Tools do
               "Optional prose narration of what this command does and why, in Aristotelian practical syllogism format. Automatically sent as italics to the chat."
           }
         },
-        "required" => ["command"],
+        "required" => ["command", "narration"],
         "additionalProperties" => false
       }
     },

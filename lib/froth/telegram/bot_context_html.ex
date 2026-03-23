@@ -201,11 +201,12 @@ defmodule Froth.Telegram.BotContextHTML do
 
   attr :entry, :map, required: true
 
-  def trace_entry(%{entry: %{kind: :call, tool: tool, input_json: input_json}} = assigns) do
-    assigns = assign(assigns, tool: tool, input_json: input_json)
+  def trace_entry(%{entry: %{kind: :call, tool: tool, input_json: input_json} = entry} = assigns) do
+    narration = Map.get(entry, :narration)
+    assigns = assign(assigns, tool: tool, input_json: input_json, narration: narration)
 
     ~H"""
-    <.call tool={@tool} input_json={@input_json} />
+    <.call tool={@tool} input_json={@input_json} narration={@narration} />
     """
   end
 
@@ -230,11 +231,15 @@ defmodule Froth.Telegram.BotContextHTML do
 
   attr :tool, :string, required: true
   attr :input_json, :string, required: true
+  attr :narration, :string, default: nil
 
   def call(assigns) do
+    truncated = String.slice(assigns.input_json, 0, 300)
+    assigns = assign(assigns, truncated: truncated)
+
     ~H"""
     <call tool={@tool}>
-      {@input_json}
+      {if @narration, do: @narration, else: @truncated}
     </call>
     """
   end
