@@ -7,3 +7,4 @@ FROTH RFCs
 0005  Legible Follow and Execution Log Reader      DRAFT  2026-03-23
 0006  Hierarchical Memory / Pre-Cognitive Compress DRAFT  2026-03-23
 0007  Triangulated Web Search (Multi-Provider)    DRAFT  2026-03-23
+0008  Unified Execution Timeline                  DRAFT  2026-03-23
