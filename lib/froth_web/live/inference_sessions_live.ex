@@ -406,22 +406,22 @@ defmodule FrothWeb.InferenceSessionsLive do
       turn_count: u.turn_count,
       event_count:
         fragment(
-          "(SELECT COUNT(*) FROM agent_events WHERE cycle_id = ?)",
+          "(SELECT COUNT(*) FROM events WHERE metadata->>'cycle_id' = ? AND event LIKE 'froth.agent.%')",
           l.cycle_id
         ),
       llm_call_count:
         fragment(
-          "(SELECT COUNT(*) FROM agent_events WHERE cycle_id = ? AND kind = 'llm.completed')",
+          "(SELECT COUNT(*) FROM events WHERE metadata->>'cycle_id' = ? AND event = 'froth.agent.llm.completed')",
           l.cycle_id
         ),
       tool_call_count:
         fragment(
-          "(SELECT COUNT(*) FROM agent_events WHERE cycle_id = ? AND kind = 'tool.started')",
+          "(SELECT COUNT(*) FROM events WHERE metadata->>'cycle_id' = ? AND event = 'froth.agent.tool.started')",
           l.cycle_id
         ),
       message_count:
         fragment(
-          "(SELECT COUNT(*) FROM agent_events WHERE cycle_id = ? AND kind = 'message.appended')",
+          "(SELECT COUNT(*) FROM events WHERE metadata->>'cycle_id' = ? AND event = 'froth.agent.message.appended')",
           l.cycle_id
         )
     })

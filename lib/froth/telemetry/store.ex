@@ -67,7 +67,7 @@ defmodule Froth.Telemetry.Store do
   end
 
   defp flush(entries) do
-    Froth.Repo.insert_all("telemetry_events", entries, log: false)
+    Froth.Repo.insert_all("events", entries, log: false)
   rescue
     e ->
       require Logger

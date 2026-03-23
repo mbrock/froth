@@ -1,11 +1,8 @@
 defmodule FrothWeb.ToolLive do
   use FrothWeb, :live_view
 
-  import Ecto.Query
-
   alias Froth.Agent
   alias Froth.Agent.Cycle
-  alias Froth.Agent.Event
   alias Froth.Agent.Message, as: AgentMessage
 
   @elixir_keywords ~w(
@@ -728,16 +725,7 @@ defmodule FrothWeb.ToolLive do
   end
 
   defp load_agent_cycle_events(cycle_id) when is_binary(cycle_id) do
-    head_id =
-      Froth.Repo.one(
-        from(e in Event,
-          where: e.cycle_id == ^cycle_id,
-          order_by: [desc: e.seq],
-          limit: 1,
-          select: e.head_id
-        ),
-        log: false
-      )
+    head_id = Agent.latest_head_id(%Cycle{id: cycle_id})
 
     head_id
     |> Agent.load_messages()

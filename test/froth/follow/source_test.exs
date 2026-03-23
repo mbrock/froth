@@ -42,7 +42,7 @@ defmodule Froth.Follow.SourceTest do
   end
 
   defp insert_event(attrs) do
-    Repo.insert_all("telemetry_events", [
+    Repo.insert_all("events", [
       %{
         id: Ecto.UUID.dump!(Ecto.UUID.generate()),
         event: attrs[:event],

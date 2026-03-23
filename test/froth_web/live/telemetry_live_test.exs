@@ -122,7 +122,7 @@ defmodule FrothWeb.TelemetryLiveTest do
     id = Ecto.UUID.generate()
     dumped_id = Ecto.UUID.dump!(id)
 
-    Repo.insert_all("telemetry_events", [
+    Repo.insert_all("events", [
       %{
         id: dumped_id,
         event: attrs[:event],

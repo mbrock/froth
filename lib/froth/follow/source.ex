@@ -12,7 +12,7 @@ defmodule Froth.Follow.Source do
     limit = Keyword.get(opts, :limit, 3000)
 
     query =
-      from(e in "telemetry_events",
+      from(e in "events",
         order_by: [desc: e.inserted_at],
         limit: ^limit,
         select: %{

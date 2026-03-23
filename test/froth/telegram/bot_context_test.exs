@@ -1,8 +1,8 @@
 defmodule Froth.Telegram.BotContextTest do
   use ExUnit.Case, async: false
 
+  alias Froth.Agent
   alias Froth.Agent.Cycle
-  alias Froth.Agent.Event, as: AgentEvent
   alias Froth.Agent.Message, as: AgentMessage
   alias Froth.Analysis
   alias Froth.ChatSummary
@@ -453,7 +453,7 @@ defmodule Froth.Telegram.BotContextTest do
         parent_id: assistant_msg.id
       })
 
-    Repo.insert!(%AgentEvent{cycle_id: cycle.id, head_id: result_msg.id, seq: 0})
+    Agent.append_event(cycle, %{head_id: result_msg.id, message_id: result_msg.id})
 
     Repo.insert!(%CycleLink{
       cycle_id: cycle.id,

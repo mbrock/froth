@@ -2,8 +2,10 @@ defmodule Froth.Agent.WorkerTest do
   use Froth.AnthropicCase, async: false
 
   import Ecto.Query
+  alias Froth.Agent
   alias Froth.ObjectStore
-  alias Froth.Agent.{Config, Cycle, Event, Message, Worker, ToolUse}
+  alias Froth.Agent.{Config, Cycle, Message, Worker, ToolUse}
+  alias Froth.Event
   alias Froth.LLM.Message, as: LLMMessage
   alias Froth.Repo
 
@@ -92,9 +94,7 @@ defmodule Froth.Agent.WorkerTest do
 
     cycle = Repo.insert!(%Cycle{})
 
-    messages
-    |> Enum.with_index()
-    |> Enum.reduce(nil, fn {msg, seq}, parent_id ->
+    Enum.reduce(messages, nil, fn msg, parent_id ->
       saved =
         Repo.insert!(%Message{
           role: msg.role,
@@ -102,7 +102,7 @@ defmodule Froth.Agent.WorkerTest do
           parent_id: parent_id
         })
 
-      Repo.insert!(%Event{cycle_id: cycle.id, head_id: saved.id, seq: seq})
+      Agent.append_event(cycle, %{head_id: saved.id, message_id: saved.id})
       saved.id
     end)
 
@@ -142,19 +142,52 @@ defmodule Froth.Agent.WorkerTest do
   end
 
   defp cycle_message_events(cycle_id) do
-    Repo.all(
-      from(e in Event,
-        where: e.cycle_id == ^cycle_id and e.kind == "message.appended",
-        order_by: e.seq
-      )
-    )
+    cycle_id
+    |> cycle_events()
+    |> Enum.filter(&(event_kind(&1) == "message.appended"))
   end
 
   defp cycle_messages(cycle_id) do
     cycle_id
     |> cycle_message_events()
-    |> Enum.map(fn event -> Repo.get!(Message, event.message_id || event.head_id) end)
+    |> Enum.map(fn event ->
+      Repo.get!(Message, event_message_id(event) || event_head_id(event))
+    end)
   end
+
+  defp cycle_events(cycle_id) do
+    Repo.all(
+      from(e in Event,
+        where:
+          like(e.event, "froth.agent.%") and
+            fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id),
+        order_by: [asc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)]
+      )
+    )
+  end
+
+  defp latest_cycle_event(cycle_id, kind) do
+    Repo.one!(
+      from(e in Event,
+        where:
+          e.event == ^"froth.agent.#{kind}" and
+            fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id),
+        order_by: [desc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)],
+        limit: 1
+      )
+    )
+  end
+
+  defp event_kind(%Event{metadata: metadata}) when is_map(metadata), do: metadata["kind"]
+  defp event_kind(_event), do: nil
+
+  defp event_head_id(%Event{metadata: metadata}) when is_map(metadata), do: metadata["head_id"]
+  defp event_head_id(_event), do: nil
+
+  defp event_message_id(%Event{metadata: metadata}) when is_map(metadata),
+    do: metadata["message_id"]
+
+  defp event_message_id(_event), do: nil
 
   describe "simple reply (no tools)" do
     test "calls the LLM once and stops" do
@@ -178,7 +211,7 @@ defmodule Froth.Agent.WorkerTest do
 
       wait_for_exit(pid)
 
-      events = Repo.all(from(e in Event, where: e.cycle_id == ^cycle.id, order_by: e.seq))
+      events = cycle_events(cycle.id)
       assert length(events) >= 2
 
       messages = cycle_messages(cycle.id)
@@ -207,14 +240,7 @@ defmodule Froth.Agent.WorkerTest do
       assert cycle.config["model"] == "claude-opus-4-6"
       assert cycle.config["provider"] == "anthropic"
 
-      kinds =
-        Repo.all(
-          from(e in Event,
-            where: e.cycle_id == ^cycle.id,
-            order_by: e.seq,
-            select: e.kind
-          )
-        )
+      kinds = Enum.map(cycle_events(cycle.id), &event_kind/1)
 
       assert "cycle.started" in kinds
       assert "llm.requested" in kinds
@@ -464,17 +490,10 @@ defmodule Froth.Agent.WorkerTest do
       assert tool_result["type"] == "tool_result"
       assert tool_result["content"] == "Yielding: Waiting for subscribed tasks."
 
-      outcome =
-        Repo.one!(
-          from(e in Event,
-            where: e.cycle_id == ^cycle.id and e.kind == "control.outcome",
-            order_by: [desc: e.seq],
-            limit: 1
-          )
-        )
+      outcome = latest_cycle_event(cycle.id, "control.outcome")
 
-      assert outcome.data["outcome"] == "yield"
-      assert outcome.data["reason"] == "Waiting for subscribed tasks."
+      assert outcome.metadata["outcome"] == "yield"
+      assert outcome.metadata["reason"] == "Waiting for subscribed tasks."
     end
 
     test "times out stalled tools using the worker-owned deadline" do
@@ -698,18 +717,12 @@ defmodule Froth.Agent.WorkerTest do
 
       wait_for_exit(pid)
 
-      event =
-        Repo.one!(
-          from(e in Event,
-            where: e.cycle_id == ^cycle.id and e.kind == "tool.completed",
-            limit: 1
-          )
-        )
+      event = latest_cycle_event(cycle.id, "tool.completed")
 
-      assert is_binary(event.blob_ref)
-      assert {:ok, path} = ObjectStore.local_path(event.blob_ref)
+      assert is_binary(event.metadata["blob_ref"])
+      assert {:ok, path} = ObjectStore.local_path(event.metadata["blob_ref"])
       assert File.exists?(path)
-      assert event.data["result_type"] == "blocks"
+      assert event.metadata["result_type"] == "blocks"
     end
   end
 

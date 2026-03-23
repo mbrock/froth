@@ -5,8 +5,8 @@ defmodule Froth.Agent do
 
   import Ecto.Query
 
-  alias Froth.Agent.{Config, Cycle, Event, Message, Worker}
-  alias Froth.{LLM, ObjectStore, Repo}
+  alias Froth.Agent.{Config, Cycle, Message, Worker}
+  alias Froth.{Event, LLM, ObjectStore, Repo}
 
   @payload_blob_threshold 8_000
   @preview_string_limit 320
@@ -80,21 +80,35 @@ defmodule Froth.Agent do
     kind = fetch_string(attrs, :kind) || "message.appended"
     data = Map.get(attrs, :data) || Map.get(attrs, "data") || %{}
     {data, blob_ref} = maybe_offload_payload(cycle_id, kind, data)
+    seq = next_event_seq(cycle_id)
+
+    metadata =
+      data
+      |> stringify_map()
+      |> Map.merge(%{
+        "kind" => kind,
+        "cycle_id" => cycle_id,
+        "seq" => seq
+      })
+      |> maybe_put_metadata("head_id", Map.get(attrs, :head_id) || Map.get(attrs, "head_id"))
+      |> maybe_put_metadata(
+        "message_id",
+        Map.get(attrs, :message_id) || Map.get(attrs, "message_id")
+      )
+      |> maybe_put_metadata(
+        "tool_use_id",
+        Map.get(attrs, :tool_use_id) || Map.get(attrs, "tool_use_id")
+      )
+      |> maybe_put_metadata("blob_ref", blob_ref)
 
     %Event{}
     |> Event.changeset(%{
-      cycle_id: cycle_id,
-      head_id: Map.get(attrs, :head_id) || Map.get(attrs, "head_id"),
-      message_id: Map.get(attrs, :message_id) || Map.get(attrs, "message_id"),
-      seq: next_event_seq(cycle_id),
-      kind: kind,
+      event: agent_event_name(kind),
       span_id: stringify_or_nil(Map.get(attrs, :span_id) || Map.get(attrs, "span_id")),
-      parent_span_id:
+      parent_id:
         stringify_or_nil(Map.get(attrs, :parent_span_id) || Map.get(attrs, "parent_span_id")),
-      tool_use_id:
-        stringify_or_nil(Map.get(attrs, :tool_use_id) || Map.get(attrs, "tool_use_id")),
-      data: data,
-      blob_ref: blob_ref
+      measurements: event_measurements(metadata),
+      metadata: metadata
     })
     |> Repo.insert!()
   end
@@ -117,10 +131,12 @@ defmodule Froth.Agent do
     outcome =
       Repo.one(
         from(e in Event,
-          where: e.cycle_id == ^cycle_id and e.kind == "control.outcome",
-          order_by: [desc: e.seq],
+          where:
+            e.event == "froth.agent.control.outcome" and
+              fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id),
+          order_by: [desc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)],
           limit: 1,
-          select: e.data
+          select: e.metadata
         )
       )
 
@@ -144,10 +160,13 @@ defmodule Froth.Agent do
   def latest_head_id(%Cycle{id: cycle_id}) do
     Repo.one(
       from(e in Event,
-        where: e.cycle_id == ^cycle_id and not is_nil(e.head_id),
-        order_by: [desc: e.seq],
+        where:
+          like(e.event, "froth.agent.%") and
+            fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id) and
+            not is_nil(fragment("?->>'head_id'", e.metadata)),
+        order_by: [desc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)],
         limit: 1,
-        select: e.head_id
+        select: fragment("?->>'head_id'", e.metadata)
       )
     )
   end
@@ -322,10 +341,17 @@ defmodule Froth.Agent do
   defp next_event_seq(cycle_id) do
     Repo.one(
       from(e in Event,
-        where: e.cycle_id == ^cycle_id,
-        select: coalesce(max(e.seq), -1) + 1
+        where:
+          like(e.event, "froth.agent.%") and
+            fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id),
+        select: fragment("COALESCE(MAX((?->>'seq')::bigint), -1) + 1", e.metadata)
       )
-    ) || 0
+    )
+    |> case do
+      value when is_integer(value) -> value
+      value when is_float(value) -> trunc(value)
+      _ -> 0
+    end
   end
 
   defp maybe_offload_payload(_cycle_id, _kind, nil), do: {%{}, nil}
@@ -535,6 +561,20 @@ defmodule Froth.Agent do
 
   defp stringify_or_nil(nil), do: nil
   defp stringify_or_nil(value), do: to_string(value)
+
+  defp maybe_put_metadata(metadata, _key, nil), do: metadata
+
+  defp maybe_put_metadata(metadata, key, value) when is_map(metadata) do
+    Map.put(metadata, key, stringify_or_nil(value))
+  end
+
+  defp event_measurements(%{"duration_ms" => duration_ms}) when is_number(duration_ms) do
+    %{"duration_ms" => duration_ms}
+  end
+
+  defp event_measurements(_metadata), do: %{}
+
+  defp agent_event_name(kind) when is_binary(kind), do: "froth.agent.#{kind}"
 
   defp stringify_atom(nil), do: nil
   defp stringify_atom(value) when is_atom(value), do: Atom.to_string(value)

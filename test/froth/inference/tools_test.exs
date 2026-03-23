@@ -60,7 +60,7 @@ defmodule Froth.Inference.ToolsTest do
       })
 
     cycle = Repo.insert!(%Cycle{})
-    Repo.insert!(%Agent.Event{cycle_id: cycle.id, head_id: result_msg.id, seq: 0})
+    Agent.append_event(cycle, %{head_id: result_msg.id, message_id: result_msg.id})
 
     Repo.insert!(%CycleLink{
       cycle_id: cycle.id,
@@ -194,7 +194,7 @@ defmodule Froth.Inference.ToolsTest do
       })
 
     cycle = Repo.insert!(%Cycle{})
-    Repo.insert!(%Agent.Event{cycle_id: cycle.id, head_id: result_msg.id, seq: 0})
+    Agent.append_event(cycle, %{head_id: result_msg.id, message_id: result_msg.id})
 
     Repo.insert!(%CycleLink{
       cycle_id: cycle.id,
@@ -286,7 +286,7 @@ defmodule Froth.Inference.ToolsTest do
       })
 
     cycle = Repo.insert!(%Cycle{})
-    Repo.insert!(%Agent.Event{cycle_id: cycle.id, head_id: result_msg.id, seq: 0})
+    Agent.append_event(cycle, %{head_id: result_msg.id, message_id: result_msg.id})
 
     Repo.insert!(%CycleLink{
       cycle_id: cycle.id,
