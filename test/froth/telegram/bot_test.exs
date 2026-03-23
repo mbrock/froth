@@ -58,6 +58,21 @@ defmodule Froth.Telegram.BotTest do
     assert state.mid_cycle_messages == []
   end
 
+  test "commit_tool tracks error details for fallback reporting" do
+    bot = start_bot()
+    tool_use = %ToolUse{id: "call_1", name: "run_shell", input: %{"command" => "false"}}
+    context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
+
+    assert {:error, "tool task failed: boom"} =
+             GenServer.call(
+               bot,
+               {:commit_tool, tool_use, context, %{execution: %{cycle_id: "cycle_1"}},
+                %{result: {:error, "tool task failed: boom"}}}
+             )
+
+    assert :sys.get_state(bot).last_tool_error == "tool task failed: boom"
+  end
+
   test "telegram error updates do not crash the bot" do
     bot = start_bot()
     ref = Process.monitor(bot)

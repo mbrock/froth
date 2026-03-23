@@ -1619,11 +1619,13 @@ defmodule Froth.Telegram.Bot do
 
   defp maybe_send_silent_cycle_fallback(%{chat_id: chat_id, bot_config: bc} = state)
        when is_integer(chat_id) do
+    error = state.last_tool_error || infer_silent_cycle_reason(state)
+
     _ =
       BotAdapter.send_message(
         bc.session_id,
         chat_id,
-        fallback_cycle_message(state.last_tool_error),
+        fallback_cycle_message(error),
         reply_to: state.reply_to
       )
 
@@ -1633,7 +1635,7 @@ defmodule Froth.Telegram.Bot do
   defp maybe_send_silent_cycle_fallback(state), do: state
 
   defp fallback_cycle_message(nil) do
-    "I ran into an internal error and stopped before replying. Please ask me again."
+    "I stopped before replying.\n\nReason: no diagnostic detail was recorded."
   end
 
   defp fallback_cycle_message(error) when is_binary(error) do
@@ -1648,9 +1650,63 @@ defmodule Froth.Telegram.Bot do
     if line == "" do
       fallback_cycle_message(nil)
     else
-      "I hit a tool error and stopped before replying.\n\n#{line}"
+      "I stopped before replying.\n\nReason: #{line}"
     end
   end
+
+  defp infer_silent_cycle_reason(%{cycle: %Cycle{} = cycle}) do
+    cycle
+    |> Agent.latest_head_id()
+    |> Agent.load_messages()
+    |> List.last()
+    |> describe_silent_cycle_message()
+  end
+
+  defp infer_silent_cycle_reason(_), do: nil
+
+  defp describe_silent_cycle_message(%Message{role: :user, content: content}) do
+    extract_tool_error(content) || "cycle completed without sending a reply after tool execution"
+  end
+
+  defp describe_silent_cycle_message(%Message{role: :agent, content: content, metadata: metadata}) do
+    stop_reason = metadata_value(metadata, "stop_reason")
+    tool_names = extract_tool_use_names(content)
+
+    stop_suffix =
+      if is_binary(stop_reason) and stop_reason != "",
+        do: " (stop_reason=#{stop_reason})",
+        else: ""
+
+    cond do
+      tool_names != [] ->
+        "assistant stopped after requesting #{Enum.join(tool_names, ", ")} without sending a reply#{stop_suffix}"
+
+      String.trim(extract_text(content)) == "" ->
+        "assistant produced no reply content#{stop_suffix}"
+
+      true ->
+        "assistant cycle completed without sending a reply#{stop_suffix}"
+    end
+  end
+
+  defp describe_silent_cycle_message(%Message{}), do: "cycle completed without sending a reply"
+  defp describe_silent_cycle_message(_), do: nil
+
+  defp metadata_value(metadata, "stop_reason") when is_map(metadata),
+    do: metadata["stop_reason"] || metadata[:stop_reason]
+
+  defp metadata_value(_metadata, _key), do: nil
+
+  defp extract_tool_use_names(%{"_wrapped" => blocks}) when is_list(blocks) do
+    blocks
+    |> Enum.flat_map(fn
+      %{"type" => "tool_use", "name" => name} when is_binary(name) -> [name]
+      _ -> []
+    end)
+    |> Enum.take(3)
+  end
+
+  defp extract_tool_use_names(_), do: []
 
   defp maybe_set_crash_error(state, :normal), do: state
   defp maybe_set_crash_error(state, :shutdown), do: state
