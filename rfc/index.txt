@@ -1,0 +1,5 @@
+FROTH RFCs
+
+0001  In-Browser Video Encoding via WebCodecs     DRAFT  2026-03-20
+0002  Native Multimodal LLM Layer                 DRAFT  2026-03-22
+0003  Parallel Tool Execution                     DRAFT  2026-03-23
