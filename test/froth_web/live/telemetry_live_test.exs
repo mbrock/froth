@@ -56,6 +56,40 @@ defmodule FrothWeb.TelemetryLiveTest do
     assert has_element?(view, "#event-#{id}", "anthropic")
   end
 
+  test "entry scope buttons narrow the timeline to one cycle", %{conn: conn} do
+    matching_id =
+      insert_event(%{
+        event: "froth.agent.tool.completed",
+        metadata: %{
+          "tool_name" => "read_tool_transcript",
+          "cycle_id" => "01KMDKN3GHAC7B814PD3GB4THP"
+        }
+      })
+
+    other_id =
+      insert_event(%{
+        event: "froth.agent.tool.completed",
+        metadata: %{
+          "tool_name" => "other_tool",
+          "cycle_id" => "01OTHERCYCLE00000000000000"
+        }
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/froth/telemetry")
+
+    view
+    |> element("#event-#{matching_id}")
+    |> render_click()
+
+    view
+    |> element("#event-filter-cycle-#{matching_id}")
+    |> render_click()
+
+    assert has_element?(view, "#telemetry-scope-filters", "cycle 01KMDKN3GHAC7B814PD3GB4THP")
+    assert has_element?(view, "#event-#{matching_id}")
+    refute has_element?(view, "#event-#{other_id}")
+  end
+
   defp insert_event(attrs) do
     id = Ecto.UUID.generate()
     dumped_id = Ecto.UUID.dump!(id)

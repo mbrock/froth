@@ -78,10 +78,14 @@ The first implementation slice of this RFC is now in place:
   `Froth.Follow.Renderer` exist
 - `mix froth.follow` now renders projected follow entries instead of
   formatting raw telemetry inline
+- `mix froth.follow` now supports scope-aware filtering for cycle/span
+  in addition to event-prefix and mode filtering
 - `TelemetryLive` now consumes the same projected entry model and has
   `Smart` and `Raw` modes
 - `TelemetryLive` rows can now expand inline to show the raw projected
   payload on demand
+- `TelemetryLive` can now pin the timeline to a cycle or span directly
+  from an entry's expanded detail controls
 - projector behavior is covered by focused tests, and the LiveView has
   integration coverage for smart/raw rendering
 
@@ -89,8 +93,10 @@ That means the shared semantic layer is no longer hypothetical.
 
 What is still not done:
 
-- cycle/span/task pinning in the readers
-- richer filtering beyond event-prefix and mode
+- URL-deep-linking and durable navigation state for cycle/span/task
+  pinning in the readers
+- richer filtering beyond event-prefix, text, and first-pass
+  cycle/span scope filters
 - a richer raw detail pane with linked navigation instead of a simple
   inline payload expansion
 - a dedicated `FollowLive` tuned for execution-log reading rather than

@@ -3,7 +3,7 @@ defmodule FrothWeb.TelemetryLive do
 
   import Ecto.Query
 
-  alias Froth.Follow.{Entry, Projector}
+  alias Froth.Follow.{Entry, Filter, Projector}
 
   @page_size 3000
   @max_events 5000
@@ -19,13 +19,14 @@ defmodule FrothWeb.TelemetryLive do
       )
     end
 
-    events = load_recent_events(nil, nil)
+    follow_filter = Filter.new()
+    events = load_recent_events(follow_filter, nil)
 
     {:ok,
      assign(socket,
        entries: events,
-       filter_event: nil,
        filter_text: "",
+       follow_filter: follow_filter,
        paused: false,
        selected_entry_id: nil,
        view_mode: :smart
@@ -55,19 +56,42 @@ defmodule FrothWeb.TelemetryLive do
 
   @impl true
   def handle_event("filter", %{"event" => event_prefix}, socket) do
-    filter = if event_prefix == "", do: nil, else: event_prefix
-    events = load_recent_events(filter, nil)
-    {:noreply, assign(socket, filter_event: filter, filter_text: "", entries: events)}
+    follow_filter =
+      %{
+        socket.assigns.follow_filter
+        | event_prefix: normalize_filter_value(event_prefix)
+      }
+
+    events = load_recent_events(follow_filter, socket.assigns.filter_text)
+    {:noreply, assign(socket, follow_filter: follow_filter, entries: events)}
   end
 
   def handle_event("search", %{"q" => q}, socket) do
-    text = if q == "", do: nil, else: q
-    events = load_recent_events(socket.assigns.filter_event, text)
+    text = normalize_filter_value(q)
+    events = load_recent_events(socket.assigns.follow_filter, text)
     {:noreply, assign(socket, filter_text: q || "", entries: events)}
   end
 
   def handle_event("toggle-pause", _, socket) do
     {:noreply, assign(socket, paused: !socket.assigns.paused)}
+  end
+
+  def handle_event("filter-cycle", %{"cycle" => cycle_id}, socket) do
+    follow_filter = %{socket.assigns.follow_filter | cycle_id: normalize_filter_value(cycle_id)}
+    events = load_recent_events(follow_filter, socket.assigns.filter_text)
+    {:noreply, assign(socket, follow_filter: follow_filter, entries: events)}
+  end
+
+  def handle_event("filter-span", %{"span" => span_id}, socket) do
+    follow_filter = %{socket.assigns.follow_filter | span_id: normalize_filter_value(span_id)}
+    events = load_recent_events(follow_filter, socket.assigns.filter_text)
+    {:noreply, assign(socket, follow_filter: follow_filter, entries: events)}
+  end
+
+  def handle_event("clear-scope", _, socket) do
+    follow_filter = %{socket.assigns.follow_filter | cycle_id: nil, span_id: nil}
+    events = load_recent_events(follow_filter, socket.assigns.filter_text)
+    {:noreply, assign(socket, follow_filter: follow_filter, entries: events)}
   end
 
   def handle_event("select-entry", %{"id" => id}, socket) do
@@ -84,7 +108,7 @@ defmodule FrothWeb.TelemetryLive do
     {:noreply, assign(socket, entries: [])}
   end
 
-  defp load_recent_events(event_filter, text_filter) do
+  defp load_recent_events(%Filter{} = follow_filter, text_filter) do
     query =
       from(e in "telemetry_events",
         order_by: [desc: e.inserted_at],
@@ -101,9 +125,33 @@ defmodule FrothWeb.TelemetryLive do
       )
 
     query =
-      case event_filter do
+      case follow_filter.event_prefix do
         nil -> query
         prefix -> from(e in query, where: like(e.event, ^"#{prefix}%"))
+      end
+
+    query =
+      case follow_filter.cycle_id do
+        nil ->
+          query
+
+        cycle_id ->
+          from(e in query,
+            where: fragment("?->>'cycle_id' LIKE ?", e.metadata, ^"#{cycle_id}%")
+          )
+      end
+
+    query =
+      case follow_filter.span_id do
+        nil ->
+          query
+
+        span_id ->
+          from(e in query,
+            where:
+              like(e.span_id, ^"#{span_id}%") or
+                fragment("?->>'span_id' LIKE ?", e.metadata, ^"#{span_id}%")
+          )
       end
 
     query =
@@ -256,7 +304,7 @@ defmodule FrothWeb.TelemetryLive do
               Clear
             </button>
             <span class="text-xs text-zinc-500">
-              {length(visible_entries(@entries, @filter_event, @view_mode))} entries
+              {length(visible_entries(@entries, @follow_filter, @filter_text, @view_mode))} entries
             </span>
           </div>
         </div>
@@ -267,7 +315,7 @@ defmodule FrothWeb.TelemetryLive do
             phx-click="filter"
             phx-value-event={prefix}
             class={"rounded-full px-3 py-1 text-xs font-medium transition " <>
-              if((@filter_event || "") == prefix,
+              if((@follow_filter.event_prefix || "") == prefix,
                 do: "bg-zinc-100 text-zinc-900",
                 else: "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
               )}
@@ -285,6 +333,32 @@ defmodule FrothWeb.TelemetryLive do
               class="rounded bg-zinc-800 px-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 border border-zinc-700 focus:border-zinc-500 focus:outline-none w-48"
             />
           </form>
+        </div>
+
+        <div
+          :if={@follow_filter.cycle_id || @follow_filter.span_id}
+          id="telemetry-scope-filters"
+          class="mb-4 flex flex-wrap items-center gap-2"
+        >
+          <span
+            :if={@follow_filter.cycle_id}
+            class="rounded-full border border-sky-500/40 bg-sky-500/10 px-3 py-1 text-xs font-medium text-sky-200"
+          >
+            cycle {@follow_filter.cycle_id}
+          </span>
+          <span
+            :if={@follow_filter.span_id}
+            class="rounded-full border border-fuchsia-500/40 bg-fuchsia-500/10 px-3 py-1 text-xs font-medium text-fuchsia-200"
+          >
+            span {@follow_filter.span_id}
+          </span>
+          <button
+            id="telemetry-clear-scope"
+            phx-click="clear-scope"
+            class="rounded-full bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100"
+          >
+            Clear scope
+          </button>
         </div>
 
         <div class="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
@@ -305,7 +379,7 @@ defmodule FrothWeb.TelemetryLive do
               </tr>
             </thead>
             <tbody id="events">
-              <%= for entry <- visible_entries(@entries, @filter_event, @view_mode) do %>
+              <%= for entry <- visible_entries(@entries, @follow_filter, @filter_text, @view_mode) do %>
                 <tr
                   id={"event-#{entry.id}"}
                   phx-click="select-entry"
@@ -358,11 +432,31 @@ defmodule FrothWeb.TelemetryLive do
                 <%= if @selected_entry_id == to_string(entry.id) do %>
                   <tr id={"event-detail-#{entry.id}"} class="border-b border-zinc-900 bg-zinc-900/80">
                     <td colspan="5" class="px-3 py-3">
-                      <div class="mb-2 flex items-center justify-between">
+                      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <div class="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
                           Raw Event Payload
                         </div>
                         <div class="text-[11px] text-zinc-600">{entry.event}</div>
+                      </div>
+                      <div class="mb-3 flex flex-wrap items-center gap-2">
+                        <button
+                          :if={entry.cycle_id}
+                          id={"event-filter-cycle-#{entry.id}"}
+                          phx-click="filter-cycle"
+                          phx-value-cycle={entry.cycle_id}
+                          class="rounded-full border border-sky-500/40 bg-sky-500/10 px-3 py-1 text-[11px] font-medium text-sky-200 hover:bg-sky-500/20"
+                        >
+                          Filter cycle {String.slice(entry.cycle_id, 0, 8)}
+                        </button>
+                        <button
+                          :if={entry.span_id}
+                          id={"event-filter-span-#{entry.id}"}
+                          phx-click="filter-span"
+                          phx-value-span={entry.span_id}
+                          class="rounded-full border border-fuchsia-500/40 bg-fuchsia-500/10 px-3 py-1 text-[11px] font-medium text-fuchsia-200 hover:bg-fuchsia-500/20"
+                        >
+                          Filter span {String.slice(entry.span_id, 0, 8)}
+                        </button>
                       </div>
                       <pre
                         id={"event-json-#{entry.id}"}
@@ -381,11 +475,43 @@ defmodule FrothWeb.TelemetryLive do
     """
   end
 
-  defp visible_entries(entries, prefix, mode) do
+  defp visible_entries(entries, %Filter{} = follow_filter, text_filter, mode) do
     entries
     |> Enum.filter(fn entry ->
-      (is_nil(prefix) or String.starts_with?(entry.event, prefix)) and Entry.visible?(entry, mode)
+      Filter.matches?(entry, follow_filter) and matches_text?(entry, text_filter) and
+        Entry.visible?(entry, mode)
     end)
+  end
+
+  defp matches_text?(_entry, nil), do: true
+
+  defp matches_text?(entry, text) do
+    needle = String.downcase(text)
+
+    haystack =
+      [
+        entry.event,
+        entry.family,
+        entry.kind,
+        entry.scope,
+        entry.summary,
+        entry.detail,
+        inspect(entry.metadata, pretty: false, printable_limit: 400, limit: 20)
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.map(&String.downcase/1)
+      |> Enum.join("\n")
+
+    String.contains?(haystack, needle)
+  end
+
+  defp normalize_filter_value(nil), do: nil
+
+  defp normalize_filter_value(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
   end
 
   defp entry_json(entry) do

@@ -4,7 +4,7 @@ defmodule Mix.Tasks.Froth.Follow do
 
   use Mix.Task
 
-  alias Froth.Follow.{Entry, Projector, Renderer}
+  alias Froth.Follow.{Entry, Filter, Projector, Renderer}
 
   @handler_id "froth-follow"
 
@@ -27,12 +27,21 @@ defmodule Mix.Tasks.Froth.Follow do
     end
 
     {opts, remaining, _invalid} =
-      OptionParser.parse(args, strict: [raw: :boolean, errors: :boolean])
+      OptionParser.parse(args,
+        strict: [raw: :boolean, errors: :boolean, cycle: :string, span: :string]
+      )
 
     mode = parse_mode(opts)
-    prefix_filter = parse_filter(remaining)
+
+    filter =
+      Filter.new(
+        event_prefix: parse_filter(remaining),
+        cycle_id: opts[:cycle],
+        span_id: opts[:span]
+      )
+
     events = fetch_events(node)
-    events = filter_events(events, prefix_filter)
+    events = filter_events(events, Filter.event_segments(filter))
 
     follower = self()
 
@@ -43,15 +52,20 @@ defmodule Mix.Tasks.Froth.Follow do
     :rpc.call(node, :telemetry, :attach_many, [@handler_id, events, handler, nil])
 
     Mix.shell().info("Connected to #{node}")
+    filter_summary = Filter.summary(filter)
 
-    Mix.shell().info(
-      "Following #{length(events)} telemetry events#{if prefix_filter, do: " (filter: #{Enum.join(prefix_filter, ".")})"} #{mode_label(mode)}\n"
-    )
+    Mix.shell().info([
+      "Following #{length(events)} telemetry events",
+      if(filter_summary == [], do: "", else: " (#{Enum.join(filter_summary, ", ")})"),
+      " ",
+      mode_label(mode),
+      "\n"
+    ])
 
     Process.flag(:trap_exit, true)
 
     try do
-      loop(mode, prefix_filter)
+      loop(mode, filter)
     after
       :rpc.call(node, :telemetry, :detach, [@handler_id])
     end
@@ -91,25 +105,17 @@ defmodule Mix.Tasks.Froth.Follow do
     end)
   end
 
-  defp loop(mode, prefix_filter) do
+  defp loop(mode, filter) do
     receive do
       {:telemetry_event, event_name, measurements, metadata} ->
         entry = Projector.from_live(event_name, measurements, metadata)
 
-        if matches_prefix?(entry, prefix_filter) and Entry.visible?(entry, mode) do
+        if Filter.matches?(entry, filter) and Entry.visible?(entry, mode) do
           IO.write(Renderer.to_ansi(entry, mode))
           IO.write("\n")
         end
     end
 
-    loop(mode, prefix_filter)
-  end
-
-  defp matches_prefix?(_entry, nil), do: true
-
-  defp matches_prefix?(entry, prefix) do
-    entry.event
-    |> String.split(".")
-    |> List.starts_with?(prefix)
+    loop(mode, filter)
   end
 end
