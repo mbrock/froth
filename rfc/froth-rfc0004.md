@@ -258,6 +258,50 @@ not cumulative conversation snapshots as the primary runtime record.
 idea. Continue moving app-specific linkage into thin relation tables
 around a stronger core agent runtime model.
 
+### 8. Make control outcomes explicit, not textual
+
+A recent runtime failure made this concrete.
+
+Charlie ran a normal cycle, sent a status message successfully, then
+called `read_tool_transcript`. The tool completed successfully. The
+cycle then stopped `reason=normal` without taking the next think step
+or sending a real answer.
+
+The proximate cause was not a provider failure and not a process crash.
+The transcript tool had returned text containing the string
+`Yielding:` inside a code snippet. The worker was using a substring
+check on tool-result text to decide whether a tool had asked the cycle
+to yield. A transcript containing that text therefore triggered the
+same control path as a real yield.
+
+That is exactly the kind of bug an execution spine should make harder
+to write.
+
+Cycle control outcomes such as:
+
+- `yield`
+- `waiting_on_subscription`
+- `reply_sent`
+- `assistant_stopped_without_reply`
+- `tool_error`
+- `cycle_error`
+
+should be represented as explicit runtime facts, not inferred from
+rendered text.
+
+In practice that means:
+
+- tool execution should return typed outcomes for control flow
+- `agent_events` should persist those outcomes as first-class kinds or
+  structured payload fields
+- cycle-stop reasons shown to users should come from structured state
+  and event history, not transcript heuristics
+- transcript rows should remain semantic content, not scheduler control
+
+The recent false-positive `Yielding:` stop bug was fixed in code by
+making yield explicit in the worker runtime. The persistence model
+should follow the same rule.
+
 ## Schema Sketch
 
 One plausible near-term shape:
@@ -319,7 +363,8 @@ Phase 2: Expand `agent_events` into a typed execution log while
          migration.
 
 Phase 3: Persist LLM-call and tool-invocation boundaries as events
-         from `Agent.Worker`.
+         from `Agent.Worker`, including explicit control outcomes such
+         as `yield`, `reply_sent`, and `assistant_stopped_without_reply`.
 
 Phase 4: Introduce blob refs for large payloads and media, with
          object-store-backed storage for the heavy data.
@@ -359,7 +404,7 @@ The next phase should build the execution spine in this order:
 
 1. richer `agent_cycles`
 2. typed `agent_events`
-3. explicit LLM/tool operation records via events
+3. explicit LLM/tool operation records and control outcomes via events
 4. blob refs for large payloads
 5. UI and query paths that consume the new records directly
 
