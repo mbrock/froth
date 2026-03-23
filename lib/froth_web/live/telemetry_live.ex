@@ -1,9 +1,7 @@
 defmodule FrothWeb.TelemetryLive do
   use FrothWeb, :live_view
 
-  import Ecto.Query
-
-  alias Froth.Follow.{Entry, Filter, Projector}
+  alias Froth.Follow.{Entry, Filter, Projector, Source}
 
   @page_size 3000
   @max_events 5000
@@ -107,69 +105,7 @@ defmodule FrothWeb.TelemetryLive do
   end
 
   defp load_recent_events(%Filter{} = follow_filter, text_filter) do
-    query =
-      from(e in "telemetry_events",
-        order_by: [desc: e.inserted_at],
-        limit: ^@page_size,
-        select: %{
-          id: type(e.id, Ecto.UUID),
-          event: e.event,
-          span_id: e.span_id,
-          parent_id: e.parent_id,
-          measurements: e.measurements,
-          metadata: e.metadata,
-          inserted_at: e.inserted_at
-        }
-      )
-
-    query =
-      case follow_filter.event_prefix do
-        nil -> query
-        prefix -> from(e in query, where: like(e.event, ^"#{prefix}%"))
-      end
-
-    query =
-      case follow_filter.cycle_id do
-        nil ->
-          query
-
-        cycle_id ->
-          from(e in query,
-            where: fragment("?->>'cycle_id' LIKE ?", e.metadata, ^"#{cycle_id}%")
-          )
-      end
-
-    query =
-      case follow_filter.span_id do
-        nil ->
-          query
-
-        span_id ->
-          from(e in query,
-            where:
-              like(e.span_id, ^"#{span_id}%") or
-                fragment("?->>'span_id' LIKE ?", e.metadata, ^"#{span_id}%")
-          )
-      end
-
-    query =
-      case text_filter do
-        nil ->
-          query
-
-        text ->
-          pattern = "%#{text}%"
-
-          from(e in query,
-            where:
-              like(e.event, ^pattern) or
-                fragment("?::text LIKE ?", e.metadata, ^pattern)
-          )
-      end
-
-    query
-    |> Froth.Repo.all(log: false)
-    |> Enum.map(&Projector.from_row/1)
+    Source.recent_entries(filter: follow_filter, text: text_filter, limit: @page_size)
   end
 
   defp event_color("froth.telegram." <> _), do: "text-blue-400"

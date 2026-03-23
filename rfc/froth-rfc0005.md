@@ -76,10 +76,14 @@ The first implementation slice of this RFC is now in place:
 
 - `Froth.Follow.Entry`, `Froth.Follow.Projector`, and
   `Froth.Follow.Renderer` exist
+- `Froth.Follow.Source` now exists as the shared recent-history loader
+  for follow readers
 - `mix froth.follow` now renders projected follow entries instead of
   formatting raw telemetry inline
 - `mix froth.follow` now supports scope-aware filtering for cycle/span
   in addition to event-prefix and mode filtering
+- `mix froth.follow` now boots with a recent matching history tail
+  before switching to live streaming
 - `TelemetryLive` now consumes the same projected entry model and has
   `Smart` and `Raw` modes
 - `TelemetryLive` rows can now expand inline to show the raw projected

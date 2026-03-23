@@ -4,7 +4,7 @@ defmodule Mix.Tasks.Froth.Follow do
 
   use Mix.Task
 
-  alias Froth.Follow.{Entry, Filter, Projector, Renderer}
+  alias Froth.Follow.{Entry, Filter, Projector, Renderer, Source}
 
   @handler_id "froth-follow"
 
@@ -28,14 +28,15 @@ defmodule Mix.Tasks.Froth.Follow do
 
     {opts, remaining, _invalid} =
       OptionParser.parse(args,
-        strict: [raw: :boolean, errors: :boolean, cycle: :string, span: :string]
+        strict: [raw: :boolean, errors: :boolean, cycle: :string, span: :string, tail: :integer]
       )
 
     mode = parse_mode(opts)
+    tail = max(opts[:tail] || 20, 0)
 
     filter =
       Filter.new(
-        event_prefix: parse_filter(remaining),
+        event_prefix: parse_event_prefix(remaining),
         cycle_id: opts[:cycle],
         span_id: opts[:span]
       )
@@ -62,6 +63,8 @@ defmodule Mix.Tasks.Froth.Follow do
       "\n"
     ])
 
+    render_recent_history(mode, filter, tail)
+
     Process.flag(:trap_exit, true)
 
     try do
@@ -87,13 +90,8 @@ defmodule Mix.Tasks.Froth.Follow do
   defp mode_label(:errors), do: "(errors mode)"
   defp mode_label(:smart), do: "(smart mode)"
 
-  defp parse_filter([]), do: nil
-
-  defp parse_filter([filter | _]) do
-    filter
-    |> String.split(".")
-    |> Enum.reject(&(&1 == ""))
-  end
+  defp parse_event_prefix([]), do: nil
+  defp parse_event_prefix([filter | _]), do: filter
 
   defp filter_events(events, nil), do: events
 
@@ -117,5 +115,25 @@ defmodule Mix.Tasks.Froth.Follow do
     end
 
     loop(mode, filter)
+  end
+
+  defp render_recent_history(_mode, _filter, 0), do: :ok
+
+  defp render_recent_history(mode, filter, tail) do
+    entries =
+      Source.recent_entries(filter: filter, limit: tail)
+      |> Enum.filter(&Entry.visible?(&1, mode))
+      |> Enum.reverse()
+
+    if entries != [] do
+      Mix.shell().info("Recent matching entries:\n")
+
+      Enum.each(entries, fn entry ->
+        IO.write(Renderer.to_ansi(entry, mode))
+        IO.write("\n")
+      end)
+
+      IO.write("\n")
+    end
   end
 end
