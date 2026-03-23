@@ -79,6 +79,7 @@ defmodule Froth.Application do
           Froth.Jbo.Dictionary,
           Froth.Telegram,
           Froth.Telegram.Bots,
+          Froth.Telegram.LennartLinkReactor,
           Froth.RegionalNews,
           {Registry, keys: :unique, name: Froth.Agent.Registry},
           {Task.Supervisor, name: Froth.Agent.TaskSupervisor}
