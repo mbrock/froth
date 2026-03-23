@@ -1,223 +1,181 @@
-# FROTH-RFC-0008: Unified Execution Timeline
+# FROTH-RFC-0008: Unified Event Table
 
-Status: DRAFT
+Status: DRAFT → READY FOR IMPLEMENTATION
 Author: Charlie (@charliebuddybot)
 Date: 2026-03-23
-Related: FROTH-RFC-0004 (Execution Spine), FROTH-RFC-0005 (Legible Follow)
+Supersedes: RFC-0004 agent_events table (deprecated)
 
 ## Situation
 
-Froth has three separate execution viewers that show the same family
-of events through three different lenses:
+Froth has two event tables recording overlapping facts:
 
-1. **TelemetryLive** — raw telemetry events projected through the
-   Follow layer (RFC-0005). Has Smart and Raw modes, cycle/span
-   pinning, URL-based scope filtering. Sees everything the BEAM
-   emits. Does not see Codex sessions. Does not show narrations.
+1. **telemetry_events** — the firehose. Columns: id (uuid),
+   event (varchar), measurements (jsonb), metadata (jsonb),
+   inserted_at, span_id, parent_id. Written by
+   Froth.Telemetry.Store via the BEAM :telemetry bus. Sees
+   everything. Schema-free payloads.
 
-2. **CodexLive** — Codex session viewer. Streams JSONL entries from
-   `codex app-server` over PubSub. Has session/thread navigation,
-   entry kinds (assistant, tool, reasoning, error, etc.), a prompt
-   dock, a Micromanage button. Does not see Anthropic agent cycles.
-   Does not see shell tasks. Does not show telemetry spans.
+2. **agent_events** — created by RFC-0004. Columns: id (uuid),
+   cycle_id, head_id, seq, kind, span_id, parent_span_id,
+   message_id, tool_use_id, data_json (jsonb), blob_ref,
+   inserted_at. Written by Froth.Agent.append_event/2.
+   Agent-specific typed columns that are null for everything
+   else.
 
-3. **ToolLive** — agent cycle inspector. Triggered by Telegram
-   mini-app deep links. Shows agent events, live thinking, live
-   text, tool call results with syntax highlighting, narrations.
-   Tied to a single cycle. Does not see Codex sessions. Does not
-   see other concurrent cycles. Does not see telemetry.
+The worker dual-writes: every agent execution event fires a
+telemetry span AND inserts an agent_events row. Same span IDs
+in both places. Two tables recording the same facts with
+different column layouts.
 
-Additionally, the **chat itself** receives narration messages —
-the italicized prose lines from `elixir_eval` and `run_shell`
-tool calls. These are the only execution traces most observers
-see. They flow through `BotAdapter.send_italic` and appear as
-regular Telegram messages. They are not connected to any web view.
-
-### What Each View Has That the Others Lack
-
-TelemetryLive:
-- Sees all telemetry events across all subsystems
-- Has the Follow projector (semantic grouping, noise filtering)
-- Has cycle/span scoping with URL persistence
-- Has Smart/Raw mode toggle
-
-CodexLive:
-- Sees Codex reasoning traces and tool execution
-- Has session/thread multiplexing
-- Has the prompt dock (interactive input)
-- Has entry kind classification (assistant, tool, reasoning)
-
-ToolLive:
-- Sees narrations (the italicized intention lines)
-- Has syntax-highlighted code and results
-- Has live thinking/text streaming
-- Has the Telegram mini-app integration (deep-linkable from chat)
-
-Chat narrations:
-- Visible to all humans and bots without opening a browser
-- Tied to the conversation flow
-- Not queryable, not grouped, not filterable
-
-### The Divergence
-
-These four surfaces were built for different moments in the
-project's history. TelemetryLive was built when telemetry was
-the only observability layer. CodexLive was built when Codex
-arrived as a separate tool. ToolLive was built when Telegram
-mini-apps became the primary deep-link mechanism. Narrations
-were built when chat was the only interface.
-
-Each one works. None of them compose. A Codex session dispatched
-by Charlie (RFC dispatch/2) produces events in Codex's JSONL
-stream AND telemetry spans AND chat narrations, but no single
-view shows all three. The operator must hold three browser tabs
-and a Telegram window to follow one unit of work.
+Three separate viewers (TelemetryLive, CodexLive, ToolLive)
+read from different subsets. No single view sees everything.
 
 ## Goal
 
-One LiveView that multiplexes all execution streams into a
-single chronological timeline.
+One table. One timeline. JSONB payloads. No nullable slop
+columns for domain-specific fields.
 
 ## Design
 
-### The Timeline as Primitive
+### Step 1: Rename telemetry_events → events
 
-The unified view is not a dashboard. It is a timeline. Every
-event — telemetry span, Codex entry, agent message, shell
-output line, narration — becomes a timeline entry with:
+Migration:
 
-- `timestamp` (wall clock, monotonic where available)
-- `source` (`:telemetry`, `:codex`, `:agent`, `:shell`, `:narration`)
-- `scope` (cycle_id, session_id, span_id, task_id — whatever applies)
-- `kind` (maps to the entry's semantic type within its source)
-- `body` (the rendered content)
+    rename table(:telemetry_events), to: table(:events)
 
-The timeline is append-only in live mode. Historical mode loads
-from persisted sources (telemetry_events, codex_events,
-agent_events, shell task output).
+Update all index names accordingly. Update Froth.Telemetry.Store
+to write to "events" instead of "telemetry_events".
 
-### Source Adapters
+### Step 2: Enrich metadata JSONB
 
-Each execution source gets an adapter that normalizes its events
-into timeline entries:
+Agent execution data that RFC-0004 put in typed columns goes
+into the metadata JSONB instead:
 
-**TelemetryAdapter** — wraps the existing Follow projector.
-Already does semantic grouping and noise filtering. Entries
-carry span_id and cycle_id when available. This is the adapter
-that RFC-0005 already mostly built.
+    metadata: %{
+      "kind" => "tool.completed",
+      "cycle_id" => "01ABCDEF...",
+      "head_id" => "01ABCDEF...",
+      "tool_use_id" => "toolu_abc123",
+      "blob_ref" => "sha256:...",
+      "seq" => 42,
+      ...domain-specific payload...
+    }
 
-**CodexAdapter** — subscribes to Codex PubSub topics. Maps
-Codex entry kinds (assistant, tool, reasoning, error, status)
-to timeline entries. Carries session_id and thread_id as scope.
+The only real columns on the events table are:
 
-**AgentAdapter** — subscribes to agent cycle PubSub topics.
-Emits narrations, tool calls, LLM request/response pairs,
-thinking blocks. Carries cycle_id. This replaces ToolLive's
-direct event subscription.
+    id          uuid        NOT NULL  (primary key)
+    event       varchar     NOT NULL  (dot-joined name, e.g. "froth.agent.cycle")
+    span_id     varchar     NULL      (already a column — keep it)
+    parent_id   varchar     NULL      (already a column — keep it)
+    measurements jsonb      NULL      (timing, counts)
+    metadata    jsonb       NULL      (everything else)
+    inserted_at timestamp   NOT NULL
 
-**ShellAdapter** — subscribes to shell task output. Emits
-stdout/stderr lines as timeline entries. Carries task_id.
+span_id and parent_id stay as columns because they are the
+join keys for span tree traversal and they apply to every
+event source, not just agents. Everything domain-specific
+goes in JSONB.
 
-### Scope Filtering
+### Step 3: Rewrite Agent.append_event/2
 
-The timeline supports nested scope filtering:
+Instead of inserting into agent_events, it calls
+Froth.Telemetry.Store or writes directly to events:
+
+    Froth.Repo.insert_all("events", [%{
+      id: Ecto.UUID.generate(),
+      event: "froth.agent.#{kind}",
+      span_id: attrs.span_id,
+      parent_id: attrs.parent_span_id,
+      measurements: %{},
+      metadata: %{
+        "kind" => kind,
+        "cycle_id" => cycle_id,
+        "head_id" => head_id,
+        "tool_use_id" => tool_use_id,
+        "data" => data,
+        "blob_ref" => blob_ref,
+        "seq" => next_seq
+      },
+      inserted_at: DateTime.utc_now()
+    }])
+
+The blob offloading logic from RFC-0004 remains — payloads
+over 8KB get hashed, stored in ObjectStore, and replaced
+with a summary in the metadata. That logic is good. It just
+writes to the wrong table.
+
+### Step 4: Drop agent_events
+
+Migration:
+
+    drop table(:agent_events)
+
+Remove Froth.Agent.Event schema module.
+
+### Step 5: Update cycle_usage view
+
+The cycle_usage view currently joins through agent_events.
+Rewrite it to query the events table filtering on
+metadata->>'cycle_id' and event LIKE 'froth.agent.%'.
+
+### Step 6: Add GIN index on metadata
+
+    create index(:events, [:metadata], using: "gin")
+
+This makes queries like
+`WHERE metadata->>'cycle_id' = ?` and
+`WHERE metadata->>'kind' = ?` fast without adding columns.
+
+### Step 7: Unified LiveView
+
+One TimelineLive that reads from the events table with
+filters:
 
 - No filter: everything, all sources, all scopes
-- Cycle filter: all events from one agent cycle (agent events +
-  telemetry spans + any Codex sessions dispatched by that cycle +
-  any shell tasks started by that cycle)
-- Session filter: all events from one Codex session
-- Task filter: all events from one shell task
-- Span filter: all events within a telemetry span tree
+- Cycle filter: WHERE metadata->>'cycle_id' = ?
+- Session filter: WHERE metadata->>'session_id' = ?
+- Span filter: span tree traversal via span_id/parent_id
+- Source filter: WHERE event LIKE 'froth.agent.%' etc.
 
-Scopes are composable. "Show me cycle X" includes the Codex
-session that cycle dispatched and the shell tasks that session
-started. The scope graph is: cycle -> dispatched sessions ->
-spawned tasks -> telemetry spans. Walking that graph in either
-direction is the primary navigation mechanism.
+The existing TelemetryLive, CodexLive, and ToolLive become
+pre-filtered bookmarks into this one view.
 
-### The Narration Channel
+## Migration Strategy
 
-Narrations currently go to Telegram only. In the unified view,
-narrations are timeline entries like everything else. But the
-Telegram channel remains — narrations are the only execution
-trace that reaches people who are not looking at a browser.
+Phases 1-4 (rename, enrich, rewrite, drop) are one migration
+and one code change. No transitional dual-write period. The
+agent_events table has existed for less than an hour. There
+is no historical data worth preserving — any agent_events
+rows can be re-derived from telemetry_events which recorded
+the same spans.
 
-The narration becomes dual-published: once to Telegram (as
-today), once to the timeline PubSub. The timeline entry
-carries a reference to the Telegram message_id, so clicking
-a narration in the web view can deep-link to the chat context.
+Phase 5-7 (view rewrite, GIN index, unified LiveView) can
+land separately.
 
-### Rendering
+## What RFC-0004 Got Right
 
-Each source adapter owns its own rendering. Codex entries
-render with their existing kind-based formatting. Agent events
-render with syntax-highlighted code blocks and narration
-callouts. Telemetry entries render with the Follow projector's
-existing smart formatting. Shell output renders as monospace
-streams.
+- Cycle status tracking on the cycles table (keep)
+- Blob offloading for large payloads (keep, redirect to events)
+- Event sequencing per cycle (keep, in metadata)
+- The worker's boolean finalization gates (keep)
+- The LiveView modeline compaction (keep)
 
-The timeline itself is a flat chronological list with source
-indicators (colored left border or icon). Scope transitions
-(a new cycle starts, a Codex session begins) are rendered as
-section headers that can be collapsed.
+## What RFC-0004 Got Wrong
 
-### Relation to Existing RFCs
-
-**RFC-0004 (Execution Spine)**: The spine provides the durable
-persistence model. The timeline provides the presentation model.
-When RFC-0004 lands `agent_events` as first-class records, the
-AgentAdapter switches from PubSub subscription to database
-queries for historical data. The live path remains PubSub.
-
-**RFC-0005 (Legible Follow)**: The Follow projector becomes one
-of four source adapters. Its Smart/Raw mode toggle remains
-available per-source. The TelemetryLive view becomes a
-pre-filtered instance of the unified timeline (scope: telemetry
-only).
-
-**RFC-0007 (Triangulated Search)**: When a search fan-out runs
-three concurrent provider calls, each produces telemetry spans.
-The timeline shows all three in parallel, scoped to the parent
-tool call. The operator sees the race.
-
-### Migration Path
-
-Phase 1: Build the timeline entry model and the four source
-adapters. Wire them into a new `TimelineLive` view. Keep
-TelemetryLive, CodexLive, and ToolLive running unchanged.
-
-Phase 2: Add scope-graph navigation. Clicking a cycle ID in
-the timeline pins to that cycle's full execution tree. Clicking
-a Codex session pins to that session. The Micromanage button
-in Telegram deep-links to the timeline scoped to that session
-instead of to CodexLive directly.
-
-Phase 3: Retire TelemetryLive and CodexLive as standalone
-views. They become pre-scoped bookmarks into the timeline.
-ToolLive becomes the Telegram mini-app entry point that
-redirects to a timeline scope.
-
-Phase 4: When RFC-0004 lands, switch historical data loading
-from raw telemetry_events to the execution spine tables.
-Live streaming remains PubSub-based regardless.
+- Created a new table instead of enriching the existing one
+- Added nullable typed columns for domain-specific fields
+- Duplicated span_id/parent_span_id as separate column names
 
 ## Non-Goals
 
-- This RFC does not change how Codex sessions work internally.
-- This RFC does not change how telemetry is collected.
-- This RFC does not add new execution capabilities.
-- This RFC does not replace Telegram narrations with web-only
-  output.
+- This does not change how the BEAM :telemetry bus works
+- This does not change cycle lifecycle management
+- This does not add new event sources
+- This does not touch Codex session management
 
 ## The Thesis
 
-The family has one conversation. It happens in Telegram. The
-machines have one execution surface. It happens everywhere —
-Codex sessions, agent cycles, shell commands, telemetry spans.
-The conversation has one view (the chat). The execution surface
-has four views and none of them see the whole thing. The
-execution surface needs what the conversation already has: one
-timeline where everything that happened appears in the order
-it happened, and you can scroll.
-
+One table called events. Span tree as columns because it is
+universal. Everything else as JSONB because it is not. The
+table that already exists gets promoted, not replaced. Fewer
+tables, not more.
