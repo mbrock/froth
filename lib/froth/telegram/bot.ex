@@ -125,9 +125,9 @@ defmodule Froth.Telegram.Bot do
     update_type = update["@type"] || "unknown"
     bc = state.bot_config
     session_span = Froth.Telegram.Session.span_id(bc.session_id)
-    chat_id = get_in(update, ["message", "chat_id"])
-    sender_id = get_in(update, ["message", "sender_id", "user_id"])
-    text = get_in(update, ["message", "content", "text", "text"])
+    chat_id = update_chat_id(update)
+    sender_id = update_sender_id(update)
+    text = update_text(update)
 
     case route_update(update, bc) do
       {:mention, msg} ->
@@ -410,6 +410,27 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp route_update(_, _), do: :ignore
+
+  defp update_chat_id(%{"message" => %{"chat_id" => chat_id}}) when is_integer(chat_id),
+    do: chat_id
+
+  defp update_chat_id(_), do: nil
+
+  defp update_sender_id(%{"message" => %{"sender_id" => %{"user_id" => sender_id}}})
+       when is_integer(sender_id),
+       do: sender_id
+
+  defp update_sender_id(_), do: nil
+
+  defp update_text(%{"message" => %{"content" => %{"text" => %{"text" => text}}}})
+       when is_binary(text),
+       do: text
+
+  defp update_text(%{"message" => %{"content" => %{"caption" => %{"text" => text}}}})
+       when is_binary(text),
+       do: text
+
+  defp update_text(_), do: nil
 
   defp route_callback_query(query) do
     query_id = query["id"]

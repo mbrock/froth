@@ -95,7 +95,15 @@ defmodule Froth.Agent do
 
           %{"type" => "tool_use", "name" => name, "input" => input} ->
             narration = Map.get(input, "narration")
-            [%{kind: :call, tool: name, input_json: encode_tool_input(input), narration: narration}]
+
+            [
+              %{
+                kind: :call,
+                tool: name,
+                input_json: encode_tool_input(input),
+                narration: narration
+              }
+            ]
 
           _ ->
             []

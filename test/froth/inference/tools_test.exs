@@ -244,6 +244,97 @@ defmodule Froth.Inference.ToolsTest do
     assert transcript =~ "/tmp/abc.mp4"
   end
 
+  test "read_tool_transcript keeps oversized transcripts bounded" do
+    bot_id = "charlie"
+    chat_id = unique_chat_id()
+    task_id = "shell:test:#{System.unique_integer([:positive])}"
+    huge_chunk = String.duplicate("abcdefghij", 4_000)
+
+    user_msg =
+      Repo.insert!(%Message{
+        role: :user,
+        content: Message.wrap([%{"type" => "text", "text" => huge_chunk}])
+      })
+
+    agent_msg =
+      Repo.insert!(%Message{
+        role: :agent,
+        content:
+          Message.wrap([
+            %{
+              "type" => "tool_use",
+              "id" => "toolu_huge",
+              "name" => "run_shell",
+              "input" => %{"command" => "printf huge"}
+            }
+          ]),
+        parent_id: user_msg.id
+      })
+
+    result_msg =
+      Repo.insert!(%Message{
+        role: :user,
+        content:
+          Message.wrap([
+            %{
+              "type" => "tool_result",
+              "tool_use_id" => "toolu_huge",
+              "content" => huge_chunk
+            }
+          ]),
+        parent_id: agent_msg.id
+      })
+
+    cycle = Repo.insert!(%Cycle{})
+    Repo.insert!(%Agent.Event{cycle_id: cycle.id, head_id: result_msg.id, seq: 0})
+
+    Repo.insert!(%CycleLink{
+      cycle_id: cycle.id,
+      bot_id: bot_id,
+      chat_id: chat_id,
+      reply_to: 789
+    })
+
+    Repo.insert!(
+      Task.changeset(%Task{}, %{
+        task_id: task_id,
+        type: "shell",
+        status: "completed",
+        label: "printf huge"
+      })
+    )
+
+    Repo.insert!(
+      TaskTelegramLink.changeset(%TaskTelegramLink{}, %{
+        task_id: task_id,
+        bot_id: bot_id,
+        chat_id: chat_id
+      })
+    )
+
+    Repo.insert!(
+      TaskEvent.changeset(%TaskEvent{}, %{
+        task_id: task_id,
+        sequence: 1,
+        kind: "stdout",
+        content: huge_chunk,
+        emitted_at: DateTime.utc_now()
+      })
+    )
+
+    {:ok, transcript} =
+      Tools.execute(
+        "read_tool_transcript",
+        %{"cycle_id" => cycle.id, "include_messages" => true, "task_output_lines" => 200},
+        chat_id,
+        bot_id: bot_id,
+        session_id: "charlie"
+      )
+
+    assert String.length(transcript) <= 20_080
+    refute transcript =~ huge_chunk
+  end
+
   defp unique_chat_id do
     9_000_000_000 + System.unique_integer([:positive])
   end

@@ -1,46 +1,56 @@
 defmodule FrothWeb.RfcController do
   use FrothWeb, :controller
 
-  @rfc_dir Application.app_dir(:froth, "priv/../rfc")
+  @rfc_dir Application.app_dir(:froth, "priv/../rfc") |> Path.expand()
 
-  defp rfc_dir do
-    Path.join(File.cwd!(), "rfc")
-  end
+  defp rfc_dir, do: @rfc_dir
 
   def index(conn, _params) do
     rfcs =
       rfc_dir()
-      |> File.ls!()
+      |> File.ls()
+      |> case do
+        {:ok, files} -> files
+        {:error, _reason} -> []
+      end
       |> Enum.filter(&String.match?(&1, ~r/^froth-rfc\d+\.md$/))
       |> Enum.sort()
       |> Enum.map(fn filename ->
         path = Path.join(rfc_dir(), filename)
         content = File.read!(path)
         slug = String.replace(filename, ".md", "")
-        number = case Regex.run(~r/rfc(\d+)/, slug) do
-          [_, n] -> n
-          _ -> "????"
-        end
+
+        number =
+          case Regex.run(~r/rfc(\d+)/, slug) do
+            [_, n] -> n
+            _ -> "????"
+          end
 
         # Extract title from first # heading
-        title = case Regex.run(~r/^#\s+(.+)$/m, content) do
-          [_, t] -> t
-          _ -> slug
-        end
+        title =
+          case Regex.run(~r/^#\s+(.+)$/m, content) do
+            [_, t] -> t
+            _ -> slug
+          end
 
         # Extract status and date
-        status = case Regex.run(~r/Status:\s*(.+)$/m, content) do
-          [_, s] -> String.trim(s)
-          _ -> "UNKNOWN"
-        end
-        date = case Regex.run(~r/Date:\s*(.+)$/m, content) do
-          [_, d] -> String.trim(d)
-          _ -> ""
-        end
-        author = case Regex.run(~r/Author:\s*(.+)$/m, content) do
-          [_, a] -> String.trim(a)
-          _ -> ""
-        end
+        status =
+          case Regex.run(~r/Status:\s*(.+)$/m, content) do
+            [_, s] -> String.trim(s)
+            _ -> "UNKNOWN"
+          end
+
+        date =
+          case Regex.run(~r/Date:\s*(.+)$/m, content) do
+            [_, d] -> String.trim(d)
+            _ -> ""
+          end
+
+        author =
+          case Regex.run(~r/Author:\s*(.+)$/m, content) do
+            [_, a] -> String.trim(a)
+            _ -> ""
+          end
 
         %{
           slug: slug,
@@ -63,11 +73,15 @@ defmodule FrothWeb.RfcController do
       path = Path.join(rfc_dir(), raw_slug)
 
       path =
-        if File.exists?(path), do: path,
-        else: Path.join(rfc_dir(), normalize_filename(String.replace_suffix(raw_slug, ".md", "")))
+        if File.exists?(path),
+          do: path,
+          else:
+            Path.join(rfc_dir(), normalize_filename(String.replace_suffix(raw_slug, ".md", "")))
 
       if File.exists?(path) do
-        conn |> put_resp_content_type("text/plain; charset=utf-8") |> send_resp(200, File.read!(path))
+        conn
+        |> put_resp_content_type("text/plain; charset=utf-8")
+        |> send_resp(200, File.read!(path))
       else
         conn |> put_resp_content_type("text/plain") |> send_resp(404, "RFC not found")
       end
@@ -78,20 +92,24 @@ defmodule FrothWeb.RfcController do
 
       if File.exists?(path) do
         content = File.read!(path)
-        {:ok, html_body, _} = Earmark.as_html(content, %Earmark.Options{
-          code_class_prefix: "language-",
-          smartypants: false
-        })
 
-        title = case Regex.run(~r/^#\s+(.+)$/m, content) do
-          [_, t] -> t
-          _ -> slug
-        end
+        {:ok, html_body, _} =
+          Earmark.as_html(content, %Earmark.Options{
+            code_class_prefix: "language-",
+            smartypants: false
+          })
 
-        number = case Regex.run(~r/rfc(\d+)/, slug) do
-          [_, n] -> n
-          _ -> slug
-        end
+        title =
+          case Regex.run(~r/^#\s+(.+)$/m, content) do
+            [_, t] -> t
+            _ -> slug
+          end
+
+        number =
+          case Regex.run(~r/rfc(\d+)/, slug) do
+            [_, n] -> n
+            _ -> slug
+          end
 
         html = render_rfc(number, title, html_body)
         conn |> put_resp_content_type("text/html") |> send_resp(200, html)
@@ -103,26 +121,31 @@ defmodule FrothWeb.RfcController do
 
   defp normalize_filename(slug) do
     cond do
-      String.match?(slug, ~r/^froth-rfc\d+$/) -> slug <> ".md"
+      String.match?(slug, ~r/^froth-rfc\d+$/) ->
+        slug <> ".md"
+
       String.match?(slug, ~r/^\d+$/) ->
         padded = String.pad_leading(slug, 4, "0")
         "froth-rfc#{padded}.md"
-      true -> slug <> ".md"
+
+      true ->
+        slug <> ".md"
     end
   end
 
   defp render_index(rfcs) do
-    rows = Enum.map_join(rfcs, "\n", fn rfc ->
-      """
-      <tr>
-        <td class="rfc-num"><a href="/rfc/#{rfc.number}">#{rfc.number}</a></td>
-        <td class="rfc-title"><a href="/rfc/#{rfc.number}">#{escape(rfc.title)}</a></td>
-        <td class="rfc-status #{String.downcase(rfc.status)}">#{escape(rfc.status)}</td>
-        <td class="rfc-date">#{escape(rfc.date)}</td>
-        <td class="rfc-author">#{escape(rfc.author)}</td>
-      </tr>
-      """
-    end)
+    rows =
+      Enum.map_join(rfcs, "\n", fn rfc ->
+        """
+        <tr>
+          <td class="rfc-num"><a href="/rfc/#{rfc.number}">#{rfc.number}</a></td>
+          <td class="rfc-title"><a href="/rfc/#{rfc.number}">#{escape(rfc.title)}</a></td>
+          <td class="rfc-status #{String.downcase(rfc.status)}">#{escape(rfc.status)}</td>
+          <td class="rfc-date">#{escape(rfc.date)}</td>
+          <td class="rfc-author">#{escape(rfc.author)}</td>
+        </tr>
+        """
+      end)
 
     """
     <!DOCTYPE html>

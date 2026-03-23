@@ -7,6 +7,10 @@ defmodule Froth.Inference.Tools do
   import Ecto.Query
 
   @default_session_id "charlie"
+  @read_tool_transcript_max_cycles 5
+  @read_tool_transcript_max_chars 20_000
+  @read_tool_transcript_max_message_lines 120
+  @read_tool_transcript_max_task_output_chars 3_000
 
   @tool_specs [
     %{
@@ -1045,10 +1049,10 @@ defmodule Froth.Inference.Tools do
   defp read_tool_transcript(chat_id, bot_id, input)
        when is_integer(chat_id) and is_binary(bot_id) and is_map(input) do
     requested_cycle_id = input["cycle_id"]
-    cycle_limit = bounded_integer(input["limit"], 3, 1, 20)
+    cycle_limit = bounded_integer(input["limit"], 3, 1, @read_tool_transcript_max_cycles)
     include_messages = parse_boolean(input["include_messages"], false)
     include_task_output = parse_boolean(input["include_task_output"], true)
-    task_output_lines = bounded_integer(input["task_output_lines"], 120, 10, 2_000)
+    task_output_lines = bounded_integer(input["task_output_lines"], 80, 10, 400)
 
     alias Froth.Agent
     alias Froth.Agent.{Cycle, Message}
@@ -1105,12 +1109,15 @@ defmodule Froth.Inference.Tools do
           )
         end)
 
-      """
+      transcript = """
       Agent cycle transcript history for chat #{chat_id} (bot #{bot_id}):
 
       #{Enum.join(sections, "\n\n---\n\n")}
       """
+
+      transcript
       |> String.trim()
+      |> truncate_read_tool_transcript()
     end
   end
 
@@ -1166,7 +1173,7 @@ defmodule Froth.Inference.Tools do
       |> Enum.flat_map(fn {message, index} ->
         format_api_message_line(message, index)
       end)
-      |> Enum.take(400)
+      |> Enum.take(@read_tool_transcript_max_message_lines)
 
     if lines == [] do
       "  (none)"
@@ -1373,7 +1380,11 @@ defmodule Froth.Inference.Tools do
         if stdout == "" do
           "\n    output: (no stdout/stderr in selected event window)"
         else
-          "\n    output:\n" <> indent_block(preview_multiline_text(stdout, 8_000), "      ")
+          "\n    output:\n" <>
+            indent_block(
+              preview_multiline_text(stdout, @read_tool_transcript_max_task_output_chars),
+              "      "
+            )
         end
 
       output_block <> status_block
@@ -1480,6 +1491,15 @@ defmodule Froth.Inference.Tools do
     text
     |> String.split("\n")
     |> Enum.map_join("\n", &(prefix <> &1))
+  end
+
+  defp truncate_read_tool_transcript(text) when is_binary(text) do
+    if String.length(text) > @read_tool_transcript_max_chars do
+      String.slice(text, 0, @read_tool_transcript_max_chars) <>
+        "\n\n(truncated; narrow with cycle_id or lower limits before asking for more)"
+    else
+      text
+    end
   end
 
   defp parse_positive_integer(value) when is_integer(value) and value > 0, do: value

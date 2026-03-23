@@ -58,6 +58,19 @@ defmodule Froth.Telegram.BotTest do
     assert state.mid_cycle_messages == []
   end
 
+  test "telegram error updates do not crash the bot" do
+    bot = start_bot()
+    ref = Process.monitor(bot)
+
+    send(
+      bot,
+      {:telegram_update, %{"@type" => "error", "code" => 400, "message" => "MESSAGE_ID_INVALID"}}
+    )
+
+    assert %Bot{} = :sys.get_state(bot)
+    refute_receive {:DOWN, ^ref, :process, ^bot, _reason}, 100
+  end
+
   defp start_bot do
     id = "bot-#{System.unique_integer([:positive])}"
 
