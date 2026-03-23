@@ -3,143 +3,300 @@
 Status: DRAFT
 Author: Charlie (@charliebuddybot)
 Date: 2026-03-23
+Related: FROTH-RFC-0004
 
 ## Problem
 
-When Claude issues N tool calls in a single response, the agent
-worker correctly spawns N concurrent Tasks (worker.ex:238-244).
-But every Task calls the same GenServer — the bot process — via
-GenServer.call with the default 5000ms timeout:
+When an agent response contains N tool calls, `Froth.Agent.Worker`
+does the obvious thing: it spawns N concurrent Tasks.
+
+The concurrency stops there.
+
+Each Task immediately calls the same GenServer:
 
     GenServer.call(worker.config.tool_executor,
       {:execute, tool_use, context})
 
-The bot process handles {:execute, ...} in handle_call (bot.ex:353),
-which means it processes one tool call at a time. The other N-1
-Tasks queue in the mailbox. If tool call #1 takes 3 seconds, tool
-call #2 has 2 seconds left before it hits the default timeout. If
-#1 takes 6 seconds, #2 is already dead.
+In the Telegram bots, `tool_executor` is the bot process. That
+process handles:
 
-The failure mode: "exited in: GenServer.call(PID, {:execute, ...},
-5000) ** (EXIT) time out". The cycle ends without having sent any
-messages. The fallback at bot.ex:1536 fires: "I ran into an
-internal error and stopped before replying."
+    handle_call({:execute, %ToolUse{} = tool_use, context}, ...)
 
-This happened 26 times in the last 3 hours of Charlie's operation
-on 2026-03-23.
+which means all tool executions are serialized through one mailbox.
 
-## Analysis
+So the current shape is:
 
-The serialization is not intentional. It is an accident of the bot
-process wearing two hats: it is both the Telegram event router and
-the tool executor. Tool execution was added to the bot process
-because the bot process holds the state needed for tool execution
-(session_id, chat_id, reply_to, sent message tracking). But there
-is no reason the execution itself must be serialized.
+    worker spawns N Tasks
+      -> all N Tasks queue on one GenServer.call
+      -> bot executes tool 1
+      -> tool 2 waits
+      -> tool 3 waits
+      -> ...
 
-The 5000ms timeout is the OTP default. It was never chosen. It was
-inherited by not specifying a timeout argument.
+The result is the worst of both worlds:
 
-## Proposed Fix
+- the worker thinks it is doing parallel tool execution
+- the bot process is actually doing serialized tool execution
+- the queue is governed by the OTP default `GenServer.call` timeout
+  of 5000ms
 
-Three options in order of increasing correctness:
+If tool call #1 takes long enough, tool call #2 can fail before it
+ever starts running.
 
-### Option A: Increase the timeout (one line)
+## Why This Is Happening
 
-    GenServer.call(worker.config.tool_executor,
-      {:execute, tool_use, context}, 30_000)
+The serialization is not intentional. It is a consequence of the bot
+process wearing two hats:
 
-Pros: Fixes the immediate crash. One line change.
-Cons: Still serialized. 5 tool calls that each take 4 seconds
-      = 20 seconds total, even though they're independent. The
-      Tasks are concurrent but the GenServer is not.
+1. it is the Telegram event router and state owner
+2. it is also the tool executor
 
-### Option B: Move execution out of the GenServer
+Some of that state is genuinely needed by tools:
 
-Extract execute_tool_call/3 into a pure function module. The bot
-process handle_call becomes:
+- `chat_id`
+- `reply_to`
+- `session_id`
+- sent-message tracking
+- cycle control-prompt bookkeeping
+- mid-cycle message injection
+- task registration and error tracking
 
-    def handle_call({:execute, %ToolUse{} = tool_use, context},
-                    _from, state) do
-      # Return the execution context immediately
-      {:reply, {:ok, extract_exec_context(state)}, state}
-    end
+But needing state access is not the same as needing serialized
+execution.
 
-The Task then calls the pure function directly with the context:
+The code path today mixes three different responsibilities inside one
+GenServer call:
+
+1. gather the execution context
+2. perform the actual tool work and network I/O
+3. mutate bot state based on the result
+
+That is the real bug.
+
+## A Second Bug Hidden Inside the First One
+
+The current draft of this RFC could tempt a one-line fix:
+
+    GenServer.call(..., :infinity)
+
+That does remove the accidental 5000ms timeout. But in the current
+code there is no separate worker-owned timeout for tool tasks.
+
+So today:
+
+- `5000ms` is an accidental timeout
+- `:infinity` would become an accidental non-timeout
+
+Both are wrong.
+
+Timeout policy should belong to `Froth.Agent.Worker`, because the
+worker owns the lifecycle of the tool tasks.
+
+## Requirements
+
+Any real fix should satisfy all of these:
+
+1. Tool work should run in parallel when the tools are independent.
+2. Bot state must remain internally consistent.
+3. External side effects should not require the bot GenServer to sit
+   blocked on network I/O.
+4. Timeouts must be explicit and owned by the worker, not inherited
+   from `GenServer.call`.
+5. The model should compose with RFC-0004's execution-log and
+   telemetry direction.
+
+## Proposed Architecture
+
+### 1. Move timeout ownership into `Agent.Worker`
+
+`Agent.Worker` should own tool deadlines explicitly.
+
+Add a `tool_timeout_ms` config value and have the worker schedule a
+timeout per invocation. If a tool exceeds its deadline:
+
+- the worker terminates the task
+- the worker records a failed tool result
+- the cycle continues or fails according to policy
+
+Only after this exists should the internal `GenServer.call` timeout be
+set to `:infinity`, because at that point the worker is the owner of
+the deadline.
+
+### 2. Split tool execution into `prepare`, `execute`, and `commit`
+
+The core change is to separate state access from work.
+
+#### Prepare
+
+The bot process handles a fast call that:
+
+- validates the tool request
+- snapshots the execution context
+- reserves any state that must be claimed atomically
+- returns an execution capsule
+
+This step should not perform network I/O or long-running work.
+
+Example outputs of prepare:
+
+- `chat_id`
+- `reply_to`
+- `session_id`
+- bot identity
+- cycle metadata
+- whether a control prompt should be shown
+- whether narration should be sent
+
+#### Execute
+
+The worker Task executes the tool outside the bot GenServer using the
+prepared capsule.
+
+This is where:
+
+- `Tools.execute/5`
+- shell execution
+- eval execution
+- outbound message sends
+- object-store access
+- HTTP calls
+
+should happen.
+
+Execution returns both a result and a list of state effects.
+
+#### Commit
+
+After execution completes, the bot process handles a fast commit step
+that applies the serialized state mutations:
+
+- `track_sent_message`
+- `put_last_tool_error`
+- `register_cycle_task`
+- clearing or consuming `mid_cycle_messages`
+- any bookkeeping around cycle prompts and task tracking
+
+This preserves state consistency without forcing the actual work
+through one mailbox.
+
+## Concrete Shape
+
+One plausible interface:
+
+    {:ok, capsule, prepare_effects} =
+      GenServer.call(executor, {:prepare_tool, tool_use, context}, :infinity)
 
     Task.Supervisor.async_nolink(TaskSupervisor, fn ->
-      ctx = GenServer.call(executor, {:get_context, tool_use}, 5000)
-      result = Froth.Agent.ToolExecutor.execute(tool_use, ctx)
-      {:tool_result, id, result}
+      outcome = Froth.Agent.ToolRunner.execute(tool_use, capsule, prepare_effects)
+      {:tool_result, tool_use.id, outcome}
     end)
 
-Pros: Truly parallel. The GenServer call is instant (just reads
-      state). The actual work happens in the Task.
-Cons: Requires splitting execute_tool_call into a pure function
-      and a state-reading function. Some tools mutate state
-      (e.g., tracking sent messages) — those mutations need to
-      be sent back as casts after execution completes.
+Then on completion:
 
-### Option C: Pool of tool executors
+    GenServer.cast(executor, {:commit_tool, tool_use.id, outcome.commit_effects})
 
-Replace the single bot process with a pool of worker processes,
-each capable of executing tools independently. Overkill for the
-current problem but correct for a future where 10 agents run
-simultaneously.
+Where `outcome` contains:
+
+- semantic tool result content
+- `is_error`
+- `commit_effects`
+- telemetry metadata
+
+## Why This Fits the Current Code
+
+The existing bot code already reveals the correct split.
+
+`execute_tool_call/3` currently mixes together:
+
+- pure context resolution
+- long-running tool work via `Tools.execute`
+- outbound Telegram sends
+- state mutation via helpers like `track_sent_message`
+- follow-up state mutation via `maybe_track_task_from_result`
+  and `maybe_track_tool_error`
+
+Those should become separate phases instead of one blocking call.
+
+Even the special cases point in the same direction:
+
+- `send_message` does network I/O plus sent-message bookkeeping
+- `run_shell` and `elixir_eval` need control-prompt reservation and
+  optional narration, but not a blocked bot mailbox
+- `maybe_inject_mid_cycle_messages/2` is a commit concern, not an
+  execution concern
+
+## What Not To Do
+
+### Not just "increase the timeout"
+
+Changing `5000` to `30000` reduces pain but keeps the architecture
+wrong. It preserves serialization and leaves the timeout policy in
+the wrong layer.
+
+### Not just `:infinity` without worker deadlines
+
+That only swaps one accidental policy for another.
+
+### Not a process pool first
+
+A pool of tool executors may make sense later, but it does not solve
+the fact that execution, state access, and commit are currently
+collapsed into one operation. Fix the boundary first.
+
+## Migration Plan
+
+Phase 1: Add explicit `tool_timeout_ms` to `Agent.Config` and make
+         `Agent.Worker` own tool deadlines.
+
+Phase 2: Set internal `GenServer.call` timeouts for tool execution
+         to `:infinity`, now that the worker owns the deadline.
+
+Phase 3: Replace `{:execute, tool_use, context}` with a `prepare`
+         step that returns a lightweight execution capsule.
+
+Phase 4: Execute tools in Tasks outside the bot GenServer and return
+         structured outcomes plus commit effects.
+
+Phase 5: Add a `commit` step in the bot process for serialized state
+         mutation.
+
+Phase 6: Emit `tool.started`, `tool.completed`, `tool.failed`, and
+         `tool.timed_out` events in a form that can attach cleanly to
+         RFC-0004's execution spine.
+
+## Consequences
+
+### Benefits
+
+- Parallel tool execution becomes real, not performative.
+- Tool timeouts become explicit and debuggable.
+- Bot state remains consistent without forcing network I/O through one
+  mailbox.
+- The execution model becomes a better fit for persistence and
+  telemetry.
+
+### Costs
+
+- More moving parts in the tool-execution path.
+- A new prepared execution capsule / commit-effects abstraction.
+- Some tool behavior currently expressed as direct state mutation will
+  need to be refactored.
 
 ## Recommendation
 
-Option A now. Option B next. Option A is the door — just walk
-through it. Option B is the pipe — it requires an artifact (the
-refactored module) but produces the right architecture.
+Do this in two deliberate steps:
 
-The literal diff for Option A:
+1. move timeout ownership into the worker immediately
+2. then split tool execution into `prepare`, `execute`, and `commit`
 
-    --- a/lib/froth/agent/worker.ex
-    +++ b/lib/froth/agent/worker.ex
-    @@ -240,7 +240,7 @@
-         invocations =
-           Enum.map(tool_uses, fn %ToolUse{id: id} = tool_use ->
-             task =
-               Task.Supervisor.async_nolink(
-                 Froth.Agent.TaskSupervisor, fn ->
-    -              result = GenServer.call(
-    -                worker.config.tool_executor,
-    -                {:execute, tool_use, context})
-    +              result = GenServer.call(
-    +                worker.config.tool_executor,
-    +                {:execute, tool_use, context},
-    +                :infinity)
-                   {:tool_result, id, result}
-                 end)
-
-The Task itself has a timeout managed by the worker's collection
-phase. The GenServer.call timeout is redundant with that — it
-should be :infinity so the Task's own supervision handles the
-lifecycle. If a tool hangs, the Task gets killed by the worker's
-phase timeout, not by an arbitrary 5-second wall clock.
-
-## Side Effects of the Current Bug
-
-1. Every "I ran into an internal error" message costs a full
-   agent cycle ($4-20) that produced no output.
-2. The user sees an apology instead of an answer and must
-   re-trigger, doubling the cost.
-3. The failure is silent — no error logged to the agent's own
-   context, no stack trace in the cycle record. The cycle just
-   ends.
-4. The bug is worse for Charlie (Opus 4.6, $4+ per cycle) than
-   for the Sonnet-based bots, because Charlie's cycles are more
-   expensive to waste.
-5. The bug is triggered more often by capable agents, because
-   capable agents issue more parallel tool calls. The system
-   punishes competence.
+That fixes the current failure mode without pretending the real issue
+was just a magic number.
 
 ## References
 
-- worker.ex:230-250 (start_tools)
-- bot.ex:353-356 (handle_call {:execute})
-- bot.ex:1536 (internal error fallback message)
-- OTP GenServer default timeout: 5000ms
-- FROTH-RFC-0001: WebCodecs (prior art on eliminating
-  unnecessary intermediaries)
+- `lib/froth/agent/worker.ex` (`start_tools/2`)
+- `lib/froth/telegram/bot.ex` (`handle_call({:execute, ...})`)
+- `lib/froth/telegram/bot.ex` (`execute_tool_call/3`)
+- `lib/froth/telegram/bot.ex` (`maybe_inject_mid_cycle_messages/2`)
+- `lib/froth/telegram/bot.ex` (`track_sent_message/3`)
+- `lib/froth/telegram/bot.ex` (`put_last_tool_error/2`)
