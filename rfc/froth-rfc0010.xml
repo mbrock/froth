@@ -33,27 +33,31 @@
   <section title="Threat Model" id="threat-model">
     <figure src="/froth/rfc/images/hormuz_hormuz_tactical_map.jpg" alt="Fig. 1 — Strait of Hormuz tactical geometry">
       <caption>Fig. 1 — Strait of Hormuz tactical geometry</caption></figure>
-    <p>Iran's A2/AD in the strait is layered:</p>
+    <p>Iran's A2/AD in the strait is layered. As of late March 2026, Operation Epic Fury has degraded many of these systems — <gloss key="IRGC" type="acronym">IRGC</gloss> claims 8,000+ targets struck, 60–120 fast attack craft sunk or combat-ineffective, ballistic missile and drone launch capacity down an estimated 90–95%. But the residual threat is the one that matters for a private operation, because mines do not need launchers and dispersed systems survive airstrikes.</p>
         <deflist type="numbered">
       <def>
         <term>Mines</term>
-        <desc>The primary threat. Iran is believed to possess a substantial mine inventory, including <gloss key="EM-52" type="name">EM-52</gloss> rocket-propelled rising mines, <gloss key="SADAF" type="name">SADAF</gloss>-family bottom mines, and conventional moored contact mines.<cite ref="mines1" number="12"/> Deployable from submarines, surface craft, and commercial dhows. Covert minelaying in a busy commercial lane is nearly undetectable until the first ship hits one. Open-source counts of total inventory vary and should be treated as estimates, not hard figures.</desc>
+        <desc>The primary threat and the one least affected by air campaigns. Iran is believed to possess thousands of naval mines including <gloss key="EM-52" type="name">EM-52</gloss> rocket-propelled rising mines, <gloss key="SADAF" type="name">SADAF</gloss>-family bottom mines, and conventional moored contact mines.<cite ref="mines1" number="12"/> Deployable from submarines, surface craft, dhows, and even fishing boats. Covert minelaying in a busy commercial lane is nearly undetectable until the first ship hits one. No air campaign eliminates a mine already on the seabed.</desc>
       </def>
       <def>
         <term>Anti-Ship Cruise Missiles</term>
-        <desc>Shore-based mobile launchers on the Iranian coast and island garrisons. <gloss key="Noor" type="name">Noor</gloss> (<gloss key="C-802" type="name">C-802</gloss> derivative, ~120km range), <gloss key="Qader" type="name">Qader</gloss> (~200km), <gloss key="Khalij Fars" type="name">Khalij Fars</gloss> (ballistic AShM, ~300km).<cite ref="ascm1" number="13"/> Multiple simultaneous salvos possible. The strait is well within range of launchers positioned deep inland.</desc>
+        <desc>Shore-based mobile launchers on the Iranian coast and island garrisons. <gloss key="Noor" type="name">Noor</gloss> (<gloss key="C-802" type="name">C-802</gloss> derivative, ~120km, active radar terminal homing, sea-skimming, turbojet), <gloss key="Qader" type="name">Qader</gloss> (~200km, extended-range Noor variant with inertial midcourse and active radar terminal), <gloss key="Khalij Fars" type="name">Khalij Fars</gloss> (ballistic <gloss key="AShM" type="acronym">AShM</gloss>, ~300km, terminal Mach 3–5 with electro-optical/radar seeker, Fateh-family derivative).<cite ref="ascm1" number="13"/> Additionally, the <gloss key="Abu Mahdi" type="name">Abu Mahdi</gloss> cruise missile (~1,000km range, AI-guided, low-altitude, land/sea/air launch capable) entered serial production circa 2025. Many hardened coastal sites struck by 5,000-lb penetrators, but mobile transporter-erector-launchers survive by dispersion — the launchers that matter are the ones that moved before the strike.</desc>
       </def>
       <def>
         <term>Fast Attack Craft</term>
-        <desc><gloss key="IRGC" type="acronym">IRGC</gloss> Navy swarm doctrine. Dozens of armed speedboats capable of coordinated harassment, <gloss key="RPG" type="acronym">RPG</gloss>/ATGM attacks, and suicide runs. Effective in confined waters where maneuver space is limited and rules of engagement are ambiguous.</desc>
+        <desc><gloss key="IRGC" type="acronym">IRGC</gloss> Navy swarm doctrine. Pre-war strength: 100–200 armed speedboats including <gloss key="Ashura" type="name">Ashura</gloss>-class craft capable of 90+ km/h carrying Qadr heat-seeking missiles (25km range), Nasr-1 short-range <gloss key="AShM" type="acronym">AShM</gloss>, <gloss key="RPG" type="acronym">RPG</gloss>s, and mine-laying rails. Post–Epic Fury: 60–120+ sunk or combat-ineffective. The survivors are the ones hiding in coves and under bridges. In confined waters where maneuver space is limited, even a degraded swarm force creates ambiguity that degrades targeting confidence on both sides.</desc>
       </def>
       <def>
         <term>Submarines</term>
-        <desc><gloss key="Ghadir" type="name">Ghadir</gloss>-class midget submarines (~23 built per open-source estimates), <gloss key="Nahang" type="name">Nahang</gloss>-class.<cite ref="mines1" number="12"/> Mine delivery, torpedo attacks, intelligence gathering. Small enough to be difficult to track in shallow, noisy Gulf waters.</desc>
+        <desc>20+ <gloss key="Ghadir" type="name">Ghadir</gloss>-class midget submarines (120-ton displacement, shallow-water optimized, difficult to track in the noisy Gulf thermocline). Armed with Hoot torpedoes, Nasr-1 missiles, and mine delivery capability. Some sunk in strikes. <gloss key="Fateh" type="name">Fateh</gloss>-class heavier submarines provide additional capability.<cite ref="mines1" number="12"/> The submarine threat is less about the weapons they carry and more about the uncertainty they create: a convoy that might be tracked by a submarine behaves differently than one that is not.</desc>
       </def>
       <def>
         <term>Drones and Loitering Munitions</term>
-        <desc><gloss key="ISR" type="acronym">ISR</gloss> and strike from land, sea, and island positions. Adds a persistent surveillance and targeting layer over the entire strait.</desc>
+        <desc>The fastest-evolving layer. <gloss key="Shahed-136" type="name">Shahed-136</gloss> one-way attack drones (2,000+ km range, low-cost, mass-produced, tunnel-stored — launch capacity down 83–95% post-strikes but production continues). <gloss key="Mohajer" type="name">Mohajer</gloss>-6/10 for reconnaissance and strike. <gloss key="Shahed-238" type="name">Shahed-238</gloss> jet-powered variant for higher-speed attack. The 359 loitering surface-to-air system (150km range, unveiled January 2025) adds a new dimension: a loitering munition that hunts aircraft rather than ships. Iran used daily drone waves in the first week of the Gulf campaign. The drones are cheap enough to be expendable and numerous enough to saturate point defenses.</desc>
+      </def>
+      <def>
+        <term>Shore-Based Sensors</term>
+        <desc>The kill chain begins here. <gloss key="Ghadir-radar" type="name">Ghadir</gloss> over-the-horizon radar for wide-area maritime and air surveillance. Sepehr <gloss key="OTH" type="acronym">OTH</gloss> radar for detection and tracking. Electro-optical/infrared coastal observation posts on Qeshm, Abu Musa, Greater and Lesser Tunbs. <gloss key="AIS" type="acronym">AIS</gloss> monitoring. Distributed <gloss key="ISR" type="acronym">ISR</gloss> from islands and mainland creates persistent contact with all traffic in the strait. The advantage is not the individual sensor but the ability to find, fix, and track a ship long enough to coordinate a salvo. Some island sites (Abu Musa harbor, Tunbs installations) damaged by Epic Fury strikes; the degree of sensor degradation is not publicly confirmed.</desc>
       </def>
       <def>
         <term>Geography</term>
@@ -503,6 +507,42 @@
     <entry key="UUV" type="acronym">
       <full>Unmanned Underwater Vehicle</full>
       <definition>Remotely operated or autonomous submersible; broader category including AUVs and ROVs</definition>
+    </entry>
+    <entry key="Abu Mahdi" type="acronym">
+      <full>Abu Mahdi Naval Cruise Missile</full>
+      <definition>Iranian long-range cruise missile; AI-guided, >1,000km range; land/sea/air launch capable</definition>
+    </entry>
+    <entry key="AShM" type="acronym">
+      <full>Anti-Ship Missile</full>
+      <definition>Missile designed to strike naval vessels</definition>
+    </entry>
+    <entry key="Ashura" type="name">
+      <full>Ashura-class Fast Attack Craft</full>
+      <definition>IRGC Navy high-speed interceptor; 90+ km/h; armed with Qadr heat-seeking missiles</definition>
+    </entry>
+    <entry key="Shahed-136" type="name">
+      <full>Shahed-136 One-Way Attack Drone</full>
+      <definition>Mass-produced Iranian loitering munition; 2,000+ km range; delta-wing, propeller-driven</definition>
+    </entry>
+    <entry key="Shahed-238" type="name">
+      <full>Shahed-238 Jet-Powered Attack Drone</full>
+      <definition>Jet-powered variant of Iranian one-way attack drone; higher speed than Shahed-136</definition>
+    </entry>
+    <entry key="Mohajer" type="name">
+      <full>Mohajer UAV Family</full>
+      <definition>Iranian reconnaissance and strike drone series; Mohajer-6 and Mohajer-10 variants</definition>
+    </entry>
+    <entry key="Fateh" type="name">
+      <full>Fateh-class Submarine</full>
+      <definition>Iranian semi-heavy submarine; larger than Ghadir-class; torpedo and missile capable</definition>
+    </entry>
+    <entry key="OTH" type="acronym">
+      <full>Over-the-Horizon</full>
+      <definition>Radar that detects targets beyond the visual horizon by bouncing signals off the ionosphere or using surface waves</definition>
+    </entry>
+    <entry key="Ghadir-radar" type="name">
+      <full>Ghadir Radar</full>
+      <definition>Iranian over-the-horizon radar system for wide-area maritime and air surveillance</definition>
     </entry>
   </glossary>
 </rfc>
