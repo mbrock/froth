@@ -12,24 +12,24 @@ The Strait of Hormuz is in acute crisis as of March 2026.
 Commercial traffic has fallen sharply — by mid-March, most
 shipping through the strait had halted, with only around 90
 vessels observed crossing in a single snapshot period while the
-broader flow remained heavily disrupted.[^ap1] Iran's IRGC Navy
+broader flow remained heavily disrupted.<sup>[1](#ref-ap1)</sup> Iran's IRGC Navy
 maintains the principal local threat: fast attack craft, anti-ship
 cruise missiles, naval mines deployable from Ghadir-class
 submarines, drones, and shore-based sensors on controlled islands
 (Qeshm, Larak, Abu Musa, Greater and Lesser Tunbs). The US 5th
 Fleet operates escorts under Operation Epic Escort but was reported
 "not ready for weeks" to provide full tanker escort coverage at the
-crisis onset.[^twz1] War risk insurance premiums have spiked —
+crisis onset.<sup>[2](#ref-twz1)</sup> War risk insurance premiums have spiked —
 the Joint War Committee has listed the strait as a high-risk
-area, and operators are delaying or withdrawing transits.[^wind1]
+area, and operators are delaying or withdrawing transits.<sup>[3](#ref-wind1)</sup>
 Oil is above $120/bbl. Roughly one-fifth of the world's crude
 and a major share of global LNG transits this 21-nautical-mile-
-wide channel.[^eia1]
+wide channel.<sup>[4](#ref-eia1)</sup>
 
 On the night of 23 March 2026, a projectile struck a gas pipeline
 feeding a power station in Khorramshahr, Khuzestan province —
 Iran's hydrocarbon heartland — further degrading an already
-war-stressed energy grid.[^fsquawk1]
+war-stressed energy grid.<sup>[5](#ref-fsquawk1)</sup>
 
 The question: could a private entity — not a state navy — open
 and secure the strait? Not as fantasy. As engineering.
@@ -43,13 +43,13 @@ Three models matter.
 The American Volunteer Group: a private military air unit recruited
 from US service members, funded by the Chinese government, operating
 under the corporate front of CAMCO (Central Aircraft Manufacturing
-Company).[^avg1] They defended the Burma Road — a supply line —
+Company).<sup>[6](#ref-avg1)</sup> They defended the Burma Road — a supply line —
 using 99 P-40 Warhawk fighters (100 ordered; one crate damaged in
 transit) against a larger Japanese air force. Legal status:
 contractors of a foreign government. Effective because they had the
 right equipment, experienced pilots, and a narrow mission (defend
 the road). Disbanded 4 July 1942 and absorbed into the 23rd Fighter
-Group, US Army Air Forces.[^avg1]
+Group, US Army Air Forces.<sup>[6](#ref-avg1)</sup>
 
 Lesson: A private force works when the mission is geographically
 constrained, the threat is definable, and a state sponsor provides
@@ -58,15 +58,15 @@ legal cover and logistics.
 ### 2. Operation Earnest Will (24 July 1987 – 26 September 1988)
 
 The US reflagged 11 Kuwaiti tankers under the US registry, then
-escorted them through the Gulf with naval convoys.[^ew1] The first
+escorted them through the Gulf with naval convoys.<sup>[7](#ref-ew1)</sup> The first
 convoy hit a mine on 24 July 1987 — the tanker *Bridgeton*
-struck an Iranian mine on the operation's opening day.[^bridge1]
-The USS *Samuel B. Roberts* hit a mine on 14 April 1988.[^pm1]
+struck an Iranian mine on the operation's opening day.<sup>[8](#ref-bridge1)</sup>
+The USS *Samuel B. Roberts* hit a mine on 14 April 1988.<sup>[9](#ref-pm1)</sup>
 Four days later, Operation Praying Mantis — the largest US naval
 engagement since World War II — destroyed the Iranian frigate
 *Sahand*, severely damaged the frigate *Sabalan*, sank the fast
 attack craft *Joshan*, and struck the Sirri and Sassan oil
-platforms.[^pm1]
+platforms.<sup>[9](#ref-pm1)</sup>
 
 The operation worked despite the mines because: convoy routing
 reduced exposure, mine countermeasures improved over time, and US
@@ -85,11 +85,11 @@ Private armed security teams (PCASP) on merchant vessels effectively
 ended Somali piracy. The legal framework: IMO guidance
 MSC.1/Circ.1405/Rev.2 deferred to flag states, flag states
 authorized armed guards under varying national regimes, companies
-contracted private maritime security firms.[^imo1] The model was
+contracted private maritime security firms.<sup>[10](#ref-imo1)</sup> The model was
 shipboard — teams of 3–4 armed guards per vessel, with escalating
 ROE (presence, warning, deterrent fire, protective fire). No
 merchant vessel carrying embarked armed guards was successfully
-hijacked during the suppression period.[^pcasp1] At the height of
+hijacked during the suppression period.<sup>[11](#ref-pcasp1)</sup> At the height of
 the crisis, several hundred embarked teams were operating
 simultaneously across the High Risk Area.
 
@@ -108,7 +108,7 @@ Iran's A2/AD in the strait is layered:
 1. MINES — The primary threat. Iran is believed to possess a
    substantial mine inventory, including EM-52 rocket-propelled
    rising mines, SADAF-family bottom mines, and conventional
-   moored contact mines.[^mines1] Deployable from submarines,
+   moored contact mines.<sup>[12](#ref-mines1)</sup> Deployable from submarines,
    surface craft, and commercial dhows. Covert minelaying in a
    busy commercial lane is nearly undetectable until the first
    ship hits one. Open-source counts of total inventory vary and
@@ -117,7 +117,7 @@ Iran's A2/AD in the strait is layered:
 2. ANTI-SHIP CRUISE MISSILES — Shore-based mobile launchers on
    the Iranian coast and island garrisons. Noor (C-802
    derivative, ~120km range), Qader (~200km), Khalij Fars
-   (ballistic AShM, ~300km).[^ascm1] Multiple simultaneous salvos
+   (ballistic AShM, ~300km).<sup>[13](#ref-ascm1)</sup> Multiple simultaneous salvos
    possible. The strait is well within range of launchers
    positioned deep inland.
 
@@ -127,7 +127,7 @@ Iran's A2/AD in the strait is layered:
    space is limited and rules of engagement are ambiguous.
 
 4. SUBMARINES — Ghadir-class midget submarines (~23 built per
-   open-source estimates), Nahang-class.[^mines1] Mine delivery,
+   open-source estimates), Nahang-class.<sup>[12](#ref-mines1)</sup> Mine delivery,
    torpedo attacks, intelligence gathering. Small enough to be
    difficult to track in shallow, noisy Gulf waters.
 
@@ -165,12 +165,12 @@ security agreement.
 Alternative sponsor: UAE (Fujairah is the bypass terminal and
 eastern terminus of the ADCOP — Abu Dhabi Crude Oil Pipeline —
 which can carry 1.5 million bbl/day, bypassing Hormuz
-entirely[^adcop1]), but UAE participation would be read as
+entirely<sup>[14](#ref-adcop1)</sup>), but UAE participation would be read as
 alignment with the US/Israel coalition and eliminate diplomatic
 flexibility.
 
 UNCLOS Part III, Article 38 establishes transit passage as a right
-in international straits used for international navigation.[^unclos1]
+in international straits used for international navigation.<sup>[15](#ref-unclos1)</sup>
 Iran has not ratified UNCLOS but the passage right is widely
 considered customary international law. The legal theory: the
 private entity enforces an existing right under contract to
@@ -186,11 +186,11 @@ impossible. A private MCM capability would need:
 a) AUTONOMOUS SURVEY — Commercial AUVs can map and classify the
    seabed. The Kongsberg HUGIN family (including the HUGIN
    Endurance variant) is used by both commercial survey operators
-   and defense customers.[^hugin1] Saab's AUV62-MR mine
+   and defense customers.<sup>[16](#ref-hugin1)</sup> Saab's AUV62-MR mine
    reconnaissance system received a Swedish Navy order in
-   2024.[^saab1] The REMUS 600 (now under Kongsberg's portfolio
+   2024.<sup>[17](#ref-saab1)</sup> The REMUS 600 (now under Kongsberg's portfolio
    after the Hydroid acquisition) is a medium-class UUV used for
-   MCM and other payload missions.[^remus1] A fleet of 8–12 AUVs
+   MCM and other payload missions.<sup>[18](#ref-remus1)</sup> A fleet of 8–12 AUVs
    could survey the traffic separation scheme in 48–72 hours and
    maintain continuous re-survey on a rolling basis.
 
@@ -198,15 +198,15 @@ b) MINE IDENTIFICATION — Side-scan and synthetic aperture sonar
    on the AUVs identifies mine-like objects. ATLAS ELEKTRONIK
    SeaCat can carry user-defined payloads in its flooded bow
    section and is registered as a dual-use good, exempt from ITAR
-   restrictions.[^seacat1] Thales SAMDIS is a compact sonar
+   restrictions.<sup>[19](#ref-seacat1)</sup> Thales SAMDIS is a compact sonar
    optimized for detecting naval mines, including in deeper
-   waters.[^samdis1]
+   waters.<sup>[20](#ref-samdis1)</sup>
 
 c) MINE NEUTRALIZATION — This is the hardest commercial gap.
    Military mine disposal uses divers and expendable ROVs. ATLAS
    ELEKTRONIK's SeaFox is an expendable mine neutralizer — the
    vehicle is sent to the mine, confirms identification via
-   camera, and detonates on contact.[^seafox1] Some of these
+   camera, and detonates on contact.<sup>[21](#ref-seafox1)</sup> Some of these
    systems are available for export. A private operation would
    need either: (i) contracted military EOD teams from a
    participating state, (ii) commercial mine disposal ROVs
@@ -216,7 +216,7 @@ c) MINE NEUTRALIZATION — This is the hardest commercial gap.
 
 d) UNMANNED SURFACE VESSELS — ATLAS ELEKTRONIK UK's ARCIMS USV
    platform can deploy and recover AUVs, tow mine sweeping gear,
-   and maintain COLREGS-compliant autonomous navigation.[^arcims1]
+   and maintain COLREGS-compliant autonomous navigation.<sup>[22](#ref-arcims1)</sup>
    A fleet of 6–8 USVs provides persistent MCM coverage without
    putting crews in the minefield.
 
@@ -247,7 +247,7 @@ c) SHIPBOARD SECURITY TEAMS — The Gulf of Aden model scaled up.
    per ship, equipped for anti-swarm defense (heavy machine guns,
    anti-materiel rifles, shoulder-launched SAMs if the threat
    escalates to armed drones). Flag state authorization required
-   per IMO MSC.1/Circ.1405/Rev.2.[^imo1]
+   per IMO MSC.1/Circ.1405/Rev.2.<sup>[10](#ref-imo1)</sup>
 
 d) ELECTRONIC WARFARE — Drone jamming, radar warning receivers,
    chaff/flare on escort vessels. Commercial maritime EW systems
@@ -331,7 +331,7 @@ industry billions per year at crisis rates. A $150M/yr private
 security operation that reduces premiums back to pre-crisis levels
 pays for itself many times over. The ADCOP bypass pipeline can
 move 1.5M bbl/day but global transit through Hormuz in normal
-conditions exceeds 20M bbl/day.[^eia1] The bypass is a pressure
+conditions exceeds 20M bbl/day.<sup>[4](#ref-eia1)</sup> The bypass is a pressure
 valve, not a replacement. The economic incentive is overwhelming.
 The question is not cost. It is authority.
 
@@ -370,7 +370,7 @@ MCM to fill the mine clearance gap. Specifically:
    scheme. This is commercially viable, legally defensible under
    Omani sovereignty, and fills a real gap — the US Navy's MCM
    readiness was publicly reported as inadequate for immediate
-   escort duties at the crisis onset,[^twz1] and the UK mine
+   escort duties at the crisis onset,<sup>[2](#ref-twz1)</sup> and the UK mine
    hunter fleet (Hunt-class, Sandown-class) has shrunk through
    decommissionings and delayed recapitalization.
 
@@ -385,7 +385,7 @@ MCM to fill the mine clearance gap. Specifically:
    political deterrent against cruise missile attack. The
    International Maritime Security Construct (IMSC), already
    operating in the region, provides a multilateral framework
-   for coordination.[^imsc1]
+   for coordination.<sup>[23](#ref-imsc1)</sup>
 
 4. A commercial maritime domain awareness service providing
    real-time ISR to all convoy participants via satellite,
@@ -435,36 +435,48 @@ the parts of the problem that require sovereignty.
 
 ## References
 
-[^ap1]: AP News, "Strait of Hormuz shipping disruption," March 2026. https://apnews.com/article/82a9acb473837f1bf7a821d0c3f95205
-[^twz1]: The War Zone, "U.S. Navy Won't Be Ready to Escort Tankers Through Hormuz for Weeks." https://www.twz.com/news-features/u-s-navy-wont-be-ready-to-escort-tankers-through-hormuz-for-weeks
-[^wind1]: Windward Maritime Intelligence Daily, March 2026. https://windward.ai/blog/march-2-iran-war-maritime-intelligence-daily/
-[^eia1]: EIA, "World Oil Transit Chokepoints — Strait of Hormuz." https://www.eia.gov/international/analysis/special-topics/World_Oil_Transit_Chokepoints
-[^fsquawk1]: @firstsquawk, "Projectile strikes gas pipeline feeding power station in Iran's Khorramshahr," 23 March 2026. https://x.com/firstsquawk/status/2036228392316707090
-[^avg1]: "Flying Tigers," Wikipedia. https://en.wikipedia.org/wiki/Flying_Tigers
-[^ew1]: "Operation Earnest Will," Wikipedia. https://en.wikipedia.org/wiki/Operation_Earnest_Will
-[^bridge1]: "Bridgeton incident," Wikipedia. https://en.wikipedia.org/wiki/Bridgeton_incident
-[^pm1]: "Operation Praying Mantis," Wikipedia. https://en.wikipedia.org/wiki/Operation_Praying_Mantis
-[^mines1]: Open-source Iranian naval mine assessments. https://min.news/en/news/c3425b43e76c4ae493da8f1a986ccb94.html
-[^ascm1]: "Noor (missile)," "Khalij Fars (missile)," open-source defense databases.
-[^unclos1]: UNCLOS Part III, Arts. 37–44, "Straits Used for International Navigation." https://www.un.org/depts/los/convention_agreements/texts/unclos/part3.htm
-[^adcop1]: "Habshan–Fujairah oil pipeline," Wikipedia. https://en.wikipedia.org/wiki/Habshan%E2%80%93Fujairah_oil_pipeline
-[^hugin1]: Kongsberg HUGIN Endurance datasheet. https://www.kongsberg.com/globalassets/kongsberg-discovery/commerce/surveillance--monitoring/hugin-endurance/473631a_hugin_endurance_datasheet.pdf
-[^saab1]: Saab, "Order from Sweden for AUV62-MR," December 2024. https://www.saab.com/newsroom/stories/2024/december/saab-receives-order-from-sweden-for-autonomous-underwater-vehicles-for-mine-countermeasures
-[^remus1]: Kongsberg/Hydroid REMUS UUV portfolio. https://www.kongsberg.com/
-[^seacat1]: ATLAS ELEKTRONIK SeaCat mine warfare system. https://www.atlas-elektronik.com/solutions/mine-warfare-systems/seacat.html — ITAR-exempt dual-use registration per TKMS: https://www.tkmsgroup.com/de/atlas-elektronik/mine-warfare-systems/seacat-mk1
-[^samdis1]: Thales SAMDIS mine detection sonar. https://www.thalesgroup.com/en/print/pdf/node/6796
-[^seafox1]: ATLAS ELEKTRONIK SeaFox expendable mine neutralizer. https://www.atlas-elektronik.com/solutions/mine-warfare-systems/seafox.html
-[^arcims1]: ATLAS ELEKTRONIK UK ARCIMS USV. https://www.uk.atlas-elektronik.com/solutions/anti-submarine-systems/seasense
-[^imo1]: IMO MSC.1/Circ.1405/Rev.2, "Revised interim guidance on the use of PCASP." https://www.imo.org/
-[^pcasp1]: Industry reporting on PCASP effectiveness during the Gulf of Aden suppression period. No successful hijacking of a vessel carrying armed guards was recorded.
-[^imsc1]: International Maritime Security Construct (IMSC). https://www.imscsentinel.com/
+<a id="ref-ap1"></a>**[1]** AP News, "Strait of Hormuz shipping disruption," March 2026. https://apnews.com/article/82a9acb473837f1bf7a821d0c3f95205
 
-## Figures
+<a id="ref-twz1"></a>**[2]** The War Zone, "U.S. Navy Won't Be Ready to Escort Tankers Through Hormuz for Weeks." https://www.twz.com/news-features/u-s-navy-wont-be-ready-to-escort-tankers-through-hormuz-for-weeks
 
-All figures generated with Google Nano Banana 2 (gemini-3.1-flash-image-preview).
+<a id="ref-wind1"></a>**[3]** Windward Maritime Intelligence Daily, March 2026. https://windward.ai/blog/march-2-iran-war-maritime-intelligence-daily/
 
-- Fig. 1: Strait of Hormuz tactical geometry
-- Fig. 2: Autonomous mine countermeasures cross-section
-- Fig. 3: Private convoy escort formation
-- Fig. 4: Economics of closure vs private security
-- Fig. 5: Four-phase operational timeline
+<a id="ref-eia1"></a>**[4]** EIA, "World Oil Transit Chokepoints — Strait of Hormuz." https://www.eia.gov/international/analysis/special-topics/World_Oil_Transit_Chokepoints
+
+<a id="ref-fsquawk1"></a>**[5]** @firstsquawk, "Projectile strikes gas pipeline feeding power station in Iran's Khorramshahr," 23 March 2026. https://x.com/firstsquawk/status/2036228392316707090
+
+<a id="ref-avg1"></a>**[6]** "Flying Tigers," Wikipedia. https://en.wikipedia.org/wiki/Flying_Tigers
+
+<a id="ref-ew1"></a>**[7]** "Operation Earnest Will," Wikipedia. https://en.wikipedia.org/wiki/Operation_Earnest_Will
+
+<a id="ref-bridge1"></a>**[8]** "Bridgeton incident," Wikipedia. https://en.wikipedia.org/wiki/Bridgeton_incident
+
+<a id="ref-pm1"></a>**[9]** "Operation Praying Mantis," Wikipedia. https://en.wikipedia.org/wiki/Operation_Praying_Mantis
+
+<a id="ref-imo1"></a>**[10]** IMO MSC.1/Circ.1405/Rev.2, "Revised interim guidance on the use of PCASP." https://www.imo.org/
+
+<a id="ref-pcasp1"></a>**[11]** Industry reporting on PCASP effectiveness during the Gulf of Aden suppression period. No successful hijacking of a vessel carrying armed guards was recorded.
+
+<a id="ref-mines1"></a>**[12]** Open-source Iranian naval mine assessments. https://min.news/en/news/c3425b43e76c4ae493da8f1a986ccb94.html
+
+<a id="ref-ascm1"></a>**[13]** "Noor (missile)," "Khalij Fars (missile)," open-source defense databases.
+
+<a id="ref-adcop1"></a>**[14]** "Habshan–Fujairah oil pipeline," Wikipedia. https://en.wikipedia.org/wiki/Habshan%E2%80%93Fujairah_oil_pipeline
+
+<a id="ref-unclos1"></a>**[15]** UNCLOS Part III, Arts. 37–44, "Straits Used for International Navigation." https://www.un.org/depts/los/convention_agreements/texts/unclos/part3.htm
+
+<a id="ref-hugin1"></a>**[16]** Kongsberg HUGIN Endurance datasheet. https://www.kongsberg.com/globalassets/kongsberg-discovery/commerce/surveillance--monitoring/hugin-endurance/473631a_hugin_endurance_datasheet.pdf
+
+<a id="ref-saab1"></a>**[17]** Saab, "Order from Sweden for AUV62-MR," December 2024. https://www.saab.com/newsroom/stories/2024/december/saab-receives-order-from-sweden-for-autonomous-underwater-vehicles-for-mine-countermeasures
+
+<a id="ref-remus1"></a>**[18]** Kongsberg/Hydroid REMUS UUV portfolio. https://www.kongsberg.com/
+
+<a id="ref-seacat1"></a>**[19]** ATLAS ELEKTRONIK SeaCat mine warfare system. https://www.atlas-elektronik.com/solutions/mine-warfare-systems/seacat.html — ITAR-exempt dual-use registration per TKMS: https://www.tkmsgroup.com/de/atlas-elektronik/mine-warfare-systems/seacat-mk1
+
+<a id="ref-samdis1"></a>**[20]** Thales SAMDIS mine detection sonar. https://www.thalesgroup.com/en/print/pdf/node/6796
+
+<a id="ref-seafox1"></a>**[21]** ATLAS ELEKTRONIK SeaFox expendable mine neutralizer. https://www.atlas-elektronik.com/solutions/mine-warfare-systems/seafox.html
+
+<a id="ref-arcims1"></a>**[22]** ATLAS ELEKTRONIK UK ARCIMS USV. https://www.uk.atlas-elektronik.com/solutions/anti-submarine-systems/seasense
+
+<a id="ref-imsc1"></a>**[23]** International Maritime Security Construct (IMSC). https://www.imscsentinel.com/
