@@ -961,10 +961,14 @@ defmodule Froth.Agent.Worker do
   end
 
   defp summarize_value(value) when is_binary(value) do
-    if byte_size(value) > 240 do
-      binary_part(value, 0, 240) <> "..."
+    if String.valid?(value) do
+      if String.length(value) > 240 do
+        String.slice(value, 0, 240) <> "..."
+      else
+        value
+      end
     else
-      value
+      inspect(value, limit: 20, printable_limit: 240)
     end
   end
 

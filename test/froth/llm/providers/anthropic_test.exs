@@ -130,4 +130,43 @@ defmodule Froth.LLM.Providers.AnthropicTest do
              }
            ]
   end
+
+  test "build_request normalizes tool_result content to anthropic-compatible shapes" do
+    request = %Request{
+      provider: Anthropic,
+      headers: [{"x-api-key", "test"}],
+      model: "claude-opus-4-6",
+      max_tokens: 1024,
+      messages: [
+        Message.user([
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "call_map",
+            "content" => %{"status" => "ok", "answer" => 42}
+          },
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "call_block",
+            "content" => %{"type" => "text", "text" => "done"}
+          }
+        ])
+      ]
+    }
+
+    {:ok, %{body: body}} = Anthropic.build_request(request)
+
+    [message] = body["messages"]
+    [map_result, block_result] = message["content"]
+
+    assert message["role"] == "user"
+    assert map_result["type"] == "tool_result"
+    assert map_result["tool_use_id"] == "call_map"
+    assert Jason.decode!(map_result["content"]) == %{"answer" => 42, "status" => "ok"}
+
+    assert block_result == %{
+             "type" => "tool_result",
+             "tool_use_id" => "call_block",
+             "content" => [%{"type" => "text", "text" => "done"}]
+           }
+  end
 end

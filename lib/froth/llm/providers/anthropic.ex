@@ -415,7 +415,7 @@ defmodule Froth.LLM.Providers.Anthropic do
         [
           %{
             "role" => encode_role(role),
-            "content" => Message.content_blocks(normalized)
+            "content" => encode_content_blocks(Message.content_blocks(normalized))
           }
         ]
 
@@ -477,6 +477,42 @@ defmodule Froth.LLM.Providers.Anthropic do
   end
 
   defp maybe_merge(_resource, _path, _value, _raw), do: nil
+
+  defp encode_content_blocks(blocks) when is_list(blocks) do
+    Enum.map(blocks, &encode_content_block/1)
+  end
+
+  defp encode_content_block(%{"type" => "tool_result", "content" => content} = block) do
+    Map.put(block, "content", encode_tool_result_content(content))
+  end
+
+  defp encode_content_block(block), do: block
+
+  defp encode_tool_result_content(content) when is_binary(content), do: content
+
+  defp encode_tool_result_content(content) when is_list(content) do
+    if Enum.all?(content, &content_block?/1) do
+      Enum.map(content, &encode_content_block/1)
+    else
+      encode_jsonish(content)
+    end
+  end
+
+  defp encode_tool_result_content(%{"type" => _type} = block), do: [encode_content_block(block)]
+  defp encode_tool_result_content(%{"text" => _text} = block), do: [encode_content_block(block)]
+  defp encode_tool_result_content(%{} = content), do: encode_jsonish(content)
+  defp encode_tool_result_content(content), do: to_string(content)
+
+  defp content_block?(%{"type" => _type}), do: true
+  defp content_block?(%{"text" => _text}), do: true
+  defp content_block?(_), do: false
+
+  defp encode_jsonish(value) do
+    case Jason.encode(value) do
+      {:ok, json} -> json
+      _ -> inspect(value, limit: :infinity, printable_limit: :infinity)
+    end
+  end
 
   defp encode_role(:user), do: "user"
   defp encode_role(:assistant), do: "assistant"

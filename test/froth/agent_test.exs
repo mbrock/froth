@@ -219,6 +219,18 @@ defmodule Froth.Agent.WorkerTest do
       assert List.last(messages).role == :agent
     end
 
+    test "does not crash when request previews truncate unicode text" do
+      executor = start_executor(fn _, _ -> "ok" end)
+      long_text = String.duplicate("Ben oui — ", 80)
+
+      {pid, _cycle} =
+        start_worker([Message.user(long_text)], "simple_reply", tools: [], executor: executor)
+
+      assert_receive {:api_call, 0, _body}, 5000
+      assert_receive {:replay_done, 0}, 5000
+      wait_for_exit(pid)
+    end
+
     test "records a durable cycle summary and llm execution events" do
       executor = start_executor(fn _, _ -> "ok" end)
 
