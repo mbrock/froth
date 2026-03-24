@@ -277,4 +277,16 @@
     </a>
   </xsl:template>
 
+  <!-- Inline: tt (inline code) -->
+  <xsl:template match="rfc:tt">
+    <code class="inline"><xsl:apply-templates/></code>
+  </xsl:template>
+
+  <!-- Inline: anchor (invisible reference target) -->
+  <xsl:template match="rfc:anchor">
+    <a>
+      <xsl:attribute name="id"><xsl:value-of select="@id"/></xsl:attribute>
+    </a>
+  </xsl:template>
+
 </xsl:stylesheet>

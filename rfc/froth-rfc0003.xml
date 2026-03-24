@@ -9,13 +9,13 @@
     <related>FROTH-RFC-0004</related>
   </meta>
   <section title="Problem" id="problem">
-    <p>When an agent response contains N tool calls, `Froth.Agent.Worker` does the obvious thing: it spawns N concurrent Tasks.</p>
+    <p>When an agent response contains N tool calls, <tt>Froth.Agent.Worker</tt> does the obvious thing: it spawns N concurrent Tasks.</p>
     <p>The concurrency stops there.</p>
     <p>Each Task immediately calls the same GenServer:</p>
     <code>GenServer.call(worker.config.tool_executor,
   {:execute, tool_use, context})
 </code>
-    <p>In the Telegram bots, `tool_executor` is the bot process. That process handles:</p>
+    <p>In the Telegram bots, <tt>tool_executor</tt> is the bot process. That process handles:</p>
     <code>handle_call({:execute, %ToolUse{} = tool_use, context}, ...)
 </code>
     <p>which means all tool executions are serialized through one mailbox.</p>
@@ -31,7 +31,7 @@
     <list type="bullet">
       <item><p>the worker thinks it is doing parallel tool execution</p></item>
       <item><p>the bot process is actually doing serialized tool execution</p></item>
-      <item><p>the queue is governed by the OTP default `GenServer.call` timeout of 5000ms</p></item>
+      <item><p>the queue is governed by the OTP default <tt>GenServer.call</tt> timeout of 5000ms</p></item>
     </list>
     <p>If tool call #1 takes long enough, tool call #2 can fail before it ever starts running.</p>
   </section>
@@ -43,9 +43,9 @@
     </list>
     <p>Some of that state is genuinely needed by tools:</p>
     <list type="bullet">
-      <item><p>`chat_id`</p></item>
-      <item><p>`reply_to`</p></item>
-      <item><p>`session_id`</p></item>
+      <item><p><tt>chat_id</tt></p></item>
+      <item><p><tt>reply_to</tt></p></item>
+      <item><p><tt>session_id</tt></p></item>
       <item><p>sent-message tracking</p></item>
       <item><p>cycle control-prompt bookkeeping</p></item>
       <item><p>mid-cycle message injection</p></item>
@@ -67,11 +67,11 @@
     <p>That does remove the accidental 5000ms timeout. But in the current code there is no separate worker-owned timeout for tool tasks.</p>
     <p>So today:</p>
     <list type="bullet">
-      <item><p>`5000ms` is an accidental timeout</p></item>
-      <item><p>`:infinity` would become an accidental non-timeout</p></item>
+      <item><p><tt>5000ms</tt> is an accidental timeout</p></item>
+      <item><p><tt>:infinity</tt> would become an accidental non-timeout</p></item>
     </list>
     <p>Both are wrong.</p>
-    <p>Timeout policy should belong to `Froth.Agent.Worker`, because the worker owns the lifecycle of the tool tasks.</p>
+    <p>Timeout policy should belong to <tt>Froth.Agent.Worker</tt>, because the worker owns the lifecycle of the tool tasks.</p>
   </section>
   <section title="Requirements" id="requirements">
     <p>Any real fix should satisfy all of these:</p>
@@ -79,20 +79,20 @@
       <item><p>Tool work should run in parallel when the tools are independent.</p></item>
       <item><p>Bot state must remain internally consistent.</p></item>
       <item><p>External side effects should not require the bot GenServer to sit blocked on network I/O.</p></item>
-      <item><p>Timeouts must be explicit and owned by the worker, not inherited from `GenServer.call`.</p></item>
+      <item><p>Timeouts must be explicit and owned by the worker, not inherited from <tt>GenServer.call</tt>.</p></item>
       <item><p>The model should compose with RFC-0004's execution-log and telemetry direction.</p></item>
     </list>
   </section>
   <section title="Proposed Architecture" id="proposed-architecture">
     <subsection title="1. Move timeout ownership into `Agent.Worker`" id="1-move-timeout-ownership-into-agent-worker">
-      <p>`Agent.Worker` should own tool deadlines explicitly.</p>
-      <p>Add a `tool_timeout_ms` config value and have the worker schedule a timeout per invocation. If a tool exceeds its deadline:</p>
+      <p><tt>Agent.Worker</tt> should own tool deadlines explicitly.</p>
+      <p>Add a <tt>tool_timeout_ms</tt> config value and have the worker schedule a timeout per invocation. If a tool exceeds its deadline:</p>
       <list type="bullet">
         <item><p>the worker terminates the task</p></item>
         <item><p>the worker records a failed tool result</p></item>
         <item><p>the cycle continues or fails according to policy</p></item>
       </list>
-      <p>Only after this exists should the internal `GenServer.call` timeout be set to `:infinity`, because at that point the worker is the owner of the deadline.</p>
+      <p>Only after this exists should the internal <tt>GenServer.call</tt> timeout be set to <tt>:infinity</tt>, because at that point the worker is the owner of the deadline.</p>
     </subsection>
     <subsection title="2. Split tool execution into `prepare`, `execute`, and `commit`" id="2-split-tool-execution-into-prepare-execute-and-commit">
       <p>The core change is to separate state access from work.</p>
@@ -107,9 +107,9 @@
       <p>This step should not perform network I/O or long-running work.</p>
       <p>Example outputs of prepare:</p>
       <list type="bullet">
-        <item><p>`chat_id`</p></item>
-        <item><p>`reply_to`</p></item>
-        <item><p>`session_id`</p></item>
+        <item><p><tt>chat_id</tt></p></item>
+        <item><p><tt>reply_to</tt></p></item>
+        <item><p><tt>session_id</tt></p></item>
         <item><p>bot identity</p></item>
         <item><p>cycle metadata</p></item>
         <item><p>whether a control prompt should be shown</p></item>
@@ -119,7 +119,7 @@
       <p>The worker Task executes the tool outside the bot GenServer using the prepared capsule.</p>
       <p>This is where:</p>
       <list type="bullet">
-        <item><p>`Tools.execute/5`</p></item>
+        <item><p><tt>Tools.execute/5</tt></p></item>
         <item><p>shell execution</p></item>
         <item><p>eval execution</p></item>
         <item><p>outbound message sends</p></item>
@@ -131,10 +131,10 @@
       <p>#### Commit</p>
       <p>After execution completes, the bot process handles a fast commit step that applies the serialized state mutations:</p>
       <list type="bullet">
-        <item><p>`track_sent_message`</p></item>
-        <item><p>`put_last_tool_error`</p></item>
-        <item><p>`register_cycle_task`</p></item>
-        <item><p>clearing or consuming `mid_cycle_messages`</p></item>
+        <item><p><tt>track_sent_message</tt></p></item>
+        <item><p><tt>put_last_tool_error</tt></p></item>
+        <item><p><tt>register_cycle_task</tt></p></item>
+        <item><p>clearing or consuming <tt>mid_cycle_messages</tt></p></item>
         <item><p>any bookkeeping around cycle prompts and task tracking</p></item>
       </list>
       <p>This preserves state consistency without forcing the actual work through one mailbox.</p>
@@ -153,35 +153,35 @@ end)
     <p>Then on completion:</p>
     <code>GenServer.cast(executor, {:commit_tool, tool_use.id, outcome.commit_effects})
 </code>
-    <p>Where `outcome` contains:</p>
+    <p>Where <tt>outcome</tt> contains:</p>
     <list type="bullet">
       <item><p>semantic tool result content</p></item>
-      <item><p>`is_error`</p></item>
-      <item><p>`commit_effects`</p></item>
+      <item><p><tt>is_error</tt></p></item>
+      <item><p><tt>commit_effects</tt></p></item>
       <item><p>telemetry metadata</p></item>
     </list>
   </section>
   <section title="Why This Fits the Current Code" id="why-this-fits-the-current-code">
     <p>The existing bot code already reveals the correct split.</p>
-    <p>`execute_tool_call/3` currently mixes together:</p>
+    <p><tt>execute_tool_call/3</tt> currently mixes together:</p>
     <list type="bullet">
       <item><p>pure context resolution</p></item>
-      <item><p>long-running tool work via `Tools.execute`</p></item>
+      <item><p>long-running tool work via <tt>Tools.execute</tt></p></item>
       <item><p>outbound Telegram sends</p></item>
-      <item><p>state mutation via helpers like `track_sent_message`</p></item>
-      <item><p>follow-up state mutation via `maybe_track_task_from_result` and `maybe_track_tool_error`</p></item>
+      <item><p>state mutation via helpers like <tt>track_sent_message</tt></p></item>
+      <item><p>follow-up state mutation via <tt>maybe_track_task_from_result</tt> and <tt>maybe_track_tool_error</tt></p></item>
     </list>
     <p>Those should become separate phases instead of one blocking call.</p>
     <p>Even the special cases point in the same direction:</p>
     <list type="bullet">
-      <item><p>`send_message` does network I/O plus sent-message bookkeeping</p></item>
-      <item><p>`run_shell` and `elixir_eval` need control-prompt reservation and optional narration, but not a blocked bot mailbox</p></item>
-      <item><p>`maybe_inject_mid_cycle_messages/2` is a commit concern, not an execution concern</p></item>
+      <item><p><tt>send_message</tt> does network I/O plus sent-message bookkeeping</p></item>
+      <item><p><tt>run_shell</tt> and <tt>elixir_eval</tt> need control-prompt reservation and optional narration, but not a blocked bot mailbox</p></item>
+      <item><p><tt>maybe_inject_mid_cycle_messages/2</tt> is a commit concern, not an execution concern</p></item>
     </list>
   </section>
   <section title="What Not To Do" id="what-not-to-do">
     <subsection title="Not just &quot;increase the timeout&quot;" id="not-just-increase-the-timeout">
-      <p>Changing `5000` to `30000` reduces pain but keeps the architecture wrong. It preserves serialization and leaves the timeout policy in the wrong layer.</p>
+      <p>Changing <tt>5000</tt> to <tt>30000</tt> reduces pain but keeps the architecture wrong. It preserves serialization and leaves the timeout policy in the wrong layer.</p>
     </subsection>
     <subsection title="Not just `:infinity` without worker deadlines" id="not-just-infinity-without-worker-deadlines">
       <p>That only swaps one accidental policy for another.</p>
@@ -191,23 +191,23 @@ end)
     </subsection>
   </section>
   <section title="Migration Plan" id="migration-plan">
-    <p>Phase 1: Add explicit `tool_timeout_ms` to `Agent.Config` and make</p>
-    <code>     `Agent.Worker` own tool deadlines.
+    <p>Phase 1: Add explicit <tt>tool_timeout_ms</tt> to <tt>Agent.Config</tt> and make</p>
+    <code>     <tt>Agent.Worker</tt> own tool deadlines.
 </code>
-    <p>Phase 2: Set internal `GenServer.call` timeouts for tool execution</p>
-    <code>     to `:infinity`, now that the worker owns the deadline.
+    <p>Phase 2: Set internal <tt>GenServer.call</tt> timeouts for tool execution</p>
+    <code>     to <tt>:infinity</tt>, now that the worker owns the deadline.
 </code>
-    <p>Phase 3: Replace `{:execute, tool_use, context}` with a `prepare`</p>
+    <p>Phase 3: Replace <tt>{:execute, tool_use, context}</tt> with a <tt>prepare</tt></p>
     <code>     step that returns a lightweight execution capsule.
 </code>
     <p>Phase 4: Execute tools in Tasks outside the bot GenServer and return</p>
     <code>     structured outcomes plus commit effects.
 </code>
-    <p>Phase 5: Add a `commit` step in the bot process for serialized state</p>
+    <p>Phase 5: Add a <tt>commit</tt> step in the bot process for serialized state</p>
     <code>     mutation.
 </code>
-    <p>Phase 6: Emit `tool.started`, `tool.completed`, `tool.failed`, and</p>
-    <code>     `tool.timed_out` events in a form that can attach cleanly to
+    <p>Phase 6: Emit <tt>tool.started</tt>, <tt>tool.completed</tt>, <tt>tool.failed</tt>, and</p>
+    <code>     <tt>tool.timed_out</tt> events in a form that can attach cleanly to
      RFC-0004's execution spine.
 </code>
   </section>
@@ -232,7 +232,7 @@ end)
     <p>Do this in two deliberate steps:</p>
     <list type="numbered">
       <item><p>move timeout ownership into the worker immediately</p></item>
-      <item><p>then split tool execution into `prepare`, `execute`, and `commit`</p></item>
+      <item><p>then split tool execution into <tt>prepare</tt>, <tt>execute</tt>, and <tt>commit</tt></p></item>
     </list>
     <p>That fixes the current failure mode without pretending the real issue was just a magic number.</p>
   </section>

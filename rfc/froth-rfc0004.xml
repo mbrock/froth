@@ -12,13 +12,13 @@
     <p>RFC-0002 pushes Froth toward a native multimodal LLM layer. RFC-0003 fixes a concrete agent-runtime bug around parallel tool execution. Both are necessary. Neither is the next bottleneck.</p>
     <p>The next bottleneck is that execution state is split across four different worlds:</p>
     <list type="bullet">
-      <item><p>in-memory process state inside `Froth.Agent.Worker`</p></item>
-      <item><p>semantic transcript state in `agent_messages`</p></item>
-      <item><p>minimal sequencing state in `agent_events`</p></item>
-      <item><p>low-level span data in `telemetry_events`</p></item>
+      <item><p>in-memory process state inside <tt>Froth.Agent.Worker</tt></p></item>
+      <item><p>semantic transcript state in <tt>agent_messages</tt></p></item>
+      <item><p>minimal sequencing state in <tt>agent_events</tt></p></item>
+      <item><p>low-level span data in <tt>telemetry_events</tt></p></item>
     </list>
     <p>That split was fine while the agent subsystem was small. It is starting to hurt now.</p>
-    <p>`agent_cycles` currently stores almost nothing except an ID and timestamps. `agent_events` is only a head pointer plus a sequence number. `agent_messages` stores the semantic content and some metadata, but not the runtime structure of the cycle. Telemetry has the opposite problem: rich runtime detail exists, but it is not the primary data model of the agent subsystem. It is just a span stream.</p>
+    <p><tt>agent_cycles</tt> currently stores almost nothing except an ID and timestamps. <tt>agent_events</tt> is only a head pointer plus a sequence number. <tt>agent_messages</tt> stores the semantic content and some metadata, but not the runtime structure of the cycle. Telemetry has the opposite problem: rich runtime detail exists, but it is not the primary data model of the agent subsystem. It is just a span stream.</p>
     <p>This means Froth can reconstruct a transcript, but not a run.</p>
     <p>Questions that should be first-class are currently awkward:</p>
     <list type="bullet">
@@ -57,64 +57,64 @@
     <p>Froth should treat &quot;agent cycle&quot;, &quot;LLM call&quot;, &quot;tool invocation&quot;, &quot;semantic message&quot;, &quot;blob/media artifact&quot;, and &quot;telemetry span&quot; as connected pieces of one run. Today those pieces exist, but they do not line up in one durable model.</p>
     <p>The right move is:</p>
     <list type="numbered">
-      <item><p>make `agent_cycles` a real run record</p></item>
-      <item><p>turn `agent_events` into a durable execution log</p></item>
-      <item><p>keep `agent_messages` as the semantic transcript</p></item>
+      <item><p>make <tt>agent_cycles</tt> a real run record</p></item>
+      <item><p>turn <tt>agent_events</tt> into a durable execution log</p></item>
+      <item><p>keep <tt>agent_messages</tt> as the semantic transcript</p></item>
       <item><p>move large blobs and raw payloads out of transcript tables</p></item>
       <item><p>persist enough config and provenance to make runs inspectable and resumable</p></item>
     </list>
   </section>
   <section title="Proposed Changes" id="proposed-changes">
     <subsection title="1. Promote `agent_cycles` from ID holder to run record" id="1-promote-agent-cycles-from-id-holder-to-run-record">
-      <p>`agent_cycles` should become the durable summary of a run.</p>
+      <p><tt>agent_cycles</tt> should become the durable summary of a run.</p>
       <p>It should carry fields like:</p>
       <list type="bullet">
-        <item><p>`status` (`queued`, `running`, `waiting_on_tools`, `completed`, `failed`, `cancelled`)</p></item>
-        <item><p>resolved `provider`</p></item>
-        <item><p>resolved `model`</p></item>
-        <item><p>`root_span_id`</p></item>
-        <item><p>`parent_span_id`</p></item>
-        <item><p>`config_json`</p></item>
-        <item><p>`system_prompt_ref` or `system_prompt_hash`</p></item>
-        <item><p>`toolset_hash`</p></item>
-        <item><p>aggregate `usage`</p></item>
-        <item><p>aggregate `cost_usd`</p></item>
-        <item><p>`error`</p></item>
-        <item><p>`started_at`</p></item>
-        <item><p>`finished_at`</p></item>
+        <item><p><tt>status</tt> (<tt>queued</tt>, <tt>running</tt>, <tt>waiting_on_tools</tt>, <tt>completed</tt>, <tt>failed</tt>, <tt>cancelled</tt>)</p></item>
+        <item><p>resolved <tt>provider</tt></p></item>
+        <item><p>resolved <tt>model</tt></p></item>
+        <item><p><tt>root_span_id</tt></p></item>
+        <item><p><tt>parent_span_id</tt></p></item>
+        <item><p><tt>config_json</tt></p></item>
+        <item><p><tt>system_prompt_ref</tt> or <tt>system_prompt_hash</tt></p></item>
+        <item><p><tt>toolset_hash</tt></p></item>
+        <item><p>aggregate <tt>usage</tt></p></item>
+        <item><p>aggregate <tt>cost_usd</tt></p></item>
+        <item><p><tt>error</tt></p></item>
+        <item><p><tt>started_at</tt></p></item>
+        <item><p><tt>finished_at</tt></p></item>
       </list>
       <p>The key point is that a cycle should be inspectable without replaying the whole transcript and without scraping telemetry to recover basic facts about what happened.</p>
     </subsection>
     <subsection title="2. Turn `agent_events` into the execution log" id="2-turn-agent-events-into-the-execution-log">
-      <p>`agent_events` should stop being only &quot;head moved to message X&quot;. That information is useful, but it is not enough.</p>
-      <p>Instead, `agent_events` should be an append-only log of meaningful runtime transitions. Example kinds:</p>
+      <p><tt>agent_events</tt> should stop being only &quot;head moved to message X&quot;. That information is useful, but it is not enough.</p>
+      <p>Instead, <tt>agent_events</tt> should be an append-only log of meaningful runtime transitions. Example kinds:</p>
       <list type="bullet">
-        <item><p>`cycle.started`</p></item>
-        <item><p>`llm.requested`</p></item>
-        <item><p>`llm.completed`</p></item>
-        <item><p>`tool.started`</p></item>
-        <item><p>`tool.completed`</p></item>
-        <item><p>`tool.failed`</p></item>
-        <item><p>`message.appended`</p></item>
-        <item><p>`cycle.completed`</p></item>
-        <item><p>`cycle.failed`</p></item>
+        <item><p><tt>cycle.started</tt></p></item>
+        <item><p><tt>llm.requested</tt></p></item>
+        <item><p><tt>llm.completed</tt></p></item>
+        <item><p><tt>tool.started</tt></p></item>
+        <item><p><tt>tool.completed</tt></p></item>
+        <item><p><tt>tool.failed</tt></p></item>
+        <item><p><tt>message.appended</tt></p></item>
+        <item><p><tt>cycle.completed</tt></p></item>
+        <item><p><tt>cycle.failed</tt></p></item>
       </list>
       <p>Each event row should be able to carry:</p>
       <list type="bullet">
-        <item><p>`cycle_id`</p></item>
-        <item><p>`seq`</p></item>
-        <item><p>`kind`</p></item>
-        <item><p>`span_id`</p></item>
-        <item><p>`parent_span_id`</p></item>
-        <item><p>`message_id`</p></item>
-        <item><p>`tool_use_id`</p></item>
-        <item><p>`data_json`</p></item>
-        <item><p>`blob_ref`</p></item>
+        <item><p><tt>cycle_id</tt></p></item>
+        <item><p><tt>seq</tt></p></item>
+        <item><p><tt>kind</tt></p></item>
+        <item><p><tt>span_id</tt></p></item>
+        <item><p><tt>parent_span_id</tt></p></item>
+        <item><p><tt>message_id</tt></p></item>
+        <item><p><tt>tool_use_id</tt></p></item>
+        <item><p><tt>data_json</tt></p></item>
+        <item><p><tt>blob_ref</tt></p></item>
       </list>
       <p>This does not mean persisting every token delta. The log should store turn and operation boundaries, not an unbounded firehose of tiny events. Live token streaming can remain PubSub + telemetry.</p>
     </subsection>
     <subsection title="3. Keep `agent_messages` as the semantic transcript" id="3-keep-agent-messages-as-the-semantic-transcript">
-      <p>`agent_messages` is still the right place for the semantic content chain:</p>
+      <p><tt>agent_messages</tt> is still the right place for the semantic content chain:</p>
       <list type="bullet">
         <item><p>user messages</p></item>
         <item><p>assistant messages</p></item>
@@ -194,31 +194,31 @@
         <item><p>derived summaries and views</p></item>
       </list>
       <p>not cumulative conversation snapshots as the primary runtime record.</p>
-      <p>`telegram_cycle_links` is already a step in this direction. Keep that idea. Continue moving app-specific linkage into thin relation tables around a stronger core agent runtime model.</p>
+      <p><tt>telegram_cycle_links</tt> is already a step in this direction. Keep that idea. Continue moving app-specific linkage into thin relation tables around a stronger core agent runtime model.</p>
     </subsection>
     <subsection title="8. Make control outcomes explicit, not textual" id="8-make-control-outcomes-explicit-not-textual">
       <p>A recent runtime failure made this concrete.</p>
-      <p>Charlie ran a normal cycle, sent a status message successfully, then called `read_tool_transcript`. The tool completed successfully. The cycle then stopped `reason=normal` without taking the next think step or sending a real answer.</p>
-      <p>The proximate cause was not a provider failure and not a process crash. The transcript tool had returned text containing the string `Yielding:` inside a code snippet. The worker was using a substring check on tool-result text to decide whether a tool had asked the cycle to yield. A transcript containing that text therefore triggered the same control path as a real yield.</p>
+      <p>Charlie ran a normal cycle, sent a status message successfully, then called <tt>read_tool_transcript</tt>. The tool completed successfully. The cycle then stopped <tt>reason=normal</tt> without taking the next think step or sending a real answer.</p>
+      <p>The proximate cause was not a provider failure and not a process crash. The transcript tool had returned text containing the string <tt>Yielding:</tt> inside a code snippet. The worker was using a substring check on tool-result text to decide whether a tool had asked the cycle to yield. A transcript containing that text therefore triggered the same control path as a real yield.</p>
       <p>That is exactly the kind of bug an execution spine should make harder to write.</p>
       <p>Cycle control outcomes such as:</p>
       <list type="bullet">
-        <item><p>`yield`</p></item>
-        <item><p>`waiting_on_subscription`</p></item>
-        <item><p>`reply_sent`</p></item>
-        <item><p>`assistant_stopped_without_reply`</p></item>
-        <item><p>`tool_error`</p></item>
-        <item><p>`cycle_error`</p></item>
+        <item><p><tt>yield</tt></p></item>
+        <item><p><tt>waiting_on_subscription</tt></p></item>
+        <item><p><tt>reply_sent</tt></p></item>
+        <item><p><tt>assistant_stopped_without_reply</tt></p></item>
+        <item><p><tt>tool_error</tt></p></item>
+        <item><p><tt>cycle_error</tt></p></item>
       </list>
       <p>should be represented as explicit runtime facts, not inferred from rendered text.</p>
       <p>In practice that means:</p>
       <list type="bullet">
         <item><p>tool execution should return typed outcomes for control flow</p></item>
-        <item><p>`agent_events` should persist those outcomes as first-class kinds or structured payload fields</p></item>
+        <item><p><tt>agent_events</tt> should persist those outcomes as first-class kinds or structured payload fields</p></item>
         <item><p>cycle-stop reasons shown to users should come from structured state and event history, not transcript heuristics</p></item>
         <item><p>transcript rows should remain semantic content, not scheduler control</p></item>
       </list>
-      <p>The recent false-positive `Yielding:` stop bug was fixed in code by making yield explicit in the worker runtime. The persistence model should follow the same rule.</p>
+      <p>The recent false-positive <tt>Yielding:</tt> stop bug was fixed in code by making yield explicit in the worker runtime. The persistence model should follow the same rule.</p>
     </subsection>
   </section>
   <section title="Schema Sketch" id="schema-sketch">
@@ -269,16 +269,16 @@ telegram_cycle_links
     <p>This is intentionally conservative. It evolves the tables Froth already has instead of requiring a whole new runtime subsystem at once.</p>
   </section>
   <section title="Migration Plan" id="migration-plan">
-    <p>Phase 1: Add `status`, resolved config, usage, error, and span fields</p>
-    <code>     to `agent_cycles`.
+    <p>Phase 1: Add <tt>status</tt>, resolved config, usage, error, and span fields</p>
+    <code>     to <tt>agent_cycles</tt>.
 </code>
-    <p>Phase 2: Expand `agent_events` into a typed execution log while</p>
+    <p>Phase 2: Expand <tt>agent_events</tt> into a typed execution log while</p>
     <code>     keeping the existing head-tracking semantics working during
      migration.
 </code>
     <p>Phase 3: Persist LLM-call and tool-invocation boundaries as events</p>
-    <code>     from `Agent.Worker`, including explicit control outcomes such
-     as `yield`, `reply_sent`, and `assistant_stopped_without_reply`.
+    <code>     from <tt>Agent.Worker</tt>, including explicit control outcomes such
+     as <tt>yield</tt>, <tt>reply_sent</tt>, and <tt>assistant_stopped_without_reply</tt>.
 </code>
     <p>Phase 4: Introduce blob refs for large payloads and media, with</p>
     <code>     object-store-backed storage for the heavy data.
@@ -314,8 +314,8 @@ telegram_cycle_links
     <p>Do not spend the next phase only adding more provider features.</p>
     <p>The next phase should build the execution spine in this order:</p>
     <list type="numbered">
-      <item><p>richer `agent_cycles`</p></item>
-      <item><p>typed `agent_events`</p></item>
+      <item><p>richer <tt>agent_cycles</tt></p></item>
+      <item><p>typed <tt>agent_events</tt></p></item>
       <item><p>explicit LLM/tool operation records and control outcomes via events</p></item>
       <item><p>blob refs for large payloads</p></item>
       <item><p>UI and query paths that consume the new records directly</p></item>

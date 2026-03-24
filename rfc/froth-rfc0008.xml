@@ -11,8 +11,8 @@
   <section title="Situation" id="situation">
     <p>Froth has two event tables recording overlapping facts:</p>
     <list type="numbered">
-      <item><p>**telemetry_events** — the firehose. Columns: id (uuid), event (varchar), measurements (jsonb), metadata (jsonb), inserted_at, span_id, parent_id. Written by Froth.Telemetry.Store via the BEAM :telemetry bus. Sees everything. Schema-free payloads.</p></item>
-      <item><p>**agent_events** — created by RFC-0004. Columns: id (uuid), cycle_id, head_id, seq, kind, span_id, parent_span_id, message_id, tool_use_id, data_json (jsonb), blob_ref, inserted_at. Written by Froth.Agent.append_event/2. Agent-specific typed columns that are null for everything else.</p></item>
+      <item><p><strong>telemetry_events</strong> — the firehose. Columns: id (uuid), event (varchar), measurements (jsonb), metadata (jsonb), inserted_at, span_id, parent_id. Written by Froth.Telemetry.Store via the BEAM :telemetry bus. Sees everything. Schema-free payloads.</p></item>
+      <item><p><strong>agent_events</strong> — created by RFC-0004. Columns: id (uuid), cycle_id, head_id, seq, kind, span_id, parent_span_id, message_id, tool_use_id, data_json (jsonb), blob_ref, inserted_at. Written by Froth.Agent.append_event/2. Agent-specific typed columns that are null for everything else.</p></item>
     </list>
     <p>The worker dual-writes: every agent execution event fires a telemetry span AND inserts an agent_events row. Same span IDs in both places. Two tables recording the same facts with different column layouts.</p>
     <p>Three separate viewers (TelemetryLive, CodexLive, ToolLive) read from different subsets. No single view sees everything.</p>
@@ -84,7 +84,7 @@ inserted_at timestamp   NOT NULL
     <subsection title="Step 6: Add GIN index on metadata" id="step-6-add-gin-index-on-metadata">
       <code>create index(:events, [:metadata], using: &quot;gin&quot;)
 </code>
-      <p>This makes queries like `WHERE metadata-&gt;&gt;'cycle_id' = ?` and `WHERE metadata-&gt;&gt;'kind' = ?` fast without adding columns.</p>
+      <p>This makes queries like <tt>WHERE metadata-&gt;&gt;'cycle_id' = ?</tt> and <tt>WHERE metadata-&gt;&gt;'kind' = ?</tt> fast without adding columns.</p>
     </subsection>
     <subsection title="Step 7: Unified LiveView" id="step-7-unified-liveview">
       <p>One TimelineLive that reads from the events table with filters:</p>

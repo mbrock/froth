@@ -53,7 +53,7 @@
     avc: { format: 'annexb' }   // Raw NAL units
   });
 
-  const frameCount = Math.ceil(durationS * fps);
+  const frameCount = Math.ceil(durationS <em> fps);
 
   for (let i = 0; i &lt; frameCount; i++) {
     const t = i / fps;
@@ -61,7 +61,7 @@
 
     // Capture the current viewport as a VideoFrame
     const frame = new VideoFrame(canvas, {
-      timestamp: Math.round(t * 1_000_000),  // microseconds
+      timestamp: Math.round(t </em> 1_000_000),  // microseconds
       duration: Math.round(1_000_000 / fps)
     });
 
@@ -81,20 +81,20 @@
     </subsection>
     <subsection title="Canvas Requirement" id="canvas-requirement">
       <p>WebCodecs needs a canvas or offscreen canvas to create VideoFrames. The current template renders to DOM elements (divs with background images, text spans). Two options:</p>
-      <p>A. **html2canvas approach**: After each renderAt(), use    html2canvas or a similar library to rasterize the DOM to a    canvas. Adds ~20ms per frame. Total overhead: ~2 minutes    for a 4-minute video.</p>
-      <p>B. **Native canvas rendering**: Rewrite the renderer to paint    directly to a canvas using CanvasRenderingContext2D. Faster    but loses CSS typography, transitions, and layout. Wrong    tradeoff for our use case where the CSS IS the production    value.</p>
-      <p>C. **OffscreenCanvas from screenshot**: Use Chrome DevTools    Page.captureScreenshot but decode it into a VideoFrame    instead of writing to disk. Hybrid approach: DOM rendering    for quality, WebCodecs for encoding. Still uses DevTools    but eliminates disk I/O.</p>
-      <p>D. **Chrome's --enable-features=CanvasOopRasterization**: With    GPU rasterization enabled in headless Chrome, the entire    page render is already on the GPU. A VideoFrame can be    constructed from the compositor output via    `document.startViewTransition` or similar emerging APIs.    This is the zero-copy path. Not stable yet.</p>
-      <p>**Recommended: Option C for v1, Option D when Chrome ships it.**</p>
+      <p>A. <strong>html2canvas approach</strong>: After each renderAt(), use    html2canvas or a similar library to rasterize the DOM to a    canvas. Adds ~20ms per frame. Total overhead: ~2 minutes    for a 4-minute video.</p>
+      <p>B. <strong>Native canvas rendering</strong>: Rewrite the renderer to paint    directly to a canvas using CanvasRenderingContext2D. Faster    but loses CSS typography, transitions, and layout. Wrong    tradeoff for our use case where the CSS IS the production    value.</p>
+      <p>C. <strong>OffscreenCanvas from screenshot</strong>: Use Chrome DevTools    Page.captureScreenshot but decode it into a VideoFrame    instead of writing to disk. Hybrid approach: DOM rendering    for quality, WebCodecs for encoding. Still uses DevTools    but eliminates disk I/O.</p>
+      <p>D. <strong>Chrome's --enable-features=CanvasOopRasterization</strong>: With    GPU rasterization enabled in headless Chrome, the entire    page render is already on the GPU. A VideoFrame can be    constructed from the compositor output via    <tt>document.startViewTransition</tt> or similar emerging APIs.    This is the zero-copy path. Not stable yet.</p>
+      <p><strong>Recommended: Option C for v1, Option D when Chrome ships it.</strong></p>
     </subsection>
     <subsection title="Muxing" id="muxing">
       <p>Encoded chunks need to be assembled into an MP4 container.</p>
-      <p>**In-browser (preferred):**</p>
+      <p><strong>In-browser (preferred):</strong></p>
       <list type="bullet">
         <item><p>mp4-muxer (npm): ~50KB, produces spec-compliant fMP4</p></item>
         <item><p>Inject via CDN URL or inline the library</p></item>
       </list>
-      <p>**Server-side fallback:**</p>
+      <p><strong>Server-side fallback:</strong></p>
       <list type="bullet">
         <item><p>Stream chunks back to Elixir via DevTools eval</p></item>
         <item><p>Assemble with an Elixir MP4 writer or pipe to ffmpeg</p></item>

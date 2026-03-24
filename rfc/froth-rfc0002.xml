@@ -8,8 +8,8 @@
     <date>2026-03-22</date>
   </meta>
   <section title="Situation" id="situation">
-    <p>`Froth.LLM` already has the right high-level shape: a request goes in, a provider builds a transport request, SSE payloads become `Edit`s, and callers consume a stream of semantic events. That part works.</p>
-    <p>But the provider layer is still uneven. Anthropic already speaks its native API. xAI has a native Responses path when built-in tools are needed. `Froth.OpenAI` and `Froth.Gemini`, however, still route through `Froth.LLM.Providers.OpenAICompat`. That made it easy to get text streaming and tool calls working across multiple vendors, but it also pushed the abstraction in the wrong direction: toward &quot;chat completion compatibility&quot; instead of &quot;native multimodal model interfaces&quot;.</p>
+    <p><tt>Froth.LLM</tt> already has the right high-level shape: a request goes in, a provider builds a transport request, SSE payloads become <tt>Edit</tt>s, and callers consume a stream of semantic events. That part works.</p>
+    <p>But the provider layer is still uneven. Anthropic already speaks its native API. xAI has a native Responses path when built-in tools are needed. <tt>Froth.OpenAI</tt> and <tt>Froth.Gemini</tt>, however, still route through <tt>Froth.LLM.Providers.OpenAICompat</tt>. That made it easy to get text streaming and tool calls working across multiple vendors, but it also pushed the abstraction in the wrong direction: toward &quot;chat completion compatibility&quot; instead of &quot;native multimodal model interfaces&quot;.</p>
     <p>That starts to hurt as soon as the vendors differ in meaningful ways:</p>
     <list type="bullet">
       <item><p>Gemini uses native parts and supports image/audio IO on its own API.</p></item>
@@ -18,32 +18,32 @@
       <item><p>xAI has a native Responses API that does not cleanly collapse into a chat-completions-shaped wire format.</p></item>
     </list>
     <p>Compatibility endpoints flatten those differences. They hide capabilities, force lowest-common-denominator request shapes, and make multimodal support feel like a bolt-on. The result is a core layer that is more &quot;OpenAI-ish text chat&quot; than &quot;native multimodal LLM&quot;.</p>
-    <p>That is backwards. `Froth.LLM` should be the semantic layer. The vendor APIs should be adapters beneath it.</p>
+    <p>That is backwards. <tt>Froth.LLM</tt> should be the semantic layer. The vendor APIs should be adapters beneath it.</p>
   </section>
   <section title="Goal" id="goal">
-    <p>Turn `Froth.LLM` into a native multimodal abstraction that speaks OpenAI's API, Gemini's API, Anthropic's API, xAI's API, and similar vendor APIs directly, while presenting one coherent request, response, and streaming edit model to the rest of Froth.</p>
+    <p>Turn <tt>Froth.LLM</tt> into a native multimodal abstraction that speaks OpenAI's API, Gemini's API, Anthropic's API, xAI's API, and similar vendor APIs directly, while presenting one coherent request, response, and streaming edit model to the rest of Froth.</p>
   </section>
   <section title="Non-Goals" id="non-goals">
     <list type="bullet">
       <item><p>This RFC is not primarily about image generation as a separate subsystem.</p></item>
       <item><p>This RFC is not about pretending the vendor APIs are identical.</p></item>
       <item><p>This RFC is not about removing provider-specific options entirely.</p></item>
-      <item><p>This RFC does not replace `Froth.Replicate` for Replicate-native models.</p></item>
+      <item><p>This RFC does not replace <tt>Froth.Replicate</tt> for Replicate-native models.</p></item>
     </list>
   </section>
   <section title="Design Principles" id="design-principles">
     <list type="numbered">
-      <item><p>NATIVE PROVIDERS FIRST. `Froth.OpenAI` should talk to OpenAI. `Froth.Gemini` should talk to Gemini. `Froth.Anthropic` should talk to Anthropic. Compatibility layers are transitional helpers, not the architecture.</p></item>
+      <item><p>NATIVE PROVIDERS FIRST. <tt>Froth.OpenAI</tt> should talk to OpenAI. <tt>Froth.Gemini</tt> should talk to Gemini. <tt>Froth.Anthropic</tt> should talk to Anthropic. Compatibility layers are transitional helpers, not the architecture.</p></item>
       <item><p>ONE SEMANTIC CORE, MANY ADAPTERS. The caller should construct a Froth request in Froth terms. Each provider translates that request to its own wire format and translates streamed payloads back into Froth edits.</p></item>
       <item><p>MULTIMODAL IS FUNDAMENTAL. Text, images, audio, files, tool calls, and tool results are all first-class content. The core request model should assume mixed-modality content is normal.</p></item>
       <item><p>NORMALIZE SEMANTICS, NOT WIRE FORMATS. We should align on concepts like roles, content blocks, tools, tool results, response modalities, usage, and stop reasons. We should not align on one vendor's JSON layout.</p></item>
       <item><p>CAPABILITY MISMATCH SHOULD FAIL FAST. If the caller requests image output, audio input, JSON schema output, or some tool mode a vendor cannot satisfy, the provider should say so explicitly rather than silently degrading.</p></item>
-      <item><p>PROVIDER OPTIONS ARE AN ESCAPE HATCH. Vendor-specific options still matter, but they should sit in `provider_options` around the edges of a shared semantic model, not define the core abstraction.</p></item>
+      <item><p>PROVIDER OPTIONS ARE AN ESCAPE HATCH. Vendor-specific options still matter, but they should sit in <tt>provider_options</tt> around the edges of a shared semantic model, not define the core abstraction.</p></item>
     </list>
   </section>
   <section title="Proposed Changes" id="proposed-changes">
     <subsection title="1. Define a native Froth message/content model" id="1-define-a-native-froth-message-content-model">
-      <p>Today `Request.messages` is effectively `list(map())` containing provider-shaped payloads. Replace that with a semantic Froth format.</p>
+      <p>Today <tt>Request.messages</tt> is effectively <tt>list(map())</tt> containing provider-shaped payloads. Replace that with a semantic Froth format.</p>
       <p>Example:</p>
       <code>%Froth.LLM.Message{
   role: :user,
@@ -86,36 +86,36 @@
     <subsection title="3. Replace compatibility-backed providers with native ones" id="3-replace-compatibility-backed-providers-with-native-ones">
       <p>Introduce or evolve provider modules so each vendor has a native adapter:</p>
       <list type="bullet">
-        <item><p>`Froth.LLM.Providers.OpenAI`</p></item>
-        <item><p>`Froth.LLM.Providers.Gemini`</p></item>
-        <item><p>`Froth.LLM.Providers.Anthropic`</p></item>
-        <item><p>`Froth.LLM.Providers.XAIResponses`</p></item>
+        <item><p><tt>Froth.LLM.Providers.OpenAI</tt></p></item>
+        <item><p><tt>Froth.LLM.Providers.Gemini</tt></p></item>
+        <item><p><tt>Froth.LLM.Providers.Anthropic</tt></p></item>
+        <item><p><tt>Froth.LLM.Providers.XAIResponses</tt></p></item>
       </list>
       <p>Concretely:</p>
       <list type="bullet">
-        <item><p>`Froth.OpenAI` should stop setting `provider: OpenAICompat` and instead build requests for a native OpenAI provider.</p></item>
-        <item><p>`Froth.Gemini` should stop using the Google OpenAI-compatible endpoint and instead speak Gemini's native API directly.</p></item>
-        <item><p>`Froth.LLM.Providers.Anthropic` remains native, but should adopt the shared Froth multimodal request model instead of accepting only Anthropic-shaped message maps.</p></item>
-        <item><p>`Froth.LLM.Providers.OpenAICompat` becomes a migration shim and can eventually be removed.</p></item>
+        <item><p><tt>Froth.OpenAI</tt> should stop setting <tt>provider: OpenAICompat</tt> and instead build requests for a native OpenAI provider.</p></item>
+        <item><p><tt>Froth.Gemini</tt> should stop using the Google OpenAI-compatible endpoint and instead speak Gemini's native API directly.</p></item>
+        <item><p><tt>Froth.LLM.Providers.Anthropic</tt> remains native, but should adopt the shared Froth multimodal request model instead of accepting only Anthropic-shaped message maps.</p></item>
+        <item><p><tt>Froth.LLM.Providers.OpenAICompat</tt> becomes a migration shim and can eventually be removed.</p></item>
       </list>
     </subsection>
     <subsection title="4. Extend `Request` around shared semantics" id="4-extend-request-around-shared-semantics">
-      <p>`Froth.LLM.Request` should carry the shared semantic fields needed by all providers. Likely additions include:</p>
+      <p><tt>Froth.LLM.Request</tt> should carry the shared semantic fields needed by all providers. Likely additions include:</p>
       <list type="bullet">
-        <item><p>semantic `messages`</p></item>
-        <item><p>`response_modalities`</p></item>
-        <item><p>`response_format`</p></item>
+        <item><p>semantic <tt>messages</tt></p></item>
+        <item><p><tt>response_modalities</tt></p></item>
+        <item><p><tt>response_format</tt></p></item>
         <item><p>provider capability hints</p></item>
       </list>
-      <p>Existing fields like `thinking`, `output_config`, and `cache_control` should be reconsidered in this light:</p>
+      <p>Existing fields like <tt>thinking</tt>, <tt>output_config</tt>, and <tt>cache_control</tt> should be reconsidered in this light:</p>
       <list type="bullet">
         <item><p>if they represent shared semantics, promote them into clearer provider-neutral fields</p></item>
-        <item><p>if they are truly vendor-specific, keep them in `provider_options`</p></item>
+        <item><p>if they are truly vendor-specific, keep them in <tt>provider_options</tt></p></item>
       </list>
       <p>The goal is to reduce the amount of vendor vocabulary that leaks into the core request struct.</p>
     </subsection>
     <subsection title="5. Extend the edit/store model to carry multimodal output" id="5-extend-the-edit-store-model-to-carry-multimodal-output">
-      <p>`Edit` already gives Froth a nice streaming abstraction. Keep that, but generalize it beyond text deltas and tool-call JSON fragments.</p>
+      <p><tt>Edit</tt> already gives Froth a nice streaming abstraction. Keep that, but generalize it beyond text deltas and tool-call JSON fragments.</p>
       <p>Examples:</p>
       <code>%Edit{op: :append, resource: [&quot;message&quot;, &quot;blocks&quot;, 0], path: [&quot;text&quot;], value: &quot;hello&quot;}
 
@@ -133,35 +133,35 @@
   value: {:url, &quot;audio/mpeg&quot;, &quot;https://...&quot;}
 }
 </code>
-      <p>The store then accumulates a final multimodal message, and `project_event/1` can continue to emit convenient events like `{:text_delta, ...}`, `{:tool_use_start, ...}`, plus new image/audio events where useful.</p>
+      <p>The store then accumulates a final multimodal message, and <tt>project_event/1</tt> can continue to emit convenient events like <tt>{:text_delta, ...}</tt>, <tt>{:tool_use_start, ...}</tt>, plus new image/audio events where useful.</p>
     </subsection>
     <subsection title="6. Convenience APIs become thin wrappers on top" id="6-convenience-apis-become-thin-wrappers-on-top">
       <p>If Froth wants helpers like:</p>
       <code>Froth.ImageGen.generate(prompt, opts)
 </code>
-      <p>that is fine, but those helpers should sit on top of the multimodal `Froth.LLM` layer rather than define a separate abstraction. The core change in this RFC is the native multimodal provider layer itself.</p>
+      <p>that is fine, but those helpers should sit on top of the multimodal <tt>Froth.LLM</tt> layer rather than define a separate abstraction. The core change in this RFC is the native multimodal provider layer itself.</p>
     </subsection>
   </section>
   <section title="Migration Plan" id="migration-plan">
     <p>Phase 1: Add native provider modules for OpenAI and Gemini and route</p>
-    <code>     `Froth.OpenAI` / `Froth.Gemini` through them instead of
-     `OpenAICompat`.
+    <code>     <tt>Froth.OpenAI</tt> / <tt>Froth.Gemini</tt> through them instead of
+     <tt>OpenAICompat</tt>.
 </code>
     <p>Phase 2: Introduce Froth-native message/content structs and teach each</p>
     <code>     provider to accept them while remaining backward compatible
      with today's raw message maps.
 </code>
     <p>Phase 3: Add response modality and response format fields to</p>
-    <code>     `Froth.LLM.Request`.
+    <code>     <tt>Froth.LLM.Request</tt>.
 </code>
-    <p>Phase 4: Extend `Froth.LLM.Edit` and `Froth.LLM.Store` to accumulate</p>
+    <p>Phase 4: Extend <tt>Froth.LLM.Edit</tt> and <tt>Froth.LLM.Store</tt> to accumulate</p>
     <code>     multimodal output blocks, not just text and tool calls.
 </code>
     <p>Phase 5: Update call sites to construct semantic Froth messages rather</p>
-    <code>     than provider-shaped payloads. Deprecate `OpenAICompat`.
+    <code>     than provider-shaped payloads. Deprecate <tt>OpenAICompat</tt>.
 </code>
     <p>Phase 6: Add thin convenience APIs on top where they are useful</p>
-    <code>     (`ImageGen`, structured-output helpers, audio helpers, etc.).
+    <code>     (<tt>ImageGen</tt>, structured-output helpers, audio helpers, etc.).
 </code>
   </section>
   <section title="Consequences" id="consequences">
@@ -185,8 +185,8 @@
   <section title="Open Questions" id="open-questions">
     <list type="numbered">
       <item><p>What is the right Froth-native shape for content blocks? Pure MIME blocks are elegant for media, but tools and thinking likely need a richer typed structure than MIME alone.</p></item>
-      <item><p>Which fields truly belong in `Request`, and which should remain vendor-specific options? `thinking`, `output_config`, and `cache_control` are the obvious pressure points.</p></item>
-      <item><p>Should all providers project the same small event vocabulary (`:text_delta`, `:tool_use_start`, `:usage`, etc.), or should Froth also expose richer block-level events for image/audio output?</p></item>
+      <item><p>Which fields truly belong in <tt>Request</tt>, and which should remain vendor-specific options? <tt>thinking</tt>, <tt>output_config</tt>, and <tt>cache_control</tt> are the obvious pressure points.</p></item>
+      <item><p>Should all providers project the same small event vocabulary (<tt>:text_delta</tt>, <tt>:tool_use_start</tt>, <tt>:usage</tt>, etc.), or should Froth also expose richer block-level events for image/audio output?</p></item>
       <item><p>How should binary outputs be persisted? Some vendors return inline bytes, some return URLs, some return file references. Froth likely needs a consistent storage story above the provider layer.</p></item>
       <item><p>Do we want a capability registry per model/provider pair so callers can discover what is supported before making a request?</p></item>
     </list>
