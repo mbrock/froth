@@ -16,30 +16,35 @@ defmodule FrothWeb.RfcController do
         path = Path.join(rfc_dir(), filename)
         content = File.read!(path)
 
-        number = case Regex.run(~r/rfc(\d+)/, filename) do
-          [_, n] -> n
-          _ -> "????"
-        end
+        number =
+          case Regex.run(~r/rfc(\d+)/, filename) do
+            [_, n] -> n
+            _ -> "????"
+          end
 
-        title = case Regex.run(~r/<title>(.+?)<\/title>/, content) do
-          [_, t] -> t
-          _ -> filename
-        end
+        title =
+          case Regex.run(~r/<title>(.+?)<\/title>/, content) do
+            [_, t] -> t
+            _ -> filename
+          end
 
-        status = case Regex.run(~r/<status>(.+?)<\/status>/, content) do
-          [_, s] -> s
-          _ -> "UNKNOWN"
-        end
+        status =
+          case Regex.run(~r/<status>(.+?)<\/status>/, content) do
+            [_, s] -> s
+            _ -> "UNKNOWN"
+          end
 
-        date = case Regex.run(~r/<date>(.+?)<\/date>/, content) do
-          [_, d] -> d
-          _ -> ""
-        end
+        date =
+          case Regex.run(~r/<date>(.+?)<\/date>/, content) do
+            [_, d] -> d
+            _ -> ""
+          end
 
-        author = case Regex.run(~r/<author>(.+?)<\/author>/, content) do
-          [_, a] -> a
-          _ -> ""
-        end
+        author =
+          case Regex.run(~r/<author>(.+?)<\/author>/, content) do
+            [_, a] -> a
+            _ -> ""
+          end
 
         %{number: number, title: title, status: status, date: date, author: author}
       end)
@@ -53,6 +58,7 @@ defmodule FrothWeb.RfcController do
       # Serve raw XML source
       String.ends_with?(raw_slug, ".xml") ->
         path = Path.join(rfc_dir(), raw_slug)
+
         if File.exists?(path) do
           conn
           |> put_resp_content_type("application/xml; charset=utf-8")
@@ -64,6 +70,7 @@ defmodule FrothWeb.RfcController do
       # Serve raw markdown source (backward compat)
       String.ends_with?(raw_slug, ".md") ->
         path = Path.join(rfc_dir(), raw_slug)
+
         if File.exists?(path) do
           conn
           |> put_resp_content_type("text/plain; charset=utf-8")
@@ -81,6 +88,7 @@ defmodule FrothWeb.RfcController do
       # Serve schema
       raw_slug == "schema.xsd" ->
         path = Path.join(rfc_dir(), "schema.xsd")
+
         conn
         |> put_resp_content_type("application/xml; charset=utf-8")
         |> send_resp(200, File.read!(path))
@@ -88,16 +96,19 @@ defmodule FrothWeb.RfcController do
       # Default: server-side XSLT transform to HTML
       true ->
         xml_path = resolve_xml(raw_slug)
+
         if xml_path && File.exists?(xml_path) do
           case xslt_transform(xml_path) do
             {:ok, html} ->
               conn |> put_resp_content_type("text/html") |> send_resp(200, html)
+
             {:error, reason} ->
               conn |> send_resp(500, "XSLT error: #{reason}")
           end
         else
           # Fall back to markdown
           md_path = resolve_md(raw_slug)
+
           if md_path && File.exists?(md_path) do
             serve_markdown(conn, md_path, raw_slug)
           else
@@ -112,8 +123,10 @@ defmodule FrothWeb.RfcController do
       String.match?(slug, ~r/^\d+$/) ->
         padded = String.pad_leading(slug, 4, "0")
         Path.join(rfc_dir(), "froth-rfc#{padded}.xml")
+
       String.match?(slug, ~r/^froth-rfc\d+$/) ->
         Path.join(rfc_dir(), slug <> ".xml")
+
       true ->
         nil
     end
@@ -124,8 +137,10 @@ defmodule FrothWeb.RfcController do
       String.match?(slug, ~r/^\d+$/) ->
         padded = String.pad_leading(slug, 4, "0")
         Path.join(rfc_dir(), "froth-rfc#{padded}.md")
+
       String.match?(slug, ~r/^froth-rfc\d+$/) ->
         Path.join(rfc_dir(), slug <> ".md")
+
       true ->
         nil
     end
@@ -140,19 +155,26 @@ defmodule FrothWeb.RfcController do
 
   defp serve_markdown(conn, path, slug) do
     content = File.read!(path)
-    {:ok, html_body, _} = Earmark.as_html(content, %Earmark.Options{
-      code_class_prefix: "language-",
-      smartypants: false,
-      escape: false
-    })
-    title = case Regex.run(~r/^#\s+(.+)$/m, content) do
-      [_, t] -> t
-      _ -> slug
-    end
-    number = case Regex.run(~r/rfc(\d+)/, slug) do
-      [_, n] -> n
-      _ -> slug
-    end
+
+    {:ok, html_body, _} =
+      Earmark.as_html(content, %Earmark.Options{
+        code_class_prefix: "language-",
+        smartypants: false,
+        escape: false
+      })
+
+    title =
+      case Regex.run(~r/^#\s+(.+)$/m, content) do
+        [_, t] -> t
+        _ -> slug
+      end
+
+    number =
+      case Regex.run(~r/rfc(\d+)/, slug) do
+        [_, n] -> n
+        _ -> slug
+      end
+
     html = render_rfc_markdown(number, title, html_body)
     conn |> put_resp_content_type("text/html") |> send_resp(200, html)
   end
@@ -173,17 +195,18 @@ defmodule FrothWeb.RfcController do
   end
 
   defp render_index(rfcs) do
-    rows = Enum.map_join(rfcs, "\n", fn rfc ->
-      """
-      <tr>
-        <td class="rfc-num"><a href="/rfc/#{rfc.number}">#{escape(rfc.number)}</a></td>
-        <td class="rfc-title"><a href="/rfc/#{rfc.number}">#{escape(rfc.title)}</a></td>
-        <td class="rfc-status">#{escape(rfc.status)}</td>
-        <td class="rfc-date">#{escape(rfc.date)}</td>
-        <td class="rfc-author">#{escape(rfc.author)}</td>
-      </tr>
-      """
-    end)
+    rows =
+      Enum.map_join(rfcs, "\n", fn rfc ->
+        """
+        <tr>
+          <td class="rfc-num"><a href="/rfc/#{rfc.number}">#{escape(rfc.number)}</a></td>
+          <td class="rfc-title"><a href="/rfc/#{rfc.number}">#{escape(rfc.title)}</a></td>
+          <td class="rfc-status">#{escape(rfc.status)}</td>
+          <td class="rfc-date">#{escape(rfc.date)}</td>
+          <td class="rfc-author">#{escape(rfc.author)}</td>
+        </tr>
+        """
+      end)
 
     """
     <!DOCTYPE html>

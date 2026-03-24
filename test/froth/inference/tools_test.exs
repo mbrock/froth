@@ -138,6 +138,86 @@ defmodule Froth.Inference.ToolsTest do
     assert get_in(spec, ["input_schema", "required"]) == ["message_id"]
   end
 
+  test "web_search is exposed in tool specs" do
+    spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "web_search"))
+
+    refute is_nil(spec)
+    assert get_in(spec, ["input_schema", "required"]) == ["query"]
+  end
+
+  test "web_search executes triangulated search and returns tool payload" do
+    original_grok = Application.get_env(:froth, Froth.Grok, [])
+    original_openai = Application.get_env(:froth, Froth.OpenAI, [])
+    original_gemini = Application.get_env(:froth, Froth.Gemini, [])
+    original_stream_fun = Application.get_env(:froth, :llm_stream_fun)
+    original_stream_single_fun = Application.get_env(:froth, :llm_stream_single_fun)
+
+    on_exit(fn ->
+      Application.put_env(:froth, Froth.Grok, original_grok)
+      Application.put_env(:froth, Froth.OpenAI, original_openai)
+      Application.put_env(:froth, Froth.Gemini, original_gemini)
+
+      if is_nil(original_stream_fun) do
+        Application.delete_env(:froth, :llm_stream_fun)
+      else
+        Application.put_env(:froth, :llm_stream_fun, original_stream_fun)
+      end
+
+      if is_nil(original_stream_single_fun) do
+        Application.delete_env(:froth, :llm_stream_single_fun)
+      else
+        Application.put_env(:froth, :llm_stream_single_fun, original_stream_single_fun)
+      end
+    end)
+
+    Application.put_env(:froth, Froth.Grok, api_key: "test-grok")
+    Application.put_env(:froth, Froth.OpenAI, api_key: "test-openai")
+    Application.put_env(:froth, Froth.Gemini, api_key: "test-gemini")
+
+    Application.put_env(:froth, :llm_stream_fun, fn request, _on_event, _opts ->
+      text = "Provider #{inspect(request.provider)} saw https://example.test/source"
+
+      {:ok,
+       %{
+         text: text,
+         content: [%{"type" => "text", "text" => text}],
+         stop_reason: "stop",
+         usage: %{},
+         model: request.model,
+         message_id: "resp_test"
+       }}
+    end)
+
+    Application.put_env(:froth, :llm_stream_single_fun, fn _messages, _on_event, _opts ->
+      json =
+        ~s({"collated":"All three providers returned a grounded source.","agreement":1.0,"single_source_claims":[]})
+
+      {:ok,
+       %{
+         text: json,
+         content: [%{"type" => "text", "text" => json}],
+         stop_reason: "end_turn",
+         usage: %{},
+         model: "claude-sonnet-4-20250514",
+         message_id: "msg_collate"
+       }}
+    end)
+
+    assert {:ok, payload} =
+             Tools.execute(
+               "web_search",
+               %{"query" => "Kharg Island"},
+               unique_chat_id(),
+               bot_id: "charlie",
+               session_id: "charlie"
+             )
+
+    assert payload["collated"] == "All three providers returned a grounded source."
+    assert payload["agreement"] == 1.0
+    assert payload["single_source_claims"] == []
+    assert Map.keys(payload["providers"]) == ["gemini", "grok", "openai"]
+  end
+
   test "look validates message references before trying telegram download" do
     chat_id = unique_chat_id()
 

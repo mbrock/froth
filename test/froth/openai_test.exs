@@ -4,6 +4,7 @@ defmodule Froth.OpenAITest do
   alias Froth.LLM.Message
   alias Froth.LLM.Request
   alias Froth.LLM.Providers.OpenAI, as: OpenAIProvider
+  alias Froth.LLM.Providers.OpenAIResponses
   alias Froth.OpenAI
 
   setup do
@@ -57,6 +58,52 @@ defmodule Froth.OpenAITest do
                      %Request{
                        provider: OpenAIProvider,
                        endpoint: "https://api.openai.com/v1/chat/completions",
+                       model: "gpt-5-mini",
+                       messages: [
+                         %Message{role: :user, content: [%{"type" => "text", "text" => "hello"}]}
+                       ],
+                       provider_options: %{
+                         "include_usage" => true,
+                         "reasoning_effort" => nil
+                       }
+                     }}
+  end
+
+  test "stream_single/3 uses the Responses provider for built-in tools" do
+    test_pid = self()
+
+    Application.put_env(:froth, OpenAI,
+      api_key: "test-key-not-real",
+      model: "gpt-5-mini"
+    )
+
+    Application.put_env(:froth, :llm_stream_fun, fn request, _on_event, _opts ->
+      send(test_pid, {:llm_request, request})
+
+      {:ok,
+       %{
+         text: "hello",
+         content: [%{"type" => "text", "text" => "hello"}],
+         stop_reason: "stop",
+         usage: %{},
+         model: request.model,
+         message_id: "resp_test"
+       }}
+    end)
+
+    assert {:ok, result} =
+             OpenAI.stream_single(
+               [Message.user("hello")],
+               fn _event -> :ok end,
+               tools: [%{"type" => "web_search_preview"}]
+             )
+
+    assert result.text == "hello"
+
+    assert_received {:llm_request,
+                     %Request{
+                       provider: OpenAIResponses,
+                       endpoint: "https://api.openai.com/v1/responses",
                        model: "gpt-5-mini",
                        messages: [
                          %Message{role: :user, content: [%{"type" => "text", "text" => "hello"}]}

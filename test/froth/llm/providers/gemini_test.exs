@@ -170,4 +170,36 @@ defmodule Froth.LLM.Providers.GeminiTest do
              }
            ]
   end
+
+  test "build_request passes through google search retrieval grounding tools" do
+    request = %Request{
+      provider: Gemini,
+      endpoint:
+        "https://example.test/v1beta/models/gemini-3.1-pro:streamGenerateContent?alt=sse&key=test",
+      model: "gemini-3.1-pro",
+      messages: [Message.user("latest shipping disruptions")],
+      tools: [
+        %{
+          "type" => "google_search_retrieval",
+          "dynamic_retrieval_config" => %{
+            "mode" => "MODE_DYNAMIC",
+            "dynamic_threshold" => 0.3
+          }
+        }
+      ]
+    }
+
+    {:ok, %{body: body}} = Gemini.build_request(request)
+
+    assert body["tools"] == [
+             %{
+               "google_search_retrieval" => %{
+                 "dynamic_retrieval_config" => %{
+                   "mode" => "MODE_DYNAMIC",
+                   "dynamic_threshold" => 0.3
+                 }
+               }
+             }
+           ]
+  end
 end

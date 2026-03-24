@@ -4,6 +4,7 @@ defmodule Froth.Inference.Tools do
   """
 
   alias Froth.Repo
+  alias Froth.Search, as: WebSearch
   import Ecto.Query
 
   @default_session_id "charlie"
@@ -75,6 +76,22 @@ defmodule Froth.Inference.Tools do
           "after" => %{
             "type" => "integer",
             "description" => "Context messages after each hit. Default 3."
+          }
+        },
+        "required" => ["query"],
+        "additionalProperties" => false
+      }
+    },
+    %{
+      "name" => "web_search",
+      "description" =>
+        "Search the web via Grok, OpenAI, and Gemini simultaneously. Returns a triangulated result with source attribution, provider status, and confidence markers.",
+      "input_schema" => %{
+        "type" => "object",
+        "properties" => %{
+          "query" => %{
+            "type" => "string",
+            "description" => "The search query. Be specific."
           }
         },
         "required" => ["query"],
@@ -315,6 +332,7 @@ defmodule Froth.Inference.Tools do
 
   def label("read_log"), do: "read chat log"
   def label("search"), do: "search chat log"
+  def label("web_search"), do: "search web"
   def label("view_analysis"), do: "open analysis"
   def label("look"), do: "look at media"
   def label("read_tool_transcript"), do: "read tool transcript"
@@ -338,6 +356,17 @@ defmodule Froth.Inference.Tools do
 
       "search" ->
         {:ok, search(chat_id, input, session_id)}
+
+      "web_search" ->
+        case input["query"] do
+          query when is_binary(query) ->
+            with {:ok, result} <- WebSearch.query(query) do
+              {:ok, Froth.Search.Result.tool_payload(result)}
+            end
+
+          _ ->
+            {:error, "query must be a string"}
+        end
 
       "view_analysis" ->
         {:ok, view_analysis(input)}

@@ -342,7 +342,13 @@ defmodule Froth.LLM.Providers.Gemini do
 
   defp encode_tool(%{"type" => "web_search"}), do: {:builtin, %{"googleSearch" => %{}}}
   defp encode_tool(%{"type" => "google_search"}), do: {:builtin, %{"googleSearch" => %{}}}
+
+  defp encode_tool(%{"type" => "google_search_retrieval"} = tool),
+    do: {:builtin, google_search_retrieval_tool(tool)}
+
   defp encode_tool(%{"googleSearch" => _} = tool), do: {:builtin, tool}
+  defp encode_tool(%{"googleSearchRetrieval" => _} = tool), do: {:builtin, tool}
+  defp encode_tool(%{"google_search_retrieval" => _} = tool), do: {:builtin, tool}
   defp encode_tool(%{"codeExecution" => _} = tool), do: {:builtin, tool}
 
   defp encode_tool(tool) when is_map(tool) do
@@ -355,6 +361,22 @@ defmodule Froth.LLM.Providers.Gemini do
   end
 
   defp encode_tool(_tool), do: :skip
+
+  defp google_search_retrieval_tool(%{"google_search_retrieval" => _} = tool), do: tool
+
+  defp google_search_retrieval_tool(%{"googleSearchRetrieval" => _} = tool), do: tool
+
+  defp google_search_retrieval_tool(tool) when is_map(tool) do
+    config =
+      tool
+      |> Map.drop(["type"])
+      |> case do
+        %{} = config when map_size(config) > 0 -> config
+        _ -> %{}
+      end
+
+    %{"google_search_retrieval" => config}
+  end
 
   defp maybe_add_function_declarations(tools, []), do: tools
 

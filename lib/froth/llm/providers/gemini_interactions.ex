@@ -443,10 +443,15 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
   defp encode_tool(%{"type" => "google_search"} = tool),
     do: Map.put_new(tool, "type", "google_search")
 
+  defp encode_tool(%{"type" => "google_search_retrieval"} = tool),
+    do: google_search_retrieval_tool(tool)
+
   defp encode_tool(%{"type" => "code_execution"} = tool), do: tool
   defp encode_tool(%{"type" => "url_context"} = tool), do: tool
   defp encode_tool(%{"type" => "computer_use"} = tool), do: tool
   defp encode_tool(%{"type" => "mcp_server"} = tool), do: tool
+  defp encode_tool(%{"googleSearchRetrieval" => _} = tool), do: tool
+  defp encode_tool(%{"google_search_retrieval" => _} = tool), do: tool
 
   defp encode_tool(tool) when is_map(tool) do
     %{
@@ -458,6 +463,22 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
   end
 
   defp encode_tool(_tool), do: nil
+
+  defp google_search_retrieval_tool(%{"google_search_retrieval" => _} = tool), do: tool
+
+  defp google_search_retrieval_tool(%{"googleSearchRetrieval" => _} = tool), do: tool
+
+  defp google_search_retrieval_tool(tool) when is_map(tool) do
+    config =
+      tool
+      |> Map.drop(["type"])
+      |> case do
+        %{} = config when map_size(config) > 0 -> config
+        _ -> %{}
+      end
+
+    %{"google_search_retrieval" => config}
+  end
 
   defp generation_config(%Request{} = request) do
     %{}

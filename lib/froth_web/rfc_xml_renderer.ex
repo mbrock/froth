@@ -50,30 +50,38 @@ defmodule FrothWeb.RfcXmlRenderer do
       body: meta_html <> sections_html <> refs_html
     }
   end
-  defp render_rfc(_), do: %{number: "????", title: "Parse Error", body: "<p>Failed to parse RFC XML</p>"}
+
+  defp render_rfc(_),
+    do: %{number: "????", title: "Parse Error", body: "<p>Failed to parse RFC XML</p>"}
 
   defp render_section({:xmlElement, :section, _, _, _, _, _, attrs, children, _, _, _}) do
     title = get_attr(attrs, :title)
     id = get_attr(attrs, :id)
     content = Enum.map(children, &render_block/1) |> Enum.join("\n")
+
     ~s'<section id="#{h(to_string(id))}">\n<h2>#{h(to_string(title))}</h2>\n#{content}\n</section>'
   end
+
   defp render_section(_), do: ""
 
   defp render_block({:xmlElement, :p, _, _, _, _, _, _attrs, children, _, _, _}) do
     "<p>#{render_inline(children)}</p>"
   end
+
   defp render_block({:xmlElement, :code, _, _, _, _, _, attrs, children, _, _, _}) do
     lang = get_attr(attrs, :lang)
     text = text_content(children)
-    lang_class = if lang && lang != '', do: ~s' class="language-#{h(to_string(lang))}"', else: ""
+    lang_text = if lang, do: to_string(lang), else: ""
+    lang_class = if lang_text != "", do: ~s( class="language-#{h(lang_text)}"), else: ""
     "<pre><code#{lang_class}>#{h(to_string(text))}</code></pre>"
   end
+
   defp render_block({:xmlElement, :figure, _, _, _, _, _, attrs, children, _, _, _}) do
     src = get_attr(attrs, :src)
     alt = get_attr(attrs, :alt)
     caption_el = find_child(children, :caption)
     caption = if caption_el, do: render_inline(elem_children(caption_el)), else: to_string(alt)
+
     """
     <figure>
       <img src="#{h(to_string(src))}" alt="#{h(to_string(alt))}" loading="lazy">
@@ -81,35 +89,46 @@ defmodule FrothWeb.RfcXmlRenderer do
     </figure>
     """
   end
+
   defp render_block({:xmlElement, :list, _, _, _, _, _, attrs, children, _, _, _}) do
-    type = get_attr(attrs, :type) || 'numbered'
+    type = get_attr(attrs, :type) || "numbered"
     items = find_children(children, :item)
-    tag = case to_string(type) do
-      "numbered" -> "ol"
-      "lettered" -> ~s'ol type="a"'
-      "bullet" -> "ul"
-      _ -> "ol"
-    end
+
+    tag =
+      case to_string(type) do
+        "numbered" -> "ol"
+        "lettered" -> ~s'ol type="a"'
+        "bullet" -> "ul"
+        _ -> "ol"
+      end
+
     close_tag = String.split(to_string(tag), " ") |> hd()
     items_html = Enum.map(items, &render_item/1) |> Enum.join("\n")
     "<#{tag}>\n#{items_html}\n</#{close_tag}>"
   end
+
   defp render_block({:xmlElement, :section, _, _, _, _, _, _, _, _, _, _} = el) do
     render_section(el)
   end
+
   defp render_block({:xmlText, _, _, _, text, _}) do
     t = String.trim(to_string(text))
     if t == "", do: "", else: t
   end
+
   defp render_block(_), do: ""
 
   defp render_item({:xmlElement, :item, _, _, _, _, _, _attrs, children, _, _, _}) do
     label_el = find_child(children, :label)
-    label = if label_el, do: "<strong>#{text_content(elem_children(label_el))}) </strong>", else: ""
+
+    label =
+      if label_el, do: "<strong>#{text_content(elem_children(label_el))}) </strong>", else: ""
+
     ps = find_children(children, :p)
     inner = Enum.map(ps, fn p -> render_inline(elem_children(p)) end) |> Enum.join(" ")
     "<li>#{label}#{inner}</li>"
   end
+
   defp render_item(_), do: ""
 
   defp render_inline(children) do
@@ -117,43 +136,57 @@ defmodule FrothWeb.RfcXmlRenderer do
   end
 
   defp render_inline_node({:xmlText, _, _, _, text, _}), do: to_string(text)
+
   defp render_inline_node({:xmlElement, :cite, _, _, _, _, _, attrs, _, _, _, _}) do
     ref = get_attr(attrs, :ref)
     ~s'<sup><a href="#ref-#{h(to_string(ref))}">[#{h(to_string(ref))}]</a></sup>'
   end
+
   defp render_inline_node({:xmlElement, :em, _, _, _, _, _, _, children, _, _, _}) do
     "<em>#{text_content(children)}</em>"
   end
+
   defp render_inline_node({:xmlElement, :strong, _, _, _, _, _, _, children, _, _, _}) do
     "<strong>#{text_content(children)}</strong>"
   end
+
   defp render_inline_node({:xmlElement, :c, _, _, _, _, _, _, children, _, _, _}) do
     "<code>#{h(to_string(text_content(children)))}</code>"
   end
+
   defp render_inline_node({:xmlElement, :link, _, _, _, _, _, attrs, children, _, _, _}) do
     href = get_attr(attrs, :href)
     "<a href=\"#{h(to_string(href))}\">#{text_content(children)}</a>"
   end
+
   defp render_inline_node({:xmlElement, :"rfc-ref", _, _, _, _, _, attrs, _, _, _, _}) do
     number = get_attr(attrs, :number)
     "<a href=\"/rfc/#{h(to_string(number))}\">RFC-#{h(to_string(number))}</a>"
   end
+
   defp render_inline_node(_), do: ""
 
   defp render_references({:xmlElement, :references, _, _, _, _, _, _, children, _, _, _}) do
     refs = find_children(children, :ref)
+
     if refs == [] do
       ""
     else
-      items = Enum.map(refs, fn {:xmlElement, :ref, _, _, _, _, _, attrs, children, _, _, _} ->
-        id = get_attr(attrs, :id)
-        number = get_attr(attrs, :number)
-        title = meta_field_from(children, :title)
-        url = meta_field_from(children, :url)
-        num_display = if number && number != '', do: "[#{number}]", else: "[#{id}]"
-        url_html = if url, do: " <a href=\"#{h(to_string(url))}\">#{h(to_string(url))}</a>", else: ""
-        ~s'<li id="ref-#{h(to_string(id))}">#{num_display} #{h(to_string(title || ""))}#{url_html}</li>'
-      end) |> Enum.join("\n")
+      items =
+        Enum.map(refs, fn {:xmlElement, :ref, _, _, _, _, _, attrs, children, _, _, _} ->
+          id = get_attr(attrs, :id)
+          number = get_attr(attrs, :number)
+          title = meta_field_from(children, :title)
+          url = meta_field_from(children, :url)
+          num_display = if number && to_string(number) != "", do: "[#{number}]", else: "[#{id}]"
+
+          url_html =
+            if url, do: " <a href=\"#{h(to_string(url))}\">#{h(to_string(url))}</a>", else: ""
+
+          ~s'<li id="ref-#{h(to_string(id))}">#{num_display} #{h(to_string(title || ""))}#{url_html}</li>'
+        end)
+        |> Enum.join("\n")
+
       """
       <section id="references">
         <h2>References</h2>
@@ -164,12 +197,16 @@ defmodule FrothWeb.RfcXmlRenderer do
       """
     end
   end
+
   defp render_references(_), do: ""
 
   # Helpers
 
   defp get_attr(attrs, name) do
-    case Enum.find(attrs, fn {:xmlAttribute, n, _, _, _, _, _, _, v, _} -> n == name; _ -> false end) do
+    case Enum.find(attrs, fn
+           {:xmlAttribute, n, _, _, _, _, _, _, _value, _} -> n == name
+           _ -> false
+         end) do
       {:xmlAttribute, _, _, _, _, _, _, _, value, _} -> value
       _ -> nil
     end
@@ -197,10 +234,12 @@ defmodule FrothWeb.RfcXmlRenderer do
       {:xmlText, _, _, _, text, _} -> to_string(text)
       {:xmlElement, _, _, _, _, _, _, _, cs, _, _, _} -> text_content(cs)
       _ -> ""
-    end) |> Enum.join("")
+    end)
+    |> Enum.join("")
   end
 
   defp meta_field(nil, _), do: nil
+
   defp meta_field({:xmlElement, _, _, _, _, _, _, _, children, _, _, _}, name) do
     case find_child(children, name) do
       nil -> nil

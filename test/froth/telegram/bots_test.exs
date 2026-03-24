@@ -36,6 +36,11 @@ defmodule Froth.Telegram.BotsTest do
              &(&1["name"] == "send_message")
            )
 
+    assert Enum.any?(
+             Charlie.default_config().tools_module.specs_for_api(),
+             &(&1["name"] == "web_search")
+           )
+
     assert Lennart.default_config().runtime_module == Lennart
     assert Lennart.default_config().tools_module == Froth.Telegram.Toolsets.Lennart
     assert Lennart.default_config().recent_message_limit == 250
