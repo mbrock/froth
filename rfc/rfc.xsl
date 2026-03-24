@@ -98,8 +98,9 @@
           color: var(--muted); font-size: 0.9em;
         }
         .status { font-variant: small-caps; letter-spacing: 0.05em; }
-        .references { font-size: 0.9em; }
-        .references li { margin: 0.6em 0; word-break: break-all; }
+        .references { font-size: 0.9em; list-style: none; padding-left: 2.5em; }
+        .references li { margin: 0.6em 0; word-break: break-all; position: relative; }
+        .references .ref-num { position: absolute; left: -2.5em; color: var(--muted); font-variant-numeric: tabular-nums; }
         footer {
           margin-top: 3em; padding-top: 1em; border-top: 1px solid var(--border);
           font-size: 0.85em; color: var(--muted);
@@ -113,6 +114,72 @@
           body { max-width: none; font-size: 10pt; }
           a { color: inherit; text-decoration: underline; }
           pre { border: 1px solid #ccc; }
+        }
+
+        /* Glossary terms — underdotted with tap-to-reveal */
+
+
+        .gloss-tip {
+          visibility: hidden; opacity: 0;
+          transform: translateY(4px);
+          transition: all 0.15s ease;
+          position: absolute;
+          bottom: 100%; left: 50%;
+          transform: translateX(-50%) translateY(4px);
+          min-width: 200px; max-width: 320px;
+          padding: 8px 12px;
+          background: var(--fg); color: var(--bg);
+          font-size: 0.82em; line-height: 1.4;
+          border-radius: 4px;
+          z-index: 100;
+          pointer-events: none;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+        }
+        .gloss-tip::after {
+          content: ''; position: absolute;
+          top: 100%; left: 50%;
+          margin-left: -5px;
+          border: 5px solid transparent;
+          border-top-color: var(--fg);
+        }
+        .gloss-tip .gloss-full {
+          font-variant: small-caps;
+          letter-spacing: 0.04em;
+          display: block;
+          margin-bottom: 2px;
+        }
+        .gloss-tip .gloss-def {
+          font-style: italic;
+          font-size: 0.92em;
+          color: #ccc;
+        }
+        @media (prefers-color-scheme: dark) {
+          .gloss-tip { background: #e8e8e8; color: #111; }
+          .gloss-tip::after { border-top-color: #e8e8e8; }
+          .gloss-tip .gloss-def { color: #555; }
+        }
+
+        .gloss-acronym, .gloss-name.active .gloss-tip {
+          visibility: visible; opacity: 1;
+          transform: translateX(-50%) translateY(0);
+          pointer-events: auto;
+        }
+
+        .glossary-list { columns: 2; column-gap: 2em; }
+        .glossary-list dt {
+          font-variant: small-caps; letter-spacing: 0.06em;
+          font-weight: 600; margin-top: 0.6em;
+          break-after: avoid;
+        }
+        .glossary-list dd {
+          margin: 0 0 0.4em 0; font-size: 0.9em;
+          break-inside: avoid;
+        }
+        .glossary-list dd .gloss-full {
+          font-variant: small-caps; letter-spacing: 0.04em;
+        }
+        @media (max-width: 600px) {
+          .glossary-list { columns: 1; }
         }
       </style>
     </head>
@@ -151,6 +218,9 @@
         <!-- Sections -->
         <xsl:apply-templates select="rfc:section"/>
 
+        <!-- Glossary -->
+        <xsl:apply-templates select="rfc:glossary"/>
+
         <!-- References -->
         <xsl:if test="rfc:references">
           <section id="references">
@@ -158,11 +228,10 @@
             <ol class="references">
               <xsl:for-each select="rfc:references/rfc:ref">
                 <li>
-                  <xsl:attribute name="id">ref-<xsl:value-of select="@id"/></xsl:attribute>
+                  <xsl:attribute name="id"><xsl:value-of select="@id"/></xsl:attribute>
                   <xsl:if test="@number">
-                    [<xsl:value-of select="@number"/>]
+                    <span class="ref-num">[<xsl:value-of select="@number"/>]</span>
                   </xsl:if>
-                  <xsl:text> </xsl:text>
                   <xsl:value-of select="rfc:title"/>
                   <xsl:if test="rfc:url">
                     <xsl:text> </xsl:text>
@@ -188,6 +257,25 @@
           <a href="/rfc">Index</a>
         </p>
       </footer>
+    
+        <script>
+          // Toggle glossary tooltips on tap (mobile)
+          document.addEventListener('click', function(e) {
+            var term = e.target.closest('.gloss-acronym, .gloss-name');
+            if (term) {
+              // Close all other open tips
+              document.querySelectorAll('.gloss-acronym, .gloss-name.active').forEach(function(t) {
+                if (t !== term) t.classList.remove('active');
+              });
+              term.classList.toggle('active');
+              e.preventDefault();
+            } else {
+              document.querySelectorAll('.gloss-acronym, .gloss-name.active').forEach(function(t) {
+                t.classList.remove('active');
+              });
+            }}
+          });
+        </script>
     </body>
     </html>
   </xsl:template>
@@ -324,6 +412,69 @@
     <a>
       <xsl:attribute name="id"><xsl:value-of select="@id"/></xsl:attribute>
     </a>
+  </xsl:template>
+
+
+  <!-- Glossary inline term: acronym (abbr + all-small-caps) -->
+  <xsl:template match="rfc:gloss[@type='acronym']">
+    <abbr class="gloss-acronym" tabindex="0">
+      <xsl:variable name="k" select="@key"/>
+      <xsl:attribute name="title"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></xsl:attribute>
+      <xsl:apply-templates/>
+      <xsl:if test="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]">
+        <span class="gloss-tip">
+          <span class="gloss-full"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></span>
+          <span class="gloss-def"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:definition"/></span>
+        </span>
+      </xsl:if>
+    </abbr>
+  </xsl:template>
+
+  <!-- Glossary inline term: named thing (dfn + small-caps) -->
+  <xsl:template match="rfc:gloss[@type='name']">
+    <dfn class="gloss-name" tabindex="0">
+      <xsl:variable name="k" select="@key"/>
+      <xsl:attribute name="title"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></xsl:attribute>
+      <xsl:apply-templates/>
+      <xsl:if test="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]">
+        <span class="gloss-tip">
+          <span class="gloss-full"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></span>
+          <span class="gloss-def"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:definition"/></span>
+        </span>
+      </xsl:if>
+    </dfn>
+  </xsl:template>
+
+  <!-- Glossary inline term: untyped fallback -->
+  <xsl:template match="rfc:gloss">
+    <span class="gloss-acronym" tabindex="0">
+      <xsl:variable name="k" select="@key"/>
+      <xsl:apply-templates/>
+      <xsl:if test="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]">
+        <span class="gloss-tip">
+          <span class="gloss-full"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></span>
+          <span class="gloss-def"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:definition"/></span>
+        </span>
+      </xsl:if>
+    </span>
+  </xsl:template>
+
+  <!-- Glossary section rendered as appendix -->
+  <xsl:template match="rfc:glossary">
+    <section id="glossary">
+      <h2>Glossary</h2>
+      <dl class="glossary-list">
+        <xsl:for-each select="rfc:entry">
+          <xsl:sort select="@key"/>
+          <dt><xsl:value-of select="@key"/></dt>
+          <dd>
+            <span class="gloss-full"><xsl:value-of select="rfc:full"/></span>
+            <xsl:text> — </xsl:text>
+            <xsl:value-of select="rfc:definition"/>
+          </dd>
+        </xsl:for-each>
+      </dl>
+    </section>
   </xsl:template>
 
 </xsl:stylesheet>
