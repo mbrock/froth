@@ -409,12 +409,12 @@
       <xsl:apply-templates/>
     </abbr>
     <xsl:if test="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]">
-      <div class="gloss-pop" popover="auto">
+      <span class="gloss-pop" popover="auto">
         <xsl:attribute name="id">g-<xsl:value-of select="$uid"/></xsl:attribute>
         <xsl:attribute name="style">position-anchor: --g-<xsl:value-of select="$uid"/></xsl:attribute>
         <span class="gloss-full"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></span>
         <span class="gloss-def"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:definition"/></span>
-      </div>
+      </span>
     </xsl:if>
   </xsl:template>
 
@@ -429,12 +429,12 @@
       <xsl:apply-templates/>
     </dfn>
     <xsl:if test="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]">
-      <div class="gloss-pop" popover="auto">
+      <span class="gloss-pop" popover="auto">
         <xsl:attribute name="id">g-<xsl:value-of select="$uid"/></xsl:attribute>
         <xsl:attribute name="style">position-anchor: --g-<xsl:value-of select="$uid"/></xsl:attribute>
         <span class="gloss-full"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></span>
         <span class="gloss-def"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:definition"/></span>
-      </div>
+      </span>
     </xsl:if>
   </xsl:template>
 
@@ -448,12 +448,12 @@
       <xsl:apply-templates/>
     </span>
     <xsl:if test="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]">
-      <div class="gloss-pop" popover="auto">
+      <span class="gloss-pop" popover="auto">
         <xsl:attribute name="id">g-<xsl:value-of select="$uid"/></xsl:attribute>
         <xsl:attribute name="style">position-anchor: --g-<xsl:value-of select="$uid"/></xsl:attribute>
         <span class="gloss-full"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></span>
         <span class="gloss-def"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:definition"/></span>
-      </div>
+      </span>
     </xsl:if>
   </xsl:template>
 
