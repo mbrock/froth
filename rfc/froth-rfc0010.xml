@@ -133,23 +133,32 @@
       </def>
     </deflist>
     </subsection>
-    <subsection title="Phase 4: Shore-Based Missile Defense (the limit case)" id="phase-4-shore-based-missile-defense-the-limit-case">
-      <p>This is where the private model breaks. Three scenarios:</p>
-          <deflist>
+    <subsection title="Phase 4: Defeating the Kill Chain (the missile problem)" id="phase-4-defeating-the-kill-chain-the-missile-problem">
+      <p>The conventional framing says: cruise missiles are a state threat requiring a state response. A private force handles everything below the missile threshold and prays. This framing is wrong. It asks the question in the attacker's language. The question is not <em>how do you intercept a Mach 3 missile?</em> The question is <em>how do you make the missile miss, or never launch?</em></p>
+      <p>A cruise missile needs a kill chain: detect, identify, track, target, engage, assess. The missile is the last link. A private entity cannot intercept the missile. But a private entity can break the kill chain at every other link.</p>
+      <deflist>
       <def>
-        <term>Ignore It</term>
-        <desc>Accept that cruise missiles are a state threat requiring a state response. The private force handles everything below the cruise missile threshold: mines, swarms, drones, surveillance. A cruise missile attack on a convoy is an act of war against the flag state of the vessels, not against the private security provider. This is the Flying Tigers model: let the state handle the existential threat.</desc>
+        <term>Electromagnetic Deception</term>
+        <desc>Commercial electronic warfare systems operating in reverse: radar spoofing, <gloss key="AIS" type="acronym">AIS</gloss> manipulation, GPS-denied navigation for hostile sensors. The <gloss key="IRGC" type="acronym">IRGC</gloss> relies on shore-based radar (Qeshm, the Tunbs), maritime patrol aircraft, and fast attack craft with surface search radar. A private fleet carrying commercial <gloss key="ESM" type="acronym">ESM</gloss> suites (<gloss key="Saab" type="name">Saab</gloss>, Elbit, Rafael) can generate phantom contacts, mask real signatures, and degrade the targeting solution. Twelve radar returns where three ships transit. The seeker acquires a ghost. The technology is dual-use. The export controls are ambiguous. An Omani-flagged vessel carrying a commercial <gloss key="ECA" type="name">ECA</gloss> electronic countermeasure suite is a survey ship with self-protection equipment.</desc>
       </def>
       <def>
-        <term>State Umbrella</term>
-        <desc>Negotiate a public-private air defense cooperative agreement where a state (US, UK, France, or a regional power) provides air defense coverage for the convoy route. The private force does <gloss key="MCM" type="acronym">MCM</gloss> and surface escort; the state provides the air/missile defense umbrella. This is Operation <gloss key="Earnest Will" type="name">Earnest Will</gloss> with a public-private split.</desc>
+        <term>Saturation of the Seeker Environment</term>
+        <desc>The <gloss key="C-802" type="name">C-802</gloss> uses active radar terminal homing. The <gloss key="Khalij Fars" type="name">Khalij Fars</gloss> uses imaging infrared or active radar at terminal phase. Both discriminate targets by radar cross section. Fill the 6-nautical-mile traffic separation scheme with radar reflectors: corner cubes on autonomous buoys, towed radar enhancer barges behind every convoy vessel at 500m offset, drone swarms carrying luneberg lenses. The radar cross section of the convoy becomes the radar cross section of the entire strait. The missile's terminal seeker sees a wall of returns and cannot discriminate. This is the chaff principle applied not to one ship but to the transit corridor. Commercial corner reflectors cost hundreds of dollars. Autonomous buoys cost thousands. The density required is a logistics problem, not a technology problem.</desc>
       </def>
       <def>
-        <term>Point Defense Only</term>
-        <desc>Escort vessels carry short-range air defense (<gloss key="RAM" type="acronym">RAM</gloss>, Phalanx/CIWS equivalents). This handles drones and possibly terminal-phase cruise missiles but cannot intercept salvos at range. A private entity can buy <gloss key="CIWS" type="acronym">CIWS</gloss>. A private entity cannot buy a naval integrated air defense system.</desc>
+        <term>Formation as Countermeasure</term>
+        <desc>VLCCs spaced at maximum radar discrimination distance (the minimum range at which two targets of similar cross section merge into one return for the seeker — approximately 200-400m for a <gloss key="C-802" type="name">C-802</gloss> seeker at terminal range). <gloss key="OPV" type="acronym">OPV</gloss> escorts positioned at the likely seeker acquisition bearings, carrying expendable decoys (chaff, flares, towed radar targets). Unmanned decoy barges in the threat axis — cheap, radar-bright, expendable. The formation is designed so that a missile acquiring at terminal phase hits the decoy, not the tanker. You are not intercepting the missile. You are making the missile miss by redesigning what the target looks like to a radar seeker at Mach 3.</desc>
+      </def>
+      <def>
+        <term>Point Defense Layer</term>
+        <desc>Escort vessels still carry short-range air defense: <gloss key="CIWS" type="acronym">CIWS</gloss> or <gloss key="RAM" type="acronym">RAM</gloss> equivalents for terminal intercept of subsonic cruise missiles and armed drones. This layer handles the <gloss key="C-802" type="name">C-802</gloss> (subsonic, sea-skimming) but not the <gloss key="Khalij Fars" type="name">Khalij Fars</gloss> (Mach 3 ballistic). The point defense is not the primary defense. It is the last resort after deception, saturation, and formation have failed. A private entity can purchase <gloss key="CIWS" type="acronym">CIWS</gloss>. A private entity cannot purchase an integrated area air defense system. This remains the hard limit.</desc>
+      </def>
+      <def>
+        <term>Political Economy of the Missile</term>
+        <desc>Iran has never fired a cruise missile at a commercial tanker. Not in the Tanker War (1984-1988). Not in <gloss key="Earnest Will" type="name">Earnest Will</gloss>. Not now. Iran mines, swarms with fast attack craft, seizes vessels, and shoots at military targets. A cruise missile into a VLCC carrying two million barrels of crude is an environmental catastrophe — Deepwater Horizon at sea, in the world's most important shipping lane. It turns every coastal state, every oil importer, and China (Iran's primary customer) against Tehran. The political cost exceeds the military value. The private entity does not need to make the missile technically impossible. It needs to make the political cost of firing it visible. Cameras on every vessel. Satellite feeds to every newsroom. A live-streamed transit corridor. The missile defense, in its highest form, is journalism.</desc>
       </def>
     </deflist>
-      <p>The honest answer: Phase 4 cannot be solved privately. A private force can clear mines, escort convoys, jam drones, and deter fast attack craft. It cannot defeat a state's cruise missile arsenal. The plan requires a state partner willing to provide air defense, or it requires a political arrangement where the cruise missile threat is managed through diplomacy (Omani channel) rather than kinetics.</p>
+      <p>The honest assessment: a private force cannot win a kinetic engagement against a state's cruise missile arsenal. But it does not need to. It needs to make the engagement <em>unprofitable</em> — technically (the missile misses), economically (the insurance math still works), and politically (the world is watching). The conventional framing treats the missile as a physics problem. The correct framing treats it as an information problem. The kill chain has six links. The missile is one. Break any other and the chain fails.</p>
     </subsection>
   </section>
   <section title="Cost Estimate" id="cost-estimate">
