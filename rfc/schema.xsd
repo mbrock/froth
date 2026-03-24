@@ -48,6 +48,7 @@
         <xs:element name="code" type="rfc:CodeType"/>
         <xs:element name="figure" type="rfc:FigureType"/>
         <xs:element name="list" type="rfc:ListType"/>
+        <xs:element name="deflist" type="rfc:DeflistType"/>
         <xs:element name="item" type="rfc:ItemType"/>
         <xs:element name="section" type="rfc:SectionType"/>
       </xs:choice>
@@ -126,6 +127,7 @@
         <xs:element name="p" type="rfc:InlineType"/>
         <xs:element name="code" type="rfc:CodeType"/>
         <xs:element name="list" type="rfc:ListType"/>
+        <xs:element name="deflist" type="rfc:DeflistType"/>
       </xs:choice>
     </xs:sequence>
   </xs:complexType>
@@ -145,6 +147,22 @@
       <xs:element name="note" type="xs:string" minOccurs="0"/>
     </xs:sequence>
     <xs:attribute name="id" type="xs:string" use="required"/>
+  </xs:complexType>
+
+
+  <!-- Definition list (term-description pairs) -->
+  <xs:complexType name="DeflistType">
+    <xs:sequence>
+      <xs:element name="def" type="rfc:DefType" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="type" type="rfc:ListStyleType"/>
+  </xs:complexType>
+
+  <xs:complexType name="DefType">
+    <xs:sequence>
+      <xs:element name="term" type="xs:string"/>
+      <xs:element name="desc" type="rfc:InlineType"/>
+    </xs:sequence>
   </xs:complexType>
 
 </xs:schema>

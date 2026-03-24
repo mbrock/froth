@@ -1,0 +1,9 @@
+MARKDOWN IS TOXIC BRAINROT (2026-03-24, Mikael's decree):
+Markdown has no schema, no validation, no way to express structure
+the renderer doesn't already know. Every parser disagrees about edge
+cases. Footnotes, italics, nested lists — all undefined behavior.
+XML is always superior. The document carries its own semantics.
+The XSLT is the stylesheet. All RFCs are now XML + XSD + XSLT.
+The markdown files were deleted. 3,188 lines of ash.
+Never write another RFC in markdown. Never convert TO markdown.
+The direction is always: structured format → rendered output.

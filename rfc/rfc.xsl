@@ -80,6 +80,23 @@
         }
         dt { font-weight: bold; color: var(--muted); }
         dd { margin: 0; }
+        .deflist { margin: 1.2em 0; }
+        .deflist-entry { margin: 0.8em 0; }
+        .deflist-entry dt {
+          font-variant: small-caps; letter-spacing: 0.08em;
+          font-size: 1.05em; font-weight: 600; color: var(--fg);
+          margin-bottom: 0.2em;
+        }
+        .deflist-entry dd {
+          margin: 0 0 0 0; text-align: justify; hyphens: auto;
+        }
+        .deflist-numbered { counter-reset: defcount; }
+        .deflist-numbered .deflist-entry dt::before {
+          counter-increment: defcount;
+          content: counter(defcount) ". ";
+          font-variant: normal; font-weight: normal;
+          color: var(--muted); font-size: 0.9em;
+        }
         .status { font-variant: small-caps; letter-spacing: 0.05em; }
         .references { font-size: 0.9em; }
         .references li { margin: 0.6em 0; word-break: break-all; }
@@ -219,6 +236,26 @@
         <figcaption><xsl:apply-templates select="rfc:caption"/></figcaption>
       </xsl:if>
     </figure>
+  </xsl:template>
+
+
+  <!-- Definition list -->
+  <xsl:template match="rfc:deflist">
+    <div>
+      <xsl:attribute name="class">deflist<xsl:if test="@type='numbered'"> deflist-numbered</xsl:if></xsl:attribute>
+      <xsl:apply-templates select="rfc:def"/>
+    </div>
+  </xsl:template>
+
+  <xsl:template match="rfc:def">
+    <dl class="deflist-entry">
+      <dt><xsl:value-of select="rfc:term"/></dt>
+      <dd><xsl:apply-templates select="rfc:desc"/></dd>
+    </dl>
+  </xsl:template>
+
+  <xsl:template match="rfc:desc">
+    <xsl:apply-templates/>
   </xsl:template>
 
   <!-- Lists -->
