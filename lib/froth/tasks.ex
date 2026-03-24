@@ -306,18 +306,8 @@ defmodule Froth.Tasks do
         })
 
         output_preview = recent_output_text(task_id, 10)
-
-        synthetic_message = %{
-          "chat_id" => link.chat_id,
-          "sender_id" => %{"user_id" => 0},
-          "content" => %{
-            "text" => %{
-              "text" =>
-                "Task #{task_id} #{task.status}.\n\n#{output_preview}"
-                |> String.trim()
-            }
-          }
-        }
+        message_text = "[Task completed] #{task_id} #{task.status}.\n\n#{output_preview}"
+        synthetic_message = synthetic_message(link.chat_id, message_text)
 
         Froth.Telegram.Bots.cast(link.bot_id, {:start_inference_session, synthetic_message})
       end
@@ -356,16 +346,10 @@ defmodule Froth.Tasks do
       if link.chat_id do
         elapsed = format_elapsed(task.started_at)
 
-        synthetic_message = %{
-          "chat_id" => link.chat_id,
-          "sender_id" => %{"user_id" => 0},
-          "content" => %{
-            "text" => %{
-              "text" =>
-                "Task #{task.task_id} is still running after #{link.expect_minutes} minutes (elapsed: #{elapsed})."
-            }
-          }
-        }
+        message_text =
+          "Task #{task.task_id} is still running after #{link.expect_minutes} minutes (elapsed: #{elapsed})."
+
+        synthetic_message = synthetic_message(link.chat_id, message_text)
 
         Froth.Telegram.Bots.cast(link.bot_id, {:start_inference_session, synthetic_message})
       end
@@ -432,5 +416,18 @@ defmodule Froth.Tasks do
     recent_output(task_id, limit)
     |> Enum.map_join("\n", & &1.content)
     |> String.slice(0, 2000)
+  end
+
+  defp synthetic_message(chat_id, text) when is_integer(chat_id) and is_binary(text) do
+    %{
+      "chat_id" => chat_id,
+      "id" => 0,
+      "sender_id" => 0,
+      "content" => %{
+        "text" => %{
+          "text" => String.trim(text)
+        }
+      }
+    }
   end
 end

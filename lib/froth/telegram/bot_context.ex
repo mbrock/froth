@@ -119,7 +119,8 @@ defmodule Froth.Telegram.BotContext do
       date: msg_unix(msg),
       sender_id:
         get_in(msg, ["sender_id", "user_id"]) ||
-          get_in(msg, ["sender_id", "chat_id"]),
+          get_in(msg, ["sender_id", "chat_id"]) ||
+          integer_sender_id(msg["sender_id"]),
       message_id: msg["id"] || "unknown",
       type: get_in(msg, ["content", "@type"]) || "unknown",
       text:
@@ -204,6 +205,9 @@ defmodule Froth.Telegram.BotContext do
 
   defp fallback_sender(nil), do: "unknown"
   defp fallback_sender(id), do: "user:#{id}"
+
+  defp integer_sender_id(sender_id) when is_integer(sender_id), do: sender_id
+  defp integer_sender_id(_sender_id), do: nil
 
   defp truncate_analyses(analyses) do
     Enum.map(analyses, fn a ->

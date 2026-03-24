@@ -35,6 +35,7 @@ defmodule Froth.Codex.Task do
 
   alias Froth.Telemetry.Span
   alias Froth.Codex.Session, as: CodexSession
+  alias Froth.Codex.TaskWatcher
   alias Froth.Telegram.BotAdapter
 
   @base_url "https://t.me/charliebuddybot/tool?startapp="
@@ -45,38 +46,72 @@ defmodule Froth.Codex.Task do
   Options:
     * `:cwd` — working directory for Codex (default: ~/froth)
     * `:chat_id` — Telegram chat to send the "Micromanage" button to
+    * `:bot_id` — Telegram bot id to notify when the Codex task finishes
     * `:reply_to` — message ID to reply to
     * `:session_id` — explicit session ID (default: generated)
     * `:await` — if true, blocks until turn completes (default: false)
   """
   def run(prompt, opts \\ []) when is_binary(prompt) do
+    session_module = Keyword.get(opts, :session_module, CodexSession)
+
     session_id =
       Keyword.get(opts, :session_id) ||
         "codex_#{:crypto.strong_rand_bytes(4) |> Base.encode16(case: :lower)}"
 
     cwd = Keyword.get(opts, :cwd, Path.join(System.user_home!(), "froth"))
     chat_id = Keyword.get(opts, :chat_id)
+    bot_id = Keyword.get(opts, :bot_id)
     reply_to = Keyword.get(opts, :reply_to)
     await = Keyword.get(opts, :await, false)
 
-    # Start the Codex session (spawns the app-server port)
-    {:ok, _pid} = CodexSession.ensure_started(session_id, cwd: cwd)
+    with {:ok, _pid} <- session_module.ensure_started(session_id, cwd: cwd),
+         {:ok, task} <- create_codex_task(session_id, prompt, cwd) do
+      case maybe_subscribe_telegram(task.task_id, bot_id, chat_id) do
+        :ok ->
+          case start_task_watcher(task.task_id, session_id, session_module) do
+            {:ok, watcher_pid} ->
+              case session_module.send_prompt(session_id, prompt) do
+                :ok ->
+                  Froth.Tasks.start(task.task_id)
 
-    # Send Telegram button if chat_id given
-    if chat_id do
-      send_micromanage_button(session_id, chat_id, reply_to, prompt)
-    end
+                  if chat_id do
+                    send_micromanage_button(session_id, chat_id, reply_to, prompt)
+                  end
 
-    # Send the prompt to Codex
-    :ok = CodexSession.send_prompt(session_id, prompt)
+                  Span.execute([:froth, :codex, :task_started], nil, %{
+                    session_id: session_id,
+                    task_id: task.task_id,
+                    prompt: prompt
+                  })
 
-    Span.execute([:froth, :codex, :task_started], nil, %{session_id: session_id, prompt: prompt})
+                  if await do
+                    case session_module.subscribe(session_id) do
+                      :ok ->
+                        initial_saw_turn? = await_active_turn?(session_id, session_module)
+                        collect_until_done(session_id, session_module, initial_saw_turn?)
 
-    if await do
-      CodexSession.subscribe(session_id)
-      collect_until_done(session_id)
-    else
-      {:ok, session_id}
+                      {:error, reason} ->
+                        {:error, reason}
+                    end
+                  else
+                    {:ok, session_id}
+                  end
+
+                {:error, reason} = error ->
+                  stop_watcher(watcher_pid)
+                  Froth.Tasks.fail(task.task_id, task_failure_reason(reason))
+                  error
+              end
+
+            {:error, reason} = error ->
+              Froth.Tasks.fail(task.task_id, task_failure_reason(reason))
+              error
+          end
+
+        {:error, reason} = error ->
+          Froth.Tasks.fail(task.task_id, task_failure_reason(reason))
+          error
+      end
     end
   end
 
@@ -155,21 +190,97 @@ defmodule Froth.Codex.Task do
     )
   end
 
-  defp collect_until_done(session_id) do
+  defp collect_until_done(session_id, session_module, saw_turn?) do
     receive do
       {:codex_session_updated, ^session_id} ->
-        case CodexSession.snapshot(session_id) do
-          {:ok, %{status: :idle}} ->
-            {:ok, session_id}
-
+        case session_module.snapshot(session_id) do
           {:ok, %{status: :error}} ->
             {:error, session_id}
 
-          _ ->
-            collect_until_done(session_id)
+          {:ok, snapshot} ->
+            active_turn_id =
+              Map.get(snapshot, :active_turn_id) || Map.get(snapshot, "active_turn_id")
+
+            saw_turn? = saw_turn? or is_binary(active_turn_id)
+
+            if saw_turn? and is_nil(active_turn_id) do
+              {:ok, session_id}
+            else
+              collect_until_done(session_id, session_module, saw_turn?)
+            end
+
+          _other ->
+            collect_until_done(session_id, session_module, saw_turn?)
         end
     after
       300_000 -> {:timeout, session_id}
     end
+  end
+
+  defp create_codex_task(session_id, prompt, cwd) do
+    Froth.Tasks.create(%{
+      task_id: Froth.Tasks.generate_id("codex"),
+      type: "codex",
+      label: prompt_label(prompt),
+      metadata: %{session_id: session_id, cwd: cwd}
+    })
+  end
+
+  defp maybe_subscribe_telegram(task_id, bot_id, chat_id)
+       when is_binary(task_id) and is_binary(bot_id) and is_integer(chat_id) do
+    case Froth.Tasks.subscribe_telegram(task_id, bot_id, chat_id) do
+      {:ok, _link} -> :ok
+      {:error, _reason} = error -> error
+      _ -> :ok
+    end
+  end
+
+  defp maybe_subscribe_telegram(_task_id, _bot_id, _chat_id), do: :ok
+
+  defp start_task_watcher(task_id, session_id, session_module)
+       when is_binary(task_id) and is_binary(session_id) do
+    DynamicSupervisor.start_child(
+      Froth.Tasks.Supervisor,
+      {TaskWatcher, [task_id: task_id, session_id: session_id, session_module: session_module]}
+    )
+  end
+
+  defp stop_watcher(pid) when is_pid(pid) do
+    if Process.alive?(pid) do
+      GenServer.stop(pid, :normal)
+    else
+      :ok
+    end
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp await_active_turn?(session_id, session_module) do
+    case session_module.snapshot(session_id) do
+      {:ok, snapshot} ->
+        active_turn_id = Map.get(snapshot, :active_turn_id) || Map.get(snapshot, "active_turn_id")
+        is_binary(active_turn_id)
+
+      _ ->
+        false
+    end
+  end
+
+  defp prompt_label(prompt) when is_binary(prompt) do
+    prompt
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+    |> case do
+      "" -> "Codex task"
+      compact -> String.slice(compact, 0, 120)
+    end
+  end
+
+  defp task_failure_reason(reason) when is_binary(reason), do: String.slice(reason, 0, 200)
+
+  defp task_failure_reason(reason) do
+    reason
+    |> inspect()
+    |> String.slice(0, 200)
   end
 end

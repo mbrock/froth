@@ -515,7 +515,7 @@ defmodule Froth.Telegram.Bot do
 
   defp start_cycle_from_message(state, msg) when is_map(msg) do
     chat_id = msg["chat_id"]
-    reply_to = msg["id"]
+    reply_to = normalize_reply_to(msg["id"])
 
     text =
       get_in(msg, ["content", "text", "text"]) ||
@@ -531,7 +531,8 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp start_cycle(state, chat_id, reply_to, text, user_content)
-       when is_integer(chat_id) and is_integer(reply_to) and is_binary(text) do
+       when is_integer(chat_id) and (is_integer(reply_to) or is_nil(reply_to)) and
+              is_binary(text) do
     state = normalize_state(state)
     bc = state.bot_config
 
@@ -637,6 +638,11 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp start_cycle(state, _chat_id, _reply_to, _text, _user_content), do: state
+
+  defp normalize_reply_to(0), do: nil
+  defp normalize_reply_to(reply_to) when is_integer(reply_to), do: reply_to
+  defp normalize_reply_to(nil), do: nil
+  defp normalize_reply_to(_reply_to), do: nil
 
   @response_instruction "\n\nNow reply using the send_message tool."
 
@@ -1083,7 +1089,9 @@ defmodule Froth.Telegram.Bot do
 
       split_pos =
         case :binary.matches(candidate, "\n\n") |> List.last() do
-          {pos, _len} when pos > div(limit, 4) -> pos + 2
+          {pos, _len} when pos > div(limit, 4) ->
+            pos + 2
+
           _ ->
             # Fall back to last single newline
             case :binary.matches(candidate, "\n") |> List.last() do

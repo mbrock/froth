@@ -107,7 +107,6 @@ defmodule Froth.Telegram.BotAdapter do
     payload = %{
       "@type" => "sendMessage",
       "chat_id" => chat_id,
-      "reply_to" => reply_to_msg(opts[:reply_to]),
       "input_message_content" => %{
         "@type" => "inputMessageText",
         "text" => %{
@@ -116,6 +115,12 @@ defmodule Froth.Telegram.BotAdapter do
         }
       }
     }
+
+    payload =
+      case reply_to_msg(opts[:reply_to]) do
+        reply_to when is_map(reply_to) -> Map.put(payload, "reply_to", reply_to)
+        _ -> payload
+      end
 
     payload =
       case opts[:entities] do
@@ -246,8 +251,9 @@ defmodule Froth.Telegram.BotAdapter do
   end
 
   defp reply_to_msg(nil), do: nil
+  defp reply_to_msg(0), do: nil
 
-  defp reply_to_msg(message_id) when is_integer(message_id) do
+  defp reply_to_msg(message_id) when is_integer(message_id) and message_id > 0 do
     %{"@type" => "inputMessageReplyToMessage", "message_id" => message_id}
   end
 
