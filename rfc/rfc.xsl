@@ -258,24 +258,7 @@
         </p>
       </footer>
     
-        <script>
-          // Toggle glossary tooltips on tap (mobile)
-          document.addEventListener('click', function(e) {
-            var term = e.target.closest('.gloss-acronym, .gloss-name');
-            if (term) {
-              // Close all other open tips
-              document.querySelectorAll('.gloss-acronym, .gloss-name.active').forEach(function(t) {
-                if (t !== term) t.classList.remove('active');
-              });
-              term.classList.toggle('active');
-              e.preventDefault();
-            } else {
-              document.querySelectorAll('.gloss-acronym, .gloss-name.active').forEach(function(t) {
-                t.classList.remove('active');
-              });
-            }}
-          });
-        </script>
+        
     </body>
     </html>
   </xsl:template>
@@ -415,48 +398,63 @@
   </xsl:template>
 
 
-  <!-- Glossary inline term: acronym (abbr + all-small-caps) -->
+  <!-- Glossary inline term: acronym (abbr + all-small-caps + popover) -->
   <xsl:template match="rfc:gloss[@type='acronym']">
-    <abbr class="gloss-acronym" tabindex="0">
-      <xsl:variable name="k" select="@key"/>
-      <xsl:attribute name="title"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></xsl:attribute>
+    <xsl:variable name="k" select="@key"/>
+    <xsl:variable name="uid" select="generate-id()"/>
+    <abbr class="gloss-acronym">
+      <xsl:attribute name="style">--anchor: --g-<xsl:value-of select="$uid"/></xsl:attribute>
+      <xsl:attribute name="popovertarget">g-<xsl:value-of select="$uid"/></xsl:attribute>
+      <xsl:attribute name="popovertargetaction">toggle</xsl:attribute>
       <xsl:apply-templates/>
-      <xsl:if test="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]">
-        <span class="gloss-tip">
-          <span class="gloss-full"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></span>
-          <span class="gloss-def"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:definition"/></span>
-        </span>
-      </xsl:if>
     </abbr>
+    <xsl:if test="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]">
+      <div class="gloss-pop" popover="auto">
+        <xsl:attribute name="id">g-<xsl:value-of select="$uid"/></xsl:attribute>
+        <xsl:attribute name="style">position-anchor: --g-<xsl:value-of select="$uid"/></xsl:attribute>
+        <span class="gloss-full"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></span>
+        <span class="gloss-def"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:definition"/></span>
+      </div>
+    </xsl:if>
   </xsl:template>
 
-  <!-- Glossary inline term: named thing (dfn + small-caps) -->
+  <!-- Glossary inline term: named thing (dfn + small-caps + popover) -->
   <xsl:template match="rfc:gloss[@type='name']">
-    <dfn class="gloss-name" tabindex="0">
-      <xsl:variable name="k" select="@key"/>
-      <xsl:attribute name="title"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></xsl:attribute>
+    <xsl:variable name="k" select="@key"/>
+    <xsl:variable name="uid" select="generate-id()"/>
+    <dfn class="gloss-name">
+      <xsl:attribute name="style">--anchor: --g-<xsl:value-of select="$uid"/></xsl:attribute>
+      <xsl:attribute name="popovertarget">g-<xsl:value-of select="$uid"/></xsl:attribute>
+      <xsl:attribute name="popovertargetaction">toggle</xsl:attribute>
       <xsl:apply-templates/>
-      <xsl:if test="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]">
-        <span class="gloss-tip">
-          <span class="gloss-full"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></span>
-          <span class="gloss-def"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:definition"/></span>
-        </span>
-      </xsl:if>
     </dfn>
+    <xsl:if test="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]">
+      <div class="gloss-pop" popover="auto">
+        <xsl:attribute name="id">g-<xsl:value-of select="$uid"/></xsl:attribute>
+        <xsl:attribute name="style">position-anchor: --g-<xsl:value-of select="$uid"/></xsl:attribute>
+        <span class="gloss-full"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></span>
+        <span class="gloss-def"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:definition"/></span>
+      </div>
+    </xsl:if>
   </xsl:template>
 
-  <!-- Glossary inline term: untyped fallback -->
+  <!-- Glossary inline term: untyped fallback (popover) -->
   <xsl:template match="rfc:gloss">
-    <span class="gloss-acronym" tabindex="0">
-      <xsl:variable name="k" select="@key"/>
+    <xsl:variable name="k" select="@key"/>
+    <xsl:variable name="uid" select="generate-id()"/>
+    <span class="gloss-acronym">
+      <xsl:attribute name="style">--anchor: --g-<xsl:value-of select="$uid"/></xsl:attribute>
+      <xsl:attribute name="popovertarget">g-<xsl:value-of select="$uid"/></xsl:attribute>
       <xsl:apply-templates/>
-      <xsl:if test="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]">
-        <span class="gloss-tip">
-          <span class="gloss-full"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></span>
-          <span class="gloss-def"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:definition"/></span>
-        </span>
-      </xsl:if>
     </span>
+    <xsl:if test="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]">
+      <div class="gloss-pop" popover="auto">
+        <xsl:attribute name="id">g-<xsl:value-of select="$uid"/></xsl:attribute>
+        <xsl:attribute name="style">position-anchor: --g-<xsl:value-of select="$uid"/></xsl:attribute>
+        <span class="gloss-full"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:full"/></span>
+        <span class="gloss-def"><xsl:value-of select="/rfc:rfc/rfc:glossary/rfc:entry[@key=$k]/rfc:definition"/></span>
+      </div>
+    </xsl:if>
   </xsl:template>
 
   <!-- Glossary section rendered as appendix -->
