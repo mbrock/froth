@@ -96,7 +96,7 @@ defmodule FrothWeb.RfcController do
         {:ok, html_body, _} =
           Earmark.as_html(content, %Earmark.Options{
             code_class_prefix: "language-",
-            smartypants: false
+            smartypants: false, escape: false
           })
 
         title =
