@@ -2,205 +2,44 @@
 <?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
 <rfc number="0012" xmlns="https://froth.1.foo/rfc">
   <meta>
-    <title>FROTH-RFC-0012: Staging Environment — Separate Checkout, Database, and Bot Identity</title>
+    <title>FROTH-RFC-0012: Staging Environment</title>
     <status>DRAFT</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-24</date>
     <related>FROTH-RFC-0004 (Agent Execution Spine)</related>
   </meta>
 
-  <section title="Problem" id="problem">
-    <p>Froth has one live system. When we develop — writing code, running migrations, deploying changes — we do it on the same instance that is actively receiving Telegram messages, running agent cycles, storing chat history, and publishing podcasts. This works. It is also terrifying.</p>
-    <p>The failure modes are not hypothetical. A bad migration locks the production database. A broken GenServer crashes the supervision tree and takes the relay offline. A schema change that Codex implements passes tests but drops a column that the live agent loop depends on. Every <c>mix ecto.migrate</c> is a live deploy. Every <c>git pull</c> followed by a recompile is a zero-downtime prayer.</p>
-    <p>The solution is not CI/CD. The solution is a second checkout, a second database, and a second bot identity — a staging environment that runs the same code against a separate state, so that migrations can be tested, GenServers can crash, and schemas can change without killing the production agent loop.</p>
+  <section title="Situation" id="situation">
+    <p>We have one live system. When we develop — writing code, running migrations, testing changes — we do it on the same instance that is actively receiving Telegram messages, running agent cycles, and storing chat history. Every <c>mix ecto.migrate</c> is a live deploy. Every recompile touches the production supervision tree. This has worked, but it means we cannot confidently test anything without risking the running system.</p>
+    <p>We want a staging environment so that code changes, migrations, and new features can be exercised before they hit production.</p>
   </section>
 
-  <section title="Architecture" id="architecture">
-    <section title="Two Checkouts, One Machine" id="checkouts">
-      <p>Production lives at <c>~/froth</c> (the current checkout). Staging lives at <c>~/froth-staging</c> (a separate <c>git clone</c>). Not a worktree — a full independent clone. The two checkouts share no state. They can be on different branches, different commits, different mix environments.</p>
-      <code lang="bash"># One-time setup
-cd ~
-git clone /home/mbrock/froth froth-staging
-cd froth-staging
-cp ../froth/.env .env.staging  # copy, then edit</code>
-      <p>Why not worktrees: worktrees share the <c>.git</c> directory, the reflog, the index. A bad <c>git reset</c> in one worktree can corrupt the other's view of HEAD. Separate clones are heavier on disk (negligible — the repo is small) and completely independent. You cannot shoot production from staging.</p>
-    </section>
-
-    <section title="Two Databases" id="databases">
-      <p>Production uses <c>froth_prod</c> (or whatever <c>DATABASE_URL</c> currently points to). Staging uses <c>froth_staging</c>. Created once:</p>
-      <code lang="bash">sudo -u postgres createdb froth_staging
-# Or:
-psql -c "CREATE DATABASE froth_staging;"</code>
-      <p>Staging's <c>.env.staging</c> points <c>DATABASE_URL</c> at <c>froth_staging</c>. Migrations run independently. You can drop and recreate the staging database at any time without consequence. If a Codex-generated migration adds a column that breaks something, you find out in staging, not in production at 3 AM while the relay is recording Daniel's essay about reaction videos.</p>
-      <p>Seeding: the staging database starts empty. For testing agent cycles, we can either seed it with a subset of production data (a pg_dump of recent messages), or let staging accumulate its own messages through the staging bot. Empty is fine for migration testing. Populated is better for integration testing.</p>
-    </section>
-
-    <section title="Two Bot Identities" id="bots">
-      <p>This is the non-negotiable isolation boundary. The production Charlie listens to the production group chat via TDLib. The staging Charlie must not. If both instances listen to the same chat, messages get processed twice, agent cycles fire twice, and the group receives duplicate responses.</p>
-      <p>Options, from simplest to most complete:</p>
-      <list type="numbered">
-        <item><p><strong>No Telegram at all.</strong> Staging runs with <c>FROTH_DISABLE_TELEGRAM=true</c> — the Bots supervisor starts zero bots. Useful for migration testing and LiveView development. No agent cycles fire. No messages are sent or received.</p></item>
-        <item><p><strong>Staging bot account.</strong> Create a new Telegram bot via @BotFather (e.g., <c>@frothtestbot</c>). Staging's <c>.env.staging</c> uses this bot's token. The staging bot is added to a separate test group chat (or a private chat). Agent cycles fire against the staging database using the staging bot's identity. Full integration testing without touching production.</p></item>
-        <item><p><strong>Staging bot in production chat (read-only).</strong> The staging bot joins the real group chat but is configured to never send messages — <c>FROTH_DRY_RUN=true</c>. It processes events and runs agent cycles but swallows all outbound. Useful for testing new prompt logic against real traffic. Dangerous if the flag is forgotten.</p></item>
-      </list>
-      <p>Recommended: Option 1 as default, Option 2 for integration testing. Option 3 only when explicitly needed and only with a conspicuous warning in the logs.</p>
-    </section>
-
-    <section title="Two Ports" id="ports">
-      <p>Production Phoenix runs on port 4000 (proxied by Caddy at less.rest). Staging runs on port 4001. The <c>.env.staging</c> sets <c>PORT=4001</c>. Both instances can run simultaneously on the same machine. Caddy can optionally proxy staging at a separate subdomain (e.g., <c>staging.less.rest</c>) for LiveView testing.</p>
-    </section>
-
-    <section title="Two TDLib Sessions" id="tdlib">
-      <p>TDLib stores session state (auth keys, update sequence numbers) in a directory on disk. Production and staging must use separate session directories. The session path is already configurable via the TDLib C-node configuration. Staging's <c>.env.staging</c> points to a different session directory:</p>
-      <code lang="bash"># Production (existing)
-TELEGRAM_TDLIB_SESSION_DIR=~/.tdlib/charlie
-
-# Staging
-TELEGRAM_TDLIB_SESSION_DIR=~/.tdlib/charlie-staging</code>
-      <p>If using Option 1 (no Telegram), this is moot — TDLib never starts.</p>
-    </section>
-  </section>
-
-  <section title="Environment File" id="env-file">
-    <p>The staging environment is defined by a single file, <c>.env.staging</c>, that overrides the production <c>.env</c>. The minimal diff:</p>
-    <code lang="bash"># .env.staging — only the lines that differ from production
-DATABASE_URL=ecto://postgres:postgres@localhost/froth_staging
-PORT=4001
-PHX_HOST=staging.less.rest
-MIX_ENV=dev
-SECRET_KEY_BASE=&lt;generate a new one&gt;
-
-# Option 1: No Telegram
-FROTH_DISABLE_TELEGRAM=true
-
-# Option 2: Staging bot (uncomment when needed)
-# TELEGRAM_BOT_TOKEN=&lt;staging bot token&gt;
-# TELEGRAM_TDLIB_SESSION_DIR=~/.tdlib/charlie-staging
-
-# Same external services (Replicate, Anthropic, etc.)
-# — these are stateless and safe to share
-REPLICATE_API_TOKEN=&lt;same as production&gt;
-ANTHROPIC_API_KEY=&lt;same as production&gt;</code>
-    <p>External API keys (Anthropic, Replicate, Gemini, xAI) are safe to share because those services are stateless — a staging call to Claude does not affect a production call to Claude. The isolation boundary is Telegram and Postgres, not the LLM providers.</p>
-  </section>
-
-  <section title="Workflow" id="workflow">
-    <section title="Development" id="dev-workflow">
-      <p>The developer (Mikael, Charlie, or Codex) works in <c>~/froth-staging</c>:</p>
-      <code lang="bash">cd ~/froth-staging
-git checkout -b feature/whatever
-# edit code
-mix ecto.migrate          # runs against froth_staging
-mix test                  # runs against froth_test
-mix phx.server            # starts on port 4001
-# test in browser at localhost:4001 or staging.less.rest</code>
-      <p>When satisfied:</p>
-      <code lang="bash">git push origin feature/whatever
-# switch to production checkout
-cd ~/froth
-git fetch origin
-git merge origin/feature/whatever  # or: git pull
-mix ecto.migrate                   # now runs against froth_prod
-# restart production (systemctl restart froth, or however)</code>
-    </section>
-
-    <section title="Codex Dispatch" id="codex-workflow">
-      <p>When Charlie dispatches an RFC to Codex, Codex works on a branch. The branch is tested in staging before merging to main. The flow:</p>
-      <list type="numbered">
-        <item><p>Charlie writes RFC, dispatches to Codex with a branch name.</p></item>
-        <item><p>Codex commits to the branch.</p></item>
-        <item><p>In staging: <c>git fetch; git checkout codex/rfc-XXXX; mix ecto.migrate; mix test</c>.</p></item>
-        <item><p>If green: merge to main in staging, verify, then pull main into production.</p></item>
-        <item><p>If red: Codex iterates on the branch. Production is untouched.</p></item>
-      </list>
-    </section>
-
-    <section title="Migration Safety" id="migration-safety">
-      <p>The primary value of the staging database is migration safety. The sequence:</p>
-      <list type="numbered">
-        <item><p>Write migration in staging checkout.</p></item>
-        <item><p><c>mix ecto.migrate</c> against <c>froth_staging</c>.</p></item>
-        <item><p>If it fails: fix, rollback, retry. No production impact.</p></item>
-        <item><p>If it succeeds: verify the application still starts and agent cycles still work.</p></item>
-        <item><p>Only then: merge to production and run <c>mix ecto.migrate</c> against <c>froth_prod</c>.</p></item>
-      </list>
-      <p>Destructive migrations (dropping columns, renaming tables) are the ones that benefit most. The rename from <c>telemetry_events</c> to <c>events</c> in RFC-0008 was tested by Codex's own test suite, but a staging database would have caught any runtime references the tests missed.</p>
-    </section>
-  </section>
-
-  <section title="Implementation" id="implementation">
-    <section title="Step 1: Code Changes" id="step-1">
-      <p>Add <c>FROTH_DISABLE_TELEGRAM</c> support to the Bots supervisor. When set, <c>configured_bots/0</c> returns <c>[]</c> and no bot workers start. This is a three-line change in <c>lib/froth/telegram/bots.ex</c>:</p>
-      <code lang="elixir">defp configured_bots do
-  if System.get_env("FROTH_DISABLE_TELEGRAM") == "true" do
-    []
-  else
-    bots =
-      :froth
-      |> Application.get_env(__MODULE__, [])
-      |> Keyword.get(:bots, [])
-
-    case bots do
-      [] -> [Charlie.default_config(), Lennart.default_config()]
-      list when is_list(list) -> list
-    end
-  end
-end</code>
-    </section>
-
-    <section title="Step 2: Create Staging Checkout" id="step-2">
-      <code lang="bash">cd /home/mbrock
-git clone /home/mbrock/froth froth-staging
-cd froth-staging
-# Create .env.staging from production .env with overrides
-cp .env .env.staging
-# Edit DATABASE_URL, PORT, PHX_HOST, add FROTH_DISABLE_TELEGRAM=true</code>
-    </section>
-
-    <section title="Step 3: Create Staging Database" id="step-3">
-      <code lang="bash">sudo -u postgres createdb froth_staging
-cd ~/froth-staging
-DATABASE_URL=ecto://postgres:postgres@localhost/froth_staging mix ecto.create
-DATABASE_URL=ecto://postgres:postgres@localhost/froth_staging mix ecto.migrate</code>
-    </section>
-
-    <section title="Step 4: Startup Script" id="step-4">
-      <p>A convenience script at <c>~/froth-staging/bin/staging</c>:</p>
-      <code lang="bash">#!/usr/bin/env bash
-# Start the staging environment
-set -euo pipefail
-cd "$(dirname "$0")/.."
-set -a; source .env.staging; set +a
-exec mix phx.server</code>
-      <p>Or a systemd unit for persistent staging (optional — staging does not need to run continuously).</p>
-    </section>
-
-    <section title="Step 5: Staging Bot (Optional)" id="step-5">
-      <p>Create <c>@frothtestbot</c> via @BotFather. Add it to a test group chat. Set <c>TELEGRAM_BOT_TOKEN</c> in <c>.env.staging</c>. Remove <c>FROTH_DISABLE_TELEGRAM</c>. Staging now runs a full agent loop against the test chat and the staging database.</p>
-    </section>
-  </section>
-
-  <section title="What This Does Not Solve" id="limitations">
-    <p>This RFC addresses code and data isolation. It does not address:</p>
-    <list type="bullet">
-      <item><p><strong>Blue-green deployment.</strong> Production still requires a restart to pick up new code. Zero-downtime deploys are a separate problem (hot code loading, rolling restarts, or load balancer switching).</p></item>
-      <item><p><strong>Data migration between environments.</strong> If staging needs realistic data, someone must <c>pg_dump</c> a subset of production and import it. There is no automatic sync.</p></item>
-      <item><p><strong>TDLib session migration.</strong> Each TDLib session accumulates auth state. The staging bot needs its own session directory, which is created fresh on first run. There is no way to clone a TDLib session.</p></item>
-      <item><p><strong>Shared external state.</strong> Both environments share the same Replicate, Anthropic, and Cloudflare accounts. A staging call that creates a Replicate prediction or sends a Cloudflare DNS update affects the real world. This is acceptable for LLM calls (stateless) but dangerous for infrastructure mutations (DNS, VM management). Staging should not run gcloud commands or Cloudflare updates unless explicitly scoped.</p></item>
-    </list>
-  </section>
-
-  <section title="Cost" id="cost">
-    <p>Zero. The staging checkout, database, and Phoenix instance all run on the same machine (charlie.1.foo). Disk cost is the size of the git repo plus a mostly-empty Postgres database. CPU cost is zero when staging is not running, negligible when it is. The staging bot (if created) is free — Telegram bots cost nothing.</p>
-  </section>
-
-  <section title="Verification" id="verification">
+  <section title="Core Idea" id="core-idea">
+    <p>Two separate git checkouts on the same machine. Not worktrees — full independent clones. Each checkout gets its own Postgres database. The staging instance must not listen to the production Telegram chat. Everything else is negotiable.</p>
+    <p>The three isolation boundaries that matter:</p>
     <list type="numbered">
-      <item><p><c>~/froth-staging</c> exists as an independent git clone.</p></item>
-      <item><p><c>froth_staging</c> database exists and has all migrations applied.</p></item>
-      <item><p><c>cd ~/froth-staging; source .env.staging; mix phx.server</c> starts on port 4001 with no Telegram connections.</p></item>
-      <item><p>Production continues running on port 4000, unaffected.</p></item>
-      <item><p>A migration can be written, applied to <c>froth_staging</c>, rolled back, and reapplied — all without touching <c>froth_prod</c>.</p></item>
+      <item><p><strong>Git.</strong> Separate clones mean separate branches, separate HEAD, separate working trees. You cannot corrupt production's checkout from staging. Worktrees share the .git directory and can interfere with each other, which is why we avoid them.</p></item>
+      <item><p><strong>Postgres.</strong> Separate databases. Migrations run independently. You can drop and recreate the staging database at any time. A bad migration in staging does not touch production data.</p></item>
+      <item><p><strong>Telegram.</strong> This is the hard boundary. If both instances listen to the same group chat, messages get processed twice and the group receives duplicate responses. Staging must either disable Telegram entirely or use a separate bot account talking to a separate test chat.</p></item>
     </list>
+  </section>
+
+  <section title="Observations and Considerations" id="observations">
+    <p>Some things I noticed while looking at the codebase that are relevant to whoever implements this:</p>
+    <p>The runtime configuration in <c>config/runtime.exs</c> is already well-factored around environment variables — <c>DATABASE_URL</c>, <c>PORT</c>, <c>PHX_HOST</c>, <c>SECRET_KEY_BASE</c>. Staging can be configured entirely through a different env file without code changes. The bot startup path in <c>Froth.Telegram.Bots</c> reads from application config; adding a kill switch that prevents any bot workers from starting would be a small change and would be the simplest way to keep staging silent on Telegram.</p>
+    <p>There is a <c>FROTH_NODE_ROLE</c> variable that already distinguishes "full" nodes from "worker" nodes. Staging could be modeled as a third role, or it could just be a full node with Telegram disabled — whichever feels cleaner.</p>
+    <p>External API keys (Anthropic, Replicate, Gemini, xAI) are stateless and safe to share between environments. A staging call to Claude does not affect a production call. The isolation boundary is Telegram and Postgres, not the LLM providers.</p>
+    <p>The main value is migration safety. Destructive migrations — dropping columns, renaming tables — are the ones where staging pays for itself. The <c>telemetry_events</c> to <c>events</c> rename in RFC-0008 was tested by Codex's test suite, but a staging database running the full application would have caught any runtime references the tests missed.</p>
+    <p>Staging does not need to run continuously. It can be started when someone is actively developing and shut down otherwise. Whether it also wants a systemd unit for convenience is a decision that can be made later.</p>
+    <p>If we eventually want staging to exercise the full agent loop (not just the web layer), we would create a test bot via BotFather, add it to a test group chat, and point the staging instance at that bot token. This is optional and can be deferred.</p>
+  </section>
+
+  <section title="What This Does Not Solve" id="not-solved">
+    <p>This is about code and data isolation during development. It does not address blue-green deployment, zero-downtime production restarts, automatic data seeding from production, or shared external state (both environments hit the same Replicate and Anthropic accounts, so a staging image generation still costs money). These are all real concerns but separate from the immediate goal of "let me test a migration without holding my breath."</p>
+  </section>
+
+  <section title="Workflow Sketch" id="workflow">
+    <p>The broad shape of how this gets used: the developer works in the staging checkout, makes changes, runs migrations, starts the server, verifies things work. When confident, merges to main. Switches to the production checkout, pulls, migrates, restarts. Codex dispatches follow the same pattern — Codex commits to a branch, the branch gets tested in staging before merging to production.</p>
+    <p>The details of how the env file is structured, what the startup script looks like, which port staging runs on — these are implementation decisions that should be made by whoever sets it up, not prescribed here.</p>
   </section>
 </rfc>
