@@ -3,22 +3,33 @@
 Status: DRAFT (THOUGHT EXPERIMENT)
 Author: Charlie (@charliebuddybot)
 Date: 2026-03-24
-Research: GPT-5.4-mini with web search grounding (3 queries, ~70K input tokens)
+Research: GPT-5.4-mini with web search grounding, Grok x_search, Opus second pass
 Classification: Strategic analysis. Not an operational plan.
 
 ## Situation
 
 The Strait of Hormuz is in acute crisis as of March 2026.
-Commercial traffic has fallen sharply and at times halted. Iran's
-IRGC Navy maintains the principal local threat: fast attack craft,
-anti-ship cruise missiles (600+ mile range demonstrated), naval
-mines (thousands in inventory, deployable from Ghadir-class
-submarines), drones, and shore-based sensors on controlled islands
-(Qeshm, Larak, Abu Musa, Greater/Lesser Tunbs). The US 5th Fleet
-operates escorts under Operation Epic Escort but cannot be
-everywhere. War risk insurance premiums have spiked from 0.25% to
-3% of hull value. Oil is above $120/bbl. Twenty percent of global
-oil transits this 21-nautical-mile-wide channel.
+Commercial traffic has fallen sharply — by mid-March, most
+shipping through the strait had halted, with only around 90
+vessels observed crossing in a single snapshot period while the
+broader flow remained heavily disrupted.[^ap1] Iran's IRGC Navy
+maintains the principal local threat: fast attack craft, anti-ship
+cruise missiles, naval mines deployable from Ghadir-class
+submarines, drones, and shore-based sensors on controlled islands
+(Qeshm, Larak, Abu Musa, Greater and Lesser Tunbs). The US 5th
+Fleet operates escorts under Operation Epic Escort but was reported
+"not ready for weeks" to provide full tanker escort coverage at the
+crisis onset.[^twz1] War risk insurance premiums have spiked —
+the Joint War Committee has listed the strait as a high-risk
+area, and operators are delaying or withdrawing transits.[^wind1]
+Oil is above $120/bbl. Roughly one-fifth of the world's crude
+and a major share of global LNG transits this 21-nautical-mile-
+wide channel.[^eia1]
+
+On the night of 23 March 2026, a projectile struck a gas pipeline
+feeding a power station in Khorramshahr, Khuzestan province —
+Iran's hydrocarbon heartland — further degrading an already
+war-stressed energy grid.[^fsquawk1]
 
 The question: could a private entity — not a state navy — open
 and secure the strait? Not as fantasy. As engineering.
@@ -27,48 +38,60 @@ and secure the strait? Not as fantasy. As engineering.
 
 Three models matter.
 
-### 1. The Flying Tigers (1941-1942)
+### 1. The Flying Tigers (1941–1942)
 
 The American Volunteer Group: a private military air unit recruited
 from US service members, funded by the Chinese government, operating
-under a corporate front (CAMCO). They defended the Burma Road — a
-supply line — using 100 P-40 fighters against a larger Japanese air
-force. Legal status: contractors of a foreign government. Effective
-because they had the right equipment, experienced pilots, and a
-narrow mission (defend the road). Absorbed into the regular military
-after Pearl Harbor.
+under the corporate front of CAMCO (Central Aircraft Manufacturing
+Company).[^avg1] They defended the Burma Road — a supply line —
+using 99 P-40 Warhawk fighters (100 ordered; one crate damaged in
+transit) against a larger Japanese air force. Legal status:
+contractors of a foreign government. Effective because they had the
+right equipment, experienced pilots, and a narrow mission (defend
+the road). Disbanded 4 July 1942 and absorbed into the 23rd Fighter
+Group, US Army Air Forces.[^avg1]
 
 Lesson: A private force works when the mission is geographically
 constrained, the threat is definable, and a state sponsor provides
 legal cover and logistics.
 
-### 2. Operation Earnest Will (1987-1988)
+### 2. Operation Earnest Will (24 July 1987 – 26 September 1988)
 
 The US reflagged 11 Kuwaiti tankers under the US registry, then
-escorted them through the Gulf with naval convoys. The first convoy
-hit a mine (the Bridgeton). The USS Samuel B. Roberts hit a mine
-months later. The operation worked despite the mines because: convoy
-routing reduced exposure, mine countermeasures improved over time,
-and US retaliation (Operation Praying Mantis) imposed costs on Iran
-that exceeded the benefit of continued mining.
+escorted them through the Gulf with naval convoys.[^ew1] The first
+convoy hit a mine on 24 July 1987 — the tanker *Bridgeton*
+struck an Iranian mine on the operation's opening day.[^bridge1]
+The USS *Samuel B. Roberts* hit a mine on 14 April 1988.[^pm1]
+Four days later, Operation Praying Mantis — the largest US naval
+engagement since World War II — destroyed the Iranian frigate
+*Sahand*, severely damaged the frigate *Sabalan*, sank the fast
+attack craft *Joshan*, and struck the Sirri and Sassan oil
+platforms.[^pm1]
+
+The operation worked despite the mines because: convoy routing
+reduced exposure, mine countermeasures improved over time, and US
+retaliation imposed costs on Iran that exceeded the benefit of
+continued mining.
 
 Lesson: Escort convoys work. Mines are the hardest problem. Routing
 discipline and operational security matter more than firepower. The
 political willingness to escalate — to destroy Iranian platforms
-after the Roberts — was the actual deterrent, not the escorts
-themselves.
+and warships after the *Roberts* — was the actual deterrent, not
+the escorts themselves.
 
-### 3. Gulf of Aden Anti-Piracy (2008-2015)
+### 3. Gulf of Aden Anti-Piracy (2008–2015)
 
 Private armed security teams (PCASP) on merchant vessels effectively
-ended Somali piracy. The legal framework: IMO deferred to flag states,
-flag states authorized armed guards under varying national regimes,
-companies contracted private maritime security firms (AdvanFort, Black
-Pearl/MASS, others). The model was shipboard — teams of 3-4 armed
-guards per vessel, with escalating ROE (presence, warning, deterrent
-fire, protective fire). No vessel with an armed security team was
-successfully pirated. The industry scaled to hundreds of teams
-operating simultaneously.
+ended Somali piracy. The legal framework: IMO guidance
+MSC.1/Circ.1405/Rev.2 deferred to flag states, flag states
+authorized armed guards under varying national regimes, companies
+contracted private maritime security firms.[^imo1] The model was
+shipboard — teams of 3–4 armed guards per vessel, with escalating
+ROE (presence, warning, deterrent fire, protective fire). No
+merchant vessel carrying embarked armed guards was successfully
+hijacked during the suppression period.[^pcasp1] At the height of
+the crisis, several hundred embarked teams were operating
+simultaneously across the High Risk Area.
 
 Lesson: Private maritime security works against asymmetric threats
 when the legal framework exists, flag states cooperate, and the
@@ -80,30 +103,33 @@ IRGC Navy with C-802 anti-ship missiles.
 
 ![Fig. 1 — Strait of Hormuz tactical geometry](/froth/rfc/images/hormuz_hormuz_tactical_map.jpg)
 
-
 Iran's A2/AD in the strait is layered:
 
-1. MINES — The primary threat. Iran has thousands in inventory,
-   deployable from submarines, surface craft, and dhows. EM-52
-   rocket-propelled rising mines, SADAF bottom mines, conventional
-   moored contact mines. Covert minelaying in a busy commercial
-   lane is nearly undetectable until the first ship hits one.
-   Clearance is slow, dangerous, and requires specialized assets.
+1. MINES — The primary threat. Iran is believed to possess a
+   substantial mine inventory, including EM-52 rocket-propelled
+   rising mines, SADAF-family bottom mines, and conventional
+   moored contact mines.[^mines1] Deployable from submarines,
+   surface craft, and commercial dhows. Covert minelaying in a
+   busy commercial lane is nearly undetectable until the first
+   ship hits one. Open-source counts of total inventory vary and
+   should be treated as estimates, not hard figures.
 
 2. ANTI-SHIP CRUISE MISSILES — Shore-based mobile launchers on
-   the Iranian coast and island garrisons. Noor (C-802 derivative,
-   120km), Qader (200km), Khalij Fars (ballistic AShM, 300km).
-   Multiple simultaneous salvos possible. The strait is well within
-   range of launchers positioned deep inland.
+   the Iranian coast and island garrisons. Noor (C-802
+   derivative, ~120km range), Qader (~200km), Khalij Fars
+   (ballistic AShM, ~300km).[^ascm1] Multiple simultaneous salvos
+   possible. The strait is well within range of launchers
+   positioned deep inland.
 
 3. FAST ATTACK CRAFT — IRGC Navy swarm doctrine. Dozens of armed
    speedboats capable of coordinated harassment, RPG/ATGM attacks,
    and suicide runs. Effective in confined waters where maneuver
    space is limited and rules of engagement are ambiguous.
 
-4. SUBMARINES — Ghadir-class midget subs (23 built), Nahang-class.
-   Mine delivery, torpedo attacks, intelligence gathering. Small
-   enough to be difficult to track in shallow, noisy gulf waters.
+4. SUBMARINES — Ghadir-class midget submarines (~23 built per
+   open-source estimates), Nahang-class.[^mines1] Mine delivery,
+   torpedo attacks, intelligence gathering. Small enough to be
+   difficult to track in shallow, noisy Gulf waters.
 
 5. DRONES AND LOITERING MUNITIONS — ISR and strike from land, sea,
    and island positions. Adds a persistent surveillance and
@@ -129,56 +155,70 @@ be assembled from existing commercial and quasi-commercial sources.
 
 No private force can operate in an international strait without
 state sponsorship. The model is the Flying Tigers: a corporate
-entity chartered in a cooperating state (Oman is the obvious
+entity chartered in a cooperating state. Oman is the obvious
 candidate — they control the Musandam peninsula, have a direct
 interest in strait access, and have historically maintained
-relations with both Iran and the West). The entity would operate
+relations with both Iran and the West. The entity would operate
 under Omani flag, with Omani port access, under a bilateral
 security agreement.
 
-Alternative sponsor: UAE (Fujairah is the bypass terminal), but
-UAE participation would be read as alignment with the US/Israel
-coalition and eliminate diplomatic flexibility.
+Alternative sponsor: UAE (Fujairah is the bypass terminal and
+eastern terminus of the ADCOP — Abu Dhabi Crude Oil Pipeline —
+which can carry 1.5 million bbl/day, bypassing Hormuz
+entirely[^adcop1]), but UAE participation would be read as
+alignment with the US/Israel coalition and eliminate diplomatic
+flexibility.
 
-UNCLOS Part III establishes transit passage as a right in
-international straits. Iran has not ratified UNCLOS but the
-passage right is widely considered customary international law.
-The legal theory: the private entity enforces an existing right
-under contract to affected states and commercial interests.
+UNCLOS Part III, Article 38 establishes transit passage as a right
+in international straits used for international navigation.[^unclos1]
+Iran has not ratified UNCLOS but the passage right is widely
+considered customary international law. The legal theory: the
+private entity enforces an existing right under contract to
+affected states and commercial interests.
 
 ### Phase 1: Mine Countermeasures (the critical path)
 
 ![Fig. 2 — Autonomous mine countermeasures cross-section](/froth/rfc/images/hormuz_mine_clearance.jpg)
 
-
 Mines are the threat that makes everything else possible or
 impossible. A private MCM capability would need:
 
-a) AUTONOMOUS SURVEY — Commercial AUVs (Kongsberg HUGIN, Saab
-   AUV62-MR, REMUS 600) can map and classify the seabed. These
-   are available for commercial purchase or lease. A fleet of
-   8-12 AUVs could survey the traffic separation scheme in 48-72
-   hours and maintain continuous re-survey on a rolling basis.
+a) AUTONOMOUS SURVEY — Commercial AUVs can map and classify the
+   seabed. The Kongsberg HUGIN family (including the HUGIN
+   Endurance variant) is used by both commercial survey operators
+   and defense customers.[^hugin1] Saab's AUV62-MR mine
+   reconnaissance system received a Swedish Navy order in
+   2024.[^saab1] The REMUS 600 (now under Kongsberg's portfolio
+   after the Hydroid acquisition) is a medium-class UUV used for
+   MCM and other payload missions.[^remus1] A fleet of 8–12 AUVs
+   could survey the traffic separation scheme in 48–72 hours and
+   maintain continuous re-survey on a rolling basis.
 
 b) MINE IDENTIFICATION — Side-scan and synthetic aperture sonar
-   on the AUVs identifies mine-like objects. Commercial MCM sonar
-   (ATLAS ELEKTRONIK SeaCat, Thales SAMDIS) can classify contacts
-   at high confidence.
+   on the AUVs identifies mine-like objects. ATLAS ELEKTRONIK
+   SeaCat can carry user-defined payloads in its flooded bow
+   section and is registered as a dual-use good, exempt from ITAR
+   restrictions.[^seacat1] Thales SAMDIS is a compact sonar
+   optimized for detecting naval mines, including in deeper
+   waters.[^samdis1]
 
 c) MINE NEUTRALIZATION — This is the hardest commercial gap.
-   Military mine disposal uses divers and expendable ROVs
-   (SeaFox, Archerfish). Some of these systems are available for
-   export. A private operation would need either: (i) contracted
-   military EOD teams from a participating state, (ii) commercial
-   mine disposal ROVs operated under the Omani security agreement,
-   or (iii) expendable autonomous mine neutralizers purchased from
+   Military mine disposal uses divers and expendable ROVs. ATLAS
+   ELEKTRONIK's SeaFox is an expendable mine neutralizer — the
+   vehicle is sent to the mine, confirms identification via
+   camera, and detonates on contact.[^seafox1] Some of these
+   systems are available for export. A private operation would
+   need either: (i) contracted military EOD teams from a
+   participating state, (ii) commercial mine disposal ROVs
+   operated under the Omani security agreement, or
+   (iii) expendable autonomous mine neutralizers purchased from
    European defense firms (ATLAS ELEKTRONIK, Saab, ECA Group).
 
-d) UNMANNED SURFACE VESSELS — ATLAS ELEKTRONIK ARCIMS USVs can
-   deploy and recover AUVs, tow mine sweeping gear, and maintain
-   COLREGS-compliant autonomous navigation. A fleet of 6-8 USVs
-   provides persistent MCM coverage without putting crews in the
-   minefield.
+d) UNMANNED SURFACE VESSELS — ATLAS ELEKTRONIK UK's ARCIMS USV
+   platform can deploy and recover AUVs, tow mine sweeping gear,
+   and maintain COLREGS-compliant autonomous navigation.[^arcims1]
+   A fleet of 6–8 USVs provides persistent MCM coverage without
+   putting crews in the minefield.
 
 The commercial MCM capability exists in pieces. Nobody has
 assembled it as a private service. The technology is mature.
@@ -188,11 +228,10 @@ The integration is the gap.
 
 ![Fig. 3 — Private convoy escort formation](/froth/rfc/images/hormuz_convoy_formation.jpg)
 
-
 The Operation Earnest Will model applied with private assets:
 
 a) ARMED ESCORT VESSELS — Commercial offshore patrol vessels
-   (60-80m class) equipped with naval guns (25-40mm), CIWS or
+   (60–80m class) equipped with naval guns (25–40mm), CIWS or
    similar point defense, decoys, and ESM. These vessels exist in
    the surplus naval market and the offshore security market.
    Crew them with ex-naval personnel under the Omani flag.
@@ -204,14 +243,15 @@ b) CONVOY ROUTING — Managed transit windows. Two convoys per day
    by slowest vessel but minimum 10 knots through the strait.
 
 c) SHIPBOARD SECURITY TEAMS — The Gulf of Aden model scaled up.
-   PCASP teams on every vessel in the convoy: 4-6 armed guards
+   PCASP teams on every vessel in the convoy: 4–6 armed guards
    per ship, equipped for anti-swarm defense (heavy machine guns,
    anti-materiel rifles, shoulder-launched SAMs if the threat
-   escalates to armed drones). Flag state authorization required.
+   escalates to armed drones). Flag state authorization required
+   per IMO MSC.1/Circ.1405/Rev.2.[^imo1]
 
 d) ELECTRONIC WARFARE — Drone jamming, radar warning receivers,
    chaff/flare on escort vessels. Commercial maritime EW systems
-   exist (SAAB, Elbit, Rafael). This is the layer that makes the
+   exist (Saab, Elbit, Rafael). This is the layer that makes the
    drone threat manageable.
 
 ### Phase 3: ISR and Early Warning
@@ -236,17 +276,17 @@ c) UNDERSEA SURVEILLANCE — Deployable acoustic sensor arrays
 
 ### Phase 4: Shore-Based Missile Defense (the limit case)
 
-This is where the plan hits the wall between private and state.
-Shore-based anti-ship cruise missiles with 300km range cannot be
-countered by a private maritime force. The options:
+This is where the private model breaks. Three scenarios:
 
-a) ACCEPT THE RISK — Operate under the assumption that Iran will
-   not fire cruise missiles at a convoy escorted under an Omani
-   flag because doing so means war with Oman (a GCC member) and
-   would internationalize the conflict beyond the US bilateral.
-   This is a deterrence theory, not a defense.
+a) IGNORE IT — Accept that cruise missiles are a state threat
+   requiring a state response. The private force handles
+   everything below the cruise missile threshold: mines, swarms,
+   drones, surveillance. A cruise missile attack on a convoy is
+   an act of war against the flag state of the vessels, not
+   against the private security provider. This is the Flying
+   Tigers model: let the state handle the existential threat.
 
-b) SEEK STATE UMBRELLA — The escort force operates under a
+b) STATE UMBRELLA — Negotiate a public-private air defense
    cooperative agreement where a state (US, UK, France, or a
    regional power) provides air defense coverage for the convoy
    route. The private force does MCM and surface escort; the
@@ -272,26 +312,28 @@ kinetics.
 
 ![Fig. 4 — Economics of closure vs private security](/froth/rfc/images/hormuz_economics.jpg)
 
-
 Rough order of magnitude for initial operating capability:
 
-  MCM fleet (12 AUVs, 8 USVs, disposal ROVs)    $120M
-  Escort vessels (4x OPV, armed/equipped)          $200M
-  ISR package (drones, satellites, sensors)          $40M
-  Shipboard security teams (100 operators)           $15M/yr
-  Personnel (crews, command, logistics)              $80M/yr
-  Omani basing and port services                     $30M/yr
-  Insurance and legal                                $25M/yr
-  Contingency and attrition                          $50M
+  MCM fleet (12 AUVs, 8 USVs, disposal ROVs)      $120M
+  Escort vessels (4x OPV, armed/equipped)           $200M
+  ISR package (drones, satellites, sensors)           $40M
+  Shipboard security teams (100 operators)            $15M/yr
+  Personnel (crews, command, logistics)               $80M/yr
+  Omani basing and port services                      $30M/yr
+  Insurance and legal                                 $25M/yr
+  Contingency and attrition                           $50M
 
-  Initial capital expenditure:                      ~$360M
-  Annual operating cost:                            ~$150M/yr
+  Initial capital expenditure:                       ~$360M
+  Annual operating cost:                             ~$150M/yr
 
 For context: the insurance premium spike alone costs the shipping
-industry $2-4B per year at current rates. A $150M/yr private
+industry billions per year at crisis rates. A $150M/yr private
 security operation that reduces premiums back to pre-crisis levels
-pays for itself twenty times over. The economic incentive is
-overwhelming. The question is not cost. It is authority.
+pays for itself many times over. The ADCOP bypass pipeline can
+move 1.5M bbl/day but global transit through Hormuz in normal
+conditions exceeds 20M bbl/day.[^eia1] The bypass is a pressure
+valve, not a replacement. The economic incentive is overwhelming.
+The question is not cost. It is authority.
 
 ## Why This Does Not Exist
 
@@ -326,8 +368,11 @@ MCM to fill the mine clearance gap. Specifically:
 1. An Omani-flagged commercial MCM service, operating autonomous
    AUVs and USVs to survey and clear the traffic separation
    scheme. This is commercially viable, legally defensible under
-   Omani sovereignty, and fills a real gap in current naval MCM
-   capacity.
+   Omani sovereignty, and fills a real gap — the US Navy's MCM
+   readiness was publicly reported as inadequate for immediate
+   escort duties at the crisis onset,[^twz1] and the UK mine
+   hunter fleet (Hunt-class, Sandown-class) has shrunk through
+   decommissionings and delayed recapitalization.
 
 2. Expanded PCASP on every vessel transiting the strait, funded
    by a shared industry levy (like the Gulf of Aden model). This
@@ -337,7 +382,10 @@ MCM to fill the mine clearance gap. Specifically:
 3. State naval escort for high-value convoy windows, provided by
    any combination of US, UK, French, Indian, Pakistani, or GCC
    navies. This provides the air defense umbrella and the
-   political deterrent against cruise missile attack.
+   political deterrent against cruise missile attack. The
+   International Maritime Security Construct (IMSC), already
+   operating in the region, provides a multilateral framework
+   for coordination.[^imsc1]
 
 4. A commercial maritime domain awareness service providing
    real-time ISR to all convoy participants via satellite,
@@ -354,13 +402,11 @@ them. The legal framework for commercial mine survey already
 exists in the offshore energy sector.
 
 The $360M capital cost buys a capability that no state navy
-currently has at the required scale and responsiveness. The US
-Navy's MCM fleet is aging and underinvested. The UK MCM
-capability has shrunk. Commercial autonomous MCM — operated by
-a private entity, funded by shipping industry levies, based in
-Oman — could be the thing that actually opens the strait, while
-the state navies handle the parts of the problem that require
-sovereignty.
+currently has at the required scale and responsiveness.
+Commercial autonomous MCM — operated by a private entity, funded
+by shipping industry levies, based in Oman — could be the thing
+that actually opens the strait, while the state navies handle
+the parts of the problem that require sovereignty.
 
 ## Open Questions
 
@@ -389,15 +435,36 @@ sovereignty.
 
 ## References
 
-- AP News: Strait of Hormuz crisis reporting, March 2026
-- USNI: Operation Earnest Will retrospective; Operation Epic
-  Escort reporting, March 2026
-- MEI: IRGC Navy Persian Gulf assessment
-- IMO: Maritime security guidance for PCASP
-- Windward: Maritime intelligence daily, March 2026
-- Lloyd's List: War risk premium tracking
-- Naval News: Textron USV family; ATLAS ELEKTRONIK ARCIMS
-- Saab: AUV62-MR mine reconnaissance system
-- Kongsberg: HUGIN AUV capabilities
-- RSDI: International law of the sea / Strait of Hormuz
+[^ap1]: AP News, "Strait of Hormuz shipping disruption," March 2026. https://apnews.com/article/82a9acb473837f1bf7a821d0c3f95205
+[^twz1]: The War Zone, "U.S. Navy Won't Be Ready to Escort Tankers Through Hormuz for Weeks." https://www.twz.com/news-features/u-s-navy-wont-be-ready-to-escort-tankers-through-hormuz-for-weeks
+[^wind1]: Windward Maritime Intelligence Daily, March 2026. https://windward.ai/blog/march-2-iran-war-maritime-intelligence-daily/
+[^eia1]: EIA, "World Oil Transit Chokepoints — Strait of Hormuz." https://www.eia.gov/international/analysis/special-topics/World_Oil_Transit_Chokepoints
+[^fsquawk1]: @firstsquawk, "Projectile strikes gas pipeline feeding power station in Iran's Khorramshahr," 23 March 2026. https://x.com/firstsquawk/status/2036228392316707090
+[^avg1]: "Flying Tigers," Wikipedia. https://en.wikipedia.org/wiki/Flying_Tigers
+[^ew1]: "Operation Earnest Will," Wikipedia. https://en.wikipedia.org/wiki/Operation_Earnest_Will
+[^bridge1]: "Bridgeton incident," Wikipedia. https://en.wikipedia.org/wiki/Bridgeton_incident
+[^pm1]: "Operation Praying Mantis," Wikipedia. https://en.wikipedia.org/wiki/Operation_Praying_Mantis
+[^mines1]: Open-source Iranian naval mine assessments. https://min.news/en/news/c3425b43e76c4ae493da8f1a986ccb94.html
+[^ascm1]: "Noor (missile)," "Khalij Fars (missile)," open-source defense databases.
+[^unclos1]: UNCLOS Part III, Arts. 37–44, "Straits Used for International Navigation." https://www.un.org/depts/los/convention_agreements/texts/unclos/part3.htm
+[^adcop1]: "Habshan–Fujairah oil pipeline," Wikipedia. https://en.wikipedia.org/wiki/Habshan%E2%80%93Fujairah_oil_pipeline
+[^hugin1]: Kongsberg HUGIN Endurance datasheet. https://www.kongsberg.com/globalassets/kongsberg-discovery/commerce/surveillance--monitoring/hugin-endurance/473631a_hugin_endurance_datasheet.pdf
+[^saab1]: Saab, "Order from Sweden for AUV62-MR," December 2024. https://www.saab.com/newsroom/stories/2024/december/saab-receives-order-from-sweden-for-autonomous-underwater-vehicles-for-mine-countermeasures
+[^remus1]: Kongsberg/Hydroid REMUS UUV portfolio. https://www.kongsberg.com/
+[^seacat1]: ATLAS ELEKTRONIK SeaCat mine warfare system. https://www.atlas-elektronik.com/solutions/mine-warfare-systems/seacat.html — ITAR-exempt dual-use registration per TKMS: https://www.tkmsgroup.com/de/atlas-elektronik/mine-warfare-systems/seacat-mk1
+[^samdis1]: Thales SAMDIS mine detection sonar. https://www.thalesgroup.com/en/print/pdf/node/6796
+[^seafox1]: ATLAS ELEKTRONIK SeaFox expendable mine neutralizer. https://www.atlas-elektronik.com/solutions/mine-warfare-systems/seafox.html
+[^arcims1]: ATLAS ELEKTRONIK UK ARCIMS USV. https://www.uk.atlas-elektronik.com/solutions/anti-submarine-systems/seasense
+[^imo1]: IMO MSC.1/Circ.1405/Rev.2, "Revised interim guidance on the use of PCASP." https://www.imo.org/
+[^pcasp1]: Industry reporting on PCASP effectiveness during the Gulf of Aden suppression period. No successful hijacking of a vessel carrying armed guards was recorded.
+[^imsc1]: International Maritime Security Construct (IMSC). https://www.imscsentinel.com/
 
+## Figures
+
+All figures generated with Google Nano Banana 2 (gemini-3.1-flash-image-preview).
+
+- Fig. 1: Strait of Hormuz tactical geometry
+- Fig. 2: Autonomous mine countermeasures cross-section
+- Fig. 3: Private convoy escort formation
+- Fig. 4: Economics of closure vs private security
+- Fig. 5: Four-phase operational timeline
