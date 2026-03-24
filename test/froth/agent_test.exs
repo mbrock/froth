@@ -73,6 +73,18 @@ defmodule Froth.Agent.WorkerTest do
     }
   end
 
+  defp web_search_tool_spec do
+    %{
+      "name" => "web_search",
+      "description" => "Search the web.",
+      "input_schema" => %{
+        "type" => "object",
+        "properties" => %{"query" => %{"type" => "string"}},
+        "required" => ["query"]
+      }
+    }
+  end
+
   defp start_worker(messages, fixture, opts) do
     notify_pid = Keyword.get(opts, :notify, self())
 
@@ -549,6 +561,108 @@ defmodule Froth.Agent.WorkerTest do
       assert tool_result == %{
                "type" => "tool_result",
                "tool_use_id" => "toolu_01723uR8LLoYDLV4oqbtHEd4",
+               "content" => "tool timed out after 10ms",
+               "is_error" => true
+             }
+
+      wait_for_exit(pid)
+    end
+
+    test "uses tool-specific timeout overrides when no cycle timeout is configured" do
+      attach_tool_telemetry()
+      test_pid = self()
+      counter = start_supervised!({Elixir.Agent, fn -> 0 end})
+      previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
+      previous_overrides = Application.get_env(:froth, :tool_timeout_overrides)
+
+      on_exit(fn ->
+        if previous_fun do
+          Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
+        else
+          Application.delete_env(:froth, :llm_stream_single_fun)
+        end
+
+        if previous_overrides do
+          Application.put_env(:froth, :tool_timeout_overrides, previous_overrides)
+        else
+          Application.delete_env(:froth, :tool_timeout_overrides)
+        end
+      end)
+
+      Application.put_env(:froth, :tool_timeout_overrides, %{"web_search" => 10})
+
+      Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
+        call =
+          Elixir.Agent.get_and_update(counter, fn current ->
+            {current, current + 1}
+          end)
+
+        send(test_pid, {:llm_call, call, api_messages})
+
+        case call do
+          0 ->
+            {:ok,
+             %{
+               text: "",
+               content: [
+                 %{
+                   "type" => "tool_use",
+                   "id" => "call_1",
+                   "name" => "web_search",
+                   "input" => %{"query" => "North Korea military capabilities"}
+                 }
+               ],
+               stop_reason: "tool_use",
+               usage: %{},
+               model: opts[:model],
+               message_id: "msg_1"
+             }}
+
+          1 ->
+            {:ok,
+             %{
+               text: "done",
+               content: [%{"type" => "text", "text" => "done"}],
+               stop_reason: "stop",
+               usage: %{},
+               model: opts[:model],
+               message_id: "msg_2"
+             }}
+        end
+      end)
+
+      executor =
+        start_executor(fn %ToolUse{}, _context ->
+          Process.sleep(50)
+          "too late"
+        end)
+
+      {pid, _cycle} =
+        start_worker(
+          [Message.user("search the web")],
+          "simple_reply",
+          executor: executor,
+          tools: [web_search_tool_spec()]
+        )
+
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :timed_out], measurements,
+                      %{
+                        timeout_ms: 10,
+                        tool_name: "web_search",
+                        tool_use_id: "call_1"
+                      }},
+                     5000
+
+      assert is_integer(measurements.duration)
+      assert measurements.duration > 0
+
+      assert_receive {:llm_call, 1, api_messages}, 5000
+
+      assert %LLMMessage{role: :user, content: [tool_result]} = List.last(api_messages)
+
+      assert tool_result == %{
+               "type" => "tool_result",
+               "tool_use_id" => "call_1",
                "content" => "tool timed out after 10ms",
                "is_error" => true
              }

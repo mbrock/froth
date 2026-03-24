@@ -14,12 +14,14 @@ defmodule Froth.Agent.Worker do
   alias Froth.Telemetry.Span
 
   @default_tool_timeout_ms 30_000
+  @default_tool_timeout_overrides %{"web_search" => 90_000}
 
   @type invocation :: %{
           ref: reference(),
           task: Task.t(),
           tool_use: ToolUse.t(),
           timer_ref: reference(),
+          timeout_ms: pos_integer(),
           started_at: integer(),
           span_id: String.t()
         }
@@ -250,7 +252,7 @@ defmodule Froth.Agent.Worker do
         |> forget_invocation(invocation, MapSet.put(ignored_refs, ref))
         |> collect_tool_result(
           invocation.tool_use.id,
-          {:error, timeout_error(worker.config.tool_timeout_ms || @default_tool_timeout_ms)}
+          {:error, timeout_error(invocation.timeout_ms)}
         )
         |> maybe_tools_done()
 
@@ -409,12 +411,11 @@ defmodule Froth.Agent.Worker do
       %{cycle_id: cycle.id, head_id: worker.head_id}
       |> Map.merge(worker.config.context || %{})
 
-    tool_timeout_ms = worker.config.tool_timeout_ms || @default_tool_timeout_ms
-
     invocations =
       Enum.map(tool_uses, fn %ToolUse{id: id} = tool_use ->
         started_at = System.monotonic_time()
         span_id = generate_span_id()
+        timeout_ms = tool_timeout_ms(worker.config, tool_use)
         emit_tool_started_event(%{worker | cycle: cycle}, tool_use, span_id)
 
         task =
@@ -427,7 +428,8 @@ defmodule Froth.Agent.Worker do
           ref: task.ref,
           task: task,
           tool_use: tool_use,
-          timer_ref: Process.send_after(self(), {:tool_timeout, task.ref}, tool_timeout_ms),
+          timer_ref: Process.send_after(self(), {:tool_timeout, task.ref}, timeout_ms),
+          timeout_ms: timeout_ms,
           started_at: started_at,
           span_id: span_id
         }
@@ -529,6 +531,27 @@ defmodule Froth.Agent.Worker do
 
   defp timeout_error(tool_timeout_ms) when is_integer(tool_timeout_ms) and tool_timeout_ms > 0 do
     "tool timed out after #{tool_timeout_ms}ms"
+  end
+
+  defp tool_timeout_ms(%Config{} = config, %ToolUse{name: name}) when is_binary(name) do
+    cond do
+      is_integer(config.tool_timeout_ms) and config.tool_timeout_ms > 0 ->
+        config.tool_timeout_ms
+
+      is_integer(Map.get(tool_timeout_overrides(), name)) ->
+        Map.fetch!(tool_timeout_overrides(), name)
+
+      true ->
+        @default_tool_timeout_ms
+    end
+  end
+
+  defp tool_timeout_ms(%Config{} = config, _tool_use) do
+    config.tool_timeout_ms || @default_tool_timeout_ms
+  end
+
+  defp tool_timeout_overrides do
+    Application.get_env(:froth, :tool_timeout_overrides, @default_tool_timeout_overrides)
   end
 
   defp emit_tool_started_event(worker, %ToolUse{} = tool_use, span_id) do
@@ -645,7 +668,7 @@ defmodule Froth.Agent.Worker do
   end
 
   defp emit_tool_timed_out_event(worker, invocation) do
-    timeout_ms = worker.config.tool_timeout_ms || @default_tool_timeout_ms
+    timeout_ms = invocation.timeout_ms
     duration_ms = tool_duration_ms(invocation)
 
     Span.execute(
