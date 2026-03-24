@@ -78,6 +78,9 @@ IRGC Navy with C-802 anti-ship missiles.
 
 ## Threat Model
 
+![Fig. 1 — Strait of Hormuz tactical geometry](/froth/rfc/images/hormuz_hormuz_tactical_map.jpg)
+
+
 Iran's A2/AD in the strait is layered:
 
 1. MINES — The primary threat. Iran has thousands in inventory,
@@ -120,6 +123,8 @@ A private operation to open Hormuz would require five capabilities
 that do not currently exist in any single private entity but could
 be assembled from existing commercial and quasi-commercial sources.
 
+![Fig. 5 — Four-phase operational timeline](/froth/rfc/images/hormuz_four_phases.jpg)
+
 ### Phase 0: Legal Architecture
 
 No private force can operate in an international strait without
@@ -142,6 +147,9 @@ The legal theory: the private entity enforces an existing right
 under contract to affected states and commercial interests.
 
 ### Phase 1: Mine Countermeasures (the critical path)
+
+![Fig. 2 — Autonomous mine countermeasures cross-section](/froth/rfc/images/hormuz_mine_clearance.jpg)
+
 
 Mines are the threat that makes everything else possible or
 impossible. A private MCM capability would need:
@@ -177,6 +185,9 @@ assembled it as a private service. The technology is mature.
 The integration is the gap.
 
 ### Phase 2: Convoy Escort
+
+![Fig. 3 — Private convoy escort formation](/froth/rfc/images/hormuz_convoy_formation.jpg)
+
 
 The Operation Earnest Will model applied with private assets:
 
@@ -258,6 +269,9 @@ threat is managed through diplomacy (Omani channel) rather than
 kinetics.
 
 ## Cost Estimate
+
+![Fig. 4 — Economics of closure vs private security](/froth/rfc/images/hormuz_economics.jpg)
+
 
 Rough order of magnitude for initial operating capability:
 

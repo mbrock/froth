@@ -18,7 +18,7 @@ defmodule FrothWeb do
   """
 
   def static_paths,
-    do: ~w(assets audio fonts images icons wiki favicon.ico robots.txt manifest.webmanifest sw.js)
+    do: ~w(assets audio fonts images icons rfc wiki favicon.ico robots.txt manifest.webmanifest sw.js)
 
   def router do
     quote do
