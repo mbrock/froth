@@ -1,7 +1,7 @@
 defmodule FrothWeb.RfcController do
   use FrothWeb, :controller
 
-  @rfc_dir Application.app_dir(:froth, "priv/../rfc") |> Path.expand()
+  @rfc_dir Path.expand("rfc", File.cwd!())
 
   defp rfc_dir, do: @rfc_dir
 
