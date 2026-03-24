@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0011" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0011: Summarizer Unblock — Strip Cycle Traces and Catch Up</title>
+    <status>DRAFT</status>
+    <author>Charlie (@charliebuddybot)</author>
+    <date>2026-03-24</date>
+    <related>FROTH-RFC-0006 (Hierarchical Memory)</related>
+  </meta>
+  <section title="Problem" id="problem">
+    <p>The daily summary pipeline has been broken since March 19, 2026. Four days are pending (March 20-23). The lore file — used as runtime context for every agent message — has not been updated since March 20. Every message every robot sends uses stale context, and the staleness compounds daily.</p>
+    <p>Root cause (diagnosed in RFC-0006): <tt>BotContext.for_messages/3</tt> renders full cycle traces inline. On March 20, cycle traces account for 55% of the transcript (443K tokens out of 824K total). Stripping them reduces the transcript to 370K tokens, which fits in the context window.</p>
+  </section>
+  <section title="Implementation" id="implementation">
+    <subsection title="Step 1: Add cycle trace stripping to BotContext" id="step-1">
+      <p>Add an option <tt>:include_cycles</tt> (default <tt>true</tt>) to <tt>BotContext.for_messages/3</tt> and the underlying <tt>build_recent/3</tt>. When <tt>false</tt>, skip the <tt>build_cycle_traces_map/3</tt> call entirely — do not query <tt>cycle_traces_for_messages</tt>, do not render any <tt>&lt;cycle&gt;</tt> elements.</p>
+      <p>The option propagates through <tt>build_recent</tt> → <tt>build_cycle_traces_map</tt>. The rendering layer already handles empty cycle lists gracefully (the <tt>:for</tt> comprehension in <tt>bot_context_html.ex</tt> line 169 produces nothing when cycles is <tt>[]</tt>).</p>
+    </subsection>
+    <subsection title="Step 2: Wire the summarizer to strip cycles" id="step-2">
+      <p>In <tt>Froth.Summarizer.summarize/3</tt> (line 46), change:</p>
+      <code language="elixir">transcript = BotContext.for_messages(chat_id, messages) |> Enum.join("")</code>
+      <p>To:</p>
+      <code language="elixir">transcript = BotContext.for_messages(chat_id, messages, include_cycles: false) |> Enum.join("")</code>
+      <p>This single line change unblocks generation for every pending day including March 20.</p>
+    </subsection>
+    <subsection title="Step 3: Add catch_up function" id="step-3">
+      <p>Add <tt>Froth.Summarizer.catch_up/1</tt>:</p>
+      <code language="elixir">def catch_up(chat_id) do
+  dates = pending_summary_dates(chat_id)
+  for date &lt;- dates do
+    case summarize_day(chat_id, date) do
+      {:ok, summary} -> {:ok, date, summary}
+      {:error, reason} -> {:error, date, reason}
+    end
+  end
+end</code>
+      <p>Processes all pending dates in chronological order, so each summary has prior summaries as context.</p>
+    </subsection>
+    <subsection title="Step 4: Wire as mix task" id="step-4">
+      <p>Update <tt>lib/mix/tasks/froth.summarize.ex</tt> to add a <tt>--catch-up</tt> flag that calls <tt>catch_up/1</tt> for the default chat_id.</p>
+    </subsection>
+  </section>
+  <section title="Verification" id="verification">
+    <p>After implementation:</p>
+    <list type="numbered">
+      <item><p><tt>Froth.Summarizer.pending_summary_dates(-1003690254489)</tt> should return <tt>[]</tt></p></item>
+      <item><p><tt>Froth.Summarizer.list(-1003690254489) |> length()</tt> should be 53 (49 existing + 4 new)</p></item>
+      <item><p>The March 20 summary should exist and mention the reel pipeline, WebCodecs, and distributed compute</p></item>
+    </list>
+  </section>
+</rfc>
