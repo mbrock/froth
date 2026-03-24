@@ -503,6 +503,14 @@ defmodule FrothWeb.RfcController do
         body { padding: 1rem 0.75rem; }
         article pre { font-size: 0.75rem; padding: 0.75rem; }
       }
+      article img {
+        max-width: 100%;
+        height: auto;
+        border-radius: 4px;
+        margin: 1.5rem 0;
+        display: block;
+        border: 1px solid var(--border);
+      }
     </style>
     """
   end
