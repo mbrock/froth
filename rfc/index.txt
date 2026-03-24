@@ -8,5 +8,9 @@ FROTH RFCs
 0006  Hierarchical Memory / Pre-Cognitive Compress PARTIAL  2026-03-23
 0007  Triangulated Web Search (Multi-Provider)    DRAFT    2026-03-23
 0008  Unified Event Table                         IMPL     2026-03-23
+0009  Task Wakeup on Completion                   IMPL     2026-03-23
+0010  Opening Hormuz                              DRAFT    2026-03-23
+0011  Summarizer Unblock                          DRAFT    2026-03-24
+0012  Staging Environment                         DRAFT    2026-03-24
 
 * 0004 worker logic implemented; schema superseded by 0008.
