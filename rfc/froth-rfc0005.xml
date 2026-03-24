@@ -21,11 +21,11 @@
     <p>The raw data exists, but the operator experience is still rough.</p>
     <p>Today there are two main readers:</p>
     <list type="bullet">
-      <item><p><c>mix froth.follow</c></p></item>
-      <item><p><c>FrothWeb.TelemetryLive</c></p></item>
+      <item><p>`mix froth.follow`</p></item>
+      <item><p>`FrothWeb.TelemetryLive`</p></item>
     </list>
     <p>Both work, but both are still very close to the raw event stream.</p>
-    <p><c>mix froth.follow</c> currently prints:</p>
+    <p>`mix froth.follow` currently prints:</p>
     <list type="bullet">
       <item><p>raw event name</p></item>
       <item><p>optional duration</p></item>
@@ -39,14 +39,14 @@
       <item><p>which tool failure actually changed the outcome?</p></item>
       <item><p>which lines are operator-relevant versus transport chatter?</p></item>
     </list>
-    <p><c>TelemetryLive</c> has the same problem in a different shape. It is a generic table of raw events, not a focused execution-log reader. It truncates details, has no real semantic grouping, and does not yet feel like the UI version of <c>follow</c>.</p>
+    <p>`TelemetryLive` has the same problem in a different shape. It is a generic table of raw events, not a focused execution-log reader. It truncates details, has no real semantic grouping, and does not yet feel like the UI version of `follow`.</p>
     <p>RFC-0004 points in the right direction: Froth needs an execution spine, not just transcripts plus raw telemetry. But even before that full persistence model lands, the project already needs a much better way to read what is happening.</p>
     <p>The immediate opportunity is strong:</p>
     <list type="bullet">
-      <item><p>RFC-0003 now emits explicit <c>agent.tool.*</c> lifecycle events</p></item>
+      <item><p>RFC-0003 now emits explicit `agent.tool.*` lifecycle events</p></item>
       <item><p>spans and parent IDs already exist</p></item>
-      <item><p><c>telemetry_events</c> already gives us durable history</p></item>
-      <item><p>a future <c>agent_events</c> expansion is coming in RFC-0004</p></item>
+      <item><p>`telemetry_events` already gives us durable history</p></item>
+      <item><p>a future `agent_events` expansion is coming in RFC-0004</p></item>
     </list>
     <p>The missing piece is a presentation model.</p>
   </section>
@@ -54,7 +54,7 @@
     <p>Make Froth's live and historical execution traces readable by humans.</p>
     <p>Concretely:</p>
     <list type="bullet">
-      <item><p><c>mix froth.follow</c> should become the best way to watch a cycle run</p></item>
+      <item><p>`mix froth.follow` should become the best way to watch a cycle run</p></item>
       <item><p>a future LiveView should feel like the same reader in a richer UI</p></item>
       <item><p>raw telemetry should remain available, but not be the default view</p></item>
       <item><p>formatting logic should be shared, not duplicated between CLI and UI</p></item>
@@ -63,15 +63,15 @@
   <section title="Current Status" id="current-status">
     <p>The first implementation slice of this RFC is now in place:</p>
     <list type="bullet">
-      <item><p><c>Froth.Follow.Entry</c>, <c>Froth.Follow.Projector</c>, and <c>Froth.Follow.Renderer</c> exist</p></item>
-      <item><p><c>Froth.Follow.Source</c> now exists as the shared recent-history loader for follow readers</p></item>
-      <item><p><c>mix froth.follow</c> now renders projected follow entries instead of formatting raw telemetry inline</p></item>
-      <item><p><c>mix froth.follow</c> now supports scope-aware filtering for cycle/span in addition to event-prefix and mode filtering</p></item>
-      <item><p><c>mix froth.follow</c> now boots with a recent matching history tail before switching to live streaming</p></item>
-      <item><p><c>TelemetryLive</c> now consumes the same projected entry model and has <c>Smart</c> and <c>Raw</c> modes</p></item>
-      <item><p><c>TelemetryLive</c> rows can now expand inline to show the raw projected payload on demand</p></item>
-      <item><p><c>TelemetryLive</c> can now pin the timeline to a cycle or span directly from an entry's expanded detail controls</p></item>
-      <item><p><c>TelemetryLive</c> now keeps mode, search, and cycle/span scope in the URL so a filtered view can be reloaded or shared</p></item>
+      <item><p>`Froth.Follow.Entry`, `Froth.Follow.Projector`, and `Froth.Follow.Renderer` exist</p></item>
+      <item><p>`Froth.Follow.Source` now exists as the shared recent-history loader for follow readers</p></item>
+      <item><p>`mix froth.follow` now renders projected follow entries instead of formatting raw telemetry inline</p></item>
+      <item><p>`mix froth.follow` now supports scope-aware filtering for cycle/span in addition to event-prefix and mode filtering</p></item>
+      <item><p>`mix froth.follow` now boots with a recent matching history tail before switching to live streaming</p></item>
+      <item><p>`TelemetryLive` now consumes the same projected entry model and has `Smart` and `Raw` modes</p></item>
+      <item><p>`TelemetryLive` rows can now expand inline to show the raw projected payload on demand</p></item>
+      <item><p>`TelemetryLive` can now pin the timeline to a cycle or span directly from an entry's expanded detail controls</p></item>
+      <item><p>`TelemetryLive` now keeps mode, search, and cycle/span scope in the URL so a filtered view can be reloaded or shared</p></item>
       <item><p>projector behavior is covered by focused tests, and the LiveView has integration coverage for smart/raw rendering</p></item>
     </list>
     <p>That means the shared semantic layer is no longer hypothetical.</p>
@@ -80,8 +80,8 @@
       <item><p>richer durable navigation state for cycle/span/task pinning, including saved views and task-level deep links</p></item>
       <item><p>richer filtering beyond event-prefix, text, and first-pass cycle/span scope filters</p></item>
       <item><p>a richer raw detail pane with linked navigation instead of a simple inline payload expansion</p></item>
-      <item><p>a dedicated <c>FollowLive</c> tuned for execution-log reading rather than a reused telemetry table</p></item>
-      <item><p>preference for future typed <c>agent_events</c> over inferred telemetry when RFC-0004 lands</p></item>
+      <item><p>a dedicated `FollowLive` tuned for execution-log reading rather than a reused telemetry table</p></item>
+      <item><p>preference for future typed `agent_events` over inferred telemetry when RFC-0004 lands</p></item>
     </list>
   </section>
   <section title="Non-Goals" id="non-goals">
@@ -96,13 +96,13 @@
     <p>Froth should stop rendering raw telemetry directly and instead render projected follow entries.</p>
     <p>The right layering is:</p>
     <list type="numbered">
-      <item><p>collect raw runtime events from telemetry and later <c>agent_events</c></p></item>
-      <item><p>project them into a stable semantic <c>Follow.Entry</c></p></item>
+      <item><p>collect raw runtime events from telemetry and later `agent_events`</p></item>
+      <item><p>project them into a stable semantic `Follow.Entry`</p></item>
       <item><p>render those entries differently in CLI and LiveView</p></item>
     </list>
     <p>The shared projection layer is the key. Without it:</p>
     <list type="bullet">
-      <item><p><c>mix froth.follow</c> gets one set of heuristics</p></item>
+      <item><p>`mix froth.follow` gets one set of heuristics</p></item>
       <item><p>the LiveView gets a different set of heuristics</p></item>
       <item><p>the same event means different things in different readers</p></item>
       <item><p>future event-log work in RFC-0004 has no stable consumer model</p></item>
@@ -115,240 +115,261 @@
     </list>
   </section>
   <section title="Problem With The Current Readers" id="problem-with-the-current-readers">
-    <p>### 1. Raw event names are too low-level</p>
-    <p>This:</p>
-    <code>froth.agent.tool.completed duration=28123456 tool_name=froth_echo ...</code>
-    <p>is mechanically correct but cognitively noisy.</p>
-    <p>Operators usually want:</p>
-    <code>tool froth_echo completed 28ms</code>
-    <p>plus a small number of relevant details.</p>
-    <p>### 2. Metadata is unprioritized</p>
-    <p>Current output gives every metadata field the same visual weight. Important fields like:</p>
-    <list type="bullet">
-      <item><p><c>cycle_id</c></p></item>
-      <item><p><c>tool_name</c></p></item>
-      <item><p><c>tool_use_id</c></p></item>
-      <item><p><c>error</c></p></item>
-      <item><p><c>model</c></p></item>
-      <item><p><c>usage</c></p></item>
-    </list>
-    <p>get mixed together with lower-value plumbing fields.</p>
-    <p>### 3. There is no semantic grouping</p>
-    <p>The current readers do not really understand:</p>
-    <list type="bullet">
-      <item><p>span trees</p></item>
-      <item><p>cycle boundaries</p></item>
-      <item><p>think/tool alternation</p></item>
-      <item><p>task lifecycle</p></item>
-      <item><p>error severity</p></item>
-    </list>
-    <p>So humans have to infer the shape of the run from a firehose.</p>
-    <p>### 4. CLI and LiveView would currently drift</p>
-    <p>If we improve only <c>mix froth.follow</c>, the web reader will stay raw. If we improve only the LiveView, the terminal reader stays second-rate. The shared model should come first.</p>
+    <subsection title="1. Raw event names are too low-level" id="1-raw-event-names-are-too-low-level">
+      <p>This:</p>
+      <code>froth.agent.tool.completed duration=28123456 tool_name=froth_echo ...
+</code>
+      <p>is mechanically correct but cognitively noisy.</p>
+      <p>Operators usually want:</p>
+      <code>tool froth_echo completed 28ms
+</code>
+      <p>plus a small number of relevant details.</p>
+    </subsection>
+    <subsection title="2. Metadata is unprioritized" id="2-metadata-is-unprioritized">
+      <p>Current output gives every metadata field the same visual weight. Important fields like:</p>
+      <list type="bullet">
+        <item><p>`cycle_id`</p></item>
+        <item><p>`tool_name`</p></item>
+        <item><p>`tool_use_id`</p></item>
+        <item><p>`error`</p></item>
+        <item><p>`model`</p></item>
+        <item><p>`usage`</p></item>
+      </list>
+      <p>get mixed together with lower-value plumbing fields.</p>
+    </subsection>
+    <subsection title="3. There is no semantic grouping" id="3-there-is-no-semantic-grouping">
+      <p>The current readers do not really understand:</p>
+      <list type="bullet">
+        <item><p>span trees</p></item>
+        <item><p>cycle boundaries</p></item>
+        <item><p>think/tool alternation</p></item>
+        <item><p>task lifecycle</p></item>
+        <item><p>error severity</p></item>
+      </list>
+      <p>So humans have to infer the shape of the run from a firehose.</p>
+    </subsection>
+    <subsection title="4. CLI and LiveView would currently drift" id="4-cli-and-liveview-would-currently-drift">
+      <p>If we improve only `mix froth.follow`, the web reader will stay raw. If we improve only the LiveView, the terminal reader stays second-rate. The shared model should come first.</p>
+    </subsection>
   </section>
   <section title="Proposed Design" id="proposed-design">
-    <p>### 1. Introduce a shared projection layer</p>
-    <p>Add a <c>Froth.Follow</c> namespace with modules along these lines:</p>
-    <list type="bullet">
-      <item><p><c>Froth.Follow.Entry</c></p></item>
-      <item><p><c>Froth.Follow.Projector</c></p></item>
-      <item><p><c>Froth.Follow.Renderer</c></p></item>
-      <item><p><c>Froth.Follow.Source</c></p></item>
-    </list>
-    <p><c>Froth.Follow.Entry</c> should represent a human-facing event row, not a raw telemetry tuple. Example fields:</p>
-    <list type="bullet">
-      <item><p><c>id</c></p></item>
-      <item><p><c>at</c></p></item>
-      <item><p><c>family</c></p></item>
-      <item><p><c>kind</c></p></item>
-      <item><p><c>level</c></p></item>
-      <item><p><c>scope</c></p></item>
-      <item><p><c>summary</c></p></item>
-      <item><p><c>detail</c></p></item>
-      <item><p><c>duration_ms</c></p></item>
-      <item><p><c>cycle_id</c></p></item>
-      <item><p><c>span_id</c></p></item>
-      <item><p><c>parent_id</c></p></item>
-      <item><p><c>tool_use_id</c></p></item>
-      <item><p><c>message_id</c></p></item>
-      <item><p><c>raw</c></p></item>
-    </list>
-    <p>The important shift is that <c>summary</c> and <c>detail</c> are already projected for human reading.</p>
-    <p>### 2. Project raw events into semantic families</p>
-    <p>Raw event names should map into a smaller semantic vocabulary.</p>
-    <p>Example families:</p>
-    <list type="bullet">
-      <item><p><c>cycle</c></p></item>
-      <item><p><c>control</c></p></item>
-      <item><p><c>think</c></p></item>
-      <item><p><c>tool</c></p></item>
-      <item><p><c>llm</c></p></item>
-      <item><p><c>telegram</c></p></item>
-      <item><p><c>task</c></p></item>
-      <item><p><c>transport</c></p></item>
-      <item><p><c>error</c></p></item>
-    </list>
-    <p>Example projections:</p>
-    <list type="bullet">
-      <item><p><c>froth.agent.cycle.start</c> -&gt; <c>cycle started</c></p></item>
-      <item><p><c>froth.agent.cycle.stop</c> with structured outcome <c>yield</c> -&gt; <c>cycle yielded</c></p></item>
-      <item><p><c>froth.agent.cycle.stop</c> with structured outcome <c>assistant_stopped_without_reply</c> -&gt; <c>cycle stopped without reply</c></p></item>
-      <item><p><c>froth.agent.tool.started</c> -&gt; <c>tool &lt;name&gt; started</c></p></item>
-      <item><p><c>froth.agent.tool.completed</c> -&gt; <c>tool &lt;name&gt; completed</c></p></item>
-      <item><p><c>froth.agent.tool.failed</c> -&gt; <c>tool &lt;name&gt; failed</c></p></item>
-      <item><p><c>froth.agent.tool.timed_out</c> -&gt; <c>tool &lt;name&gt; timed out</c></p></item>
-      <item><p><c>froth.agent.control.reply_sent</c> -&gt; <c>reply sent</c></p></item>
-      <item><p><c>froth.tasks.completed</c> -&gt; <c>task &lt;id&gt; completed</c></p></item>
-      <item><p><c>froth.http.sse.text_delta</c> -&gt; hidden in smart mode, visible in raw mode</p></item>
-    </list>
-    <p>The point is not to lose the raw event. The point is to provide a semantic default.</p>
-    <p>### 3. Make "smart mode" the default for follow</p>
-    <p><c>mix froth.follow</c> should default to a smart view, not raw telemetry.</p>
-    <p>Smart mode should:</p>
-    <list type="bullet">
-      <item><p>collapse noisy transport events</p></item>
-      <item><p>highlight boundaries and failures</p></item>
-      <item><p>prefer semantic summaries over raw metadata dumps</p></item>
-      <item><p>keep stable columns so the eye can scan quickly</p></item>
-    </list>
-    <p>Suggested modes:</p>
-    <list type="bullet">
-      <item><p><c>smart</c> default operator view</p></item>
-      <item><p><c>raw</c> exact telemetry view</p></item>
-      <item><p><c>errors</c> only warnings/failures/timeouts</p></item>
-    </list>
-    <p>### 4. Give entries stable visual slots</p>
-    <p>Each rendered line should have a predictable shape:</p>
-    <code>TIME  SCOPE  SUMMARY  DETAIL</code>
-    <p>For example:</p>
-    <code lang="text">14:58:01.123  cycle 01J...   cycle started              model=claude-opus-4-6
+    <subsection title="1. Introduce a shared projection layer" id="1-introduce-a-shared-projection-layer">
+      <p>Add a `Froth.Follow` namespace with modules along these lines:</p>
+      <list type="bullet">
+        <item><p>`Froth.Follow.Entry`</p></item>
+        <item><p>`Froth.Follow.Projector`</p></item>
+        <item><p>`Froth.Follow.Renderer`</p></item>
+        <item><p>`Froth.Follow.Source`</p></item>
+      </list>
+      <p>`Froth.Follow.Entry` should represent a human-facing event row, not a raw telemetry tuple. Example fields:</p>
+      <list type="bullet">
+        <item><p>`id`</p></item>
+        <item><p>`at`</p></item>
+        <item><p>`family`</p></item>
+        <item><p>`kind`</p></item>
+        <item><p>`level`</p></item>
+        <item><p>`scope`</p></item>
+        <item><p>`summary`</p></item>
+        <item><p>`detail`</p></item>
+        <item><p>`duration_ms`</p></item>
+        <item><p>`cycle_id`</p></item>
+        <item><p>`span_id`</p></item>
+        <item><p>`parent_id`</p></item>
+        <item><p>`tool_use_id`</p></item>
+        <item><p>`message_id`</p></item>
+        <item><p>`raw`</p></item>
+      </list>
+      <p>The important shift is that `summary` and `detail` are already projected for human reading.</p>
+    </subsection>
+    <subsection title="2. Project raw events into semantic families" id="2-project-raw-events-into-semantic-families">
+      <p>Raw event names should map into a smaller semantic vocabulary.</p>
+      <p>Example families:</p>
+      <list type="bullet">
+        <item><p>`cycle`</p></item>
+        <item><p>`control`</p></item>
+        <item><p>`think`</p></item>
+        <item><p>`tool`</p></item>
+        <item><p>`llm`</p></item>
+        <item><p>`telegram`</p></item>
+        <item><p>`task`</p></item>
+        <item><p>`transport`</p></item>
+        <item><p>`error`</p></item>
+      </list>
+      <p>Example projections:</p>
+      <list type="bullet">
+        <item><p>`froth.agent.cycle.start` -&gt; `cycle started`</p></item>
+        <item><p>`froth.agent.cycle.stop` with structured outcome `yield` -&gt; `cycle yielded`</p></item>
+        <item><p>`froth.agent.cycle.stop` with structured outcome `assistant_stopped_without_reply` -&gt; `cycle stopped without reply`</p></item>
+        <item><p>`froth.agent.tool.started` -&gt; `tool &lt;name&gt; started`</p></item>
+        <item><p>`froth.agent.tool.completed` -&gt; `tool &lt;name&gt; completed`</p></item>
+        <item><p>`froth.agent.tool.failed` -&gt; `tool &lt;name&gt; failed`</p></item>
+        <item><p>`froth.agent.tool.timed_out` -&gt; `tool &lt;name&gt; timed out`</p></item>
+        <item><p>`froth.agent.control.reply_sent` -&gt; `reply sent`</p></item>
+        <item><p>`froth.tasks.completed` -&gt; `task &lt;id&gt; completed`</p></item>
+        <item><p>`froth.http.sse.text_delta` -&gt; hidden in smart mode, visible in raw mode</p></item>
+      </list>
+      <p>The point is not to lose the raw event. The point is to provide a semantic default.</p>
+    </subsection>
+    <subsection title="3. Make &quot;smart mode&quot; the default for follow" id="3-make-smart-mode-the-default-for-follow">
+      <p>`mix froth.follow` should default to a smart view, not raw telemetry.</p>
+      <p>Smart mode should:</p>
+      <list type="bullet">
+        <item><p>collapse noisy transport events</p></item>
+        <item><p>highlight boundaries and failures</p></item>
+        <item><p>prefer semantic summaries over raw metadata dumps</p></item>
+        <item><p>keep stable columns so the eye can scan quickly</p></item>
+      </list>
+      <p>Suggested modes:</p>
+      <list type="bullet">
+        <item><p>`smart` default operator view</p></item>
+        <item><p>`raw` exact telemetry view</p></item>
+        <item><p>`errors` only warnings/failures/timeouts</p></item>
+      </list>
+    </subsection>
+    <subsection title="4. Give entries stable visual slots" id="4-give-entries-stable-visual-slots">
+      <p>Each rendered line should have a predictable shape:</p>
+      <code>TIME  SCOPE  SUMMARY  DETAIL
+</code>
+      <p>For example:</p>
+      <code language="text">14:58:01.123  cycle 01J...   cycle started              model=claude-opus-4-6
 14:58:01.456  think          thinking started
 14:58:02.091  tool echo      froth_echo started         call=toolu_...
 14:58:02.119  tool echo      froth_echo completed 28ms result=text
 14:58:02.403  llm            response completed 311ms   in=842 out=119
 14:58:02.418  tool shell     run_shell timed out 30000ms
 14:58:02.420  cycle 01J...   cycle failed               tool timed out after 30000ms</code>
-    <p>This is much easier to read than the current "event name plus bag of keys" style.</p>
-    <p>### 5. Separate primary detail from raw detail</p>
-    <p>Each projected entry should expose:</p>
-    <list type="bullet">
-      <item><p>a primary summary for fast scanning</p></item>
-      <item><p>a small detail string for top-priority fields</p></item>
-      <item><p>the full raw event for drill-down</p></item>
-    </list>
-    <p>In CLI smart mode, show summary + small detail. In CLI raw mode, show the whole raw payload. In LiveView, show summary by default and raw JSON in a side panel or expandable drawer.</p>
-    <p>### 6. Correlate by cycle and span by default</p>
-    <p>Follow readers should understand correlation, not just printing order.</p>
-    <p>Important scope identifiers:</p>
-    <list type="bullet">
-      <item><p><c>cycle_id</c></p></item>
-      <item><p><c>span_id</c></p></item>
-      <item><p><c>parent_id</c></p></item>
-      <item><p><c>tool_use_id</c></p></item>
-      <item><p><c>task_id</c></p></item>
-      <item><p><c>message_id</c></p></item>
-    </list>
-    <p>The shared projector should normalize those IDs and surface them in a consistent place. That lets both CLI and UI offer:</p>
-    <list type="bullet">
-      <item><p>follow one cycle</p></item>
-      <item><p>filter to one span subtree</p></item>
-      <item><p>jump from a tool failure to related events</p></item>
-      <item><p>show only entries related to a given task or message</p></item>
-    </list>
-    <p>### 6.5. Make control outcomes first-class in the reader</p>
-    <p>The follow reader should not infer control flow from transcript text.</p>
-    <p>A recent concrete bug made this obvious: a transcript tool returned a code snippet containing the string <c>Yielding:</c> and the runtime treated that text as a real yield signal. The CLI and LiveView should not repeat that mistake at the presentation layer.</p>
-    <p>Instead, the projector should prefer explicit runtime outcomes such as:</p>
-    <list type="bullet">
-      <item><p><c>yield</c></p></item>
-      <item><p><c>reply_sent</c></p></item>
-      <item><p><c>assistant_stopped_without_reply</c></p></item>
-      <item><p><c>waiting_on_subscription</c></p></item>
-      <item><p><c>tool_error</c></p></item>
-      <item><p><c>cycle_error</c></p></item>
-    </list>
-    <p>Those outcomes should render as distinct summaries, for example:</p>
-    <code lang="text">15:05:30.842  control        reply sent                  chat=-1003690254489
+      <p>This is much easier to read than the current &quot;event name plus bag of keys&quot; style.</p>
+    </subsection>
+    <subsection title="5. Separate primary detail from raw detail" id="5-separate-primary-detail-from-raw-detail">
+      <p>Each projected entry should expose:</p>
+      <list type="bullet">
+        <item><p>a primary summary for fast scanning</p></item>
+        <item><p>a small detail string for top-priority fields</p></item>
+        <item><p>the full raw event for drill-down</p></item>
+      </list>
+      <p>In CLI smart mode, show summary + small detail. In CLI raw mode, show the whole raw payload. In LiveView, show summary by default and raw JSON in a side panel or expandable drawer.</p>
+    </subsection>
+    <subsection title="6. Correlate by cycle and span by default" id="6-correlate-by-cycle-and-span-by-default">
+      <p>Follow readers should understand correlation, not just printing order.</p>
+      <p>Important scope identifiers:</p>
+      <list type="bullet">
+        <item><p>`cycle_id`</p></item>
+        <item><p>`span_id`</p></item>
+        <item><p>`parent_id`</p></item>
+        <item><p>`tool_use_id`</p></item>
+        <item><p>`task_id`</p></item>
+        <item><p>`message_id`</p></item>
+      </list>
+      <p>The shared projector should normalize those IDs and surface them in a consistent place. That lets both CLI and UI offer:</p>
+      <list type="bullet">
+        <item><p>follow one cycle</p></item>
+        <item><p>filter to one span subtree</p></item>
+        <item><p>jump from a tool failure to related events</p></item>
+        <item><p>show only entries related to a given task or message</p></item>
+      </list>
+    </subsection>
+    <subsection title="6.5. Make control outcomes first-class in the reader" id="6-5-make-control-outcomes-first-class-in-the-reader">
+      <p>The follow reader should not infer control flow from transcript text.</p>
+      <p>A recent concrete bug made this obvious: a transcript tool returned a code snippet containing the string `Yielding:` and the runtime treated that text as a real yield signal. The CLI and LiveView should not repeat that mistake at the presentation layer.</p>
+      <p>Instead, the projector should prefer explicit runtime outcomes such as:</p>
+      <list type="bullet">
+        <item><p>`yield`</p></item>
+        <item><p>`reply_sent`</p></item>
+        <item><p>`assistant_stopped_without_reply`</p></item>
+        <item><p>`waiting_on_subscription`</p></item>
+        <item><p>`tool_error`</p></item>
+        <item><p>`cycle_error`</p></item>
+      </list>
+      <p>Those outcomes should render as distinct summaries, for example:</p>
+      <code language="text">15:05:30.842  control        reply sent                  chat=-1003690254489
 15:05:34.339  tool transcript read_tool_transcript done 111ms
 15:05:34.460  cycle 01K...   cycle yielded              waiting on subscribed task
 15:05:34.461  cycle 01K...   stopped without reply      assistant requested tool and ended</code>
-    <p>The point is not just better wording. It is to make the reader report what the runtime actually decided, not what a human might guess from nearby text.</p>
-    <p>### 7. Build the LiveView on the same entries</p>
-    <p>The future LiveView should not be another generic telemetry table. It should be a real execution-log reader.</p>
-    <p>Suggested structure:</p>
-    <list type="bullet">
-      <item><p>left rail for high-level filters and saved scopes</p></item>
-      <item><p>center timeline of projected follow entries</p></item>
-      <item><p>right detail pane for raw JSON, spans, and linked records</p></item>
-    </list>
-    <p>Important UI behaviors:</p>
-    <list type="bullet">
-      <item><p>stream new entries live</p></item>
-      <item><p>pin to a cycle/span/tool/task</p></item>
-      <item><p>pause/resume live updates</p></item>
-      <item><p>toggle smart/raw view</p></item>
-      <item><p>expand a row into raw event payload</p></item>
-      <item><p>group or fold uninteresting transport chatter</p></item>
-      <item><p>deep-link by cycle ID or span ID</p></item>
-    </list>
-    <p>This can begin on top of <c>telemetry_events</c> and later incorporate RFC-0004's richer <c>agent_events</c> without changing the UI model.</p>
-    <p>### 8. Keep raw telemetry as an escape hatch</p>
-    <p>The system should never trap operators in a projected view.</p>
-    <p>Both readers should keep a raw mode because:</p>
-    <list type="bullet">
-      <item><p>projector bugs happen</p></item>
-      <item><p>new event types will arrive before they are beautifully formatted</p></item>
-      <item><p>debugging sometimes needs the exact payload</p></item>
-    </list>
-    <p>The rule should be:</p>
-    <list type="bullet">
-      <item><p>smart mode for default readability</p></item>
-      <item><p>raw mode for exact truth</p></item>
-    </list>
-    <p>### 9. Design for mixed live and historical sources</p>
-    <p>The same follow entry model should be usable with:</p>
-    <list type="bullet">
-      <item><p>live telemetry attached through <c>:telemetry.attach_many</c></p></item>
-      <item><p>persisted rows from <c>telemetry_events</c></p></item>
-      <item><p>future typed rows from <c>agent_events</c></p></item>
-    </list>
-    <p>That means the projection API should accept either:</p>
-    <list type="bullet">
-      <item><p>raw telemetry tuples</p></item>
-      <item><p>persisted telemetry rows</p></item>
-      <item><p>future execution-log rows</p></item>
-    </list>
-    <p>This is important because the LiveView will want both:</p>
-    <list type="bullet">
-      <item><p>a historical bootstrapped timeline</p></item>
-      <item><p>live appended updates</p></item>
-    </list>
+      <p>The point is not just better wording. It is to make the reader report what the runtime actually decided, not what a human might guess from nearby text.</p>
+    </subsection>
+    <subsection title="7. Build the LiveView on the same entries" id="7-build-the-liveview-on-the-same-entries">
+      <p>The future LiveView should not be another generic telemetry table. It should be a real execution-log reader.</p>
+      <p>Suggested structure:</p>
+      <list type="bullet">
+        <item><p>left rail for high-level filters and saved scopes</p></item>
+        <item><p>center timeline of projected follow entries</p></item>
+        <item><p>right detail pane for raw JSON, spans, and linked records</p></item>
+      </list>
+      <p>Important UI behaviors:</p>
+      <list type="bullet">
+        <item><p>stream new entries live</p></item>
+        <item><p>pin to a cycle/span/tool/task</p></item>
+        <item><p>pause/resume live updates</p></item>
+        <item><p>toggle smart/raw view</p></item>
+        <item><p>expand a row into raw event payload</p></item>
+        <item><p>group or fold uninteresting transport chatter</p></item>
+        <item><p>deep-link by cycle ID or span ID</p></item>
+      </list>
+      <p>This can begin on top of `telemetry_events` and later incorporate RFC-0004's richer `agent_events` without changing the UI model.</p>
+    </subsection>
+    <subsection title="8. Keep raw telemetry as an escape hatch" id="8-keep-raw-telemetry-as-an-escape-hatch">
+      <p>The system should never trap operators in a projected view.</p>
+      <p>Both readers should keep a raw mode because:</p>
+      <list type="bullet">
+        <item><p>projector bugs happen</p></item>
+        <item><p>new event types will arrive before they are beautifully formatted</p></item>
+        <item><p>debugging sometimes needs the exact payload</p></item>
+      </list>
+      <p>The rule should be:</p>
+      <list type="bullet">
+        <item><p>smart mode for default readability</p></item>
+        <item><p>raw mode for exact truth</p></item>
+      </list>
+    </subsection>
+    <subsection title="9. Design for mixed live and historical sources" id="9-design-for-mixed-live-and-historical-sources">
+      <p>The same follow entry model should be usable with:</p>
+      <list type="bullet">
+        <item><p>live telemetry attached through `:telemetry.attach_many`</p></item>
+        <item><p>persisted rows from `telemetry_events`</p></item>
+        <item><p>future typed rows from `agent_events`</p></item>
+      </list>
+      <p>That means the projection API should accept either:</p>
+      <list type="bullet">
+        <item><p>raw telemetry tuples</p></item>
+        <item><p>persisted telemetry rows</p></item>
+        <item><p>future execution-log rows</p></item>
+      </list>
+      <p>This is important because the LiveView will want both:</p>
+      <list type="bullet">
+        <item><p>a historical bootstrapped timeline</p></item>
+        <item><p>live appended updates</p></item>
+      </list>
+    </subsection>
   </section>
   <section title="Concrete Near-Term Work" id="concrete-near-term-work">
-    <p>### Phase 1: Shared projector and renderer</p>
-    <list type="bullet">
-      <item><p>extract formatting logic out of <c>Mix.Tasks.Froth.Follow</c></p></item>
-      <item><p>define <c>Follow.Entry</c></p></item>
-      <item><p>implement smart/raw rendering</p></item>
-      <item><p>add semantic projections for current high-value families: - <c>agent</c> - <c>control</c> - <c>tool</c> - <c>llm</c> - <c>tasks</c> - <c>telegram</c></p></item>
-    </list>
-    <p>### Phase 2: Upgrade <c>mix froth.follow</c></p>
-    <list type="bullet">
-      <item><p>make smart mode the default</p></item>
-      <item><p>add <c>--raw</c></p></item>
-      <item><p>add <c>--errors</c></p></item>
-      <item><p>add filters by cycle/span/prefix</p></item>
-      <item><p>improve duration and summary formatting</p></item>
-    </list>
-    <p>### Phase 3: Build <c>FollowLive</c></p>
-    <list type="bullet">
-      <item><p>stream projected entries in a LiveView</p></item>
-      <item><p>support historical boot plus live append</p></item>
-      <item><p>add row expansion for raw payload</p></item>
-      <item><p>add cycle/span pinning and text filtering</p></item>
-    </list>
-    <p>### Phase 4: Integrate RFC-0004 data</p>
-    <p>As <c>agent_events</c> becomes a real execution log, the projector should start preferring typed execution events over inferred raw telemetry where possible.</p>
+    <subsection title="Phase 1: Shared projector and renderer" id="phase-1-shared-projector-and-renderer">
+      <list type="bullet">
+        <item><p>extract formatting logic out of `Mix.Tasks.Froth.Follow`</p></item>
+        <item><p>define `Follow.Entry`</p></item>
+        <item><p>implement smart/raw rendering</p></item>
+        <item><p>add semantic projections for current high-value families: - `agent` - `control` - `tool` - `llm` - `tasks` - `telegram`</p></item>
+      </list>
+    </subsection>
+    <subsection title="Phase 2: Upgrade `mix froth.follow`" id="phase-2-upgrade-mix-froth-follow">
+      <list type="bullet">
+        <item><p>make smart mode the default</p></item>
+        <item><p>add `--raw`</p></item>
+        <item><p>add `--errors`</p></item>
+        <item><p>add filters by cycle/span/prefix</p></item>
+        <item><p>improve duration and summary formatting</p></item>
+      </list>
+    </subsection>
+    <subsection title="Phase 3: Build `FollowLive`" id="phase-3-build-followlive">
+      <list type="bullet">
+        <item><p>stream projected entries in a LiveView</p></item>
+        <item><p>support historical boot plus live append</p></item>
+        <item><p>add row expansion for raw payload</p></item>
+        <item><p>add cycle/span pinning and text filtering</p></item>
+      </list>
+    </subsection>
+    <subsection title="Phase 4: Integrate RFC-0004 data" id="phase-4-integrate-rfc-0004-data">
+      <p>As `agent_events` becomes a real execution log, the projector should start preferring typed execution events over inferred raw telemetry where possible.</p>
+    </subsection>
   </section>
   <section title="Why This Should Happen Before A Bigger UI Rewrite" id="why-this-should-happen-before-a-bigger-ui-rewrite">
     <p>The follow/output problem is mostly not a CSS problem. It is a semantic projection problem.</p>
@@ -359,8 +380,8 @@
     <p>Do this in the following order:</p>
     <list type="numbered">
       <item><p>extract a shared follow projection layer</p></item>
-      <item><p>make <c>mix froth.follow</c> excellent in smart mode</p></item>
-      <item><p>build <c>FollowLive</c> on that same projected entry stream</p></item>
+      <item><p>make `mix froth.follow` excellent in smart mode</p></item>
+      <item><p>build `FollowLive` on that same projected entry stream</p></item>
       <item><p>connect the same reader to RFC-0004's future execution log</p></item>
     </list>
     <p>That creates one coherent operator experience across terminal, web, live telemetry, and persisted history.</p>

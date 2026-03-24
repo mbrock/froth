@@ -9,60 +9,61 @@
     <related>FROTH-RFC-0004, FROTH-RFC-0008</related>
   </meta>
   <section title="Problem" id="problem">
-    <p>When an agent calls <c>subscribe_task</c> followed by <c>yield</c>, the cycle ends cleanly but the agent is never woken up when the task completes. The wakeup pathway exists — <c>fire_notifications/1</c> builds a synthetic message and casts it to the bot via <c>Froth.Telegram.Bots.cast/2</c> — but the path has at least two failures:</p>
+    <p>When an agent calls `subscribe_task` followed by `yield`, the cycle ends cleanly but the agent is never woken up when the task completes. The wakeup pathway exists — `fire_notifications/1` builds a synthetic message and casts it to the bot via `Froth.Telegram.Bots.cast/2` — but the path has at least two failures:</p>
     <list type="numbered">
-      <item><p><strong>The synthetic message has <c>sender_id</c> as a map <c>%{"user_id" =&gt; 0}</c> instead of an integer.</strong> The bot's <c>start_cycle_from_message/2</c> calls <c>BotContext.for_message/2</c>, which may reject or misroute messages with a non-standard sender shape. The <c>reply_to</c> field is <c>nil</c> (the synthetic message has no <c>"id"</c> key), but <c>start_cycle/5</c> pattern-matches on <c>is_integer(reply_to)</c>, so the function clause won't match. <strong>This is the primary bug.</strong> The notification fires but the cycle never starts because the synthetic message doesn't satisfy the guard.</p></item>
-    </list>
-    <list type="numbered">
-      <item><p><strong>Codex sessions never call <c>fire_notifications/1</c> at all.</strong> Codex tasks are dispatched via <c>Froth.Codex.Task.run/2</c>, which returns <c>{:ok, session_id}</c> and forgets. The session broadcasts <c>{:codex_session_updated, session_id}</c> on every state change via PubSub, but nobody subscribes to that on behalf of the dispatching agent. When Codex finishes a turn, the agent that dispatched it has no way to know.</p></item>
+      <item><p>**The synthetic message has `sender_id` as a map `%{&quot;user_id&quot; =&gt; 0}` instead of an integer.** The bot's `start_cycle_from_message/2` calls `BotContext.for_message/2`, which may reject or misroute messages with a non-standard sender shape. The `reply_to` field is `nil` (the synthetic message has no `&quot;id&quot;` key), but `start_cycle/5` pattern-matches on `is_integer(reply_to)`, so the function clause won't match. **This is the primary bug.** The notification fires but the cycle never starts because the synthetic message doesn't satisfy the guard.</p></item>
+      <item><p>**Codex sessions never call `fire_notifications/1` at all.** Codex tasks are dispatched via `Froth.Codex.Task.run/2`, which returns `{:ok, session_id}` and forgets. The session broadcasts `{:codex_session_updated, session_id}` on every state change via PubSub, but nobody subscribes to that on behalf of the dispatching agent. When Codex finishes a turn, the agent that dispatched it has no way to know.</p></item>
     </list>
   </section>
   <section title="Proposed Fix" id="proposed-fix">
-    <p>### Part 1: Fix synthetic message shape</p>
-    <p>In <c>fire_notifications/1</c> (lib/froth/tasks.ex ~line 287), build the synthetic message with integer fields that satisfy the guards:</p>
-    <code lang="elixir">synthetic_message = %{
-  "chat_id" =&gt; link.chat_id,
-  "id" =&gt; 0,                              # satisfies is_integer(reply_to)
-  "sender_id" =&gt; 0,                       # integer, not map
-  "content" =&gt; %{
-    "text" =&gt; %{
-      "text" =&gt;
-        "[Task completed] #{task_id} #{task.status}.\n\n#{output_preview}"
+    <subsection title="Part 1: Fix synthetic message shape" id="part-1-fix-synthetic-message-shape">
+      <p>In `fire_notifications/1` (lib/froth/tasks.ex ~line 287), build the synthetic message with integer fields that satisfy the guards:</p>
+      <code language="elixir">synthetic_message = %{
+  &quot;chat_id&quot; =&gt; link.chat_id,
+  &quot;id&quot; =&gt; 0,                              # satisfies is_integer(reply_to)
+  &quot;sender_id&quot; =&gt; 0,                       # integer, not map
+  &quot;content&quot; =&gt; %{
+    &quot;text&quot; =&gt; %{
+      &quot;text&quot; =&gt;
+        &quot;[Task completed] #{task_id} #{task.status}.\n\n#{output_preview}&quot;
         |&gt; String.trim()
     }
   }
 }</code>
-    <p>In <c>start_cycle/5</c>, relax the <c>is_integer(reply_to)</c> guard or handle <c>reply_to == 0</c> as "no specific reply target" (send to chat without quoting a message).</p>
-    <p>### Part 2: Connect Codex completion to task notifications</p>
-    <p>When <c>Froth.Codex.Task.run/2</c> dispatches a task, it should:</p>
-    <list type="numbered">
-      <item><p>Create a Froth.Tasks task entry (via <c>Froth.Tasks.create/3</c>) tracking the Codex session.</p></item>
-      <item><p>Subscribe the dispatching bot+chat to that task (via <c>Froth.Tasks.subscribe_telegram/4</c>).</p></item>
-      <item><p>When the Codex session transitions to idle after a turn (detectable via the <c>codex_session_updated</c> PubSub broadcast in <c>broadcast_update/1</c>), call <c>Froth.Tasks.complete/2</c> on the associated task, which triggers <c>fire_notifications/1</c>.</p></item>
-    </list>
-    <p>The simplest way: add a <c>Froth.Codex.TaskWatcher</c> process (or integrate into the existing Session GenServer) that:</p>
-    <list type="bullet">
-      <item><p>On <c>send_prompt</c>, marks the associated Froth task as "running".</p></item>
-      <item><p>On transition to idle after a turn completes, marks it "completed" and calls <c>Froth.Tasks.complete/2</c>.</p></item>
-      <item><p>On session crash/exit, marks it "failed" and calls <c>Froth.Tasks.fail/2</c>.</p></item>
-    </list>
-    <p>### Part 3: Wire the reply_to for wakeup messages</p>
-    <p>When <c>start_cycle_from_message</c> receives a wakeup with <c>reply_to == 0</c>, it should send the response to the chat without quoting any message. In <c>send_plaintext_response</c> and the Telegram send path, treat <c>reply_to: 0</c> or <c>reply_to: nil</c> as "no reply target."</p>
+      <p>In `start_cycle/5`, relax the `is_integer(reply_to)` guard or handle `reply_to == 0` as &quot;no specific reply target&quot; (send to chat without quoting a message).</p>
+    </subsection>
+    <subsection title="Part 2: Connect Codex completion to task notifications" id="part-2-connect-codex-completion-to-task-notifications">
+      <p>When `Froth.Codex.Task.run/2` dispatches a task, it should:</p>
+      <list type="numbered">
+        <item><p>Create a Froth.Tasks task entry (via `Froth.Tasks.create/3`) tracking the Codex session.</p></item>
+        <item><p>Subscribe the dispatching bot+chat to that task (via `Froth.Tasks.subscribe_telegram/4`).</p></item>
+        <item><p>When the Codex session transitions to idle after a turn (detectable via the `codex_session_updated` PubSub broadcast in `broadcast_update/1`), call `Froth.Tasks.complete/2` on the associated task, which triggers `fire_notifications/1`.</p></item>
+      </list>
+      <p>The simplest way: add a `Froth.Codex.TaskWatcher` process (or integrate into the existing Session GenServer) that:</p>
+      <list type="bullet">
+        <item><p>On `send_prompt`, marks the associated Froth task as &quot;running&quot;.</p></item>
+        <item><p>On transition to idle after a turn completes, marks it &quot;completed&quot; and calls `Froth.Tasks.complete/2`.</p></item>
+        <item><p>On session crash/exit, marks it &quot;failed&quot; and calls `Froth.Tasks.fail/2`.</p></item>
+      </list>
+    </subsection>
+    <subsection title="Part 3: Wire the reply_to for wakeup messages" id="part-3-wire-the-reply-to-for-wakeup-messages">
+      <p>When `start_cycle_from_message` receives a wakeup with `reply_to == 0`, it should send the response to the chat without quoting any message. In `send_plaintext_response` and the Telegram send path, treat `reply_to: 0` or `reply_to: nil` as &quot;no reply target.&quot;</p>
+    </subsection>
   </section>
   <section title="Files to Change" id="files-to-change">
     <list type="bullet">
-      <item><p><c>lib/froth/tasks.ex</c> — fix synthetic message shape in <c>fire_notifications/1</c></p></item>
-      <item><p><c>lib/froth/telegram/bot.ex</c> — handle <c>reply_to == 0</c> in <c>start_cycle/5</c> and the send path</p></item>
-      <item><p><c>lib/froth/codex/task.ex</c> — create a Froth.Tasks entry on dispatch, subscribe the caller</p></item>
-      <item><p><c>lib/froth/codex/session.ex</c> — detect turn completion, bridge to Tasks.complete/2</p></item>
-      <item><p>Possibly a new <c>lib/froth/codex/task_watcher.ex</c> if we want a clean separation</p></item>
+      <item><p>`lib/froth/tasks.ex` — fix synthetic message shape in `fire_notifications/1`</p></item>
+      <item><p>`lib/froth/telegram/bot.ex` — handle `reply_to == 0` in `start_cycle/5` and the send path</p></item>
+      <item><p>`lib/froth/codex/task.ex` — create a Froth.Tasks entry on dispatch, subscribe the caller</p></item>
+      <item><p>`lib/froth/codex/session.ex` — detect turn completion, bridge to Tasks.complete/2</p></item>
+      <item><p>Possibly a new `lib/froth/codex/task_watcher.ex` if we want a clean separation</p></item>
     </list>
   </section>
   <section title="Testing" id="testing">
     <p>After implementation:</p>
     <list type="numbered">
       <item><p>Start a long-running eval or shell task.</p></item>
-      <item><p>Call <c>subscribe_task</c> + <c>yield</c> from the agent.</p></item>
+      <item><p>Call `subscribe_task` + `yield` from the agent.</p></item>
       <item><p>Wait for the task to complete.</p></item>
       <item><p>Verify the agent wakes up with a new cycle containing the completion message.</p></item>
       <item><p>Dispatch a Codex task.</p></item>
@@ -70,7 +71,7 @@
     </list>
   </section>
   <section title="Migration" id="migration">
-    <p>No schema changes. This is pure runtime wiring. The <c>task_telegram_links</c> table already has the right shape. The <c>fire_notifications</c> function already exists and works — it just receives messages that fail the guards.</p>
+    <p>No schema changes. This is pure runtime wiring. The `task_telegram_links` table already has the right shape. The `fire_notifications` function already exists and works — it just receives messages that fail the guards.</p>
   </section>
   <section title="Safety" id="safety">
     <p>The system is live and writing continuously. The synthetic message fix is safe — it only changes the shape of a message that currently fails silently. The Codex watcher is additive — it creates new task entries without touching existing Codex session logic.</p>

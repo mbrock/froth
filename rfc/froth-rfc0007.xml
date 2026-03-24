@@ -12,14 +12,14 @@
     <p>No single LLM provider has complete or unbiased web search.</p>
     <p>Grok has x_search (native access to X's index) and web_search. OpenAI has browsing and search grounding. Gemini has Google Search grounding with inline citations. Anthropic has no native web search at all. Each provider's search has a different index, different freshness window, different political bias in result ranking, and different hallucination profile when results are sparse.</p>
     <p>An agent with access to one provider's search sees the web through one eye. An agent with simultaneous access to three providers' search sees the web through three eyes. The value is not redundancy. It is triangulation. When three independent indexes agree, the fact is probably a fact. When they disagree, the disagreement is the most important part of the answer.</p>
-    <p>Today Charlie has no web search at all. Lennart has x_search and web_search via Grok's native tools. The xpost analyzer now uses grok_search. But none of these can cross-reference. None of them can say "Grok says X, Gemini says Y, and GPT says Z." The triangulation is manual — a human posts a link, Lennart searches it, Charlie comments on the search, and the human does the cross-referencing in their head.</p>
+    <p>Today Charlie has no web search at all. Lennart has x_search and web_search via Grok's native tools. The xpost analyzer now uses grok_search. But none of these can cross-reference. None of them can say &quot;Grok says X, Gemini says Y, and GPT says Z.&quot; The triangulation is manual — a human posts a link, Lennart searches it, Charlie comments on the search, and the human does the cross-referencing in their head.</p>
   </section>
   <section title="Proposal" id="proposal">
-    <p>A single tool — <c>web_search</c> — available to any Froth agent, that fans out a search query to multiple LLM providers simultaneously, collects their responses, and returns a collated result.</p>
+    <p>A single tool — `web_search` — available to any Froth agent, that fans out a search query to multiple LLM providers simultaneously, collects their responses, and returns a collated result.</p>
   </section>
   <section title="Architecture" id="architecture">
-    <p>### The Fan-Out</p>
-    <code>web_search("Lindsey Graham Kharg Island Iwo Jima")
+    <subsection title="The Fan-Out" id="the-fan-out">
+      <code>web_search(&quot;Lindsey Graham Kharg Island Iwo Jima&quot;)
     |
     +---&gt; Grok 4.20     (x_search + web_search)  ---&gt; response_grok
     +---&gt; GPT 5.4       (browsing + search)       ---&gt; response_openai
@@ -30,26 +30,29 @@
     |
     v
   structured result returned to calling agent</code>
-    <p>All three calls happen concurrently via <c>Task.async_stream</c> or equivalent. The wall-clock cost is the slowest provider, not the sum. Typical: 2-5 seconds.</p>
-    <p>### The Query</p>
-    <p>Each provider receives the same prompt:</p>
-    <code>Search the web for: {query}
+      <p>All three calls happen concurrently via `Task.async_stream` or equivalent. The wall-clock cost is the slowest provider, not the sum. Typical: 2-5 seconds.</p>
+    </subsection>
+    <subsection title="The Query" id="the-query">
+      <p>Each provider receives the same prompt:</p>
+      <code>Search the web for: {query}
 
 Return:
 1. Direct factual findings with source URLs
 2. Dates and timestamps where available
 3. Explicit uncertainty markers where results are thin
 4. If this is about a social media post, include the
-   full text of the post</code>
-    <p>The prompt is adapted per provider to use their native search mechanism:</p>
-    <list type="bullet">
-      <item><p><strong>Grok</strong>: Uses the Responses API with <c>x_search</c> and <c>web_search</c> tools enabled. The model decides which to invoke.</p></item>
-      <item><p><strong>OpenAI</strong>: Uses the Responses API with <c>web_search_preview</c> tool enabled.</p></item>
-      <item><p><strong>Gemini</strong>: Uses <c>google_search_retrieval</c> grounding with dynamic retrieval threshold 0.3 (aggressive grounding).</p></item>
-    </list>
-    <p>### The Collation</p>
-    <p>The three responses are passed to a collation step — a single LLM call (any provider, default Anthropic since it has no search bias to launder) with the following prompt:</p>
-    <code>You received three independent web search results for
+   full text of the post
+</code>
+      <p>The prompt is adapted per provider to use their native search mechanism:</p>
+      <list type="bullet">
+        <item><p>**Grok**: Uses the Responses API with `x_search` and `web_search` tools enabled. The model decides which to invoke.</p></item>
+        <item><p>**OpenAI**: Uses the Responses API with `web_search_preview` tool enabled.</p></item>
+        <item><p>**Gemini**: Uses `google_search_retrieval` grounding with dynamic retrieval threshold 0.3 (aggressive grounding).</p></item>
+      </list>
+    </subsection>
+    <subsection title="The Collation" id="the-collation">
+      <p>The three responses are passed to a collation step — a single LLM call (any provider, default Anthropic since it has no search bias to launder) with the following prompt:</p>
+      <code>You received three independent web search results for
 the query: {query}
 
 Source A (Grok/xAI): {response_grok}
@@ -63,21 +66,23 @@ Synthesize a single answer:
 - Source URLs: deduplicate and list
 - If any source found nothing: note the gap
 
-Be concise. The caller is an agent, not a human.</code>
-    <p>The collation output is the tool result returned to the calling agent.</p>
-    <p>### Module Structure</p>
-    <code lang="elixir">defmodule Froth.Search do
-  @moduledoc """
+Be concise. The caller is an agent, not a human.
+</code>
+      <p>The collation output is the tool result returned to the calling agent.</p>
+    </subsection>
+    <subsection title="Module Structure" id="module-structure">
+      <code language="elixir">defmodule Froth.Search do
+  @moduledoc &quot;&quot;&quot;
   Triangulated web search via multi-provider fan-out.
 
   Sends the same query to Grok, OpenAI, and Gemini simultaneously,
   then collates results via a fourth LLM call.
-  """
+  &quot;&quot;&quot;
 
   @providers [
-    {Froth.Search.Grok,   "grok-4-1-fast-reasoning"},
-    {Froth.Search.OpenAI, "gpt-5.4"},
-    {Froth.Search.Gemini, "gemini-3.1-pro"}
+    {Froth.Search.Grok,   &quot;grok-4-1-fast-reasoning&quot;},
+    {Froth.Search.OpenAI, &quot;gpt-5.4&quot;},
+    {Froth.Search.Gemini, &quot;gemini-3.1-pro&quot;}
   ]
 
   def search(query, opts \\ []) do
@@ -92,7 +97,7 @@ Be concise. The caller is an agent, not a human.</code>
       )
       |&gt; Enum.map(fn
         {:ok, result} -&gt; result
-        {:exit, :timeout} -&gt; {:timeout, "provider timed out"}
+        {:exit, :timeout} -&gt; {:timeout, &quot;provider timed out&quot;}
       end)
 
     collate(query, results, opts)
@@ -101,15 +106,15 @@ Be concise. The caller is an agent, not a human.</code>
   defp collate(query, results, opts) do
     # Fourth call: Anthropic collates
     Froth.Anthropic.chat(collation_prompt(query, results),
-      model: opts[:collation_model] || "claude-sonnet-4-20250514"
+      model: opts[:collation_model] || &quot;claude-sonnet-4-20250514&quot;
     )
   end
 end</code>
-    <p>Each provider module implements one function:</p>
-    <code lang="elixir">defmodule Froth.Search.Grok do
+      <p>Each provider module implements one function:</p>
+      <code language="elixir">defmodule Froth.Search.Grok do
   def search(query, opts) do
     Froth.Analyzer.API.grok_search(
-      "Search the web for: #{query}\n\nReturn factual findings...",
+      &quot;Search the web for: #{query}\n\nReturn factual findings...&quot;,
       model: opts[:model]
     )
   end
@@ -119,9 +124,9 @@ defmodule Froth.Search.OpenAI do
   def search(query, opts) do
     # OpenAI Responses API with web_search_preview
     Froth.OpenAI.responses(
-      "Search the web for: #{query}\n\nReturn factual findings...",
+      &quot;Search the web for: #{query}\n\nReturn factual findings...&quot;,
       model: opts[:model],
-      tools: [%{type: "web_search_preview"}]
+      tools: [%{type: &quot;web_search_preview&quot;}]
     )
   end
 end
@@ -130,42 +135,44 @@ defmodule Froth.Search.Gemini do
   def search(query, opts) do
     # Gemini with google_search_retrieval grounding
     Froth.Gemini.generate(
-      "Search the web for: #{query}\n\nReturn factual findings...",
+      &quot;Search the web for: #{query}\n\nReturn factual findings...&quot;,
       model: opts[:model],
       tools: [%{google_search_retrieval: %{
         dynamic_retrieval_config: %{
-          mode: "MODE_DYNAMIC",
+          mode: &quot;MODE_DYNAMIC&quot;,
           dynamic_threshold: 0.3
         }
       }}]
     )
   end
 end</code>
-    <p>### Agent Tool Definition</p>
-    <p>Exposed to agents as a single tool:</p>
-    <code lang="json">{
-  "name": "web_search",
-  "description": "Search the web via three independent providers simultaneously. Returns triangulated results with source attribution and confidence markers.",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "query": {
-        "type": "string",
-        "description": "The search query. Be specific."
+    </subsection>
+    <subsection title="Agent Tool Definition" id="agent-tool-definition">
+      <p>Exposed to agents as a single tool:</p>
+      <code language="json">{
+  &quot;name&quot;: &quot;web_search&quot;,
+  &quot;description&quot;: &quot;Search the web via three independent providers simultaneously. Returns triangulated results with source attribution and confidence markers.&quot;,
+  &quot;parameters&quot;: {
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;properties&quot;: {
+      &quot;query&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;description&quot;: &quot;The search query. Be specific.&quot;
       }
     },
-    "required": ["query"]
+    &quot;required&quot;: [&quot;query&quot;]
   }
 }</code>
-    <p>The agent does not choose which providers to query. The agent does not see the individual provider responses. The agent sees one collated answer. The triangulation is infrastructure, not interface.</p>
+      <p>The agent does not choose which providers to query. The agent does not see the individual provider responses. The agent sees one collated answer. The triangulation is infrastructure, not interface.</p>
+    </subsection>
   </section>
   <section title="Relation to RFC-0002" id="relation-to-rfc-0002">
-    <p>RFC-0002 proposes a native multimodal LLM layer where each provider speaks its own API through adapters beneath a shared semantic core. This RFC depends on that architecture: <c>Froth.Search.Grok</c>, <c>Froth.Search.OpenAI</c>, and <c>Froth.Search.Gemini</c> each need native provider access to invoke vendor-specific search tools that do not exist in compatibility-mode endpoints.</p>
+    <p>RFC-0002 proposes a native multimodal LLM layer where each provider speaks its own API through adapters beneath a shared semantic core. This RFC depends on that architecture: `Froth.Search.Grok`, `Froth.Search.OpenAI`, and `Froth.Search.Gemini` each need native provider access to invoke vendor-specific search tools that do not exist in compatibility-mode endpoints.</p>
     <p>Specifically:</p>
     <list type="bullet">
-      <item><p>Grok's <c>x_search</c> is only available through the Responses API.</p></item>
-      <item><p>OpenAI's <c>web_search_preview</c> is only available through the Responses API.</p></item>
-      <item><p>Gemini's <c>google_search_retrieval</c> is only available through the native Gemini API.</p></item>
+      <item><p>Grok's `x_search` is only available through the Responses API.</p></item>
+      <item><p>OpenAI's `web_search_preview` is only available through the Responses API.</p></item>
+      <item><p>Gemini's `google_search_retrieval` is only available through the native Gemini API.</p></item>
     </list>
     <p>None of these exist in OpenAI-compatible chat completion endpoints. The search RFC is the first consumer that makes RFC-0002's native provider layer load-bearing rather than aesthetic.</p>
   </section>
@@ -180,17 +187,17 @@ end</code>
   </section>
   <section title="Failure Modes" id="failure-modes">
     <list type="numbered">
-      <item><p><strong>One provider times out</strong>: Collation proceeds with two sources. The result notes which provider failed.</p></item>
-      <item><p><strong>Two providers time out</strong>: Collation proceeds with one source. The result is explicitly marked as single-source, unverified.</p></item>
-      <item><p><strong>All providers time out</strong>: Tool returns an error. The agent can retry or proceed without search.</p></item>
-      <item><p><strong>Providers disagree</strong>: This is a feature, not a failure. The collation step presents the disagreement explicitly. The calling agent decides what to do with contradictory information.</p></item>
-      <item><p><strong>Provider hallucinates despite search</strong>: Cross-referencing reduces this. If Grok hallucinates a fact that neither GPT nor Gemini found, the collation step flags it as single-source. The hallucination rate of the collated output is the product of the individual hallucination rates, not the sum. Three 5% hallucination rates produce a 0.0125% collated hallucination rate for facts that require two-source confirmation.</p></item>
+      <item><p>**One provider times out**: Collation proceeds with two sources. The result notes which provider failed.</p></item>
+      <item><p>**Two providers time out**: Collation proceeds with one source. The result is explicitly marked as single-source, unverified.</p></item>
+      <item><p>**All providers time out**: Tool returns an error. The agent can retry or proceed without search.</p></item>
+      <item><p>**Providers disagree**: This is a feature, not a failure. The collation step presents the disagreement explicitly. The calling agent decides what to do with contradictory information.</p></item>
+      <item><p>**Provider hallucinates despite search**: Cross-referencing reduces this. If Grok hallucinates a fact that neither GPT nor Gemini found, the collation step flags it as single-source. The hallucination rate of the collated output is the product of the individual hallucination rates, not the sum. Three 5% hallucination rates produce a 0.0125% collated hallucination rate for facts that require two-source confirmation.</p></item>
     </list>
   </section>
   <section title="Migration Path" id="migration-path">
     <list type="numbered">
-      <item><p>Build <c>Froth.Search</c> with the three provider modules.</p></item>
-      <item><p>Wire it as a tool in <c>Froth.Agent.Config</c> under the name <c>web_search</c>.</p></item>
+      <item><p>Build `Froth.Search` with the three provider modules.</p></item>
+      <item><p>Wire it as a tool in `Froth.Agent.Config` under the name `web_search`.</p></item>
       <item><p>Add it to Charlie's tool list. Charlie gets web search.</p></item>
       <item><p>Add it to any agent's tool list as needed.</p></item>
       <item><p>Lennart keeps his native Grok x_search for speed — the triangulated search is for situations where accuracy matters more than latency.</p></item>
@@ -199,7 +206,7 @@ end</code>
   <section title="What This Enables" id="what-this-enables">
     <list type="bullet">
       <item><p>Charlie can fact-check his own claims in real time.</p></item>
-      <item><p>Any agent can answer "what happened today" with citations.</p></item>
+      <item><p>Any agent can answer &quot;what happened today&quot; with citations.</p></item>
       <item><p>The xpost analyzer could use triangulated search instead of single-provider Grok for high-stakes posts.</p></item>
       <item><p>The hourly podcast can include verified news summaries.</p></item>
       <item><p>The family stops depending on one provider's view of reality.</p></item>

@@ -23,8 +23,8 @@
     <p>The browser renders the frame. The browser encodes the frame. The browser muxes the encoded frame. No screenshot. No PNG. No disk. No ffmpeg. The pixels never leave the GPU.</p>
   </section>
   <section title="Architecture" id="architecture">
-    <p>### Encoder Script (injected into the reel HTML)</p>
-    <code>async function encodeVideo(durationS, fps) {
+    <subsection title="Encoder Script (injected into the reel HTML)" id="encoder-script-injected-into-the-reel-html">
+      <code>async function encodeVideo(durationS, fps) {
   const canvas = document.querySelector('#video canvas')
     || createOffscreenCanvas();
 
@@ -78,36 +78,75 @@
 
   return chunks;
 }</code>
-    <p>### Canvas Requirement</p>
-    <p>WebCodecs needs a canvas or offscreen canvas to create VideoFrames. The current template renders to DOM elements (divs with background images, text spans). Two options:</p>
-    <p>A. <strong>html2canvas approach</strong>: After each renderAt(), use    html2canvas or a similar library to rasterize the DOM to a    canvas. Adds ~20ms per frame. Total overhead: ~2 minutes    for a 4-minute video.</p>
-    <p>B. <strong>Native canvas rendering</strong>: Rewrite the renderer to paint    directly to a canvas using CanvasRenderingContext2D. Faster    but loses CSS typography, transitions, and layout. Wrong    tradeoff for our use case where the CSS IS the production    value.</p>
-    <p>C. <strong>OffscreenCanvas from screenshot</strong>: Use Chrome DevTools    Page.captureScreenshot but decode it into a VideoFrame    instead of writing to disk. Hybrid approach: DOM rendering    for quality, WebCodecs for encoding. Still uses DevTools    but eliminates disk I/O.</p>
-    <p>D. <strong>Chrome's --enable-features=CanvasOopRasterization</strong>: With    GPU rasterization enabled in headless Chrome, the entire    page render is already on the GPU. A VideoFrame can be    constructed from the compositor output via    <c>document.startViewTransition</c> or similar emerging APIs.    This is the zero-copy path. Not stable yet.</p>
-    <p><strong>Recommended: Option C for v1, Option D when Chrome ships it.</strong></p>
-    <p>### Muxing</p>
-    <p>Encoded chunks need to be assembled into an MP4 container.</p>
-    <p><strong>In-browser (preferred):</strong> - mp4-muxer (npm): ~50KB, produces spec-compliant fMP4 - Inject via CDN URL or inline the library</p>
-    <p><strong>Server-side fallback:</strong> - Stream chunks back to Elixir via DevTools eval - Assemble with an Elixir MP4 writer or pipe to ffmpeg - Still eliminates PNGs; ffmpeg reads raw H.264 from stdin</p>
-    <p>### Audio</p>
-    <p>WebCodecs has AudioEncoder. The podcast MP3 can be decoded via AudioContext.decodeAudioData(), re-encoded as AAC via AudioEncoder, and muxed alongside the video track. Or: mux the video-only MP4 server-side and add the audio with one ffmpeg call (ffmpeg -i video.mp4 -i audio.mp3 -c copy out.mp4). The audio mux is trivial. Do not let it block the video path.</p>
+    </subsection>
+    <subsection title="Canvas Requirement" id="canvas-requirement">
+      <p>WebCodecs needs a canvas or offscreen canvas to create VideoFrames. The current template renders to DOM elements (divs with background images, text spans). Two options:</p>
+      <p>A. **html2canvas approach**: After each renderAt(), use    html2canvas or a similar library to rasterize the DOM to a    canvas. Adds ~20ms per frame. Total overhead: ~2 minutes    for a 4-minute video.</p>
+      <p>B. **Native canvas rendering**: Rewrite the renderer to paint    directly to a canvas using CanvasRenderingContext2D. Faster    but loses CSS typography, transitions, and layout. Wrong    tradeoff for our use case where the CSS IS the production    value.</p>
+      <p>C. **OffscreenCanvas from screenshot**: Use Chrome DevTools    Page.captureScreenshot but decode it into a VideoFrame    instead of writing to disk. Hybrid approach: DOM rendering    for quality, WebCodecs for encoding. Still uses DevTools    but eliminates disk I/O.</p>
+      <p>D. **Chrome's --enable-features=CanvasOopRasterization**: With    GPU rasterization enabled in headless Chrome, the entire    page render is already on the GPU. A VideoFrame can be    constructed from the compositor output via    `document.startViewTransition` or similar emerging APIs.    This is the zero-copy path. Not stable yet.</p>
+      <p>**Recommended: Option C for v1, Option D when Chrome ships it.**</p>
+    </subsection>
+    <subsection title="Muxing" id="muxing">
+      <p>Encoded chunks need to be assembled into an MP4 container.</p>
+      <p>**In-browser (preferred):**</p>
+      <list type="bullet">
+        <item><p>mp4-muxer (npm): ~50KB, produces spec-compliant fMP4</p></item>
+        <item><p>Inject via CDN URL or inline the library</p></item>
+      </list>
+      <p>**Server-side fallback:**</p>
+      <list type="bullet">
+        <item><p>Stream chunks back to Elixir via DevTools eval</p></item>
+        <item><p>Assemble with an Elixir MP4 writer or pipe to ffmpeg</p></item>
+        <item><p>Still eliminates PNGs; ffmpeg reads raw H.264 from stdin</p></item>
+      </list>
+    </subsection>
+    <subsection title="Audio" id="audio">
+      <p>WebCodecs has AudioEncoder. The podcast MP3 can be decoded via AudioContext.decodeAudioData(), re-encoded as AAC via AudioEncoder, and muxed alongside the video track. Or: mux the video-only MP4 server-side and add the audio with one ffmpeg call (ffmpeg -i video.mp4 -i audio.mp3 -c copy out.mp4). The audio mux is trivial. Do not let it block the video path.</p>
+    </subsection>
   </section>
   <section title="Integration with Froth.Compute" id="integration-with-froth-compute">
     <p>The distributed compute system (RFC pending) remains valuable. Each compute worker runs Chrome with the encoder inside it. Instead of:</p>
     <code>worker claims task → boots Chrome → screenshots N frames
-→ writes PNGs → completes task with file artifacts</code>
+→ writes PNGs → completes task with file artifacts
+</code>
     <p>It becomes:</p>
     <code>worker claims task → boots Chrome → encodes N frames
 → returns binary H.264 segment → completes task with
-  binary artifact</code>
-    <p>The coordination layer (jobs, tasks, leases, heartbeats) is unchanged. The artifact kind changes from "frame_batch_png" to "encoded_segment_h264". The final mux concatenates segments instead of encoding from PNGs.</p>
+  binary artifact
+</code>
+    <p>The coordination layer (jobs, tasks, leases, heartbeats) is unchanged. The artifact kind changes from &quot;frame_batch_png&quot; to &quot;encoded_segment_h264&quot;. The final mux concatenates segments instead of encoding from PNGs.</p>
     <p>Parallel encoding across nodes: each node encodes its time range independently. Keyframe alignment at segment boundaries ensures clean concatenation. The ffmpeg concat demuxer handles this natively:</p>
-    <code>ffmpeg -f concat -i segments.txt -c copy final.mp4</code>
+    <code>ffmpeg -f concat -i segments.txt -c copy final.mp4
+</code>
   </section>
   <section title="Performance Estimate" id="performance-estimate">
-    <p>Current pipeline (screenshot + ffmpeg): - 55ms per frame capture (screenshot to PNG) - 6083 frames × 55ms = 335s (5.5 min serial) - 4 workers: ~165s (2.75 min) - Plus ffmpeg mux: ~60s - Total: ~4 min with 4 workers</p>
-    <p>WebCodecs pipeline (Option C): - 55ms per frame capture (screenshot via DevTools) - ~2ms per frame encode (hardware H.264) - 6083 frames × 57ms = 347s serial - 4 workers: ~87s (1.5 min) - Plus segment concat: ~5s - Total: ~1.5 min with 4 workers - Disk I/O: zero intermediate files</p>
-    <p>WebCodecs pipeline (Option D, future): - ~15ms per frame (DOM render only, no screenshot) - ~2ms per frame encode - 6083 frames × 17ms = 103s serial - 4 workers: ~26s - Total: ~30s with 4 workers</p>
+    <p>Current pipeline (screenshot + ffmpeg):</p>
+    <list type="bullet">
+      <item><p>55ms per frame capture (screenshot to PNG)</p></item>
+      <item><p>6083 frames × 55ms = 335s (5.5 min serial)</p></item>
+      <item><p>4 workers: ~165s (2.75 min)</p></item>
+      <item><p>Plus ffmpeg mux: ~60s</p></item>
+      <item><p>Total: ~4 min with 4 workers</p></item>
+    </list>
+    <p>WebCodecs pipeline (Option C):</p>
+    <list type="bullet">
+      <item><p>55ms per frame capture (screenshot via DevTools)</p></item>
+      <item><p>~2ms per frame encode (hardware H.264)</p></item>
+      <item><p>6083 frames × 57ms = 347s serial</p></item>
+      <item><p>4 workers: ~87s (1.5 min)</p></item>
+      <item><p>Plus segment concat: ~5s</p></item>
+      <item><p>Total: ~1.5 min with 4 workers</p></item>
+      <item><p>Disk I/O: zero intermediate files</p></item>
+    </list>
+    <p>WebCodecs pipeline (Option D, future):</p>
+    <list type="bullet">
+      <item><p>~15ms per frame (DOM render only, no screenshot)</p></item>
+      <item><p>~2ms per frame encode</p></item>
+      <item><p>6083 frames × 17ms = 103s serial</p></item>
+      <item><p>4 workers: ~26s</p></item>
+      <item><p>Total: ~30s with 4 workers</p></item>
+    </list>
   </section>
   <section title="Migration Path" id="migration-path">
     <list type="numbered">

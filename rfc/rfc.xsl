@@ -184,6 +184,15 @@
     </section>
   </xsl:template>
 
+  <!-- Subsection (h3) -->
+  <xsl:template match="rfc:subsection">
+    <section class="subsection">
+      <xsl:attribute name="id"><xsl:value-of select="@id"/></xsl:attribute>
+      <h3><xsl:value-of select="@title"/></h3>
+      <xsl:apply-templates/>
+    </section>
+  </xsl:template>
+
   <!-- Paragraph -->
   <xsl:template match="rfc:p">
     <p><xsl:apply-templates/></p>
