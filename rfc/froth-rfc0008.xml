@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0008" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0008: Unified Event Table</title>
+    <status>IMPLEMENTED</status>
+    <author>Charlie (@charliebuddybot)</author>
+    <date>2026-03-23</date>
+    <supersedes>RFC-0004 agent_events table (deprecated)</supersedes>
+  </meta>
+  <section title="Situation" id="situation">
+    <p>Froth has two event tables recording overlapping facts:</p>
+    <list type="numbered">
+      <item><p><strong>telemetry_events</strong> — the firehose. Columns: id (uuid), event (varchar), measurements (jsonb), metadata (jsonb), inserted_at, span_id, parent_id. Written by Froth.Telemetry.Store via the BEAM :telemetry bus. Sees everything. Schema-free payloads.</p></item>
+    </list>
+    <list type="numbered">
+      <item><p><strong>agent_events</strong> — created by RFC-0004. Columns: id (uuid), cycle_id, head_id, seq, kind, span_id, parent_span_id, message_id, tool_use_id, data_json (jsonb), blob_ref, inserted_at. Written by Froth.Agent.append_event/2. Agent-specific typed columns that are null for everything else.</p></item>
+    </list>
+    <p>The worker dual-writes: every agent execution event fires a telemetry span AND inserts an agent_events row. Same span IDs in both places. Two tables recording the same facts with different column layouts.</p>
+    <p>Three separate viewers (TelemetryLive, CodexLive, ToolLive) read from different subsets. No single view sees everything.</p>
+  </section>
+  <section title="Goal" id="goal">
+    <p>One table. One timeline. JSONB payloads. No nullable slop columns for domain-specific fields.</p>
+  </section>
+  <section title="Design" id="design">
+    <p>### Step 1: Rename telemetry_events → events</p>
+    <p>Migration:</p>
+    <code>rename table(:telemetry_events), to: table(:events)</code>
+    <p>Update all index names accordingly. Update Froth.Telemetry.Store to write to "events" instead of "telemetry_events".</p>
+    <p>### Step 2: Enrich metadata JSONB</p>
+    <p>Agent execution data that RFC-0004 put in typed columns goes into the metadata JSONB instead:</p>
+    <code>metadata: %{
+  "kind" =&gt; "tool.completed",
+  "cycle_id" =&gt; "01ABCDEF...",
+  "head_id" =&gt; "01ABCDEF...",
+  "tool_use_id" =&gt; "toolu_abc123",
+  "blob_ref" =&gt; "sha256:...",
+  "seq" =&gt; 42,
+  ...domain-specific payload...
+}</code>
+    <p>The only real columns on the events table are:</p>
+    <code>id          uuid        NOT NULL  (primary key)
+event       varchar     NOT NULL  (dot-joined name, e.g. "froth.agent.cycle")
+span_id     varchar     NULL      (already a column — keep it)
+parent_id   varchar     NULL      (already a column — keep it)
+measurements jsonb      NULL      (timing, counts)
+metadata    jsonb       NULL      (everything else)
+inserted_at timestamp   NOT NULL</code>
+    <p>span_id and parent_id stay as columns because they are the join keys for span tree traversal and they apply to every event source, not just agents. Everything domain-specific goes in JSONB.</p>
+    <p>### Step 3: Rewrite Agent.append_event/2</p>
+    <p>Instead of inserting into agent_events, it calls Froth.Telemetry.Store or writes directly to events:</p>
+    <code>Froth.Repo.insert_all("events", [%{
+  id: Ecto.UUID.generate(),
+  event: "froth.agent.#{kind}",
+  span_id: attrs.span_id,
+  parent_id: attrs.parent_span_id,
+  measurements: %{},
+  metadata: %{
+    "kind" =&gt; kind,
+    "cycle_id" =&gt; cycle_id,
+    "head_id" =&gt; head_id,
+    "tool_use_id" =&gt; tool_use_id,
+    "data" =&gt; data,
+    "blob_ref" =&gt; blob_ref,
+    "seq" =&gt; next_seq
+  },
+  inserted_at: DateTime.utc_now()
+}])</code>
+    <p>The blob offloading logic from RFC-0004 remains — payloads over 8KB get hashed, stored in ObjectStore, and replaced with a summary in the metadata. That logic is good. It just writes to the wrong table.</p>
+    <p>### Step 4: Drop agent_events</p>
+    <p>Migration:</p>
+    <code>drop table(:agent_events)</code>
+    <p>Remove Froth.Agent.Event schema module.</p>
+    <p>### Step 5: Update cycle_usage view</p>
+    <p>The cycle_usage view currently joins through agent_events. Rewrite it to query the events table filtering on metadata-&gt;&gt;'cycle_id' and event LIKE 'froth.agent.%'.</p>
+    <p>### Step 6: Add GIN index on metadata</p>
+    <code>create index(:events, [:metadata], using: "gin")</code>
+    <p>This makes queries like <c>WHERE metadata-&gt;&gt;'cycle_id' = ?</c> and <c>WHERE metadata-&gt;&gt;'kind' = ?</c> fast without adding columns.</p>
+    <p>### Step 7: Unified LiveView</p>
+    <p>One TimelineLive that reads from the events table with filters:</p>
+    <list type="bullet">
+      <item><p>No filter: everything, all sources, all scopes</p></item>
+      <item><p>Cycle filter: WHERE metadata-&gt;&gt;'cycle_id' = ?</p></item>
+      <item><p>Session filter: WHERE metadata-&gt;&gt;'session_id' = ?</p></item>
+      <item><p>Span filter: span tree traversal via span_id/parent_id</p></item>
+      <item><p>Source filter: WHERE event LIKE 'froth.agent.%' etc.</p></item>
+    </list>
+    <p>The existing TelemetryLive, CodexLive, and ToolLive become pre-filtered bookmarks into this one view.</p>
+  </section>
+  <section title="Migration Strategy" id="migration-strategy">
+    <p>Phases 1-4 (rename, enrich, rewrite, drop) are one migration and one code change. No transitional dual-write period. The agent_events table has existed for less than an hour. There is no historical data worth preserving — any agent_events rows can be re-derived from telemetry_events which recorded the same spans.</p>
+    <p>Phase 5-7 (view rewrite, GIN index, unified LiveView) can land separately.</p>
+  </section>
+  <section title="What RFC-0004 Got Right" id="what-rfc-0004-got-right">
+    <list type="bullet">
+      <item><p>Cycle status tracking on the cycles table (keep)</p></item>
+      <item><p>Blob offloading for large payloads (keep, redirect to events)</p></item>
+      <item><p>Event sequencing per cycle (keep, in metadata)</p></item>
+      <item><p>The worker's boolean finalization gates (keep)</p></item>
+      <item><p>The LiveView modeline compaction (keep)</p></item>
+    </list>
+  </section>
+  <section title="What RFC-0004 Got Wrong" id="what-rfc-0004-got-wrong">
+    <list type="bullet">
+      <item><p>Created a new table instead of enriching the existing one</p></item>
+      <item><p>Added nullable typed columns for domain-specific fields</p></item>
+      <item><p>Duplicated span_id/parent_span_id as separate column names</p></item>
+    </list>
+  </section>
+  <section title="Non-Goals" id="non-goals">
+    <list type="bullet">
+      <item><p>This does not change how the BEAM :telemetry bus works</p></item>
+      <item><p>This does not change cycle lifecycle management</p></item>
+      <item><p>This does not add new event sources</p></item>
+      <item><p>This does not touch Codex session management</p></item>
+    </list>
+  </section>
+  <section title="The Thesis" id="the-thesis">
+    <p>One table called events. Span tree as columns because it is universal. Everything else as JSONB because it is not. The table that already exists gets promoted, not replaced. Fewer tables, not more.</p>
+  </section>
+
+</rfc>

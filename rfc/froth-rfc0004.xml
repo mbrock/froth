@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0004" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0004: Agent Execution Spine</title>
+    <status>PARTIALLY SUPERSEDED by RFC-0008</status>
+    <author>Charlie (@charliebuddybot)</author>
+    <date>2026-03-23</date>
+    <related>FROTH-RFC-0002, FROTH-RFC-0003</related>
+  </meta>
+  <section title="Situation" id="situation">
+    <p>RFC-0002 pushes Froth toward a native multimodal LLM layer. RFC-0003 fixes a concrete agent-runtime bug around parallel tool execution. Both are necessary. Neither is the next bottleneck.</p>
+    <p>The next bottleneck is that execution state is split across four different worlds:</p>
+    <list type="bullet">
+      <item><p>in-memory process state inside <c>Froth.Agent.Worker</c></p></item>
+      <item><p>semantic transcript state in <c>agent_messages</c></p></item>
+      <item><p>minimal sequencing state in <c>agent_events</c></p></item>
+      <item><p>low-level span data in <c>telemetry_events</c></p></item>
+    </list>
+    <p>That split was fine while the agent subsystem was small. It is starting to hurt now.</p>
+    <p><c>agent_cycles</c> currently stores almost nothing except an ID and timestamps. <c>agent_events</c> is only a head pointer plus a sequence number. <c>agent_messages</c> stores the semantic content and some metadata, but not the runtime structure of the cycle. Telemetry has the opposite problem: rich runtime detail exists, but it is not the primary data model of the agent subsystem. It is just a span stream.</p>
+    <p>This means Froth can reconstruct a transcript, but not a run.</p>
+    <p>Questions that should be first-class are currently awkward:</p>
+    <list type="bullet">
+      <item><p>What exact resolved config did this cycle run with?</p></item>
+      <item><p>Which LLM calls happened, in what order, with what latency and usage?</p></item>
+      <item><p>Which tool calls started, succeeded, failed, or timed out?</p></item>
+      <item><p>What blob or media payloads were involved, and where are they stored?</p></item>
+      <item><p>Which telemetry spans correspond to which cycle turns?</p></item>
+      <item><p>Can a cycle be resumed, retried, or inspected without scraping the transcript?</p></item>
+    </list>
+    <p>As multimodal support grows, this gets worse. If media blobs and raw vendor payloads live inline in JSONB transcript rows, storage gets hot, indexes get worse, and the database becomes the accidental blob store.</p>
+    <p>At the same time, the Telegram-facing side of the system is already moving toward normalized message history plus linked cycle traces. That is the right direction. The persistence model should now catch up to the runtime model.</p>
+  </section>
+  <section title="Goal" id="goal">
+    <p>Build a durable execution spine for Froth's LLM and agent runtime:</p>
+    <list type="bullet">
+      <item><p>semantic messages remain available as the transcript</p></item>
+      <item><p>runs become first-class records, not inferred after the fact</p></item>
+      <item><p>tool calls and LLM calls become queryable operational units</p></item>
+      <item><p>telemetry spans attach cleanly to persisted execution records</p></item>
+      <item><p>large payloads and media move out of hot JSONB rows</p></item>
+      <item><p>app-specific linkage such as Telegram remains possible without defining the core runtime model</p></item>
+    </list>
+  </section>
+  <section title="Non-Goals" id="non-goals">
+    <list type="bullet">
+      <item><p>This RFC does not replace Postgres with a data lake.</p></item>
+      <item><p>This RFC does not redesign prompt construction.</p></item>
+      <item><p>This RFC does not require every streamed token delta to be persisted.</p></item>
+      <item><p>This RFC does not remove provider-specific traces or telemetry.</p></item>
+      <item><p>This RFC is not a proposal for distributed agent scheduling yet.</p></item>
+    </list>
+  </section>
+  <section title="Thesis" id="thesis">
+    <p>The next layer after native provider adapters is not another wrapper. It is an execution spine.</p>
+    <p>Froth should treat "agent cycle", "LLM call", "tool invocation", "semantic message", "blob/media artifact", and "telemetry span" as connected pieces of one run. Today those pieces exist, but they do not line up in one durable model.</p>
+    <p>The right move is:</p>
+    <list type="numbered">
+      <item><p>make <c>agent_cycles</c> a real run record</p></item>
+      <item><p>turn <c>agent_events</c> into a durable execution log</p></item>
+      <item><p>keep <c>agent_messages</c> as the semantic transcript</p></item>
+      <item><p>move large blobs and raw payloads out of transcript tables</p></item>
+      <item><p>persist enough config and provenance to make runs inspectable and resumable</p></item>
+    </list>
+  </section>
+  <section title="Proposed Changes" id="proposed-changes">
+    <p>### 1. Promote <c>agent_cycles</c> from ID holder to run record</p>
+    <p><c>agent_cycles</c> should become the durable summary of a run.</p>
+    <p>It should carry fields like:</p>
+    <list type="bullet">
+      <item><p><c>status</c> (<c>queued</c>, <c>running</c>, <c>waiting_on_tools</c>, <c>completed</c>, <c>failed</c>, <c>cancelled</c>)</p></item>
+      <item><p>resolved <c>provider</c></p></item>
+      <item><p>resolved <c>model</c></p></item>
+      <item><p><c>root_span_id</c></p></item>
+      <item><p><c>parent_span_id</c></p></item>
+      <item><p><c>config_json</c></p></item>
+      <item><p><c>system_prompt_ref</c> or <c>system_prompt_hash</c></p></item>
+      <item><p><c>toolset_hash</c></p></item>
+      <item><p>aggregate <c>usage</c></p></item>
+      <item><p>aggregate <c>cost_usd</c></p></item>
+      <item><p><c>error</c></p></item>
+      <item><p><c>started_at</c></p></item>
+      <item><p><c>finished_at</c></p></item>
+    </list>
+    <p>The key point is that a cycle should be inspectable without replaying the whole transcript and without scraping telemetry to recover basic facts about what happened.</p>
+    <p>### 2. Turn <c>agent_events</c> into the execution log</p>
+    <p><c>agent_events</c> should stop being only "head moved to message X". That information is useful, but it is not enough.</p>
+    <p>Instead, <c>agent_events</c> should be an append-only log of meaningful runtime transitions. Example kinds:</p>
+    <list type="bullet">
+      <item><p><c>cycle.started</c></p></item>
+      <item><p><c>llm.requested</c></p></item>
+      <item><p><c>llm.completed</c></p></item>
+      <item><p><c>tool.started</c></p></item>
+      <item><p><c>tool.completed</c></p></item>
+      <item><p><c>tool.failed</c></p></item>
+      <item><p><c>message.appended</c></p></item>
+      <item><p><c>cycle.completed</c></p></item>
+      <item><p><c>cycle.failed</c></p></item>
+    </list>
+    <p>Each event row should be able to carry:</p>
+    <list type="bullet">
+      <item><p><c>cycle_id</c></p></item>
+      <item><p><c>seq</c></p></item>
+      <item><p><c>kind</c></p></item>
+      <item><p><c>span_id</c></p></item>
+      <item><p><c>parent_span_id</c></p></item>
+      <item><p><c>message_id</c></p></item>
+      <item><p><c>tool_use_id</c></p></item>
+      <item><p><c>data_json</c></p></item>
+      <item><p><c>blob_ref</c></p></item>
+    </list>
+    <p>This does not mean persisting every token delta. The log should store turn and operation boundaries, not an unbounded firehose of tiny events. Live token streaming can remain PubSub + telemetry.</p>
+    <p>### 3. Keep <c>agent_messages</c> as the semantic transcript</p>
+    <p><c>agent_messages</c> is still the right place for the semantic content chain:</p>
+    <list type="bullet">
+      <item><p>user messages</p></item>
+      <item><p>assistant messages</p></item>
+      <item><p>tool results</p></item>
+      <item><p>multimodal content blocks</p></item>
+    </list>
+    <p>But it should stop carrying the burden of also being the runtime execution log. It is the transcript, not the scheduler, not the trace store, and not the blob store.</p>
+    <p>This also keeps the message model aligned with RFC-0002: providers produce semantic Froth content, and the transcript stores that semantic content.</p>
+    <p>### 4. Persist resolved config and provenance explicitly</p>
+    <p>Today the agent runtime resolves provider/model/system/tools in memory and then mostly forgets the exact resolved shape.</p>
+    <p>That should be persisted at cycle start. At minimum:</p>
+    <list type="bullet">
+      <item><p>resolved provider/module</p></item>
+      <item><p>resolved model</p></item>
+      <item><p>resolved tool specs</p></item>
+      <item><p>thinking / effort settings</p></item>
+      <item><p>app-level context identifiers</p></item>
+      <item><p>bot/chat linkage where relevant</p></item>
+    </list>
+    <p>This is important for:</p>
+    <list type="bullet">
+      <item><p>reproducibility</p></item>
+      <item><p>debugging</p></item>
+      <item><p>cost analysis</p></item>
+      <item><p>future replay or resume</p></item>
+    </list>
+    <p>The stored form does not need to inline huge prompts or blobs. Hashes plus blob refs are enough if the underlying content is retrievable.</p>
+    <p>### 5. Add out-of-line blob storage for raw payloads and media</p>
+    <p>Raw vendor requests, raw vendor responses, SSE transcripts, and media blobs should not live inline in the hot path tables by default.</p>
+    <p>The right pattern is:</p>
+    <list type="bullet">
+      <item><p>Postgres stores metadata, previews, hashes, and refs</p></item>
+      <item><p>object storage stores the heavy payload</p></item>
+    </list>
+    <p>Examples of things that should become refs instead of inline JSONB:</p>
+    <list type="bullet">
+      <item><p>base64 image outputs</p></item>
+      <item><p>uploaded PDFs</p></item>
+      <item><p>full raw API request/response bodies</p></item>
+      <item><p>captured SSE transcripts for fixture/replay/debug use</p></item>
+    </list>
+    <p>This matters for both cost and performance. Multimodal support will otherwise turn normal operational tables into accidental file archives.</p>
+    <p>### 6. Make telemetry and execution records joinable by design</p>
+    <p>Froth already emits spans around:</p>
+    <list type="bullet">
+      <item><p>LLM requests</p></item>
+      <item><p>HTTP requests</p></item>
+      <item><p>SSE events</p></item>
+      <item><p>agent cycles</p></item>
+      <item><p>agent think phases</p></item>
+      <item><p>LLM edit projection</p></item>
+    </list>
+    <p>That is good. The missing piece is that the persisted agent runtime records should reference those spans directly.</p>
+    <p>The rule should be simple:</p>
+    <list type="bullet">
+      <item><p>every persisted cycle has a root span ID</p></item>
+      <item><p>every persisted LLM call or tool invocation has a span ID</p></item>
+      <item><p>every execution-log event may point at the span that emitted it</p></item>
+    </list>
+    <p>This lets the UI answer both semantic and operational questions:</p>
+    <list type="bullet">
+      <item><p>what did the model say?</p></item>
+      <item><p>how long did it take?</p></item>
+      <item><p>which provider call produced it?</p></item>
+      <item><p>where did the error happen?</p></item>
+    </list>
+    <p>### 7. De-emphasize legacy inference-session snapshots</p>
+    <p>The long-term direction should be:</p>
+    <list type="bullet">
+      <item><p>normalized Telegram messages</p></item>
+      <item><p>normalized agent cycles</p></item>
+      <item><p>explicit cycle links</p></item>
+      <item><p>derived summaries and views</p></item>
+    </list>
+    <p>not cumulative conversation snapshots as the primary runtime record.</p>
+    <p><c>telegram_cycle_links</c> is already a step in this direction. Keep that idea. Continue moving app-specific linkage into thin relation tables around a stronger core agent runtime model.</p>
+    <p>### 8. Make control outcomes explicit, not textual</p>
+    <p>A recent runtime failure made this concrete.</p>
+    <p>Charlie ran a normal cycle, sent a status message successfully, then called <c>read_tool_transcript</c>. The tool completed successfully. The cycle then stopped <c>reason=normal</c> without taking the next think step or sending a real answer.</p>
+    <p>The proximate cause was not a provider failure and not a process crash. The transcript tool had returned text containing the string <c>Yielding:</c> inside a code snippet. The worker was using a substring check on tool-result text to decide whether a tool had asked the cycle to yield. A transcript containing that text therefore triggered the same control path as a real yield.</p>
+    <p>That is exactly the kind of bug an execution spine should make harder to write.</p>
+    <p>Cycle control outcomes such as:</p>
+    <list type="bullet">
+      <item><p><c>yield</c></p></item>
+      <item><p><c>waiting_on_subscription</c></p></item>
+      <item><p><c>reply_sent</c></p></item>
+      <item><p><c>assistant_stopped_without_reply</c></p></item>
+      <item><p><c>tool_error</c></p></item>
+      <item><p><c>cycle_error</c></p></item>
+    </list>
+    <p>should be represented as explicit runtime facts, not inferred from rendered text.</p>
+    <p>In practice that means:</p>
+    <list type="bullet">
+      <item><p>tool execution should return typed outcomes for control flow</p></item>
+      <item><p><c>agent_events</c> should persist those outcomes as first-class kinds or structured payload fields</p></item>
+      <item><p>cycle-stop reasons shown to users should come from structured state and event history, not transcript heuristics</p></item>
+      <item><p>transcript rows should remain semantic content, not scheduler control</p></item>
+    </list>
+    <p>The recent false-positive <c>Yielding:</c> stop bug was fixed in code by making yield explicit in the worker runtime. The persistence model should follow the same rule.</p>
+  </section>
+  <section title="Schema Sketch" id="schema-sketch">
+    <p>One plausible near-term shape:</p>
+    <code>agent_cycles
+  id
+  status
+  provider
+  model
+  root_span_id
+  parent_span_id
+  config_json
+  usage_json
+  cost_usd
+  error
+  started_at
+  finished_at
+  inserted_at
+
+agent_events
+  id
+  cycle_id
+  seq
+  kind
+  span_id
+  parent_span_id
+  message_id
+  tool_use_id
+  data_json
+  blob_ref
+  inserted_at
+
+agent_messages
+  id
+  parent_id
+  role
+  content_json
+  metadata_json
+  inserted_at
+
+telegram_cycle_links
+  cycle_id
+  bot_id
+  chat_id
+  reply_to
+  legacy_inference_session_id</code>
+    <p>This is intentionally conservative. It evolves the tables Froth already has instead of requiring a whole new runtime subsystem at once.</p>
+  </section>
+  <section title="Migration Plan" id="migration-plan">
+    <p>Phase 1: Add <c>status</c>, resolved config, usage, error, and span fields          to <c>agent_cycles</c>.</p>
+    <p>Phase 2: Expand <c>agent_events</c> into a typed execution log while          keeping the existing head-tracking semantics working during          migration.</p>
+    <p>Phase 3: Persist LLM-call and tool-invocation boundaries as events          from <c>Agent.Worker</c>, including explicit control outcomes such          as <c>yield</c>, <c>reply_sent</c>, and <c>assistant_stopped_without_reply</c>.</p>
+    <p>Phase 4: Introduce blob refs for large payloads and media, with          object-store-backed storage for the heavy data.</p>
+    <p>Phase 5: Update the cycle UI and related views to read cycle/event          metadata directly instead of reconstructing everything from          transcript scraping.</p>
+    <p>Phase 6: Reduce dependence on legacy inference-session snapshots and          keep them only as migration/backfill compatibility.</p>
+  </section>
+  <section title="Consequences" id="consequences">
+    <p>### Benefits</p>
+    <list type="bullet">
+      <item><p>Froth gets a durable model of execution, not just transcripts.</p></item>
+      <item><p>Multimodal content stops threatening the hot operational tables.</p></item>
+      <item><p>Debugging gets easier because config, spans, tool calls, and LLM turns can be queried directly.</p></item>
+      <item><p>Resume/retry/cancel becomes architecturally possible instead of bolted on later.</p></item>
+      <item><p>App-specific consumers like Telegram can link into the runtime model without defining it.</p></item>
+    </list>
+    <p>### Costs</p>
+    <list type="bullet">
+      <item><p>More schema and migration work.</p></item>
+      <item><p>More explicit separation between transcript rows and blob storage.</p></item>
+      <item><p>Temporary duplication while old and new persistence paths coexist.</p></item>
+      <item><p>More care needed around retention, compaction, and object-store GC.</p></item>
+    </list>
+  </section>
+  <section title="Recommendation" id="recommendation">
+    <p>Do not spend the next phase only adding more provider features.</p>
+    <p>The next phase should build the execution spine in this order:</p>
+    <list type="numbered">
+      <item><p>richer <c>agent_cycles</c></p></item>
+      <item><p>typed <c>agent_events</c></p></item>
+      <item><p>explicit LLM/tool operation records and control outcomes via events</p></item>
+      <item><p>blob refs for large payloads</p></item>
+      <item><p>UI and query paths that consume the new records directly</p></item>
+    </list>
+    <p>That gives RFC-0002 somewhere durable to land and gives RFC-0003 a runtime model worthy of parallel execution.</p>
+  </section>
+
+</rfc>

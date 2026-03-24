@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="https://froth.1.foo/rfc"
+           xmlns:rfc="https://froth.1.foo/rfc"
+           elementFormDefault="qualified">
+
+  <!-- Root element -->
+  <xs:element name="rfc" type="rfc:RfcType"/>
+
+  <xs:complexType name="RfcType">
+    <xs:sequence>
+      <xs:element name="meta" type="rfc:MetaType"/>
+      <xs:element name="section" type="rfc:SectionType" maxOccurs="unbounded"/>
+      <xs:element name="references" type="rfc:ReferencesType" minOccurs="0"/>
+    </xs:sequence>
+    <xs:attribute name="number" type="xs:string" use="required"/>
+  </xs:complexType>
+
+  <!-- Metadata -->
+  <xs:complexType name="MetaType">
+    <xs:all>
+      <xs:element name="title" type="xs:string"/>
+      <xs:element name="status" type="rfc:StatusType"/>
+      <xs:element name="author" type="xs:string"/>
+      <xs:element name="date" type="xs:date"/>
+      <xs:element name="supersedes" type="xs:string" minOccurs="0"/>
+      <xs:element name="related" type="xs:string" minOccurs="0"/>
+      <xs:element name="classification" type="xs:string" minOccurs="0"/>
+      <xs:element name="research" type="xs:string" minOccurs="0"/>
+    </xs:all>
+  </xs:complexType>
+
+  <xs:simpleType name="StatusType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="DRAFT"/>
+      <xs:enumeration value="IMPLEMENTED"/>
+      <xs:enumeration value="PARTIALLY IMPLEMENTED"/>
+      <xs:enumeration value="SUPERSEDED"/>
+      <xs:enumeration value="PARTIALLY SUPERSEDED"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- Sections are recursive — can contain subsections -->
+  <xs:complexType name="SectionType" mixed="false">
+    <xs:sequence>
+      <xs:choice maxOccurs="unbounded" minOccurs="0">
+        <xs:element name="p" type="rfc:InlineType"/>
+        <xs:element name="code" type="rfc:CodeType"/>
+        <xs:element name="figure" type="rfc:FigureType"/>
+        <xs:element name="list" type="rfc:ListType"/>
+        <xs:element name="item" type="rfc:ItemType"/>
+        <xs:element name="section" type="rfc:SectionType"/>
+      </xs:choice>
+    </xs:sequence>
+    <xs:attribute name="title" type="xs:string" use="required"/>
+    <xs:attribute name="id" type="xs:string"/>
+  </xs:complexType>
+
+  <!-- Inline content: text with citations, emphasis, code spans, links -->
+  <xs:complexType name="InlineType" mixed="true">
+    <xs:choice maxOccurs="unbounded" minOccurs="0">
+      <xs:element name="cite" type="rfc:CiteType"/>
+      <xs:element name="em" type="xs:string"/>
+      <xs:element name="strong" type="xs:string"/>
+      <xs:element name="c" type="xs:string"/>  <!-- inline code -->
+      <xs:element name="link" type="rfc:LinkType"/>
+      <xs:element name="rfc-ref" type="rfc:RfcRefType"/>
+    </xs:choice>
+  </xs:complexType>
+
+  <!-- Citation reference -->
+  <xs:complexType name="CiteType">
+    <xs:attribute name="ref" type="xs:string" use="required"/>
+  </xs:complexType>
+
+  <!-- Link -->
+  <xs:complexType name="LinkType" mixed="true">
+    <xs:attribute name="href" type="xs:anyURI" use="required"/>
+  </xs:complexType>
+
+  <!-- Cross-reference to another RFC -->
+  <xs:complexType name="RfcRefType">
+    <xs:attribute name="number" type="xs:string" use="required"/>
+  </xs:complexType>
+
+  <!-- Code block -->
+  <xs:complexType name="CodeType">
+    <xs:simpleContent>
+      <xs:extension base="xs:string">
+        <xs:attribute name="lang" type="xs:string"/>
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+
+  <!-- Figure with image and caption -->
+  <xs:complexType name="FigureType">
+    <xs:sequence>
+      <xs:element name="caption" type="rfc:InlineType" minOccurs="0"/>
+    </xs:sequence>
+    <xs:attribute name="src" type="xs:string" use="required"/>
+    <xs:attribute name="alt" type="xs:string"/>
+    <xs:attribute name="number" type="xs:integer"/>
+  </xs:complexType>
+
+  <!-- Ordered or lettered list -->
+  <xs:complexType name="ListType">
+    <xs:sequence>
+      <xs:element name="item" type="rfc:ItemType" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="type" type="rfc:ListStyleType" default="numbered"/>
+  </xs:complexType>
+
+  <xs:simpleType name="ListStyleType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="numbered"/>
+      <xs:enumeration value="lettered"/>
+      <xs:enumeration value="bullet"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- List item -->
+  <xs:complexType name="ItemType" mixed="false">
+    <xs:sequence>
+      <xs:element name="label" type="xs:string" minOccurs="0"/>
+      <xs:choice maxOccurs="unbounded" minOccurs="0">
+        <xs:element name="p" type="rfc:InlineType"/>
+        <xs:element name="code" type="rfc:CodeType"/>
+        <xs:element name="list" type="rfc:ListType"/>
+      </xs:choice>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Reference list -->
+  <xs:complexType name="ReferencesType">
+    <xs:sequence>
+      <xs:element name="ref" type="rfc:RefType" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Individual reference -->
+  <xs:complexType name="RefType">
+    <xs:sequence>
+      <xs:element name="title" type="xs:string"/>
+      <xs:element name="url" type="xs:anyURI" minOccurs="0"/>
+      <xs:element name="note" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+    <xs:attribute name="id" type="xs:string" use="required"/>
+  </xs:complexType>
+
+</xs:schema>

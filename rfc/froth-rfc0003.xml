@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0003" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0003: Parallel Tool Execution</title>
+    <status>IMPLEMENTED</status>
+    <author>Charlie (@charliebuddybot)</author>
+    <date>2026-03-23</date>
+    <related>FROTH-RFC-0004</related>
+  </meta>
+  <section title="Problem" id="problem">
+    <p>When an agent response contains N tool calls, <c>Froth.Agent.Worker</c> does the obvious thing: it spawns N concurrent Tasks.</p>
+    <p>The concurrency stops there.</p>
+    <p>Each Task immediately calls the same GenServer:</p>
+    <code>GenServer.call(worker.config.tool_executor,
+  {:execute, tool_use, context})</code>
+    <p>In the Telegram bots, <c>tool_executor</c> is the bot process. That process handles:</p>
+    <code>handle_call({:execute, %ToolUse{} = tool_use, context}, ...)</code>
+    <p>which means all tool executions are serialized through one mailbox.</p>
+    <p>So the current shape is:</p>
+    <code>worker spawns N Tasks
+  -&gt; all N Tasks queue on one GenServer.call
+  -&gt; bot executes tool 1
+  -&gt; tool 2 waits
+  -&gt; tool 3 waits
+  -&gt; ...</code>
+    <p>The result is the worst of both worlds:</p>
+    <list type="bullet">
+      <item><p>the worker thinks it is doing parallel tool execution</p></item>
+      <item><p>the bot process is actually doing serialized tool execution</p></item>
+      <item><p>the queue is governed by the OTP default <c>GenServer.call</c> timeout of 5000ms</p></item>
+    </list>
+    <p>If tool call #1 takes long enough, tool call #2 can fail before it ever starts running.</p>
+  </section>
+  <section title="Why This Is Happening" id="why-this-is-happening">
+    <p>The serialization is not intentional. It is a consequence of the bot process wearing two hats:</p>
+    <list type="numbered">
+      <item><p>it is the Telegram event router and state owner</p></item>
+      <item><p>it is also the tool executor</p></item>
+    </list>
+    <p>Some of that state is genuinely needed by tools:</p>
+    <list type="bullet">
+      <item><p><c>chat_id</c></p></item>
+      <item><p><c>reply_to</c></p></item>
+      <item><p><c>session_id</c></p></item>
+      <item><p>sent-message tracking</p></item>
+      <item><p>cycle control-prompt bookkeeping</p></item>
+      <item><p>mid-cycle message injection</p></item>
+      <item><p>task registration and error tracking</p></item>
+    </list>
+    <p>But needing state access is not the same as needing serialized execution.</p>
+    <p>The code path today mixes three different responsibilities inside one GenServer call:</p>
+    <list type="numbered">
+      <item><p>gather the execution context</p></item>
+      <item><p>perform the actual tool work and network I/O</p></item>
+      <item><p>mutate bot state based on the result</p></item>
+    </list>
+    <p>That is the real bug.</p>
+  </section>
+  <section title="A Second Bug Hidden Inside the First One" id="a-second-bug-hidden-inside-the-first-one">
+    <p>The current draft of this RFC could tempt a one-line fix:</p>
+    <code>GenServer.call(..., :infinity)</code>
+    <p>That does remove the accidental 5000ms timeout. But in the current code there is no separate worker-owned timeout for tool tasks.</p>
+    <p>So today:</p>
+    <list type="bullet">
+      <item><p><c>5000ms</c> is an accidental timeout</p></item>
+      <item><p><c>:infinity</c> would become an accidental non-timeout</p></item>
+    </list>
+    <p>Both are wrong.</p>
+    <p>Timeout policy should belong to <c>Froth.Agent.Worker</c>, because the worker owns the lifecycle of the tool tasks.</p>
+  </section>
+  <section title="Requirements" id="requirements">
+    <p>Any real fix should satisfy all of these:</p>
+    <list type="numbered">
+      <item><p>Tool work should run in parallel when the tools are independent.</p></item>
+      <item><p>Bot state must remain internally consistent.</p></item>
+      <item><p>External side effects should not require the bot GenServer to sit blocked on network I/O.</p></item>
+      <item><p>Timeouts must be explicit and owned by the worker, not inherited from <c>GenServer.call</c>.</p></item>
+      <item><p>The model should compose with RFC-0004's execution-log and telemetry direction.</p></item>
+    </list>
+  </section>
+  <section title="Proposed Architecture" id="proposed-architecture">
+    <p>### 1. Move timeout ownership into <c>Agent.Worker</c></p>
+    <p><c>Agent.Worker</c> should own tool deadlines explicitly.</p>
+    <p>Add a <c>tool_timeout_ms</c> config value and have the worker schedule a timeout per invocation. If a tool exceeds its deadline:</p>
+    <list type="bullet">
+      <item><p>the worker terminates the task</p></item>
+      <item><p>the worker records a failed tool result</p></item>
+      <item><p>the cycle continues or fails according to policy</p></item>
+    </list>
+    <p>Only after this exists should the internal <c>GenServer.call</c> timeout be set to <c>:infinity</c>, because at that point the worker is the owner of the deadline.</p>
+    <p>### 2. Split tool execution into <c>prepare</c>, <c>execute</c>, and <c>commit</c></p>
+    <p>The core change is to separate state access from work.</p>
+    <p>#### Prepare</p>
+    <p>The bot process handles a fast call that:</p>
+    <list type="bullet">
+      <item><p>validates the tool request</p></item>
+      <item><p>snapshots the execution context</p></item>
+      <item><p>reserves any state that must be claimed atomically</p></item>
+      <item><p>returns an execution capsule</p></item>
+    </list>
+    <p>This step should not perform network I/O or long-running work.</p>
+    <p>Example outputs of prepare:</p>
+    <list type="bullet">
+      <item><p><c>chat_id</c></p></item>
+      <item><p><c>reply_to</c></p></item>
+      <item><p><c>session_id</c></p></item>
+      <item><p>bot identity</p></item>
+      <item><p>cycle metadata</p></item>
+      <item><p>whether a control prompt should be shown</p></item>
+      <item><p>whether narration should be sent</p></item>
+    </list>
+    <p>#### Execute</p>
+    <p>The worker Task executes the tool outside the bot GenServer using the prepared capsule.</p>
+    <p>This is where:</p>
+    <list type="bullet">
+      <item><p><c>Tools.execute/5</c></p></item>
+      <item><p>shell execution</p></item>
+      <item><p>eval execution</p></item>
+      <item><p>outbound message sends</p></item>
+      <item><p>object-store access</p></item>
+      <item><p>HTTP calls</p></item>
+    </list>
+    <p>should happen.</p>
+    <p>Execution returns both a result and a list of state effects.</p>
+    <p>#### Commit</p>
+    <p>After execution completes, the bot process handles a fast commit step that applies the serialized state mutations:</p>
+    <list type="bullet">
+      <item><p><c>track_sent_message</c></p></item>
+      <item><p><c>put_last_tool_error</c></p></item>
+      <item><p><c>register_cycle_task</c></p></item>
+      <item><p>clearing or consuming <c>mid_cycle_messages</c></p></item>
+      <item><p>any bookkeeping around cycle prompts and task tracking</p></item>
+    </list>
+    <p>This preserves state consistency without forcing the actual work through one mailbox.</p>
+  </section>
+  <section title="Concrete Shape" id="concrete-shape">
+    <p>One plausible interface:</p>
+    <code>{:ok, capsule, prepare_effects} =
+  GenServer.call(executor, {:prepare_tool, tool_use, context}, :infinity)
+
+Task.Supervisor.async_nolink(TaskSupervisor, fn -&gt;
+  outcome = Froth.Agent.ToolRunner.execute(tool_use, capsule, prepare_effects)
+  {:tool_result, tool_use.id, outcome}
+end)</code>
+    <p>Then on completion:</p>
+    <code>GenServer.cast(executor, {:commit_tool, tool_use.id, outcome.commit_effects})</code>
+    <p>Where <c>outcome</c> contains:</p>
+    <list type="bullet">
+      <item><p>semantic tool result content</p></item>
+      <item><p><c>is_error</c></p></item>
+      <item><p><c>commit_effects</c></p></item>
+      <item><p>telemetry metadata</p></item>
+    </list>
+  </section>
+  <section title="Why This Fits the Current Code" id="why-this-fits-the-current-code">
+    <p>The existing bot code already reveals the correct split.</p>
+    <p><c>execute_tool_call/3</c> currently mixes together:</p>
+    <list type="bullet">
+      <item><p>pure context resolution</p></item>
+      <item><p>long-running tool work via <c>Tools.execute</c></p></item>
+      <item><p>outbound Telegram sends</p></item>
+      <item><p>state mutation via helpers like <c>track_sent_message</c></p></item>
+      <item><p>follow-up state mutation via <c>maybe_track_task_from_result</c> and <c>maybe_track_tool_error</c></p></item>
+    </list>
+    <p>Those should become separate phases instead of one blocking call.</p>
+    <p>Even the special cases point in the same direction:</p>
+    <list type="bullet">
+      <item><p><c>send_message</c> does network I/O plus sent-message bookkeeping</p></item>
+      <item><p><c>run_shell</c> and <c>elixir_eval</c> need control-prompt reservation and optional narration, but not a blocked bot mailbox</p></item>
+      <item><p><c>maybe_inject_mid_cycle_messages/2</c> is a commit concern, not an execution concern</p></item>
+    </list>
+  </section>
+  <section title="What Not To Do" id="what-not-to-do">
+    <p>### Not just "increase the timeout"</p>
+    <p>Changing <c>5000</c> to <c>30000</c> reduces pain but keeps the architecture wrong. It preserves serialization and leaves the timeout policy in the wrong layer.</p>
+    <p>### Not just <c>:infinity</c> without worker deadlines</p>
+    <p>That only swaps one accidental policy for another.</p>
+    <p>### Not a process pool first</p>
+    <p>A pool of tool executors may make sense later, but it does not solve the fact that execution, state access, and commit are currently collapsed into one operation. Fix the boundary first.</p>
+  </section>
+  <section title="Migration Plan" id="migration-plan">
+    <p>Phase 1: Add explicit <c>tool_timeout_ms</c> to <c>Agent.Config</c> and make          <c>Agent.Worker</c> own tool deadlines.</p>
+    <p>Phase 2: Set internal <c>GenServer.call</c> timeouts for tool execution          to <c>:infinity</c>, now that the worker owns the deadline.</p>
+    <p>Phase 3: Replace <c>{:execute, tool_use, context}</c> with a <c>prepare</c>          step that returns a lightweight execution capsule.</p>
+    <p>Phase 4: Execute tools in Tasks outside the bot GenServer and return          structured outcomes plus commit effects.</p>
+    <p>Phase 5: Add a <c>commit</c> step in the bot process for serialized state          mutation.</p>
+    <p>Phase 6: Emit <c>tool.started</c>, <c>tool.completed</c>, <c>tool.failed</c>, and          <c>tool.timed_out</c> events in a form that can attach cleanly to          RFC-0004's execution spine.</p>
+  </section>
+  <section title="Consequences" id="consequences">
+    <p>### Benefits</p>
+    <list type="bullet">
+      <item><p>Parallel tool execution becomes real, not performative.</p></item>
+      <item><p>Tool timeouts become explicit and debuggable.</p></item>
+      <item><p>Bot state remains consistent without forcing network I/O through one mailbox.</p></item>
+      <item><p>The execution model becomes a better fit for persistence and telemetry.</p></item>
+    </list>
+    <p>### Costs</p>
+    <list type="bullet">
+      <item><p>More moving parts in the tool-execution path.</p></item>
+      <item><p>A new prepared execution capsule / commit-effects abstraction.</p></item>
+      <item><p>Some tool behavior currently expressed as direct state mutation will need to be refactored.</p></item>
+    </list>
+  </section>
+  <section title="Recommendation" id="recommendation">
+    <p>Do this in two deliberate steps:</p>
+    <list type="numbered">
+      <item><p>move timeout ownership into the worker immediately</p></item>
+      <item><p>then split tool execution into <c>prepare</c>, <c>execute</c>, and <c>commit</c></p></item>
+    </list>
+    <p>That fixes the current failure mode without pretending the real issue was just a magic number.</p>
+  </section>
+
+</rfc>

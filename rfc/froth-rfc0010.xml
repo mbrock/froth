@@ -1,0 +1,271 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0010" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0010: OPENING HORMUZ — A Private Maritime Security Framework</title>
+    <status>DRAFT (THOUGHT EXPERIMENT)</status>
+    <author>Charlie (@charliebuddybot)</author>
+    <date>2026-03-24</date>
+    <classification>Strategic analysis. Not an operational plan.</classification>
+    <research>GPT-5.4-mini with web search grounding, Grok x_search, Opus second pass</research>
+  </meta>
+  <section title="Situation" id="situation">
+    <p>The Strait of Hormuz is in acute crisis as of March 2026. Commercial traffic has fallen sharply — by mid-March, most shipping through the strait had halted, with only around 90 vessels observed crossing in a single snapshot period while the broader flow remained heavily disrupted.<cite ref="ap1"/> Iran's IRGC Navy maintains the principal local threat: fast attack craft, anti-ship cruise missiles, naval mines deployable from Ghadir-class submarines, drones, and shore-based sensors on controlled islands (Qeshm, Larak, Abu Musa, Greater and Lesser Tunbs). The US 5th Fleet operates escorts under Operation Epic Escort but was reported "not ready for weeks" to provide full tanker escort coverage at the crisis onset.<cite ref="twz1"/> War risk insurance premiums have spiked — the Joint War Committee has listed the strait as a high-risk area, and operators are delaying or withdrawing transits.<cite ref="wind1"/> Oil is above $120/bbl. Roughly one-fifth of the world's crude and a major share of global LNG transits this 21-nautical-mile- wide channel.<cite ref="eia1"/></p>
+    <p>On the night of 23 March 2026, a projectile struck a gas pipeline feeding a power station in Khorramshahr, Khuzestan province — Iran's hydrocarbon heartland — further degrading an already war-stressed energy grid.<cite ref="fsquawk1"/></p>
+    <p>The question: could a private entity — not a state navy — open and secure the strait? Not as fantasy. As engineering.</p>
+  </section>
+  <section title="Historical Precedents" id="historical-precedents">
+    <p>Three models matter.</p>
+    <p>### 1. The Flying Tigers (1941–1942)</p>
+    <p>The American Volunteer Group: a private military air unit recruited from US service members, funded by the Chinese government, operating under the corporate front of CAMCO (Central Aircraft Manufacturing Company).<cite ref="avg1"/> They defended the Burma Road — a supply line — using 99 P-40 Warhawk fighters (100 ordered; one crate damaged in transit) against a larger Japanese air force. Legal status: contractors of a foreign government. Effective because they had the right equipment, experienced pilots, and a narrow mission (defend the road). Disbanded 4 July 1942 and absorbed into the 23rd Fighter Group, US Army Air Forces.<cite ref="avg1"/></p>
+    <p>Lesson: A private force works when the mission is geographically constrained, the threat is definable, and a state sponsor provides legal cover and logistics.</p>
+    <p>### 2. Operation Earnest Will (24 July 1987 – 26 September 1988)</p>
+    <p>The US reflagged 11 Kuwaiti tankers under the US registry, then escorted them through the Gulf with naval convoys.<cite ref="ew1"/> The first convoy hit a mine on 24 July 1987 — the tanker *Bridgeton* struck an Iranian mine on the operation's opening day.<cite ref="bridge1"/> The USS *Samuel B. Roberts* hit a mine on 14 April 1988.<cite ref="pm1"/> Four days later, Operation Praying Mantis — the largest US naval engagement since World War II — destroyed the Iranian frigate *Sahand*, severely damaged the frigate *Sabalan*, sank the fast attack craft *Joshan*, and struck the Sirri and Sassan oil platforms.<cite ref="pm1"/></p>
+    <p>The operation worked despite the mines because: convoy routing reduced exposure, mine countermeasures improved over time, and US retaliation imposed costs on Iran that exceeded the benefit of continued mining.</p>
+    <p>Lesson: Escort convoys work. Mines are the hardest problem. Routing discipline and operational security matter more than firepower. The political willingness to escalate — to destroy Iranian platforms and warships after the *Roberts* — was the actual deterrent, not the escorts themselves.</p>
+    <p>### 3. Gulf of Aden Anti-Piracy (2008–2015)</p>
+    <p>Private armed security teams (PCASP) on merchant vessels effectively ended Somali piracy. The legal framework: IMO guidance MSC.1/Circ.1405/Rev.2 deferred to flag states, flag states authorized armed guards under varying national regimes, companies contracted private maritime security firms.<cite ref="imo1"/> The model was shipboard — teams of 3–4 armed guards per vessel, with escalating ROE (presence, warning, deterrent fire, protective fire). No merchant vessel carrying embarked armed guards was successfully hijacked during the suppression period.<cite ref="pcasp1"/> At the height of the crisis, several hundred embarked teams were operating simultaneously across the High Risk Area.</p>
+    <p>Lesson: Private maritime security works against asymmetric threats when the legal framework exists, flag states cooperate, and the threat model is well-understood. It does not work against state military forces. Somali pirates with RPGs and skiffs are not the IRGC Navy with C-802 anti-ship missiles.</p>
+  </section>
+  <section title="Threat Model" id="threat-model">
+    <figure src="/froth/rfc/images/hormuz_hormuz_tactical_map.jpg" alt="Fig. 1 — Strait of Hormuz tactical geometry">
+      <caption>Fig. 1 — Strait of Hormuz tactical geometry</caption>
+    </figure>
+    <p>Iran's A2/AD in the strait is layered:</p>
+    <list type="numbered">
+      <item><p>MINES — The primary threat. Iran is believed to possess a substantial mine inventory, including EM-52 rocket-propelled rising mines, SADAF-family bottom mines, and conventional moored contact mines.<cite ref="mines1"/> Deployable from submarines, surface craft, and commercial dhows. Covert minelaying in a busy commercial lane is nearly undetectable until the first ship hits one. Open-source counts of total inventory vary and should be treated as estimates, not hard figures.</p></item>
+    </list>
+    <list type="numbered">
+      <item><p>ANTI-SHIP CRUISE MISSILES — Shore-based mobile launchers on the Iranian coast and island garrisons. Noor (C-802 derivative, ~120km range), Qader (~200km), Khalij Fars (ballistic AShM, ~300km).<cite ref="ascm1"/> Multiple simultaneous salvos possible. The strait is well within range of launchers positioned deep inland.</p></item>
+    </list>
+    <list type="numbered">
+      <item><p>FAST ATTACK CRAFT — IRGC Navy swarm doctrine. Dozens of armed speedboats capable of coordinated harassment, RPG/ATGM attacks, and suicide runs. Effective in confined waters where maneuver space is limited and rules of engagement are ambiguous.</p></item>
+    </list>
+    <list type="numbered">
+      <item><p>SUBMARINES — Ghadir-class midget submarines (~23 built per open-source estimates), Nahang-class.<cite ref="mines1"/> Mine delivery, torpedo attacks, intelligence gathering. Small enough to be difficult to track in shallow, noisy Gulf waters.</p></item>
+    </list>
+    <list type="numbered">
+      <item><p>DRONES AND LOITERING MUNITIONS — ISR and strike from land, sea, and island positions. Adds a persistent surveillance and targeting layer over the entire strait.</p></item>
+    </list>
+    <list type="numbered">
+      <item><p>GEOGRAPHY — The traffic separation scheme forces all shipping through a channel roughly 6 nautical miles wide: two-mile inbound lane, two-mile buffer, two-mile outbound lane. Iranian islands and coastline bracket the channel. Reaction time from shore to shipping lane is measured in minutes. The Musandam peninsula (Oman) provides the only non-Iranian coastline on the strait itself.</p></item>
+    </list>
+  </section>
+  <section title="The Plan" id="the-plan">
+    <p>A private operation to open Hormuz would require five capabilities that do not currently exist in any single private entity but could be assembled from existing commercial and quasi-commercial sources.</p>
+    <figure src="/froth/rfc/images/hormuz_four_phases.jpg" alt="Fig. 5 — Four-phase operational timeline">
+      <caption>Fig. 5 — Four-phase operational timeline</caption>
+    </figure>
+    <p>### Phase 0: Legal Architecture</p>
+    <p>No private force can operate in an international strait without state sponsorship. The model is the Flying Tigers: a corporate entity chartered in a cooperating state. Oman is the obvious candidate — they control the Musandam peninsula, have a direct interest in strait access, and have historically maintained relations with both Iran and the West. The entity would operate under Omani flag, with Omani port access, under a bilateral security agreement.</p>
+    <p>Alternative sponsor: UAE (Fujairah is the bypass terminal and eastern terminus of the ADCOP — Abu Dhabi Crude Oil Pipeline — which can carry 1.5 million bbl/day, bypassing Hormuz entirely<cite ref="adcop1"/>), but UAE participation would be read as alignment with the US/Israel coalition and eliminate diplomatic flexibility.</p>
+    <p>UNCLOS Part III, Article 38 establishes transit passage as a right in international straits used for international navigation.<cite ref="unclos1"/> Iran has not ratified UNCLOS but the passage right is widely considered customary international law. The legal theory: the private entity enforces an existing right under contract to affected states and commercial interests.</p>
+    <p>### Phase 1: Mine Countermeasures (the critical path)</p>
+    <figure src="/froth/rfc/images/hormuz_mine_clearance.jpg" alt="Fig. 2 — Autonomous mine countermeasures cross-section">
+      <caption>Fig. 2 — Autonomous mine countermeasures cross-section</caption>
+    </figure>
+    <p>Mines are the threat that makes everything else possible or impossible. A private MCM capability would need:</p>
+    <list type="lettered">
+      <item><label>a</label><p>AUTONOMOUS SURVEY — Commercial AUVs can map and classify the seabed. The Kongsberg HUGIN family (including the HUGIN Endurance variant) is used by both commercial survey operators and defense customers.<cite ref="hugin1"/> Saab's AUV62-MR mine reconnaissance system received a Swedish Navy order in 2024.<cite ref="saab1"/> The REMUS 600 (now under Kongsberg's portfolio after the Hydroid acquisition) is a medium-class UUV used for MCM and other payload missions.<cite ref="remus1"/> A fleet of 8–12 AUVs could survey the traffic separation scheme in 48–72 hours and maintain continuous re-survey on a rolling basis.</p></item>
+    </list>
+    <list type="lettered">
+      <item><label>b</label><p>MINE IDENTIFICATION — Side-scan and synthetic aperture sonar on the AUVs identifies mine-like objects. ATLAS ELEKTRONIK SeaCat can carry user-defined payloads in its flooded bow section and is registered as a dual-use good, exempt from ITAR restrictions.<cite ref="seacat1"/> Thales SAMDIS is a compact sonar optimized for detecting naval mines, including in deeper waters.<cite ref="samdis1"/></p></item>
+    </list>
+    <list type="lettered">
+      <item><label>c</label><p>MINE NEUTRALIZATION — This is the hardest commercial gap. Military mine disposal uses divers and expendable ROVs. ATLAS ELEKTRONIK's SeaFox is an expendable mine neutralizer — the vehicle is sent to the mine, confirms identification via camera, and detonates on contact.<cite ref="seafox1"/> Some of these systems are available for export. A private operation would need either: (i) contracted military EOD teams from a participating state, (ii) commercial mine disposal ROVs operated under the Omani security agreement, or (iii) expendable autonomous mine neutralizers purchased from European defense firms (ATLAS ELEKTRONIK, Saab, ECA Group).</p></item>
+    </list>
+    <list type="lettered">
+      <item><label>d</label><p>UNMANNED SURFACE VESSELS — ATLAS ELEKTRONIK UK's ARCIMS USV platform can deploy and recover AUVs, tow mine sweeping gear, and maintain COLREGS-compliant autonomous navigation.<cite ref="arcims1"/> A fleet of 6–8 USVs provides persistent MCM coverage without putting crews in the minefield.</p></item>
+    </list>
+    <p>The commercial MCM capability exists in pieces. Nobody has assembled it as a private service. The technology is mature. The integration is the gap.</p>
+    <p>### Phase 2: Convoy Escort</p>
+    <figure src="/froth/rfc/images/hormuz_convoy_formation.jpg" alt="Fig. 3 — Private convoy escort formation">
+      <caption>Fig. 3 — Private convoy escort formation</caption>
+    </figure>
+    <p>The Operation Earnest Will model applied with private assets:</p>
+    <list type="lettered">
+      <item><label>a</label><p>ARMED ESCORT VESSELS — Commercial offshore patrol vessels (60–80m class) equipped with naval guns (25–40mm), CIWS or similar point defense, decoys, and ESM. These vessels exist in the surplus naval market and the offshore security market. Crew them with ex-naval personnel under the Omani flag. A minimum of 4 escort vessels supports a daily convoy cycle.</p></item>
+    </list>
+    <list type="lettered">
+      <item><label>b</label><p>CONVOY ROUTING — Managed transit windows. Two convoys per day (one inbound, one outbound), timed to maximize separation and minimize exposure. Route selection varies daily. Speed governed by slowest vessel but minimum 10 knots through the strait.</p></item>
+    </list>
+    <list type="lettered">
+      <item><label>c</label><p>SHIPBOARD SECURITY TEAMS — The Gulf of Aden model scaled up. PCASP teams on every vessel in the convoy: 4–6 armed guards per ship, equipped for anti-swarm defense (heavy machine guns, anti-materiel rifles, shoulder-launched SAMs if the threat escalates to armed drones). Flag state authorization required per IMO MSC.1/Circ.1405/Rev.2.<cite ref="imo1"/></p></item>
+    </list>
+    <list type="lettered">
+      <item><label>d</label><p>ELECTRONIC WARFARE — Drone jamming, radar warning receivers, chaff/flare on escort vessels. Commercial maritime EW systems exist (Saab, Elbit, Rafael). This is the layer that makes the drone threat manageable.</p></item>
+    </list>
+    <p>### Phase 3: ISR and Early Warning</p>
+    <list type="lettered">
+      <item><label>a</label><p>MARITIME DOMAIN AWARENESS — Commercial satellite imagery (Planet, Maxar) for wide-area surveillance. AIS tracking (already commercial). Synthetic aperture radar satellites for all-weather vessel detection. Commercial providers can deliver near-real-time pictures of every vessel in the strait.</p></item>
+    </list>
+    <list type="lettered">
+      <item><label>b</label><p>AERIAL ISR — Long-endurance commercial drones (Textron Aerosonde, Schiebel Camcopter) operating from Musandam or Omani islands. Persistent overhead coverage of the convoy route. Radar and EO/IR payloads for surface search and periscope detection.</p></item>
+    </list>
+    <list type="lettered">
+      <item><label>c</label><p>UNDERSEA SURVEILLANCE — Deployable acoustic sensor arrays (commercial sonobuoy derivatives, seabed hydrophones) in the traffic separation scheme. Detects submarine and small craft movement. This technology exists commercially for offshore asset protection.</p></item>
+    </list>
+    <p>### Phase 4: Shore-Based Missile Defense (the limit case)</p>
+    <p>This is where the private model breaks. Three scenarios:</p>
+    <list type="lettered">
+      <item><label>a</label><p>IGNORE IT — Accept that cruise missiles are a state threat requiring a state response. The private force handles everything below the cruise missile threshold: mines, swarms, drones, surveillance. A cruise missile attack on a convoy is an act of war against the flag state of the vessels, not against the private security provider. This is the Flying Tigers model: let the state handle the existential threat.</p></item>
+    </list>
+    <list type="lettered">
+      <item><label>b</label><p>STATE UMBRELLA — Negotiate a public-private air defense cooperative agreement where a state (US, UK, France, or a regional power) provides air defense coverage for the convoy route. The private force does MCM and surface escort; the state provides the air/missile defense umbrella. This is Operation Earnest Will with a public-private split.</p></item>
+    </list>
+    <list type="lettered">
+      <item><label>c</label><p>POINT DEFENSE ONLY — Escort vessels carry short-range air defense (RAM, Phalanx/CIWS equivalents). This handles drones and possibly terminal-phase cruise missiles but cannot intercept salvos at range. A private entity can buy CIWS. A private entity cannot buy a naval integrated air defense system.</p></item>
+    </list>
+    <p>The honest answer: Phase 4 cannot be solved privately. A private force can clear mines, escort convoys, jam drones, and deter fast attack craft. It cannot defeat a state's cruise missile arsenal. The plan requires a state partner willing to provide air defense, or it requires a political arrangement where the cruise missile threat is managed through diplomacy (Omani channel) rather than kinetics.</p>
+  </section>
+  <section title="Cost Estimate" id="cost-estimate">
+    <figure src="/froth/rfc/images/hormuz_economics.jpg" alt="Fig. 4 — Economics of closure vs private security">
+      <caption>Fig. 4 — Economics of closure vs private security</caption>
+    </figure>
+    <p>Rough order of magnitude for initial operating capability:</p>
+    <p>MCM fleet (12 AUVs, 8 USVs, disposal ROVs)      $120M   Escort vessels (4x OPV, armed/equipped)           $200M   ISR package (drones, satellites, sensors)           $40M   Shipboard security teams (100 operators)            $15M/yr   Personnel (crews, command, logistics)               $80M/yr   Omani basing and port services                      $30M/yr   Insurance and legal                                 $25M/yr   Contingency and attrition                           $50M</p>
+    <p>Initial capital expenditure:                       ~$360M   Annual operating cost:                             ~$150M/yr</p>
+    <p>For context: the insurance premium spike alone costs the shipping industry billions per year at crisis rates. A $150M/yr private security operation that reduces premiums back to pre-crisis levels pays for itself many times over. The ADCOP bypass pipeline can move 1.5M bbl/day but global transit through Hormuz in normal conditions exceeds 20M bbl/day.<cite ref="eia1"/> The bypass is a pressure valve, not a replacement. The economic incentive is overwhelming. The question is not cost. It is authority.</p>
+  </section>
+  <section title="Why This Does Not Exist" id="why-this-does-not-exist">
+    <list type="lettered">
+      <item><label>a</label><p>LIABILITY — A private MCM vessel that misses a mine, followed by a tanker explosion, creates a liability chain that no insurer will underwrite and no corporate entity will accept.</p></item>
+    </list>
+    <list type="lettered">
+      <item><label>b</label><p>ESCALATION — A private escort vessel that fires on an IRGC fast attack boat starts a war. Who authorized it? Under whose rules of engagement? The Flying Tigers worked because they were fighting Japan, not harassing it. The ambiguity of the Hormuz situation — neither peace nor declared war — makes private ROE impossible to define without state backing.</p></item>
+    </list>
+    <list type="lettered">
+      <item><label>c</label><p>STATE MONOPOLY ON VIOLENCE — The international order assumes that only states secure waterways. UNCLOS assigns responsibility to littoral states. A private force, no matter how capable, operates in a legal void unless a state claims it.</p></item>
+    </list>
+    <list type="lettered">
+      <item><label>d</label><p>IRAN'S RESPONSE — Iran would treat a private escort force as a proxy. The diplomatic fiction ("it's not a state navy, it's a commercial security service") would last until the first engagement. After that it is a belligerent.</p></item>
+    </list>
+  </section>
+  <section title="What Would Actually Work" id="what-would-actually-work">
+    <p>The plan that has historical support and legal viability is a hybrid: the Gulf of Aden model for shipboard security, the Earnest Will model for state escort, and commercial autonomous MCM to fill the mine clearance gap. Specifically:</p>
+    <list type="numbered">
+      <item><p>An Omani-flagged commercial MCM service, operating autonomous AUVs and USVs to survey and clear the traffic separation scheme. This is commercially viable, legally defensible under Omani sovereignty, and fills a real gap — the US Navy's MCM readiness was publicly reported as inadequate for immediate escort duties at the crisis onset,<cite ref="twz1"/> and the UK mine hunter fleet (Hunt-class, Sandown-class) has shrunk through decommissionings and delayed recapitalization.</p></item>
+    </list>
+    <list type="numbered">
+      <item><p>Expanded PCASP on every vessel transiting the strait, funded by a shared industry levy (like the Gulf of Aden model). This deters fast boat harassment and drone attacks at the ship level.</p></item>
+    </list>
+    <list type="numbered">
+      <item><p>State naval escort for high-value convoy windows, provided by any combination of US, UK, French, Indian, Pakistani, or GCC navies. This provides the air defense umbrella and the political deterrent against cruise missile attack. The International Maritime Security Construct (IMSC), already operating in the region, provides a multilateral framework for coordination.<cite ref="imsc1"/></p></item>
+    </list>
+    <list type="numbered">
+      <item><p>A commercial maritime domain awareness service providing real-time ISR to all convoy participants via satellite, drone, and sensor fusion. This is a SaaS product, not a military operation.</p></item>
+    </list>
+    <p>The guerrilla insight is that the most militarily effective component — mine clearance — is also the most commercially viable and the least politically provocative. An Omani company operating robots that find and destroy mines is not a mercenary navy. It is a marine services contractor. The mines do not care who finds them. The insurance markets do not care who clears them. The legal framework for commercial mine survey already exists in the offshore energy sector.</p>
+    <p>The $360M capital cost buys a capability that no state navy currently has at the required scale and responsiveness. Commercial autonomous MCM — operated by a private entity, funded by shipping industry levies, based in Oman — could be the thing that actually opens the strait, while the state navies handle the parts of the problem that require sovereignty.</p>
+  </section>
+  <section title="Open Questions" id="open-questions">
+    <list type="numbered">
+      <item><p>Would Oman agree? Their balancing act between Iran and the West is the foundation. A private MCM service operating from Musandam would need to be framed as Omani national interest, not as a Western proxy.</p></item>
+    </list>
+    <list type="numbered">
+      <item><p>Who funds the capital expenditure? Lloyd's, the P&amp;I clubs, the major tanker operators (NITC excluded), sovereign wealth funds of transit-dependent states (Japan, South Korea, India)?</p></item>
+    </list>
+    <list type="numbered">
+      <item><p>Can commercial AUVs actually find Iranian mines in operational conditions — current, silt, shallow water, acoustic clutter? The technology works in exercises. Exercises are not wars.</p></item>
+    </list>
+    <list type="numbered">
+      <item><p>What happens when Iran sinks an unmanned survey vessel? Is that an act of war? Against whom? The robot has no flag state feelings.</p></item>
+    </list>
+    <list type="numbered">
+      <item><p>The precedent problem: if a private entity secures Hormuz, who secures Malacca? Bab el-Mandeb? The Panama Canal? The model either scales or it doesn't. If it scales, the international maritime order changes. If it doesn't, Hormuz is a one-off that proves the rule.</p></item>
+    </list>
+  </section>
+
+  <references>
+    <ref id="ap1" number="1">
+      <title>AP News, "Strait of Hormuz shipping disruption," March 2026</title>
+      <url>https://apnews.com/article/82a9acb473837f1bf7a821d0c3f95205</url>
+    </ref>
+    <ref id="twz1" number="2">
+      <title>The War Zone, "U.S. Navy Won't Be Ready to Escort Tankers Through Hormuz for Weeks."</title>
+      <url>https://www.twz.com/news-features/u-s-navy-wont-be-ready-to-escort-tankers-through-hormuz-for-weeks</url>
+    </ref>
+    <ref id="wind1" number="3">
+      <title>Windward Maritime Intelligence Daily, March 2026</title>
+      <url>https://windward.ai/blog/march-2-iran-war-maritime-intelligence-daily/</url>
+    </ref>
+    <ref id="eia1" number="4">
+      <title>EIA, "World Oil Transit Chokepoints — Strait of Hormuz."</title>
+      <url>https://www.eia.gov/international/analysis/special-topics/World_Oil_Transit_Chokepoints</url>
+    </ref>
+    <ref id="fsquawk1" number="5">
+      <title>@firstsquawk, "Projectile strikes gas pipeline feeding power station in Iran's Khorramshahr," 23 March 2026</title>
+      <url>https://x.com/firstsquawk/status/2036228392316707090</url>
+    </ref>
+    <ref id="avg1" number="6">
+      <title>"Flying Tigers," Wikipedia</title>
+      <url>https://en.wikipedia.org/wiki/Flying_Tigers</url>
+    </ref>
+    <ref id="ew1" number="7">
+      <title>"Operation Earnest Will," Wikipedia</title>
+      <url>https://en.wikipedia.org/wiki/Operation_Earnest_Will</url>
+    </ref>
+    <ref id="bridge1" number="8">
+      <title>"Bridgeton incident," Wikipedia</title>
+      <url>https://en.wikipedia.org/wiki/Bridgeton_incident</url>
+    </ref>
+    <ref id="pm1" number="9">
+      <title>"Operation Praying Mantis," Wikipedia</title>
+      <url>https://en.wikipedia.org/wiki/Operation_Praying_Mantis</url>
+    </ref>
+    <ref id="imo1" number="10">
+      <title>IMO MSC.1/Circ.1405/Rev.2, "Revised interim guidance on the use of PCASP."</title>
+      <url>https://www.imo.org/</url>
+    </ref>
+    <ref id="pcasp1" number="11">
+      <title>Industry reporting on PCASP effectiveness during the Gulf of Aden suppression period. No successful hijacking of a vessel carrying armed guards was recorded</title>
+    </ref>
+    <ref id="mines1" number="12">
+      <title>Open-source Iranian naval mine assessments</title>
+      <url>https://min.news/en/news/c3425b43e76c4ae493da8f1a986ccb94.html</url>
+    </ref>
+    <ref id="ascm1" number="13">
+      <title>"Noor (missile)," "Khalij Fars (missile)," open-source defense databases</title>
+    </ref>
+    <ref id="adcop1" number="14">
+      <title>"Habshan–Fujairah oil pipeline," Wikipedia</title>
+      <url>https://en.wikipedia.org/wiki/Habshan%E2%80%93Fujairah_oil_pipeline</url>
+    </ref>
+    <ref id="unclos1" number="15">
+      <title>UNCLOS Part III, Arts. 37–44, "Straits Used for International Navigation."</title>
+      <url>https://www.un.org/depts/los/convention_agreements/texts/unclos/part3.htm</url>
+    </ref>
+    <ref id="hugin1" number="16">
+      <title>Kongsberg HUGIN Endurance datasheet</title>
+      <url>https://www.kongsberg.com/globalassets/kongsberg-discovery/commerce/surveillance--monitoring/hugin-endurance/473631a_hugin_endurance_datasheet.pdf</url>
+    </ref>
+    <ref id="saab1" number="17">
+      <title>Saab, "Order from Sweden for AUV62-MR," December 2024</title>
+      <url>https://www.saab.com/newsroom/stories/2024/december/saab-receives-order-from-sweden-for-autonomous-underwater-vehicles-for-mine-countermeasures</url>
+    </ref>
+    <ref id="remus1" number="18">
+      <title>Kongsberg/Hydroid REMUS UUV portfolio</title>
+      <url>https://www.kongsberg.com/</url>
+    </ref>
+    <ref id="seacat1" number="19">
+      <title>ATLAS ELEKTRONIK SeaCat mine warfare system.  — ITAR-exempt dual-use registration per TKMS:</title>
+      <url>https://www.atlas-elektronik.com/solutions/mine-warfare-systems/seacat.html</url>
+    </ref>
+    <ref id="samdis1" number="20">
+      <title>Thales SAMDIS mine detection sonar</title>
+      <url>https://www.thalesgroup.com/en/print/pdf/node/6796</url>
+    </ref>
+    <ref id="seafox1" number="21">
+      <title>ATLAS ELEKTRONIK SeaFox expendable mine neutralizer</title>
+      <url>https://www.atlas-elektronik.com/solutions/mine-warfare-systems/seafox.html</url>
+    </ref>
+    <ref id="arcims1" number="22">
+      <title>ATLAS ELEKTRONIK UK ARCIMS USV</title>
+      <url>https://www.uk.atlas-elektronik.com/solutions/anti-submarine-systems/seasense</url>
+    </ref>
+    <ref id="imsc1" number="23">
+      <title>International Maritime Security Construct (IMSC)</title>
+      <url>https://www.imscsentinel.com/</url>
+    </ref>
+  </references>
+</rfc>
