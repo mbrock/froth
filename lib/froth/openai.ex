@@ -3,13 +3,11 @@ defmodule Froth.OpenAI do
 
   alias Froth.LLM
   alias Froth.LLM.Client
-  alias Froth.LLM.Providers.OpenAI, as: OpenAIChat
   alias Froth.LLM.Providers.OpenAIResponses
   alias Froth.LLM.Request
 
   @default_max_tokens 16_384
   @default_model "gpt-5-mini"
-  @chat_endpoint "https://api.openai.com/v1/chat/completions"
   @responses_endpoint "https://api.openai.com/v1/responses"
 
   def stream_single(api_messages, on_event, opts \\ [])
@@ -31,11 +29,10 @@ defmodule Froth.OpenAI do
       {:error, :missing_api_key}
     else
       tools = Keyword.get(overrides, :tools, Keyword.get(cfg, :tools, []))
-      {provider, endpoint} = request_transport(tools)
 
       {:ok,
        %Request{
-         provider: provider,
+         provider: OpenAIResponses,
          messages: api_messages,
          model: Keyword.get(overrides, :model, Keyword.get(cfg, :model, @default_model)),
          system: system_prompt(Keyword.get(overrides, :system, Keyword.get(cfg, :system, ""))),
@@ -43,27 +40,16 @@ defmodule Froth.OpenAI do
            Keyword.get(overrides, :max_tokens, Keyword.get(cfg, :max_tokens, @default_max_tokens)),
          tools: tools,
          headers: [{"authorization", "Bearer #{api_key}"}],
-         endpoint: Keyword.get(overrides, :endpoint, Keyword.get(cfg, :endpoint, endpoint)),
+         endpoint:
+           Keyword.get(overrides, :endpoint, Keyword.get(cfg, :endpoint, @responses_endpoint)),
          provider_options: %{
            "include_usage" => true,
-           "reasoning_effort" => Keyword.get(overrides, :effort, Keyword.get(cfg, :effort))
+           "reasoning_effort" => Keyword.get(overrides, :effort, Keyword.get(cfg, :effort)),
+           "text_verbosity" => Keyword.get(overrides, :verbosity, Keyword.get(cfg, :verbosity))
          }
        }}
     end
   end
-
-  defp request_transport(tools) when is_list(tools) do
-    if Enum.any?(tools, &builtin_tool?/1) do
-      {OpenAIResponses, @responses_endpoint}
-    else
-      {OpenAIChat, @chat_endpoint}
-    end
-  end
-
-  defp request_transport(_tools), do: {OpenAIChat, @chat_endpoint}
-
-  defp builtin_tool?(%{"type" => type}) when is_binary(type), do: type != "function"
-  defp builtin_tool?(_tool), do: false
 
   defp system_prompt(system) when is_binary(system) do
     system = String.trim(system)

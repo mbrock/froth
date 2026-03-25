@@ -3,19 +3,19 @@ defmodule Froth.LLM.Providers.XAIChat do
 
   @behaviour Froth.LLM.Provider
 
-  alias Froth.LLM.Providers.OpenAI
+  alias Froth.LLM.Providers.OpenAICompat
 
   @impl true
-  defdelegate build_request(request), to: OpenAI
+  defdelegate build_request(request), to: OpenAICompat
 
   @impl true
-  defdelegate decode_payload(payload, store), to: OpenAI
+  defdelegate decode_payload(payload, store), to: OpenAICompat
 
   @impl true
-  defdelegate finalize(store), to: OpenAI
+  defdelegate finalize(store), to: OpenAICompat
 
   @impl true
-  defdelegate project_event(edit), to: OpenAI
+  defdelegate project_event(edit), to: OpenAICompat
 
-  defdelegate encode_messages(messages), to: OpenAI
+  defdelegate encode_messages(messages), to: OpenAICompat
 end

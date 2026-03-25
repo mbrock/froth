@@ -22,6 +22,7 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
       |> maybe_put("tools", encode_tools(request.tools))
       |> maybe_put("max_output_tokens", normalize_max_output_tokens(request.max_tokens))
       |> maybe_put("reasoning", reasoning_config(request.provider_options["reasoning_effort"]))
+      |> maybe_put("text", text_config(request.provider_options["text_verbosity"]))
 
     {:ok, %{url: request.endpoint, headers: request.headers, body: body}}
   end
@@ -49,33 +50,31 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
     end
   end
 
-  defp encode_normalized_message(%Message{role: role} = message)
-       when role in [:system, :user, :assistant] do
-    text_items =
-      case normalize_text_content(Message.content_blocks(message)) do
-        "" -> []
-        text -> [%{"role" => encode_role(role), "content" => text}]
-      end
+  defp encode_normalized_message(%Message{role: :system} = message) do
+    encode_text_message("system", Message.content_blocks(message))
+  end
 
-    tool_call_items =
-      if role == :assistant do
-        encode_tool_call_items(Message.tool_uses(message))
-      else
-        []
-      end
+  defp encode_normalized_message(%Message{role: :assistant} = message) do
+    encode_text_message("assistant", Message.content_blocks(message)) ++
+      encode_tool_call_items(Message.tool_uses(message))
+  end
 
-    tool_result_items =
-      if role == :user do
-        encode_tool_result_items(Message.tool_results(message))
-      else
-        []
-      end
-
-    text_items ++ tool_call_items ++ tool_result_items
+  defp encode_normalized_message(%Message{role: :user} = message) do
+    encode_user_message(Message.content_blocks(message)) ++
+      encode_tool_result_items(Message.tool_results(message))
   end
 
   defp encode_raw_message(%{"role" => "tool", "tool_use_id" => id, "content" => content}) do
     [%{"type" => "function_call_output", "call_id" => id, "output" => normalize_output(content)}]
+  end
+
+  defp encode_raw_message(%{"role" => "user", "content" => content}) when is_binary(content) do
+    [%{"role" => "user", "content" => content}]
+  end
+
+  defp encode_raw_message(%{"role" => "user", "content" => content}) when is_list(content) do
+    encode_user_message(content) ++
+      encode_tool_result_items(Enum.filter(content, &match?(%{"type" => "tool_result"}, &1)))
   end
 
   defp encode_raw_message(%{"role" => role, "content" => content}) when is_binary(content) do
@@ -83,11 +82,7 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
   end
 
   defp encode_raw_message(%{"role" => role, "content" => content}) when is_list(content) do
-    text_items =
-      case normalize_text_content(content) do
-        "" -> []
-        text -> [%{"role" => role, "content" => text}]
-      end
+    text_items = encode_text_message(role, content)
 
     tool_call_items =
       encode_tool_call_items(Enum.filter(content, &match?(%{"type" => "tool_use"}, &1)))
@@ -99,6 +94,75 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
   end
 
   defp encode_raw_message(message), do: [message]
+
+  defp encode_text_message(role, content) when is_binary(role) do
+    case normalize_text_content(content) do
+      "" -> []
+      text -> [%{"role" => role, "content" => text}]
+    end
+  end
+
+  defp encode_user_message(content) do
+    case encode_user_content(content) do
+      nil -> []
+      encoded -> [%{"role" => "user", "content" => encoded}]
+    end
+  end
+
+  defp encode_user_content(content) when is_binary(content), do: content
+
+  defp encode_user_content(content) when is_list(content) do
+    content =
+      Enum.reject(content, fn
+        %{"type" => "tool_result"} -> true
+        _ -> false
+      end)
+
+    case encode_user_content_parts(content) do
+      [] ->
+        nil
+
+      parts ->
+        if Enum.all?(parts, &(&1["type"] == "input_text")) do
+          Enum.map_join(parts, "\n", &Map.get(&1, "text", ""))
+        else
+          parts
+        end
+    end
+  end
+
+  defp encode_user_content(content), do: normalize_text_content(content)
+
+  defp encode_user_content_parts(content) when is_list(content) do
+    Enum.flat_map(content, fn
+      %{"type" => "text", "text" => text} when is_binary(text) ->
+        [%{"type" => "input_text", "text" => text}]
+
+      %{"type" => "input_text", "text" => text} = part when is_binary(text) ->
+        [part]
+
+      %{"type" => "input_image"} = part ->
+        [part]
+
+      %{"type" => "image", "source" => source} when is_map(source) ->
+        case responses_image_part(source) do
+          nil -> []
+          part -> [part]
+        end
+
+      %{"type" => "image_url"} = part ->
+        case normalize_image_url_part(part) do
+          nil -> []
+          image_part -> [image_part]
+        end
+
+      %{"text" => text} when is_binary(text) ->
+        [%{"type" => "input_text", "text" => text}]
+
+      _ ->
+        []
+    end)
+  end
 
   defp encode_tools(tools) when is_list(tools) do
     tools
@@ -196,11 +260,52 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
   defp reasoning_config(effort) when is_binary(effort), do: %{"effort" => effort}
   defp reasoning_config(_), do: nil
 
+  defp text_config(nil), do: nil
+  defp text_config(""), do: nil
+  defp text_config(verbosity) when is_binary(verbosity), do: %{"verbosity" => verbosity}
+  defp text_config(_), do: nil
+
+  defp responses_image_part(source) when is_map(source) do
+    image_url =
+      cond do
+        is_binary(source["url"]) and String.trim(source["url"]) != "" ->
+          source["url"]
+
+        is_binary(source["uri"]) and String.trim(source["uri"]) != "" ->
+          source["uri"]
+
+        is_binary(source["data"]) and String.trim(source["data"]) != "" ->
+          media_type = source["media_type"] || source["mime_type"] || "image/jpeg"
+          "data:#{media_type};base64,#{source["data"]}"
+
+        true ->
+          nil
+      end
+
+    cond do
+      is_binary(image_url) and image_url != "" ->
+        %{"type" => "input_image", "image_url" => image_url}
+
+      is_binary(source["file_id"]) and String.trim(source["file_id"]) != "" ->
+        %{"type" => "input_image", "file_id" => source["file_id"]}
+
+      true ->
+        nil
+    end
+  end
+
+  defp normalize_image_url_part(%{"image_url" => %{"url" => url}})
+       when is_binary(url) and url != "" do
+    %{"type" => "input_image", "image_url" => url}
+  end
+
+  defp normalize_image_url_part(%{"image_url" => url}) when is_binary(url) and url != "" do
+    %{"type" => "input_image", "image_url" => url}
+  end
+
+  defp normalize_image_url_part(_part), do: nil
+
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, _key, []), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
-
-  defp encode_role(:system), do: "system"
-  defp encode_role(:user), do: "user"
-  defp encode_role(:assistant), do: "assistant"
 end

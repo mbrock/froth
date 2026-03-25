@@ -2,9 +2,8 @@ defmodule Froth.OpenAITest do
   use ExUnit.Case, async: false
 
   alias Froth.LLM.Message
-  alias Froth.LLM.Request
-  alias Froth.LLM.Providers.OpenAI, as: OpenAIProvider
   alias Froth.LLM.Providers.OpenAIResponses
+  alias Froth.LLM.Request
   alias Froth.OpenAI
 
   setup do
@@ -24,7 +23,7 @@ defmodule Froth.OpenAITest do
     :ok
   end
 
-  test "stream_single/3 uses the native OpenAI provider" do
+  test "stream_single/3 uses the Responses provider for standard requests" do
     test_pid = self()
 
     Application.put_env(:froth, OpenAI,
@@ -42,7 +41,7 @@ defmodule Froth.OpenAITest do
          stop_reason: "stop",
          usage: %{},
          model: request.model,
-         message_id: "msg_test"
+         message_id: "resp_test"
        }}
     end)
 
@@ -56,20 +55,21 @@ defmodule Froth.OpenAITest do
 
     assert_received {:llm_request,
                      %Request{
-                       provider: OpenAIProvider,
-                       endpoint: "https://api.openai.com/v1/chat/completions",
+                       provider: OpenAIResponses,
+                       endpoint: "https://api.openai.com/v1/responses",
                        model: "gpt-5-mini",
                        messages: [
                          %Message{role: :user, content: [%{"type" => "text", "text" => "hello"}]}
                        ],
                        provider_options: %{
                          "include_usage" => true,
-                         "reasoning_effort" => nil
+                         "reasoning_effort" => nil,
+                         "text_verbosity" => nil
                        }
                      }}
   end
 
-  test "stream_single/3 uses the Responses provider for built-in tools" do
+  test "stream_single/3 keeps tools and effort on the Responses path" do
     test_pid = self()
 
     Application.put_env(:froth, OpenAI,
@@ -95,7 +95,9 @@ defmodule Froth.OpenAITest do
              OpenAI.stream_single(
                [Message.user("hello")],
                fn _event -> :ok end,
-               tools: [%{"type" => "web_search_preview"}]
+               tools: [%{"type" => "web_search_preview"}],
+               effort: "low",
+               verbosity: "high"
              )
 
     assert result.text == "hello"
@@ -108,9 +110,11 @@ defmodule Froth.OpenAITest do
                        messages: [
                          %Message{role: :user, content: [%{"type" => "text", "text" => "hello"}]}
                        ],
+                       tools: [%{"type" => "web_search_preview"}],
                        provider_options: %{
                          "include_usage" => true,
-                         "reasoning_effort" => nil
+                         "reasoning_effort" => "low",
+                         "text_verbosity" => "high"
                        }
                      }}
   end

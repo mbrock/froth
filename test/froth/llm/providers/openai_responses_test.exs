@@ -5,7 +5,7 @@ defmodule Froth.LLM.Providers.OpenAIResponsesTest do
   alias Froth.LLM.Providers.OpenAIResponses
   alias Froth.LLM.Request
 
-  test "build_request encodes responses-api input, instructions, and built-in tools" do
+  test "build_request encodes responses-api input, instructions, tools, reasoning, and verbosity" do
     request = %Request{
       provider: OpenAIResponses,
       endpoint: "https://example.test/v1/responses",
@@ -39,7 +39,7 @@ defmodule Froth.LLM.Providers.OpenAIResponsesTest do
           }
         }
       ],
-      provider_options: %{"reasoning_effort" => "medium"}
+      provider_options: %{"reasoning_effort" => "medium", "text_verbosity" => "low"}
     }
 
     {:ok, %{body: body}} = OpenAIResponses.build_request(request)
@@ -48,6 +48,7 @@ defmodule Froth.LLM.Providers.OpenAIResponsesTest do
     assert body["instructions"] == "system prompt"
     assert body["max_output_tokens"] == 1024
     assert body["reasoning"] == %{"effort" => "medium"}
+    assert body["text"] == %{"verbosity" => "low"}
 
     assert body["input"] == [
              %{"role" => "user", "content" => "hello"},
@@ -71,6 +72,51 @@ defmodule Froth.LLM.Providers.OpenAIResponsesTest do
                  "type" => "object",
                  "properties" => %{"text" => %{"type" => "string"}}
                }
+             }
+           ]
+  end
+
+  test "build_request encodes user image blocks into responses input items" do
+    request = %Request{
+      provider: OpenAIResponses,
+      endpoint: "https://example.test/v1/responses",
+      headers: [{"authorization", "Bearer test"}],
+      model: "gpt-5.4",
+      messages: [
+        Message.user([
+          %{"type" => "text", "text" => "What is in these images?"},
+          %{
+            "type" => "image",
+            "source" => %{
+              "type" => "base64",
+              "media_type" => "image/png",
+              "data" => "aGVsbG8="
+            }
+          },
+          %{
+            "type" => "image",
+            "source" => %{
+              "type" => "url",
+              "url" => "https://example.test/cat.png"
+            }
+          }
+        ])
+      ]
+    }
+
+    {:ok, %{body: body}} = OpenAIResponses.build_request(request)
+
+    assert body["input"] == [
+             %{
+               "role" => "user",
+               "content" => [
+                 %{"type" => "input_text", "text" => "What is in these images?"},
+                 %{
+                   "type" => "input_image",
+                   "image_url" => "data:image/png;base64,aGVsbG8="
+                 },
+                 %{"type" => "input_image", "image_url" => "https://example.test/cat.png"}
+               ]
              }
            ]
   end
