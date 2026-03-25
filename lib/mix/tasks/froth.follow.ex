@@ -10,6 +10,8 @@ defmodule Mix.Tasks.Froth.Follow do
 
   @impl Mix.Task
   def run(args) do
+    ensure_repo_started!()
+
     node = Froth.Cluster.rpc_target_node()
 
     cookie =
@@ -43,14 +45,18 @@ defmodule Mix.Tasks.Froth.Follow do
 
     events = fetch_events(node)
     events = filter_events(events, Filter.event_segments(filter))
+    handler_id = unique_handler_id()
 
-    follower = self()
-
-    handler = fn event_name, measurements, metadata, _config ->
-      send(follower, {:telemetry_event, event_name, measurements, metadata})
+    case :rpc.call(node, :telemetry, :attach_many, [
+           handler_id,
+           events,
+           &__MODULE__.handle_telemetry_event/4,
+           %{pid: self()}
+         ]) do
+      :ok -> :ok
+      {:badrpc, reason} -> abort("Could not attach telemetry handler: #{inspect(reason)}")
+      other -> abort("Could not attach telemetry handler: #{inspect(other)}")
     end
-
-    :rpc.call(node, :telemetry, :attach_many, [@handler_id, events, handler, nil])
 
     Mix.shell().info("Connected to #{node}")
     filter_summary = Filter.summary(filter)
@@ -63,14 +69,13 @@ defmodule Mix.Tasks.Froth.Follow do
       "\n"
     ])
 
-    render_recent_history(mode, filter, tail)
-
     Process.flag(:trap_exit, true)
 
     try do
+      render_recent_history(mode, filter, tail)
       loop(mode, filter)
     after
-      :rpc.call(node, :telemetry, :detach, [@handler_id])
+      :rpc.call(node, :telemetry, :detach, [handler_id])
     end
   end
 
@@ -135,5 +140,36 @@ defmodule Mix.Tasks.Froth.Follow do
 
       IO.write("\n")
     end
+  end
+
+  def handle_telemetry_event(event_name, measurements, metadata, %{pid: pid}) do
+    send(pid, {:telemetry_event, event_name, measurements, metadata})
+  end
+
+  defp ensure_repo_started! do
+    Mix.Task.run("loadpaths")
+    Mix.Task.run("app.config")
+
+    if Process.whereis(Froth.Repo) do
+      :ok
+    else
+      Application.ensure_all_started(:postgrex)
+      Application.ensure_all_started(:ecto_sql)
+
+      case Froth.Repo.start_link() do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+        {:error, reason} -> abort("Could not start Froth.Repo: #{inspect(reason)}")
+      end
+    end
+  end
+
+  defp unique_handler_id do
+    "#{@handler_id}-#{System.pid()}-#{System.unique_integer([:positive])}"
+  end
+
+  defp abort(message) do
+    Mix.shell().error(message)
+    System.halt(1)
   end
 end

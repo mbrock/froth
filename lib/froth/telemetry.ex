@@ -55,6 +55,7 @@ defmodule Froth.Telemetry do
   @agent_events [
     [:froth, :agent, :cycle, :start],
     [:froth, :agent, :cycle, :stop],
+    [:froth, :agent, :control, :outcome],
     [:froth, :agent, :think, :start],
     [:froth, :agent, :think, :stop],
     [:froth, :agent, :tool, :started],

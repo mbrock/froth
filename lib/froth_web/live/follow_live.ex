@@ -134,7 +134,7 @@ defmodule FrothWeb.FollowLive do
       <div
         id="follow-reader"
         phx-hook="ToolScroll"
-        data-follow-mode="smart"
+        data-follow-mode="always"
         class="min-h-screen bg-[radial-gradient(circle_at_top,rgba(28,55,97,0.22),transparent_28%),linear-gradient(180deg,#09090b_0%,#050507_55%,#020203_100%)] font-mono text-zinc-100"
       >
         <header class="sticky top-0 z-30 border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-xl">
@@ -192,6 +192,23 @@ defmodule FrothWeb.FollowLive do
                   ]}
                 >
                   Raw
+                </button>
+                <button
+                  id="follow-mode-errors"
+                  type="button"
+                  phx-click="set-mode"
+                  phx-value-mode="errors"
+                  class={[
+                    "inline-flex min-h-9 items-center rounded-xl border px-3 text-[11px] uppercase tracking-[0.16em] transition",
+                    if(@view_mode == :errors,
+                      do:
+                        "border-amber-200 bg-amber-100 text-amber-950 shadow-[0_10px_30px_rgba(251,191,36,0.12)]",
+                      else:
+                        "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+                    )
+                  ]}
+                >
+                  Errors
                 </button>
                 <button
                   id="follow-clear"
@@ -473,6 +490,7 @@ defmodule FrothWeb.FollowLive do
   end
 
   defp parse_view_mode("raw"), do: :raw
+  defp parse_view_mode("errors"), do: :errors
   defp parse_view_mode(_), do: :smart
 
   defp follow_path(socket, overrides) do
@@ -501,6 +519,7 @@ defmodule FrothWeb.FollowLive do
   defp normalize_query_value(_key, value), do: normalize_filter_value(value)
 
   defp mode_param(:raw), do: "raw"
+  defp mode_param(:errors), do: "errors"
   defp mode_param(:smart), do: nil
 
   defp normalize_filter_value(nil), do: nil
@@ -528,22 +547,31 @@ defmodule FrothWeb.FollowLive do
 
   defp entry_title(entry, :raw), do: entry.event
 
-  defp entry_title(%Entry{family: "tool", scope: scope, summary: summary}, :smart),
-    do: join_sentence([scope, summary])
+  defp entry_title(%Entry{family: "tool", scope: scope, summary: summary}, mode)
+       when mode in [:smart, :errors],
+       do: join_sentence([scope, summary])
 
-  defp entry_title(%Entry{family: "llm", scope: scope, summary: summary}, :smart),
-    do: join_sentence([scope, summary])
+  defp entry_title(%Entry{family: "llm", scope: scope, summary: summary}, mode)
+       when mode in [:smart, :errors],
+       do: join_sentence([scope, summary])
 
-  defp entry_title(%Entry{family: "cycle", cycle_id: cycle_id, summary: summary}, :smart),
-    do: join_sentence(["cycle #{truncate_id(cycle_id, 10)}", summary])
+  defp entry_title(%Entry{family: "cycle", cycle_id: cycle_id, summary: summary}, mode)
+       when mode in [:smart, :errors],
+       do: join_sentence(["cycle #{truncate_id(cycle_id, 10)}", summary])
 
-  defp entry_title(%Entry{family: "think", cycle_id: cycle_id, summary: summary}, :smart),
-    do: join_sentence(["cycle #{truncate_id(cycle_id, 10)}", summary])
+  defp entry_title(%Entry{family: "think", cycle_id: cycle_id, summary: summary}, mode)
+       when mode in [:smart, :errors],
+       do: join_sentence(["cycle #{truncate_id(cycle_id, 10)}", summary])
 
-  defp entry_title(%Entry{family: "telegram", summary: summary, scope: scope}, :smart),
-    do: join_sentence([scope, summary])
+  defp entry_title(%Entry{family: "control", cycle_id: cycle_id, summary: summary}, mode)
+       when mode in [:smart, :errors],
+       do: join_sentence(["cycle #{truncate_id(cycle_id, 10)}", summary])
 
-  defp entry_title(%Entry{scope: scope, summary: summary}, :smart),
+  defp entry_title(%Entry{family: "telegram", summary: summary, scope: scope}, mode)
+       when mode in [:smart, :errors],
+       do: join_sentence([scope, summary])
+
+  defp entry_title(%Entry{scope: scope, summary: summary}, mode) when mode in [:smart, :errors],
     do: join_sentence([scope, summary])
 
   defp entry_subtitle(entry, :raw) do
@@ -553,7 +581,7 @@ defmodule FrothWeb.FollowLive do
     ])
   end
 
-  defp entry_subtitle(%Entry{} = entry, :smart) do
+  defp entry_subtitle(%Entry{} = entry, mode) when mode in [:smart, :errors] do
     join_sentence([
       entry.detail,
       smart_context(entry)
@@ -576,6 +604,11 @@ defmodule FrothWeb.FollowLive do
         "telegram" ->
           join_sentence([
             entry.message_id && "message=#{truncate_id(entry.message_id, 10)}"
+          ])
+
+        "control" ->
+          join_sentence([
+            entry.tool_use_id && "call=#{truncate_id(entry.tool_use_id, 10)}"
           ])
 
         _ ->
@@ -747,22 +780,40 @@ defmodule FrothWeb.FollowLive do
   end
 
   defp family_label(family) do
-    case family_group_key(family) do
-      :agent -> "agent"
-      :tool -> "tool"
-      :llm -> "llm"
-      :telegram -> "telegram"
-      :system -> "system"
+    case family do
+      "control" ->
+        "control"
+
+      "message" ->
+        "message"
+
+      _ ->
+        case family_group_key(family) do
+          :agent -> "agent"
+          :tool -> "tool"
+          :llm -> "llm"
+          :telegram -> "telegram"
+          :system -> "system"
+        end
     end
   end
 
   defp entry_icon(family) do
-    case family_group_key(family) do
-      :agent -> "hero-sparkles"
-      :tool -> "hero-wrench-screwdriver"
-      :llm -> "hero-cpu-chip"
-      :telegram -> "hero-chat-bubble-left-right"
-      :system -> "hero-circle-stack"
+    case family do
+      "control" ->
+        "hero-bolt"
+
+      "message" ->
+        "hero-envelope"
+
+      _ ->
+        case family_group_key(family) do
+          :agent -> "hero-sparkles"
+          :tool -> "hero-wrench-screwdriver"
+          :llm -> "hero-cpu-chip"
+          :telegram -> "hero-chat-bubble-left-right"
+          :system -> "hero-circle-stack"
+        end
     end
   end
 
@@ -796,7 +847,9 @@ defmodule FrothWeb.FollowLive do
     end
   end
 
-  defp family_group_key(family) when family in ["cycle", "think"], do: :agent
+  defp family_group_key(family) when family in ["cycle", "think", "control", "message"],
+    do: :agent
+
   defp family_group_key("tool"), do: :tool
   defp family_group_key("llm"), do: :llm
   defp family_group_key("telegram"), do: :telegram

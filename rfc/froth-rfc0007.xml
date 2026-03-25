@@ -3,7 +3,7 @@
 <rfc number="0007" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0007: Triangulated Web Search via Multi-Provider Fan-Out</title>
-    <status>DRAFT</status>
+    <status>IMPLEMENTED</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-24</date>
     <related>FROTH-RFC-0002 (Native Multimodal LLM Layer)</related>
@@ -215,23 +215,23 @@ end</code>
   </section>
 
   <section title="Implementation Status" id="implementation-status">
-    <p>As of 2026-03-24, the following provider capabilities exist in Froth:</p>
+    <p>As of 2026-03-24, this RFC is implemented.</p>
     <deflist>
       <def>
         <term>Grok (xAI)</term>
-        <desc>Fully working. <tt>Froth.Grok.stream_single/3</tt> auto-detects built-in tools (<tt>x_search</tt>, <tt>web_search</tt>) and switches from the Chat Completions API to the Responses API at <tt>https://api.x.ai/v1/responses</tt>. The provider module <tt>Froth.LLM.Providers.XAIResponses</tt> handles the SSE stream. Default model: <tt>grok-4-1-fast-non-reasoning</tt>. This works today and was used for the RFC-0010 threat model verification.</desc>
+        <desc>Implemented. <tt>Froth.Search.Grok</tt> uses native <tt>x_search</tt> and <tt>web_search</tt> through Froth's xAI Responses integration.</desc>
       </def>
       <def>
         <term>OpenAI (GPT)</term>
-        <desc>Partially working. <tt>Froth.OpenAI.stream_single/3</tt> uses the Chat Completions API at <tt>https://api.openai.com/v1/chat/completions</tt>. The OpenAI provider module passes through built-in tool types unchanged, BUT the Chat Completions API does not support <tt>web_search_preview</tt> — that tool only works on the Responses API at <tt>https://api.openai.com/v1/responses</tt>. There is NO <tt>Froth.LLM.Providers.OpenAIResponses</tt> module yet. The RFC-0010 research used raw HTTP to the Responses API endpoint, bypassing Froth entirely. Default model: <tt>gpt-5-mini</tt>. THIS IS THE PRIMARY GAP.</desc>
+        <desc>Implemented. <tt>Froth.OpenAI</tt> now auto-switches to <tt>Froth.LLM.Providers.OpenAIResponses</tt> when <tt>web_search_preview</tt> is present, so search runs through OpenAI's native Responses API path.</desc>
       </def>
       <def>
         <term>Gemini (Google)</term>
-        <desc>Not implemented for search. <tt>Froth.Gemini.stream_single/3</tt> exists and supports both the <tt>generateContent</tt> and <tt>interactions</tt> endpoints. The <tt>google_search_retrieval</tt> grounding tool needs to be wired. The Gemini provider module (<tt>Froth.LLM.Providers.Gemini</tt>) already passes through non-function tools unchanged. The gap is: nobody has tested whether passing <tt>%{"type" =&gt; "google_search_retrieval"}</tt> as a tool actually activates Google Search grounding.</desc>
+        <desc>Implemented. <tt>Froth.Search.Gemini</tt> uses native <tt>google_search_retrieval</tt> grounding, and the provider/tool encoding is covered by tests.</desc>
       </def>
       <def>
         <term>Collation (Anthropic)</term>
-        <desc>Not implemented. <tt>Froth.Anthropic.stream_single/3</tt> exists and works. The collation step just needs a wrapper function that takes three provider responses and asks Anthropic to synthesize them.</desc>
+        <desc>Implemented. <tt>Froth.Search</tt> collates provider outputs into a structured <tt>Froth.Search.Result</tt>, and <tt>web_search</tt> is exposed through <tt>Froth.Inference.Tools</tt> for agent use.</desc>
       </def>
     </deflist>
   </section>
@@ -269,24 +269,16 @@ Froth.Grok.stream_single(
   system: "Search the web. Return factual findings with source URLs."
 )
 
-# OpenAI — NEEDS OpenAIResponses provider
-# Today this requires raw HTTP:
-Req.post!("https://api.openai.com/v1/responses",
-  json: %{
-    "model" =&gt; "gpt-5.4-mini",
-    "tools" =&gt; [%{"type" =&gt; "web_search_preview"}],
-    "input" =&gt; query,
-    "instructions" =&gt; "Search the web. Return factual findings with source URLs."
-  },
-  headers: [{"authorization", "Bearer #{api_key}"}],
-  receive_timeout: 60_000
+# OpenAI — implemented via Froth.OpenAI auto-switching to OpenAIResponses
+Froth.OpenAI.stream_single(
+  [%{"role" =&gt; "user", "content" =&gt; query}],
+  on_event,
+  tools: [%{"type" =&gt; "web_search_preview"}],
+  model: "gpt-5.4",
+  system: "Search the web. Return factual findings with source URLs."
 )
 
-# Target: should work through Froth.OpenAI with auto-detection
-# like Grok does, switching to Responses API when web_search_preview
-# is in the tools list.
-
-# Gemini — needs testing
+# Gemini — implemented via native google_search_retrieval grounding
 Froth.Gemini.stream_single(
   [%{"role" =&gt; "user", "content" =&gt; query}],
   on_event,
@@ -298,19 +290,17 @@ Froth.Gemini.stream_single(
       }
     }
   }],
-  model: "gemini-3-flash-preview",
+  model: "gemini-3.1-pro",
   system: "Search the web. Return factual findings with source URLs."
 )</code>
     </subsection>
 
-    <subsection title="Implementation Tasks" id="implementation-tasks">
-      <p>In priority order:</p>
-      <list type="numbered">
-        <item><p>Build <tt>Froth.LLM.Providers.OpenAIResponses</tt> — mirror the structure of <tt>XAIResponses</tt> but for OpenAI's <tt>/v1/responses</tt> endpoint. The SSE format is nearly identical (both use the Responses API spec). The key difference: OpenAI uses <tt>web_search_preview</tt> where xAI uses <tt>web_search</tt> and <tt>x_search</tt>.</p></item>
-        <item><p>Update <tt>Froth.OpenAI.build_request/2</tt> to auto-detect built-in tools and switch providers, exactly as <tt>Froth.Grok</tt> does — when tools include <tt>web_search_preview</tt>, use <tt>OpenAIResponses</tt> provider and the <tt>/v1/responses</tt> endpoint.</p></item>
-        <item><p>Test Gemini search grounding by passing <tt>google_search_retrieval</tt> tool config through the existing Gemini provider.</p></item>
-        <item><p>Build <tt>Froth.Search</tt> as the fan-out coordinator: three concurrent <tt>Task.async</tt> calls to the three providers, a collation call to Anthropic, and the result struct.</p></item>
-        <item><p>Wire <tt>Froth.Search.query/2</tt> as an agent tool named <tt>web_search</tt> in <tt>Froth.Agent.Config</tt>.</p></item>
+    <subsection title="Delivered Pieces" id="delivered-pieces">
+      <list type="bullet">
+        <item><p><tt>Froth.LLM.Providers.OpenAIResponses</tt> was added and wired into <tt>Froth.OpenAI</tt> for <tt>web_search_preview</tt>.</p></item>
+        <item><p><tt>Froth.Search</tt> was implemented as the concurrent fan-out and collation coordinator.</p></item>
+        <item><p><tt>web_search</tt> is exported through <tt>Froth.Inference.Tools</tt> for agent use.</p></item>
+        <item><p>Tests cover provider tool encoding, multi-provider fan-out, collation, and tool execution.</p></item>
       </list>
     </subsection>
   </section>

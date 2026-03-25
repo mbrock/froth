@@ -52,7 +52,7 @@ defmodule Froth.MixProject do
       {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
       {:tailwind, "~> 0.3", runtime: Mix.env() == :dev},
       {:req, "~> 0.5"},
-      {:req_sse, "~> 0.1"},
+      # {:req_sse, "~> 0.1"},  # replaced by inline SSE parser in Froth.LLM.Transport.SSE
       {:finch, "~> 0.21"},
       {:heroicons,
        github: "tailwindlabs/heroicons",

@@ -3,7 +3,7 @@
 <rfc number="0004" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0004: Agent Execution Spine</title>
-    <status>PARTIALLY SUPERSEDED by RFC-0008</status>
+    <status>IMPLEMENTED; event schema later revised by RFC-0008</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-23</date>
     <related>FROTH-RFC-0002, FROTH-RFC-0003</related>
@@ -290,6 +290,11 @@ telegram_cycle_links
     <p>Phase 6: Reduce dependence on legacy inference-session snapshots and</p>
     <code>     keep them only as migration/backfill compatibility.
 </code>
+  </section>
+  <section title="Implementation Status" id="implementation-status">
+    <p>As of 2026-03-24, the execution spine described here is implemented in Froth's runtime and persistence layers.</p>
+    <p><tt>agent_cycles</tt> now stores run status, resolved configuration, usage, cost, errors, span linkage, and blob references; worker execution persists durable cycle, LLM, and tool records that the UI and tests can inspect directly.</p>
+    <p>RFC-0008 later changed the exact event-log table shape by unifying execution events into <tt>events</tt>. That supersedes the specific <tt>agent_events</tt> schema proposed here, but not the architectural outcome.</p>
   </section>
   <section title="Consequences" id="consequences">
     <subsection title="Benefits" id="benefits">

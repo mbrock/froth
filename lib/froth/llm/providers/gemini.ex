@@ -347,6 +347,7 @@ defmodule Froth.LLM.Providers.Gemini do
     do: {:builtin, google_search_retrieval_tool(tool)}
 
   defp encode_tool(%{"googleSearch" => _} = tool), do: {:builtin, tool}
+  defp encode_tool(%{"google_search" => _}), do: {:builtin, %{"googleSearch" => %{}}}
   defp encode_tool(%{"googleSearchRetrieval" => _} = tool), do: {:builtin, tool}
   defp encode_tool(%{"google_search_retrieval" => _} = tool), do: {:builtin, tool}
   defp encode_tool(%{"codeExecution" => _} = tool), do: {:builtin, tool}

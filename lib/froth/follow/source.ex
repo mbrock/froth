@@ -64,8 +64,9 @@ defmodule Froth.Follow.Source do
 
           from(e in query,
             where:
-              like(e.event, ^pattern) or
-                fragment("?::text LIKE ?", e.metadata, ^pattern)
+              ilike(e.event, ^pattern) or
+                fragment("?::text ILIKE ?", e.measurements, ^pattern) or
+                fragment("?::text ILIKE ?", e.metadata, ^pattern)
           )
       end
 

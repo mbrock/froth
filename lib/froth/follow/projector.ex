@@ -116,6 +116,23 @@ defmodule Froth.Follow.Projector do
     }
   end
 
+  defp classify(["froth", "agent", "cycle", "started"], _m, metadata, _d) do
+    %{
+      family: "cycle",
+      kind: "started",
+      scope: short_id(metadata["cycle_id"]),
+      summary: "started",
+      detail:
+        join_detail([
+          metadata["status"] && "status=#{metadata["status"]}",
+          metadata["model"] && "model=#{metadata["model"]}",
+          metadata["provider"] && "provider=#{metadata["provider"]}"
+        ]),
+      level: :info,
+      hidden: true
+    }
+  end
+
   defp classify(["froth", "agent", "cycle", "stop"], _m, metadata, duration_ms) do
     reason = normalize_string(metadata["reason"])
     phase = normalize_string(metadata["phase"])
@@ -153,6 +170,34 @@ defmodule Froth.Follow.Projector do
       detail: detail,
       level: level,
       hidden: false
+    }
+  end
+
+  defp classify(["froth", "agent", "cycle", kind], _m, metadata, _duration_ms)
+       when kind in ["completed", "failed", "cancelled"] do
+    summary =
+      case kind do
+        "completed" -> "completed"
+        "failed" -> "failed"
+        "cancelled" -> "cancelled"
+      end
+
+    detail =
+      join_detail([
+        metadata["phase"] && "phase=#{metadata["phase"]}",
+        metadata["reply_sent"] && "reply_sent=true",
+        metadata["stop_reason"] && "stop_reason=#{metadata["stop_reason"]}",
+        metadata["error"] && "error=#{truncate(metadata["error"], 120)}"
+      ])
+
+    %{
+      family: "cycle",
+      kind: kind,
+      scope: short_id(metadata["cycle_id"]),
+      summary: summary,
+      detail: detail,
+      level: if(kind == "failed", do: :error, else: :info),
+      hidden: true
     }
   end
 
@@ -212,7 +257,119 @@ defmodule Froth.Follow.Projector do
       summary: summary,
       detail: detail,
       level: level,
+      hidden: is_binary(metadata["kind"])
+    }
+  end
+
+  defp classify(["froth", "agent", "control", "outcome"], _m, metadata, _duration_ms) do
+    outcome = normalize_string(metadata["outcome"])
+    tool_name = metadata["tool_name"]
+
+    {summary, detail, level} =
+      case outcome do
+        "reply_sent" ->
+          {"reply sent", join_detail([tool_name && "tool=#{tool_name}"]), :info}
+
+        "yield" ->
+          {"yielded", join_detail([metadata["reason"]]), :info}
+
+        "waiting_on_subscription" ->
+          {"waiting on subscription", join_detail([metadata["reason"]]), :info}
+
+        "assistant_stopped_without_reply" ->
+          {"stopped without reply", join_detail([metadata["detail"]]), :warn}
+
+        "tool_error" ->
+          {"tool error",
+           join_detail([
+             tool_name && "tool=#{tool_name}",
+             metadata["error"] && truncate(metadata["error"], 120)
+           ]), :error}
+
+        "cycle_error" ->
+          {"cycle error", join_detail([metadata["error"] && truncate(metadata["error"], 120)]),
+           :error}
+
+        value when is_binary(value) and value != "" ->
+          {humanize(value),
+           join_detail([metadata["reason"], metadata["error"], metadata["detail"]]), :info}
+
+        _ ->
+          {"outcome", join_detail([metadata["reason"], metadata["error"], metadata["detail"]]),
+           :info}
+      end
+
+    detail =
+      join_detail([
+        detail,
+        metadata["tool_use_id"] && "call=#{short_id(metadata["tool_use_id"])}"
+      ])
+
+    %{
+      family: "control",
+      kind: outcome || "outcome",
+      scope: short_id(metadata["cycle_id"]),
+      summary: summary,
+      detail: detail,
+      level: level,
       hidden: false
+    }
+  end
+
+  defp classify(["froth", "agent", "llm", kind], _m, metadata, duration_ms)
+       when kind in ["requested", "completed"] do
+    usage = nested_map(metadata["usage"])
+    input_tokens = usage["input_tokens"] || metadata["input_tokens"]
+    output_tokens = usage["output_tokens"] || metadata["output_tokens"]
+
+    {summary, detail} =
+      case kind do
+        "requested" ->
+          {"request queued",
+           join_detail([
+             metadata["model"] && "model=#{metadata["model"]}",
+             metadata["message_count"] && "messages=#{metadata["message_count"]}",
+             metadata["tool_count"] && "tools=#{metadata["tool_count"]}"
+           ])}
+
+        "completed" ->
+          {"response completed",
+           join_detail([
+             duration_ms && "#{duration_ms}ms",
+             metadata["model"] && "model=#{metadata["model"]}",
+             input_tokens && "in=#{input_tokens}",
+             output_tokens && "out=#{output_tokens}",
+             metadata["stop_reason"] && "stop=#{metadata["stop_reason"]}"
+           ])}
+      end
+
+    %{
+      family: "llm",
+      kind: kind,
+      scope: provider_label(metadata["provider"] || "llm", metadata["model"]),
+      summary: summary,
+      detail: detail,
+      level: :info,
+      hidden: true
+    }
+  end
+
+  defp classify(["froth", "agent", "message", "appended"], _m, metadata, _duration_ms) do
+    role = metadata["role"] || "message"
+    preview = metadata["text_preview"]
+
+    %{
+      family: "message",
+      kind: "appended",
+      scope: role,
+      summary: "message appended",
+      detail:
+        join_detail([
+          metadata["content_kind"] && "kind=#{metadata["content_kind"]}",
+          preview && "text=#{truncate(preview, 120)}"
+        ]),
+      level: :debug,
+      hidden: true
     }
   end
 
@@ -434,6 +591,9 @@ defmodule Froth.Follow.Projector do
   defp family_for_parts(["froth", "agent", "tool" | _]), do: "tool"
   defp family_for_parts(["froth", "agent", "cycle" | _]), do: "cycle"
   defp family_for_parts(["froth", "agent", "think" | _]), do: "think"
+  defp family_for_parts(["froth", "agent", "control" | _]), do: "control"
+  defp family_for_parts(["froth", "agent", "llm" | _]), do: "llm"
+  defp family_for_parts(["froth", "agent", "message" | _]), do: "message"
   defp family_for_parts(["froth", "tasks" | _]), do: "task"
   defp family_for_parts(["froth", "telegram" | _]), do: "telegram"
   defp family_for_parts(["froth", "http" | _]), do: "transport"

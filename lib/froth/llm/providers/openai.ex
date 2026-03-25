@@ -13,7 +13,7 @@ defmodule Froth.LLM.Providers.OpenAI do
         "messages" => encode_messages(request.messages),
         "stream" => true
       }
-      |> maybe_put("max_tokens", request.max_tokens, &positive_integer?/1)
+      |> maybe_put("max_completion_tokens", request.max_tokens, &positive_integer?/1)
       |> maybe_put("tools", encode_tools(request.tools), &non_empty_list?/1)
       |> maybe_put(
         "stream_options",

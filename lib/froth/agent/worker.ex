@@ -713,11 +713,27 @@ defmodule Froth.Agent.Worker do
   end
 
   defp emit_control_outcome(worker, outcome, data, opts \\ []) do
+    span_id = Keyword.get(opts, :span_id, worker.cycle_span_id)
+    parent_span_id = Keyword.get(opts, :parent_span_id, worker.cycle_span_id)
+
+    Span.execute(
+      [:froth, :agent, :control, :outcome],
+      parent_span_id,
+      %{
+        cycle_id: worker.cycle.id,
+        head_id: worker.head_id,
+        span_id: span_id,
+        tool_use_id: data["tool_use_id"],
+        outcome: outcome
+      }
+      |> Map.merge(stringify_map(data))
+    )
+
     Agent.append_event(worker.cycle, %{
       kind: "control.outcome",
       head_id: worker.head_id,
-      span_id: Keyword.get(opts, :span_id, worker.cycle_span_id),
-      parent_span_id: Keyword.get(opts, :parent_span_id, worker.cycle_span_id),
+      span_id: span_id,
+      parent_span_id: parent_span_id,
       tool_use_id: data["tool_use_id"],
       data: Map.put(stringify_map(data), "outcome", outcome)
     })

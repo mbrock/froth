@@ -19,7 +19,7 @@ defmodule Froth.Follow.Renderer do
     duration = entry.duration_ms && "#{entry.duration_ms}ms"
     metadata = raw_metadata(entry.metadata)
 
-    [
+    compact([
       @dim,
       format_time(entry.at),
       @reset,
@@ -29,11 +29,11 @@ defmodule Froth.Follow.Renderer do
       @reset,
       duration && [" ", @bold, duration, @reset],
       metadata != [] && [" ", metadata]
-    ]
+    ])
   end
 
   def to_ansi(%Entry{} = entry, mode) when mode in [:smart, :errors] do
-    [
+    compact([
       @dim,
       format_time(entry.at),
       @reset,
@@ -50,7 +50,7 @@ defmodule Froth.Follow.Renderer do
       entry.summary,
       @reset,
       entry.detail && ["  ", @dim, entry.detail, @reset]
-    ]
+    ])
   end
 
   defp raw_metadata(metadata) when map_size(metadata) == 0, do: []
@@ -93,9 +93,15 @@ defmodule Froth.Follow.Renderer do
   defp family_color(_family, :warn), do: @yellow
   defp family_color("cycle", _), do: @blue
   defp family_color("think", _), do: @cyan
+  defp family_color("control", _), do: @blue
+  defp family_color("message", _), do: @cyan
   defp family_color("tool", _), do: @green
   defp family_color("llm", _), do: @magenta
   defp family_color("telegram", _), do: @blue
   defp family_color("task", _), do: @cyan
   defp family_color(_family, _), do: @bold
+
+  defp compact(items) do
+    Enum.reject(items, &(&1 in [nil, false]))
+  end
 end

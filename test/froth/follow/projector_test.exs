@@ -80,4 +80,67 @@ defmodule Froth.Follow.ProjectorTest do
     assert entry.detail =~ "text=charlie hi"
     refute entry.hidden
   end
+
+  test "projects persisted control outcomes into semantic control entries" do
+    entry =
+      Projector.from_row(%{
+        id: "evt_control",
+        event: "froth.agent.control.outcome",
+        inserted_at: ~U[2026-03-24 15:05:34Z],
+        metadata: %{
+          "cycle_id" => "01KMDKN3GHAC7B814PD3GB4THP",
+          "outcome" => "yield",
+          "reason" => "Waiting for subscribed tasks.",
+          "tool_use_id" => "toolu_1234567890"
+        }
+      })
+
+    assert entry.family == "control"
+    assert entry.scope == "01KMDKN3"
+    assert entry.summary == "yielded"
+    assert entry.detail =~ "Waiting for subscribed tasks."
+    assert entry.detail =~ "call=toolu_12"
+    assert Entry.visible?(entry, :smart)
+  end
+
+  test "projects persisted message appends as hidden smart-mode entries" do
+    entry =
+      Projector.from_row(%{
+        id: "evt_message",
+        event: "froth.agent.message.appended",
+        inserted_at: ~U[2026-03-24 15:05:34Z],
+        metadata: %{
+          "role" => "user",
+          "content_kind" => "text",
+          "text_preview" => "hello there"
+        }
+      })
+
+    assert entry.family == "message"
+    assert entry.scope == "user"
+    assert entry.summary == "message appended"
+    assert entry.hidden
+    refute Entry.visible?(entry, :smart)
+    assert Entry.visible?(entry, :raw)
+  end
+
+  test "hides persisted tool spine rows in smart mode when a telemetry twin exists" do
+    entry =
+      Projector.from_row(%{
+        id: "evt_tool",
+        event: "froth.agent.tool.completed",
+        inserted_at: ~U[2026-03-24 15:05:34Z],
+        measurements: %{"duration_ms" => 56},
+        metadata: %{
+          "kind" => "tool.completed",
+          "tool_name" => "read_tool_transcript",
+          "cycle_id" => "01KMDKN3GHAC7B814PD3GB4THP"
+        }
+      })
+
+    assert entry.family == "tool"
+    assert entry.hidden
+    refute Entry.visible?(entry, :smart)
+    assert Entry.visible?(entry, :raw)
+  end
 end

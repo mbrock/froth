@@ -61,6 +61,38 @@ defmodule FrothWeb.FollowLiveTest do
     assert has_element?(view, "#follow-entry-#{id}", "provider=anthropic")
   end
 
+  test "errors mode focuses the timeline on failures and warnings", %{conn: conn} do
+    ok_id =
+      insert_event(%{
+        event: "froth.agent.tool.completed",
+        metadata: %{
+          "tool_name" => "read_tool_transcript",
+          "cycle_id" => "01KMDKN3GHAC7B814PD3GB4THP"
+        }
+      })
+
+    error_id =
+      insert_event(%{
+        event: "froth.agent.control.outcome",
+        metadata: %{
+          "cycle_id" => "01KMDKN3GHAC7B814PD3GB4THP",
+          "outcome" => "tool_error",
+          "tool_name" => "run_shell",
+          "error" => "tool timed out after 30000ms"
+        }
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/froth/follow")
+
+    view
+    |> element("#follow-mode-errors")
+    |> render_click()
+
+    assert_patch(view, ~p"/froth/follow?mode=errors")
+    assert has_element?(view, "#follow-entry-#{error_id}", "tool error")
+    refute has_element?(view, "#follow-entry-#{ok_id}")
+  end
+
   test "cycle pinning narrows the timeline to one run", %{conn: conn} do
     cycle_id = "01KMDKN3GHAC7B814PD3GB4THP"
 

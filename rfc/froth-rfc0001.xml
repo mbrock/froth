@@ -3,7 +3,7 @@
 <rfc number="0001" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0001: In-Browser Video Encoding via WebCodecs</title>
-    <status>DRAFT</status>
+    <status>PARTIALLY IMPLEMENTED</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-20</date>
     <supersedes>The screenshot-to-PNG-to-ffmpeg pipeline</supersedes>
@@ -147,6 +147,11 @@
       <item><p>4 workers: ~26s</p></item>
       <item><p>Total: ~30s with 4 workers</p></item>
     </list>
+  </section>
+  <section title="Implementation Status" id="implementation-status">
+    <p>As of 2026-03-24, this RFC is partially implemented.</p>
+    <p><tt>Froth.Video.SelfEncoder</tt> exists and can inject an in-browser self-encoding path into episode HTML, so this proposal has prototype code behind it rather than being design-only.</p>
+    <p>The default render path in <tt>Froth.Video.record/2</tt> still uses deterministic frame rendering plus muxing, and the self-encoder is not yet wired in as the default path for the main or compute renderers. The WebCodecs-first end state described here is therefore not complete.</p>
   </section>
   <section title="Migration Path" id="migration-path">
     <list type="numbered">

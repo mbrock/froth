@@ -3,7 +3,7 @@
 <rfc number="0009" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0009: Task Wakeup on Completion</title>
-    <status>DRAFT</status>
+    <status>IMPLEMENTED</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-24</date>
     <related>FROTH-RFC-0004, FROTH-RFC-0008</related>
@@ -75,6 +75,11 @@
   </section>
   <section title="Safety" id="safety">
     <p>The system is live and writing continuously. The synthetic message fix is safe — it only changes the shape of a message that currently fails silently. The Codex watcher is additive — it creates new task entries without touching existing Codex session logic.</p>
+  </section>
+  <section title="Implementation Status" id="implementation-status">
+    <p>As of 2026-03-24, this RFC is implemented.</p>
+    <p><tt>Froth.Tasks.fire_notifications/1</tt> now emits wakeup messages with integer identifiers, <tt>Froth.Telegram.Bot.normalize_reply_to/1</tt> treats <tt>0</tt> as no reply target, and <tt>Froth.Codex.Task</tt> starts a <tt>Froth.Codex.TaskWatcher</tt> that mirrors Codex session completion or failure into <tt>Froth.Tasks</tt>.</p>
+    <p>Tests cover task completion, failure, and notification wiring.</p>
   </section>
 
 </rfc>

@@ -1,16 +1,15 @@
 FROTH RFCs
 
-0001  In-Browser Video Encoding via WebCodecs     DRAFT    2026-03-20
+0001  In-Browser Video Encoding via WebCodecs     PARTIAL  2026-03-20
 0002  Native Multimodal LLM Layer                 PARTIAL  2026-03-22
 0003  Parallel Tool Execution                     IMPL     2026-03-23
-0004  Agent Execution Spine                       PARTIAL* 2026-03-23
-0005  Legible Follow and Execution Log Reader     PARTIAL  2026-03-23
+0004  Agent Execution Spine                       IMPL*    2026-03-23
+0005  Legible Follow and Execution Log Reader     PARTIAL  2026-03-24
 0006  Hierarchical Memory / Pre-Cognitive Compress PARTIAL  2026-03-23
-0007  Triangulated Web Search (Multi-Provider)    DRAFT    2026-03-23
+0007  Triangulated Web Search (Multi-Provider)    IMPL     2026-03-24
 0008  Unified Event Table                         IMPL     2026-03-23
-0009  Task Wakeup on Completion                   IMPL     2026-03-23
+0009  Task Wakeup on Completion                   IMPL     2026-03-24
 0010  Opening Hormuz                              DRAFT    2026-03-23
-0011  Summarizer Unblock                          DRAFT    2026-03-24
 0012  Staging Environment                         DRAFT    2026-03-24
 
-* 0004 worker logic implemented; schema superseded by 0008.
+* 0004 execution spine implemented; event-table schema revised by 0008.

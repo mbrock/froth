@@ -11,13 +11,13 @@ defmodule Froth.Search do
   alias Froth.Search.Result
 
   @default_timeout 30_000
-  @default_collation_model "claude-sonnet-4-20250514"
+  @default_collation_model "claude-sonnet-4-6"
   @source_text_limit 8_000
 
   @providers [
-    {:grok, Froth.Search.Grok, "grok-4-1-fast-reasoning"},
-    {:openai, Froth.Search.OpenAI, "gpt-5.4"},
-    {:gemini, Froth.Search.Gemini, "gemini-3.1-pro"}
+    {:grok, Froth.Search.Grok, "grok-4.20-0309-non-reasoning"},
+    {:openai, Froth.Search.OpenAI, "gpt-5.4-mini"},
+    {:gemini, Froth.Search.Gemini, "gemini-3.1-flash-lite-preview"}
   ]
 
   @type provider_name :: :grok | :openai | :gemini
@@ -25,21 +25,25 @@ defmodule Froth.Search do
   @doc false
   def provider_system_prompt do
     """
-    Use the enabled native web search tools when they improve factual grounding.
-    Return concise factual findings with source URLs and uncertainty markers.
+    You are a research subagent. Your job is to search the web for whatever
+    the user asks about, read what you find, and write up a clear summary
+    of what you learned. Include source URLs so the caller can verify.
+    If you are not sure about something, say so plainly -- do not hedge
+    with formulas, just say what you know and what you do not know.
+    Write like a person, not a compliance form.
     """
   end
 
   @doc false
   def provider_prompt(query) when is_binary(query) do
     """
-    Search the web for: #{String.trim(query)}
+    Research the following and write up what you find:
 
-    Return:
-    1. Direct factual findings with source URLs
-    2. Dates and timestamps where available
-    3. Explicit uncertainty markers where results are thin
-    4. If this is about a social media post, include the full text of the post
+    #{String.trim(query)}
+
+    Use your search tools. Read the results. Write a clear summary with
+    source URLs. If the query is about a specific post or document, include
+    the full text. If you find conflicting information, describe the conflict.
     """
   end
 
@@ -233,7 +237,10 @@ defmodule Froth.Search do
 
   defp collation_system_prompt do
     """
-    Return JSON only. No markdown fences.
+    You synthesize research from multiple independent search providers into
+    a single coherent answer. Return JSON only, no markdown fences. Write
+    the collated field as if you were explaining the answer to a colleague
+    who is busy and sharp -- concise but not sterile.
     """
   end
 
@@ -244,20 +251,16 @@ defmodule Froth.Search do
 
     #{formatted_sources(result.sources)}
 
-    Synthesize a single answer:
-    - Facts confirmed by 2+ sources: state as confirmed
-    - Facts from only one source: state with attribution
-    - Contradictions between sources: state the contradiction
-    - Source URLs: deduplicate and list
-    - If any source found nothing: note the gap
+    Synthesize the best answer you can from these sources. Where they agree,
+    state it plainly. Where they disagree, say so. Where only one source
+    covers something, attribute it. Deduplicate the URLs.
 
-    Be concise. The caller is an agent, not a human.
-
-    Return JSON with this exact shape:
+    Return JSON:
     {
-      "collated": "string",
-      "agreement": 0.0,
-      "single_source_claims": ["string"]
+      "collated": "your synthesis -- write clearly, not in bullet points",
+      "agreement": "0.0 to 1.0 -- how much the sources agree",
+      "citations": ["deduplicated source URLs"],
+      "single_source_claims": ["claims from only one provider, if any"]
     }
     """
   end

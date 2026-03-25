@@ -3,7 +3,7 @@
 <rfc number="0005" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0005: Legible Follow and Execution Log Reader</title>
-    <status>PARTIALLY IMPLEMENTED</status>
+    <status>PARTIALLY IMPLEMENTED; core reader now landed in CLI and FollowLive</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-23</date>
     <related>FROTH-RFC-0003, FROTH-RFC-0004</related>
@@ -61,27 +61,27 @@
     </list>
   </section>
   <section title="Current Status" id="current-status">
-    <p>The first implementation slice of this RFC is now in place:</p>
+    <p>As of 2026-03-24, the core reader described here is in place, but the surrounding navigation and drill-down work is still incomplete.</p>
     <list type="bullet">
       <item><p><tt>Froth.Follow.Entry</tt>, <tt>Froth.Follow.Projector</tt>, and <tt>Froth.Follow.Renderer</tt> exist</p></item>
       <item><p><tt>Froth.Follow.Source</tt> now exists as the shared recent-history loader for follow readers</p></item>
-      <item><p><tt>mix froth.follow</tt> now renders projected follow entries instead of formatting raw telemetry inline</p></item>
-      <item><p><tt>mix froth.follow</tt> now supports scope-aware filtering for cycle/span in addition to event-prefix and mode filtering</p></item>
-      <item><p><tt>mix froth.follow</tt> now boots with a recent matching history tail before switching to live streaming</p></item>
-      <item><p><tt>TelemetryLive</tt> now consumes the same projected entry model and has <tt>Smart</tt> and <tt>Raw</tt> modes</p></item>
-      <item><p><tt>TelemetryLive</tt> rows can now expand inline to show the raw projected payload on demand</p></item>
-      <item><p><tt>TelemetryLive</tt> can now pin the timeline to a cycle or span directly from an entry's expanded detail controls</p></item>
-      <item><p><tt>TelemetryLive</tt> now keeps mode, search, and cycle/span scope in the URL so a filtered view can be reloaded or shared</p></item>
-      <item><p>projector behavior is covered by focused tests, and the LiveView has integration coverage for smart/raw rendering</p></item>
+      <item><p><tt>mix froth.follow</tt> now renders projected follow entries instead of formatting raw telemetry inline, boots with recent matching history, and supports smart/raw/errors plus cycle/span filtering</p></item>
+      <item><p><tt>mix froth.follow</tt> now starts only the local repo state it needs, uses unique telemetry handler IDs, and no longer crashes when projected entries omit optional detail</p></item>
+      <item><p>the shared projector now treats <tt>froth.agent.control.outcome</tt> as a first-class semantic family, so yields, reply-sent, tool-error, and cycle-error outcomes render as operator-facing rows instead of raw metadata blobs</p></item>
+      <item><p>the agent runtime now emits live <tt>froth.agent.control.outcome</tt> telemetry, so control outcomes appear while tailing instead of only after a page reload</p></item>
+      <item><p>smart mode now suppresses duplicate persisted execution-spine tool rows while keeping raw mode as the exact escape hatch</p></item>
+      <item><p><tt>FollowLive</tt> now exists as a dedicated execution-log reader with <tt>Smart</tt>, <tt>Raw</tt>, and <tt>Errors</tt> modes, historical boot, live append, search, cycle/span pinning, and inline payload expansion</p></item>
+      <item><p><tt>TelemetryLive</tt> still consumes the same projected entry model, so the shared semantic layer remains real rather than duplicated</p></item>
+      <item><p>projector behavior is covered by focused tests, including control-outcome and renderer regression coverage, and the LiveView has integration coverage for smart/raw/errors rendering</p></item>
     </list>
     <p>That means the shared semantic layer is no longer hypothetical.</p>
     <p>What is still not done:</p>
     <list type="bullet">
       <item><p>richer durable navigation state for cycle/span/task pinning, including saved views and task-level deep links</p></item>
-      <item><p>richer filtering beyond event-prefix, text, and first-pass cycle/span scope filters</p></item>
+      <item><p>richer filtering beyond text plus first-pass cycle/span scope filters</p></item>
       <item><p>a richer raw detail pane with linked navigation instead of a simple inline payload expansion</p></item>
-      <item><p>a dedicated <tt>FollowLive</tt> tuned for execution-log reading rather than a reused telemetry table</p></item>
-      <item><p>preference for future typed <tt>agent_events</tt> over inferred telemetry when RFC-0004 lands</p></item>
+      <item><p>deeper task/message-aware pinning instead of the current cycle/span-only scope controls</p></item>
+      <item><p>a more complete preference strategy for typed execution-spine rows over inferred telemetry across all duplicated families, not just the first-pass tool-row suppression now in smart mode</p></item>
     </list>
   </section>
   <section title="Non-Goals" id="non-goals">

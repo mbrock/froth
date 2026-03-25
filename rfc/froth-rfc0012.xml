@@ -42,4 +42,9 @@
     <p>The broad shape of how this gets used: the developer works in the staging checkout, makes changes, runs migrations, starts the server, verifies things work. When confident, merges to main. Switches to the production checkout, pulls, migrates, restarts. Codex dispatches follow the same pattern — Codex commits to a branch, the branch gets tested in staging before merging to production.</p>
     <p>The details of how the env file is structured, what the startup script looks like, which port staging runs on — these are implementation decisions that should be made by whoever sets it up, not prescribed here.</p>
   </section>
+  <section title="Implementation Status" id="implementation-status">
+    <p>As of 2026-03-24, this RFC remains draft.</p>
+    <p><tt>config/runtime.exs</tt> already supports env-driven deployment configuration and a <tt>FROTH_NODE_ROLE</tt> split between <tt>full</tt> and <tt>worker</tt>, which is useful groundwork.</p>
+    <p>Froth does not yet have the staging checkout, staging database, Telegram isolation, or bot-start kill switch described here, so the operational staging environment itself is not in place yet.</p>
+  </section>
 </rfc>
