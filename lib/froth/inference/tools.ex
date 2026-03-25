@@ -85,7 +85,7 @@ defmodule Froth.Inference.Tools do
     %{
       "name" => "web_search",
       "description" =>
-        "Search the web via Grok, OpenAI, and Gemini simultaneously. Returns a triangulated result with source attribution, provider status, and confidence markers.",
+        "Research a topic via Grok, OpenAI, and Gemini simultaneously. Returns a triangulated result with source attribution, provider status, and confidence markers. Use this for any factual question that benefits from web sources. The models will dig, think, and report — not just return links.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
@@ -325,6 +325,32 @@ defmodule Froth.Inference.Tools do
         },
         "additionalProperties" => false
       }
+    },
+    %{
+      "name" => "spawn_engineer",
+      "description" =>
+        "Dispatch a coding task to Codex, a trusted senior engineer who works in the background. " <>
+        "This is the best way to do complex coding work — refactors, migrations, new features, bug fixes. " <>
+        "Codex gets NO chat context, so your prompt must be self-contained: explain what we want done, " <>
+        "why, and any constraints. Do NOT over-specify implementation details — Codex is a competent " <>
+        "engineer who will read the codebase, make good architectural decisions, commit the result, and " <>
+        "report back. Codex has excellent web search capabilities built in, so it can find docs, APIs, " <>
+        "solutions, and examples on its own — you do not need to look things up for it. " <>
+        "Think of it as explaining the problem to a colleague, not dictating line-by-line changes. " <>
+        "Good: 'the telemetry live view is too fluffy on mobile; tighten the layout significantly.' " <>
+        "Bad: 'change .events-header padding from 1.5rem to 0.25rem in lib/froth/...' " <>
+        "Returns a session URL where you can watch progress. The task runs in background — you do not need to wait.",
+      "input_schema" => %{
+        "type" => "object",
+        "properties" => %{
+          "prompt" => %{
+            "type" => "string",
+            "description" => "What you want built or fixed. Be clear about the goal, not the implementation. Codex will figure out the how."
+          }
+        },
+        "required" => ["prompt"],
+        "additionalProperties" => false
+      }
     }
   ]
 
@@ -332,7 +358,7 @@ defmodule Froth.Inference.Tools do
 
   def label("read_log"), do: "read chat log"
   def label("search"), do: "search chat log"
-  def label("web_search"), do: "search web"
+  def label("web_search"), do: "research"
   def label("view_analysis"), do: "open analysis"
   def label("look"), do: "look at media"
   def label("read_tool_transcript"), do: "read tool transcript"
@@ -344,6 +370,7 @@ defmodule Froth.Inference.Tools do
   def label("stop_task"), do: "stop task"
   def label("subscribe_task"), do: "subscribe"
   def label("yield"), do: "yield"
+  def label("spawn_engineer"), do: "spawn engineer"
   def label(name) when is_binary(name), do: name
   def label(_), do: "tool"
 
@@ -524,6 +551,22 @@ defmodule Froth.Inference.Tools do
       "yield" ->
         reason = input["reason"] || "Waiting for subscribed tasks."
         {:yield, reason}
+
+      "spawn_engineer" ->
+        case input["prompt"] do
+          prompt when is_binary(prompt) and prompt != "" ->
+            case Froth.Codex.Task.run(prompt, chat_id: chat_id) do
+              {:ok, session_id} ->
+                url = Froth.Codex.Task.url(session_id)
+                {:ok, "Codex task dispatched. Session: #{session_id}\nWatch progress: #{url}"}
+
+              {:error, reason} ->
+                {:error, "Failed to start Codex task: #{inspect(reason)}"}
+            end
+
+          _ ->
+            {:error, "prompt must be a non-empty string"}
+        end
 
       _ ->
         {:error, "unknown tool: #{name}"}
