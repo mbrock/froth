@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <meta name="csrf-token" content={get_csrf_token()} />
     <link phx-track-static rel="stylesheet" href="/froth/assets/css/app.css" />
     <script src="https://telegram.org/js/telegram-web-app.js">
@@ -49,7 +52,7 @@
     <script defer phx-track-static type="text/javascript" src="/froth/assets/js/app.js">
     </script>
   </head>
-  <body style="margin:0; background:#000;">
+  <body class="mini-root" style="margin:0; background:#000;">
     {@inner_content}
   </body>
 </html>

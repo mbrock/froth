@@ -169,4 +169,60 @@ defmodule Froth.LLM.Providers.AnthropicTest do
              "content" => [%{"type" => "text", "text" => "done"}]
            }
   end
+
+  test "build_request lifts mcp endpoints into mcp_servers and mcp_toolset entries" do
+    request = %Request{
+      provider: Anthropic,
+      headers: [{"x-api-key", "test"}],
+      model: "claude-opus-4-6",
+      max_tokens: 1024,
+      tools: [
+        %{
+          "name" => "froth_echo",
+          "description" => "Echo text back.",
+          "input_schema" => %{
+            "type" => "object",
+            "properties" => %{"text" => %{"type" => "string"}}
+          }
+        },
+        %{
+          "type" => "mcp_endpoint",
+          "name" => "wolfram",
+          "url" => "https://services.wolfram.com/api/mcp",
+          "bearer_token" => "wolfram-token",
+          "allowed_tools" => ["compute"],
+          "defer_loading" => true
+        }
+      ],
+      messages: [Message.user("hello")]
+    }
+
+    {:ok, %{body: body}} = Anthropic.build_request(request)
+
+    assert body["mcp_servers"] == [
+             %{
+               "type" => "url",
+               "url" => "https://services.wolfram.com/api/mcp",
+               "name" => "wolfram",
+               "authorization_token" => "wolfram-token"
+             }
+           ]
+
+    assert body["tools"] == [
+             %{
+               "name" => "froth_echo",
+               "description" => "Echo text back.",
+               "input_schema" => %{
+                 "type" => "object",
+                 "properties" => %{"text" => %{"type" => "string"}}
+               }
+             },
+             %{
+               "type" => "mcp_toolset",
+               "mcp_server_name" => "wolfram",
+               "default_config" => %{"enabled" => false, "defer_loading" => true},
+               "configs" => %{"compute" => %{"enabled" => true}}
+             }
+           ]
+  end
 end

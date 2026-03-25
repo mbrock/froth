@@ -23,8 +23,8 @@ defmodule Froth.Grok do
 
     api_key =
       Keyword.get(overrides, :api_key) ||
-        LLM.active_api_key(["grok", "xai"]) ||
-        Keyword.get(cfg, :api_key)
+        Keyword.get(cfg, :api_key) ||
+        LLM.active_api_key(["grok", "xai"])
 
     if is_nil(api_key) or api_key == "" do
       {:error, :missing_api_key}

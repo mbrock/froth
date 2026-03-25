@@ -24,6 +24,8 @@ defmodule Froth.Codex.Session do
           status: atom(),
           thread_id: String.t() | nil,
           active_turn_id: String.t() | nil,
+          active_turn_started_at_ms: integer() | nil,
+          last_turn_elapsed_ms: integer() | nil,
           entries: [map()],
           token_usage: map() | nil,
           rate_limits: map() | nil,
@@ -143,6 +145,8 @@ defmodule Froth.Codex.Session do
       status: :booting,
       thread_id: nil,
       active_turn_id: nil,
+      active_turn_started_at_ms: nil,
+      last_turn_elapsed_ms: nil,
       active_assistant_entry_id: nil,
       active_assistant_text: "",
       active_reasoning_entry_id: nil,
@@ -273,6 +277,7 @@ defmodule Froth.Codex.Session do
       |> Map.put(:codex_pid, nil)
       |> Map.put(:status, :error)
       |> Map.put(:active_turn_id, nil)
+      |> Map.put(:active_turn_started_at_ms, nil)
       |> Map.put(:auth, nil)
       |> reset_turn_state()
       |> push_entry(:error, "codex exited: #{inspect(reason)}")
@@ -347,7 +352,12 @@ defmodule Froth.Codex.Session do
 
       case codex_call(state, :turn_start, params) do
         {:ok, result} ->
-          {:ok, state |> Map.put(:active_turn_id, get_turn_id(result)) |> reset_turn_state()}
+          {:ok,
+           state
+           |> Map.put(:active_turn_id, get_turn_id(result))
+           |> Map.put(:active_turn_started_at_ms, System.system_time(:millisecond))
+           |> Map.put(:last_turn_elapsed_ms, nil)
+           |> reset_turn_state()}
 
         {:error, reason} ->
           {:error, reason, push_entry(state, :error, "turn/start failed: #{inspect(reason)}")}
@@ -359,7 +369,13 @@ defmodule Froth.Codex.Session do
     state =
       if reset_feed? do
         state
-        |> Map.merge(%{entries: [], entry_seq: 0, active_turn_id: nil})
+        |> Map.merge(%{
+          entries: [],
+          entry_seq: 0,
+          active_turn_id: nil,
+          active_turn_started_at_ms: nil,
+          last_turn_elapsed_ms: nil
+        })
         |> reset_turn_state()
         |> push_entry(:status, "starting new thread")
       else
@@ -383,6 +399,8 @@ defmodule Froth.Codex.Session do
                 |> apply_runtime_patch(result, params)
                 |> Map.put(:thread_id, thread_id)
                 |> Map.put(:active_turn_id, nil)
+                |> Map.put(:active_turn_started_at_ms, nil)
+                |> Map.put(:last_turn_elapsed_ms, nil)
                 |> reset_turn_state()
                 |> push_entry(:system, "thread started #{short_id(thread_id)}")
 
@@ -440,6 +458,8 @@ defmodule Froth.Codex.Session do
             |> apply_runtime_patch(result)
             |> Map.put(:thread_id, resolved)
             |> Map.put(:active_turn_id, nil)
+            |> Map.put(:active_turn_started_at_ms, nil)
+            |> Map.put(:last_turn_elapsed_ms, nil)
             |> reset_turn_state()
             |> push_entry(:system, "resumed thread #{short_id(resolved)}")
 
@@ -499,15 +519,26 @@ defmodule Froth.Codex.Session do
 
     state
     |> Map.put(:active_turn_id, turn_id)
+    |> Map.put(:active_turn_started_at_ms, System.system_time(:millisecond))
     |> reset_turn_state()
     |> push_entry(:status, "working#{if(turn_id, do: " (#{short_id(turn_id)})", else: "")}")
   end
 
   defp apply_notification(state, "turn/completed", params) do
     turn_status = get_in(params, ["turn", "status"]) || "completed"
+    now_ms = System.system_time(:millisecond)
+
+    elapsed_ms =
+      if is_integer(state.active_turn_started_at_ms) do
+        max(now_ms - state.active_turn_started_at_ms, 0)
+      else
+        nil
+      end
 
     state
     |> Map.put(:active_turn_id, nil)
+    |> Map.put(:active_turn_started_at_ms, nil)
+    |> Map.put(:last_turn_elapsed_ms, elapsed_ms)
     |> reset_turn_state()
     |> push_entry(:status, "turn #{turn_status}")
   end
@@ -692,6 +723,8 @@ defmodule Froth.Codex.Session do
       :status,
       :thread_id,
       :active_turn_id,
+      :active_turn_started_at_ms,
+      :last_turn_elapsed_ms,
       :entries,
       :token_usage,
       :rate_limits,

@@ -1,0 +1,253 @@
+<Layouts.app flash={@flash} variant={:plain}>
+  <div id="headlines-brutalist-view" class="headlines-brutalist min-h-screen">
+    <div class="mx-auto w-full max-w-[1800px] px-4 py-4 md:px-6 lg:px-8">
+      <div class="grid gap-6 xl:grid-cols-[18rem_minmax(0,1fr)]">
+        <aside class="space-y-4 xl:sticky xl:top-4 xl:self-start">
+          <section class="headlines-brutalist-shadow border-4 border-black bg-[var(--headline-brutalist-acid)] p-4">
+            <p class="headlines-brutalist-meta text-[11px] uppercase tracking-[0.28em] text-black/70">
+              Froth / Saved Register
+            </p>
+            <h1 class="headlines-brutalist-display mt-3 text-5xl leading-[0.88] uppercase sm:text-6xl">
+              Headlines
+            </h1>
+            <p class="mt-4 max-w-[18rem] text-sm font-semibold uppercase leading-5 text-black/80">
+              A concrete slab of every filed tabloid headline, pulled straight from the event log.
+            </p>
+          </section>
+
+          <section
+            id="headlines-coverage"
+            class="headlines-brutalist-shadow-sm grid gap-3 border-4 border-black bg-black p-4 text-[var(--headline-brutalist-paper)] sm:grid-cols-3 xl:grid-cols-1"
+          >
+            <div class="border-4 border-[var(--headline-brutalist-paper)] bg-[var(--headline-brutalist-paper)] p-3 text-black">
+              <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.24em]">
+                Coverage
+              </p>
+              <p class="headlines-brutalist-display mt-2 text-3xl uppercase leading-none">
+                {@coverage.filed_days} / {@coverage.total_days}
+              </p>
+              <p class="mt-2 text-xs font-bold uppercase tracking-[0.16em]">Days Filed</p>
+            </div>
+
+            <div class="border-4 border-[var(--headline-brutalist-paper)] p-3">
+              <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.24em]">
+                Headlines
+              </p>
+              <p class="headlines-brutalist-display mt-2 text-3xl uppercase leading-none">
+                {@coverage.total_headlines}
+              </p>
+              <p class="mt-2 text-xs font-bold uppercase tracking-[0.16em]">Saved Total</p>
+            </div>
+
+            <div class="border-4 border-[var(--headline-brutalist-warning)] bg-[var(--headline-brutalist-warning)] p-3 text-black">
+              <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.24em]">
+                Missing
+              </p>
+              <p class="headlines-brutalist-display mt-2 text-3xl uppercase leading-none">
+                {@coverage.missing_count}
+              </p>
+              <p class="mt-2 text-xs font-bold uppercase tracking-[0.16em]">Unfiled Days</p>
+            </div>
+          </section>
+
+          <section
+            :if={@chat_id}
+            class="headlines-brutalist-shadow-sm border-4 border-black bg-[var(--headline-brutalist-paper)] p-4"
+          >
+            <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.24em] text-black/70">
+              Active Chat
+            </p>
+            <p class="mt-2 break-all text-sm font-black tracking-[0.1em]">{@chat_id}</p>
+          </section>
+
+          <section
+            :if={@available_chat_ids != []}
+            class="headlines-brutalist-shadow-sm border-4 border-black bg-[var(--headline-brutalist-salmon)] p-4 text-black"
+          >
+            <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.24em] text-black/70">
+              Chat Switchboard
+            </p>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <a
+                :for={chat_id <- @available_chat_ids}
+                href={~p"/froth/headlines?chat_id=#{chat_id}"}
+                class={[
+                  "border-4 border-black px-3 py-2 text-[11px] font-black uppercase tracking-[0.16em] transition",
+                  if(chat_id == @chat_id,
+                    do: "bg-black text-[var(--headline-brutalist-paper)]",
+                    else: "bg-[var(--headline-brutalist-paper)] text-black hover:-translate-y-0.5"
+                  )
+                ]}
+              >
+                {chat_id}
+              </a>
+            </div>
+          </section>
+
+          <section
+            :if={@month_sections != []}
+            class="headlines-brutalist-shadow-sm border-4 border-black bg-[var(--headline-brutalist-concrete)] p-4"
+          >
+            <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.24em] text-black/70">
+              Month Index
+            </p>
+            <div class="mt-3 space-y-2">
+              <a
+                :for={section <- @month_sections}
+                href={"##{section.id}"}
+                class="block border-4 border-black bg-[var(--headline-brutalist-paper)] px-3 py-2 text-sm font-black uppercase tracking-[0.12em] transition hover:-translate-y-0.5"
+              >
+                <span>{section.label}</span>
+                <span class="headlines-brutalist-meta ml-2 text-[10px] text-black/70">
+                  {section.day_count} days / {section.headline_count} lines
+                </span>
+              </a>
+            </div>
+          </section>
+        </aside>
+
+        <main class="space-y-8">
+          <section class="headlines-brutalist-shadow border-4 border-black bg-white p-4 md:p-6">
+            <div class="grid gap-4 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+              <div class="space-y-4">
+                <div class="inline-flex border-4 border-black bg-black px-3 py-2 text-[var(--headline-brutalist-acid)]">
+                  <span class="headlines-brutalist-meta text-[11px] uppercase tracking-[0.28em]">
+                    Brutalist News Ledger
+                  </span>
+                </div>
+                <h2 class="headlines-brutalist-display max-w-4xl text-5xl uppercase leading-[0.9] sm:text-6xl lg:text-7xl">
+                  Every saved headline, stacked like cinder blocks.
+                </h2>
+              </div>
+
+              <div class="grid gap-3 self-start">
+                <div class="border-4 border-black bg-[var(--headline-brutalist-acid)] p-3 text-black">
+                  <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.24em]">
+                    Date Span
+                  </p>
+                  <p class="mt-2 text-sm font-black uppercase tracking-[0.14em]">
+                    {@coverage.first_day || "none"} to {@coverage.last_day || "none"}
+                  </p>
+                </div>
+                <div
+                  :if={@coverage.missing_count == 0}
+                  class="border-4 border-black bg-black p-3 text-[var(--headline-brutalist-paper)]"
+                >
+                  <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.24em]">
+                    Status
+                  </p>
+                  <p class="mt-2 text-sm font-black uppercase tracking-[0.14em]">
+                    All summary days have registered headlines.
+                  </p>
+                </div>
+                <div
+                  :if={@coverage.missing_count > 0}
+                  class="border-4 border-black bg-[var(--headline-brutalist-warning)] p-3 text-black"
+                >
+                  <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.24em]">
+                    Missing Dates
+                  </p>
+                  <p class="mt-2 text-sm font-black uppercase tracking-[0.14em]">
+                    {Enum.join(@coverage.missing_dates, ", ")}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section
+            :if={@headline_days == []}
+            class="headlines-brutalist-shadow border-4 border-black bg-[var(--headline-brutalist-warning)] p-6 text-black"
+          >
+            <h2 class="headlines-brutalist-display text-4xl uppercase leading-none">
+              Nothing filed yet.
+            </h2>
+            <p class="mt-3 max-w-2xl text-sm font-bold uppercase tracking-[0.12em]">
+              No registered headline events were found for this chat.
+            </p>
+          </section>
+
+          <section
+            :for={section <- @month_sections}
+            id={section.id}
+            class="space-y-4"
+          >
+            <div class="headlines-brutalist-shadow border-4 border-black bg-[var(--headline-brutalist-salmon)] p-4 text-black">
+              <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.28em] text-black/70">
+                    Month Sector
+                  </p>
+                  <h2 class="headlines-brutalist-display mt-2 text-4xl uppercase leading-none sm:text-5xl">
+                    {section.label}
+                  </h2>
+                </div>
+                <p class="text-sm font-black uppercase tracking-[0.16em]">
+                  {section.day_count} days / {section.headline_count} headlines
+                </p>
+              </div>
+            </div>
+
+            <div class="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
+              <article
+                :for={{day, idx} <- Enum.with_index(section.days)}
+                id={"headline-day-#{day.iso_date}"}
+                class={[
+                  "headlines-brutalist-shadow border-4 border-black",
+                  brutalist_day_card_class(idx)
+                ]}
+              >
+                <header class="border-b-4 border-black p-4">
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.28em] text-black/70">
+                        {day.weekday}
+                      </p>
+                      <h3 class="headlines-brutalist-display mt-1 text-4xl uppercase leading-none">
+                        {day.iso_date}
+                      </h3>
+                    </div>
+                    <div class="border-4 border-black bg-black px-3 py-2 text-[var(--headline-brutalist-paper)]">
+                      <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.22em]">
+                        {day.headline_count} lines
+                      </p>
+                    </div>
+                  </div>
+                </header>
+
+                <div class="divide-y-4 divide-black">
+                  <section
+                    :for={headline <- day.headlines}
+                    class="space-y-3 p-4"
+                  >
+                    <div class="flex items-start gap-3">
+                      <div class="headlines-brutalist-display mt-1 text-4xl leading-none">
+                        {headline.emoji}
+                      </div>
+                      <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-start gap-2">
+                          <h4 class="headlines-brutalist-display text-2xl uppercase leading-none sm:text-3xl">
+                            {headline.title}
+                          </h4>
+                          <span
+                            :if={headline.time_window}
+                            class="headlines-brutalist-meta border-2 border-black bg-[var(--headline-brutalist-paper)] px-2 py-1 text-[10px] uppercase tracking-[0.18em]"
+                          >
+                            {headline.time_window}
+                          </span>
+                        </div>
+                        <p class="mt-3 text-sm font-bold uppercase leading-6 tracking-[0.08em] text-black/80">
+                          {headline.sentence}
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </article>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </div>
+</Layouts.app>

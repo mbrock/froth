@@ -21,8 +21,10 @@ defmodule FrothWeb.FollowLiveTest do
 
     assert has_element?(view, "#follow-reader")
     assert has_element?(view, "#follow-mode-smart")
-    assert has_element?(view, "#follow-entry-#{id}", "read_tool_transcript completed")
+    assert has_element?(view, "#follow-entry-#{id}", "read_tool_transcript")
+    assert has_element?(view, "#follow-entry-#{id}", "completed")
     assert has_element?(view, "#follow-entry-#{id}", "tool")
+    assert has_element?(view, "#follow-cycle-summary-01KMDKN3GHAC7B814PD3GB4THP", "tools 1")
 
     view
     |> element("#follow-entry-toggle-#{id}")

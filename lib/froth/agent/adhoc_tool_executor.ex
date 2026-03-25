@@ -24,6 +24,7 @@ defmodule Froth.Agent.AdhocToolExecutor do
        prompt: Keyword.get(opts, :prompt),
        model: Keyword.get(opts, :model),
        provider: Keyword.get(opts, :provider),
+       spam: Keyword.get(opts, :spam, true),
        tool_execution_module: Keyword.get(opts, :tool_execution_module, ToolExecution),
        control_prompt_cycles: MapSet.new()
      }}
@@ -123,10 +124,12 @@ defmodule Froth.Agent.AdhocToolExecutor do
       name: name,
       input: input,
       bot_id: state.bot_id,
+      bot_username: state.bot_username,
       session_id: state.session_id,
       chat_id: chat_id,
       reply_to: reply_to,
-      cycle_id: cycle_id
+      cycle_id: cycle_id,
+      spam: state.spam
     }
   end
 
@@ -135,10 +138,12 @@ defmodule Froth.Agent.AdhocToolExecutor do
       name: name,
       input: nil,
       bot_id: state.bot_id,
+      bot_username: state.bot_username,
       session_id: state.session_id,
       chat_id: resolved_chat_id(context, state),
       reply_to: resolved_reply_to(context, state),
-      cycle_id: context_value(context, :cycle_id)
+      cycle_id: context_value(context, :cycle_id),
+      spam: state.spam
     }
   end
 
@@ -167,7 +172,10 @@ defmodule Froth.Agent.AdhocToolExecutor do
     []
     |> maybe_put_kw(:session_id, execution[:session_id])
     |> maybe_put_kw(:bot_id, bot_id_for_direct_execution(execution))
+    |> maybe_put_kw(:bot_username, execution[:bot_username])
+    |> maybe_put_kw(:cycle_id, execution[:cycle_id])
     |> maybe_put_kw(:topic, execution[:input]["topic"])
+    |> maybe_put_kw(:spam, execution[:spam])
   end
 
   defp bot_id_for_direct_execution(%{chat_id: chat_id, bot_id: bot_id})
@@ -210,7 +218,7 @@ defmodule Froth.Agent.AdhocToolExecutor do
   end
 
   defp maybe_put_reply_to(input, name, reply_to)
-       when name in ["elixir_eval", "run_shell"] and is_map(input) do
+       when name in ["elixir_eval", "run_shell", "spawn_agent"] and is_map(input) do
     Map.put(input, "reply_to", reply_to)
   end
 

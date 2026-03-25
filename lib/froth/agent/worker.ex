@@ -7,6 +7,7 @@ defmodule Froth.Agent.Worker do
   """
 
   use GenServer
+  require Logger
 
   alias Froth.Agent
   alias Froth.Agent.{Config, Cycle, ToolResult, ToolUse}
@@ -138,35 +139,46 @@ defmodule Froth.Agent.Worker do
   @impl true
   def handle_info({ref, {:ok, response}}, %{phase: {:thinking, %{ref: ref}}} = worker) do
     Process.demonitor(ref, [:flush])
+    response_diagnostics = response_diagnostics(response)
 
     response_metadata =
       response
-      |> Map.drop([:content, :text])
+      |> Map.drop([:content, :text, :diagnostics])
       |> Map.new(fn {k, v} -> {to_string(k), v} end)
+      |> maybe_put_stream_diagnostics(response_diagnostics)
 
     worker = emit_think_stop(worker)
     worker = persist_llm_completion(worker, response, response_metadata)
     worker = persist_agent_message(worker, response.content, response_metadata)
 
-    case parse_tool_uses(response.content) do
-      [] ->
+    tool_uses = parse_tool_uses(response.content)
+
+    cond do
+      tool_uses != [] ->
+        maybe_tools_done(start_tools(%{worker | saw_tool_use?: true}, tool_uses))
+
+      continue_after_provider_tools?(response_metadata, response.content) ->
+        cycle = Agent.update_cycle(worker.cycle, %{status: :running})
+
+        {:noreply, %{worker | cycle: cycle, phase: :continuing, saw_tool_use?: true},
+         {:continue, :think}}
+
+      true ->
         worker =
           %{worker | phase: :done}
-          |> maybe_emit_silent_stop(response, response_metadata)
+          |> maybe_emit_silent_stop(response, response_metadata, response_diagnostics)
           |> finalize_cycle(:completed, :normal, %{
             "stop_reason" => response_metadata["stop_reason"],
             "usage" => response_metadata["usage"] || %{}
           })
 
         {:stop, :normal, %{worker | phase: :done}}
-
-      tool_uses ->
-        maybe_tools_done(start_tools(%{worker | saw_tool_use?: true}, tool_uses))
     end
   end
 
   def handle_info({ref, {:error, reason}}, %{phase: {:thinking, %{ref: ref}}} = worker) do
     Process.demonitor(ref, [:flush])
+    log_llm_error(worker, reason)
     worker = emit_think_stop(worker, %{error: format_reason(reason)})
     {:stop, {:error, reason}, worker}
   end
@@ -303,10 +315,14 @@ defmodule Froth.Agent.Worker do
         provider: cycle.provider
       })
 
-    api_messages =
+    raw_messages =
       worker.head_id
       |> Agent.load_messages()
-      |> Enum.map(&Froth.Agent.Message.to_llm_message/1)
+
+    {request_messages, previous_response_id} =
+      llm_request_messages(cycle.provider, raw_messages)
+
+    api_messages = Enum.map(request_messages, &Froth.Agent.Message.to_llm_message/1)
 
     worker =
       %{worker | cycle: cycle}
@@ -320,6 +336,7 @@ defmodule Froth.Agent.Worker do
           "model" => cycle.model,
           "message_count" => length(api_messages),
           "tool_count" => length(worker.config.tools || []),
+          "previous_response_id" => previous_response_id,
           "messages" => Enum.map(api_messages, &llm_message_preview/1),
           "tools" => worker.config.tools || []
         }
@@ -335,7 +352,9 @@ defmodule Froth.Agent.Worker do
         tools: worker.config.tools,
         thinking: worker.config.thinking,
         effort: worker.config.effort,
-        parent_id: think_span_id
+        reasoning_summary: worker.config.reasoning_summary,
+        parent_id: think_span_id,
+        previous_response_id: previous_response_id
       ]
       |> Enum.reject(fn {_k, v} -> is_nil(v) end)
 
@@ -404,6 +423,20 @@ defmodule Froth.Agent.Worker do
   end
 
   defp parse_tool_uses(_), do: []
+
+  defp continue_after_provider_tools?(metadata, content)
+       when is_map(metadata) and is_list(content) do
+    metadata["stop_reason"] in ["pause_turn", "tool_use"] and
+      Enum.any?(content, &provider_managed_tool_block?/1)
+  end
+
+  defp continue_after_provider_tools?(_metadata, _content), do: false
+
+  defp provider_managed_tool_block?(%{"type" => type})
+       when type in ["mcp_tool_use", "mcp_tool_result"],
+       do: true
+
+  defp provider_managed_tool_block?(_block), do: false
 
   defp start_tools(worker, tool_uses) do
     cycle = Agent.update_cycle(worker.cycle, %{status: :waiting_on_tools})
@@ -822,10 +855,12 @@ defmodule Froth.Agent.Worker do
 
   defp truncate_tool_detail(detail), do: detail
 
-  defp maybe_emit_silent_stop(worker, response, metadata) do
+  defp maybe_emit_silent_stop(worker, response, metadata, diagnostics) do
     if worker.reply_sent? or assistant_visible_reply?(response) do
       worker
     else
+      log_empty_llm_response(worker, response, metadata, diagnostics)
+
       detail =
         if worker.saw_tool_use? do
           "assistant stopped without sending a reply after tool execution#{stop_reason_suffix(metadata)}"
@@ -861,8 +896,60 @@ defmodule Froth.Agent.Worker do
 
   defp assistant_visible_reply?(_response), do: false
 
-  defp assistant_output_block?(%{"type" => "tool_use"}), do: false
-  defp assistant_output_block?(%{"type" => "thinking"}), do: false
+  defp llm_request_messages("openai", messages) when is_list(messages) do
+    case latest_openai_response_boundary(messages) do
+      {response_id, tail_messages}
+      when is_binary(response_id) and response_id != "" and is_list(tail_messages) and
+             tail_messages != [] ->
+        {tail_messages, response_id}
+
+      _ ->
+        {messages, nil}
+    end
+  end
+
+  defp llm_request_messages(_provider, messages) when is_list(messages), do: {messages, nil}
+
+  defp latest_openai_response_boundary(messages) when is_list(messages) do
+    messages
+    |> Enum.with_index()
+    |> Enum.reduce(nil, fn
+      {%Froth.Agent.Message{role: :agent, metadata: metadata}, index}, _acc ->
+        case openai_response_id(metadata) do
+          response_id when is_binary(response_id) and response_id != "" -> {response_id, index}
+          _ -> nil
+        end
+
+      _, acc ->
+        acc
+    end)
+    |> case do
+      {response_id, index} ->
+        {response_id, Enum.drop(messages, index + 1)}
+
+      nil ->
+        nil
+    end
+  end
+
+  defp openai_response_id(metadata) when is_map(metadata) do
+    metadata["response_id"] || metadata[:response_id] || response_id_from_message_id(metadata)
+  end
+
+  defp openai_response_id(_metadata), do: nil
+
+  defp response_id_from_message_id(metadata) when is_map(metadata) do
+    case metadata["message_id"] || metadata[:message_id] do
+      "resp_" <> _rest = response_id -> response_id
+      _ -> nil
+    end
+  end
+
+  defp response_id_from_message_id(_metadata), do: nil
+
+  defp assistant_output_block?(%{"type" => type})
+       when type in ["tool_use", "mcp_tool_use", "mcp_tool_result", "thinking"],
+       do: false
 
   defp assistant_output_block?(%{"type" => "text", "text" => text}) when is_binary(text) do
     String.trim(text) != ""
@@ -880,6 +967,96 @@ defmodule Froth.Agent.Worker do
       value when is_binary(value) and value != "" -> " (stop_reason=#{value})"
       _ -> ""
     end
+  end
+
+  defp response_diagnostics(response) when is_map(response) do
+    case Map.get(response, :diagnostics) || Map.get(response, "diagnostics") do
+      %{} = diagnostics -> diagnostics
+      _ -> %{}
+    end
+  end
+
+  defp response_diagnostics(_response), do: %{}
+
+  defp maybe_put_stream_diagnostics(metadata, diagnostics) when is_map(metadata) do
+    case stream_diagnostics_summary(diagnostics) do
+      %{} = summary when map_size(summary) > 0 -> Map.put(metadata, "stream_diagnostics", summary)
+      _ -> metadata
+    end
+  end
+
+  defp stream_diagnostics_summary(diagnostics) when is_map(diagnostics) do
+    %{}
+    |> maybe_put_summary_value(
+      "raw_event_count",
+      diagnostics[:raw_event_count] || diagnostics["raw_event_count"]
+    )
+    |> maybe_put_summary_value(
+      "json_decode_error_count",
+      diagnostics[:json_decode_error_count] || diagnostics["json_decode_error_count"]
+    )
+    |> maybe_put_summary_value("saw_done", diagnostics[:saw_done] || diagnostics["saw_done"])
+    |> maybe_put_summary_value(
+      "trailing_buffer_bytes",
+      diagnostic_size(diagnostics[:trailing_buffer] || diagnostics["trailing_buffer"])
+    )
+  end
+
+  defp stream_diagnostics_summary(_diagnostics), do: %{}
+
+  defp maybe_put_summary_value(summary, _key, nil), do: summary
+  defp maybe_put_summary_value(summary, _key, false), do: summary
+  defp maybe_put_summary_value(summary, _key, 0), do: summary
+  defp maybe_put_summary_value(summary, key, value), do: Map.put(summary, key, value)
+
+  defp diagnostic_size(value) when is_binary(value), do: byte_size(value)
+  defp diagnostic_size(_value), do: nil
+
+  defp log_llm_error(worker, {:provider_error, provider, error, diagnostics}) do
+    Logger.warning(fn ->
+      "LLM provider error: " <>
+        inspect(
+          %{
+            cycle_id: worker.cycle.id,
+            head_id: worker.head_id,
+            provider: provider,
+            model: worker.cycle.model,
+            error: error,
+            stream_diagnostics: summarize_value(diagnostics)
+          },
+          pretty: true,
+          limit: :infinity,
+          printable_limit: :infinity
+        )
+    end)
+  end
+
+  defp log_llm_error(_worker, _reason), do: :ok
+
+  defp log_empty_llm_response(worker, response, metadata, diagnostics) do
+    Logger.warning(fn ->
+      "LLM returned empty response: " <>
+        inspect(
+          %{
+            cycle_id: worker.cycle.id,
+            head_id: worker.head_id,
+            provider: worker.cycle.provider,
+            model: worker.cycle.model,
+            after_tool_execution: worker.saw_tool_use?,
+            stop_reason: metadata["stop_reason"],
+            usage: metadata["usage"] || %{},
+            message_id: metadata["message_id"],
+            response: %{
+              "text" => Map.get(response, :text) || Map.get(response, "text"),
+              "content" => Map.get(response, :content) || Map.get(response, "content") || []
+            },
+            stream_diagnostics: summarize_value(diagnostics)
+          },
+          pretty: true,
+          limit: :infinity,
+          printable_limit: :infinity
+        )
+    end)
   end
 
   defp maybe_emit_pending_think_stop(worker, reason) do
@@ -1077,9 +1254,40 @@ defmodule Froth.Agent.Worker do
   defp normalize_reason({:error, reason}), do: format_reason(reason)
   defp normalize_reason(other), do: format_reason(other)
 
+  defp format_reason({:provider_error, provider, error, _diagnostics}) do
+    [provider, provider_error_detail(error)]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join(": ")
+  end
+
   defp format_reason(value) when is_binary(value), do: value
   defp format_reason(value) when is_atom(value), do: Atom.to_string(value)
   defp format_reason(value), do: inspect(value)
+
+  defp provider_error_detail(%{"error" => %{} = error}) do
+    [map_value(error, "type"), map_value(error, "message")]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join(": ")
+  end
+
+  defp provider_error_detail(%{} = error) do
+    detail =
+      [map_value(error, "type"), map_value(error, "message")]
+      |> Enum.reject(&(&1 in [nil, ""]))
+      |> Enum.join(": ")
+
+    if detail == "", do: inspect(error), else: detail
+  end
+
+  defp provider_error_detail(error), do: inspect(error)
+
+  defp map_value(map, key) when is_map(map) do
+    case key do
+      "type" -> Map.get(map, "type") || Map.get(map, :type)
+      "message" -> Map.get(map, "message") || Map.get(map, :message)
+      _ -> Map.get(map, key)
+    end
+  end
 
   defp resolved_provider(%Config{} = config) do
     cond do

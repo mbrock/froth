@@ -70,8 +70,17 @@ defmodule Froth.LLM do
             Keyword.take(opts, [:receive_timeout, :finch])
           )
           |> case do
-            {:ok, store} -> {:ok, provider.finalize(store)}
-            {:error, _} = err -> err
+            {:ok, %{acc: store, diagnostics: diagnostics}} ->
+              case provider_error_from_store(store) do
+                nil ->
+                  {:ok, provider.finalize(store) |> Map.put(:diagnostics, diagnostics)}
+
+                error ->
+                  {:error, {:provider_error, provider_name(provider), error, diagnostics}}
+              end
+
+            {:error, _} = err ->
+              err
           end
         else
           false -> {:error, {:invalid_provider, provider}}
@@ -101,10 +110,23 @@ defmodule Froth.LLM do
     end
   rescue
     _ -> nil
+  catch
+    :exit, _ -> nil
   end
 
   @spec default_system_prompt() :: String.t()
   def default_system_prompt, do: Froth.Anthropic.default_system_prompt()
+
+  @spec default_model(provider_ref()) :: String.t() | nil
+  def default_model(provider) do
+    case resolve_client_module(provider, nil) do
+      {:ok, Froth.Anthropic} -> "claude-opus-4-6"
+      {:ok, Froth.OpenAI} -> "gpt-5-mini"
+      {:ok, Froth.Grok} -> "grok-4-1-fast-non-reasoning"
+      {:ok, Froth.Gemini} -> "gemini-3-flash-preview"
+      _ -> nil
+    end
+  end
 
   @spec provider_name_for_model(String.t() | nil) :: atom() | nil
   def provider_name_for_model(model) when is_binary(model) do
@@ -188,6 +210,14 @@ defmodule Froth.LLM do
   end
 
   defp provider_module?(_provider), do: false
+
+  defp provider_error_from_store(%Store{} = store) do
+    case Store.get(store, ["message", "error"]) do
+      %{} = error when map_size(error) > 0 -> error
+      error when is_binary(error) and error != "" -> %{"message" => error}
+      _ -> nil
+    end
+  end
 
   defp normalize_provider_ref(ref) when is_atom(ref), do: ref
 

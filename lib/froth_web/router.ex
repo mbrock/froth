@@ -28,6 +28,7 @@ defmodule FrothWeb.Router do
 
     get "/objects/*key", ObjectStoreController, :show
     get "/summaries", SummariesController, :index
+    get "/headlines", HeadlinesController, :index
     live "/", AnalysesLive, :index
     live "/analyses", AnalysesLive, :index
     live "/analyses/:day", AnalysesLive, :index

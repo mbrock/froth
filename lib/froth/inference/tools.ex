@@ -3,7 +3,8 @@ defmodule Froth.Inference.Tools do
   Tool catalog and execution for inference sessions.
   """
 
-  alias Froth.Repo
+  alias Froth.Agent.Adhoc
+  alias Froth.{ChatSummary, Event, LLM, Repo}
   alias Froth.Search, as: WebSearch
   alias Froth.Telegram.BotAdapter
   alias Froth.Telemetry.Span
@@ -14,6 +15,9 @@ defmodule Froth.Inference.Tools do
   @read_tool_transcript_max_chars 20_000
   @read_tool_transcript_max_message_lines 120
   @read_tool_transcript_max_task_output_chars 3_000
+  @spawn_agent_default_model "gpt-5.4-mini"
+  @spawn_agent_default_tool_names ["run_shell", "elixir_eval"]
+  @wolfram_mcp_url "https://services.wolfram.com/api/mcp"
 
   @tool_specs [
     %{
@@ -354,14 +358,68 @@ defmodule Froth.Inference.Tools do
         "required" => ["prompt"],
         "additionalProperties" => false
       }
+    },
+    %{
+      "name" => "spawn_agent",
+      "description" =>
+        "Start an ad-hoc sub-agent in the background and return its cycle ID. " <>
+          "Use this to delegate a bounded task to another agent without manually wiring Froth.Agent.Adhoc. " <>
+          "By default the sub-agent gets shell and elixir_eval. " <>
+          "Check progress or final results later with read_tool_transcript using the returned cycle_id.",
+      "input_schema" => %{
+        "type" => "object",
+        "properties" => %{
+          "prompt" => %{
+            "type" => "string",
+            "description" => "Self-contained prompt for the delegated sub-agent."
+          },
+          "model" => %{
+            "type" => "string",
+            "description" => "Optional model for the sub-agent. Defaults to gpt-5.4-mini."
+          },
+          "tools" => %{
+            "type" => "array",
+            "items" => %{"type" => "string"},
+            "description" =>
+              "Optional tool names to expose to the sub-agent. Defaults to [\"shell\", \"elixir_eval\"]. " <>
+                "\"shell\" is an alias for run_shell. Pass [] for a no-tools sub-agent."
+          },
+          "system_prompt" => %{
+            "type" => "string",
+            "description" =>
+              "Optional system prompt override for the sub-agent. If omitted, the default adhoc system prompt is used."
+          }
+        },
+        "required" => ["prompt"],
+        "additionalProperties" => false
+      }
     }
   ]
 
-  def specs_for_api, do: @tool_specs
+  def specs_for_api do
+    @tool_specs ++ remote_mcp_specs()
+  end
 
   def specs_for_names(names) when is_list(names) do
     wanted = MapSet.new(names)
-    Enum.filter(@tool_specs, &MapSet.member?(wanted, &1["name"]))
+    Enum.filter(specs_for_api(), &MapSet.member?(wanted, &1["name"]))
+  end
+
+  defp remote_mcp_specs do
+    case LLM.active_api_key("wolfram") do
+      token when is_binary(token) and token != "" -> [wolfram_mcp_spec()]
+      _ -> []
+    end
+  end
+
+  defp wolfram_mcp_spec do
+    %{
+      "type" => "mcp_endpoint",
+      "name" => "wolfram",
+      "url" => @wolfram_mcp_url,
+      "bearer_token_provider" => "wolfram",
+      "defer_loading" => true
+    }
   end
 
   def label("read_log"), do: "read chat log"
@@ -379,6 +437,7 @@ defmodule Froth.Inference.Tools do
   def label("subscribe_task"), do: "subscribe"
   def label("yield"), do: "yield"
   def label("spawn_engineer"), do: "spawn engineer"
+  def label("spawn_agent"), do: "spawn agent"
   def label(name) when is_binary(name), do: name
   def label(_), do: "tool"
 
@@ -583,6 +642,9 @@ defmodule Froth.Inference.Tools do
             {:error, "prompt must be a non-empty string"}
         end
 
+      "spawn_agent" ->
+        spawn_agent(input, chat_id, opts)
+
       "register_headlines" ->
         register_headlines(input, chat_id, session_id, opts)
 
@@ -591,29 +653,266 @@ defmodule Froth.Inference.Tools do
     end
   end
 
+  defp spawn_agent(input, chat_id, opts) when is_map(input) and is_integer(chat_id) do
+    reply_to = spawn_agent_reply_to(input)
+
+    with {:ok, prompt} <- required_trimmed_string(input, "prompt"),
+         {:ok, model} <- optional_trimmed_string(input, "model"),
+         {:ok, system_prompt} <- optional_trimmed_string(input, "system_prompt"),
+         {:ok, tool_names, tool_specs} <- resolve_spawn_agent_tools(input),
+         {:ok, {cycle, _pid}} <-
+           start_spawn_agent_cycle(
+             prompt,
+             tool_specs,
+             chat_id,
+             opts,
+             model: model || @spawn_agent_default_model,
+             system_prompt: system_prompt,
+             reply_to: reply_to
+           ) do
+      {:ok, spawn_agent_result(cycle, tool_names, opts)}
+    end
+  end
+
+  defp spawn_agent(_input, _chat_id, _opts), do: {:error, "spawn_agent requires a valid chat_id"}
+
+  defp start_spawn_agent_cycle(prompt, tool_specs, chat_id, opts, extra_opts)
+       when is_binary(prompt) and is_list(tool_specs) and is_integer(chat_id) and is_list(opts) and
+              is_list(extra_opts) do
+    reply_to = spawn_agent_reply_to(extra_opts, opts)
+
+    adhoc_opts =
+      [
+        chat_id: chat_id,
+        reply_to: reply_to,
+        bot_id: opts[:bot_id],
+        bot_username: opts[:bot_username],
+        session_id: opts[:session_id],
+        model: Keyword.fetch!(extra_opts, :model),
+        tools: tool_specs
+      ]
+      |> maybe_put_spawn_agent_opt(:system, Keyword.get(extra_opts, :system_prompt))
+      |> maybe_put_spawn_agent_opt(:spam, opts[:spam])
+
+    {cycle, stream} = Adhoc.start(prompt, adhoc_opts)
+    maybe_link_spawned_cycle(cycle, chat_id, opts[:bot_id], reply_to)
+
+    case start_spawn_agent_stream(stream) do
+      {:ok, pid} -> {:ok, {cycle, pid}}
+      {:error, reason} -> {:error, "failed to start sub-agent stream: #{inspect(reason)}"}
+    end
+  end
+
+  defp start_spawn_agent_stream(stream) do
+    runner = fn -> Enum.each(stream, fn _item -> :ok end) end
+
+    case Process.whereis(Froth.Agent.TaskSupervisor) do
+      pid when is_pid(pid) ->
+        Task.Supervisor.start_child(Froth.Agent.TaskSupervisor, runner)
+
+      _ ->
+        {:ok, spawn(runner)}
+    end
+  end
+
+  defp maybe_link_spawned_cycle(%{id: cycle_id}, chat_id, bot_id, reply_to)
+       when is_binary(cycle_id) and is_integer(chat_id) and is_binary(bot_id) do
+    alias Froth.Telegram.CycleLink
+
+    Repo.insert!(%CycleLink{
+      cycle_id: cycle_id,
+      bot_id: bot_id,
+      chat_id: chat_id,
+      reply_to: reply_to
+    })
+
+    :ok
+  end
+
+  defp maybe_link_spawned_cycle(_cycle, _chat_id, _bot_id, _reply_to), do: :ok
+
+  defp spawn_agent_result(cycle, tool_names, opts) when is_list(tool_names) do
+    %{
+      "status" => "started",
+      "cycle_id" => cycle.id,
+      "model" => cycle.model,
+      "tools" => tool_names,
+      "check_tool" => "read_tool_transcript",
+      "check_input" => %{"cycle_id" => cycle.id, "include_messages" => true},
+      "check_hint" =>
+        "Call read_tool_transcript with cycle_id=#{cycle.id} and include_messages=true to inspect the delegated agent's transcript and final reply."
+    }
+    |> maybe_put_spawn_agent_result("open_url", spawn_agent_open_url(opts, cycle.id))
+  end
+
+  defp spawn_agent_open_url(opts, cycle_id) when is_binary(cycle_id) do
+    bot_id = opts[:bot_id]
+    bot_username = opts[:bot_username]
+
+    if is_binary(bot_id) and bot_id != "" and is_binary(bot_username) and bot_username != "" do
+      "https://t.me/#{bot_username}/tool?startapp=cycle_#{bot_id}_#{cycle_id}"
+    end
+  end
+
+  defp spawn_agent_open_url(_opts, _cycle_id), do: nil
+
+  defp maybe_put_spawn_agent_result(map, _key, nil), do: map
+  defp maybe_put_spawn_agent_result(map, key, value), do: Map.put(map, key, value)
+
+  defp maybe_put_spawn_agent_opt(keyword, _key, nil), do: keyword
+  defp maybe_put_spawn_agent_opt(keyword, key, value), do: Keyword.put(keyword, key, value)
+
+  defp spawn_agent_reply_to(extra_opts, _opts) when is_list(extra_opts) do
+    case Keyword.get(extra_opts, :reply_to) do
+      reply_to when is_integer(reply_to) -> reply_to
+      _ -> nil
+    end
+  end
+
+  defp spawn_agent_reply_to(input) when is_map(input) do
+    case Map.get(input, "reply_to") do
+      reply_to when is_integer(reply_to) -> reply_to
+      _ -> nil
+    end
+  end
+
+  defp resolve_spawn_agent_tools(input) when is_map(input) do
+    case Map.fetch(input, "tools") do
+      :error ->
+        resolve_spawn_agent_tool_names(@spawn_agent_default_tool_names)
+
+      {:ok, nil} ->
+        resolve_spawn_agent_tool_names(@spawn_agent_default_tool_names)
+
+      {:ok, tools} when is_list(tools) ->
+        resolve_spawn_agent_tool_names(tools)
+
+      {:ok, _other} ->
+        {:error, "tools must be an array of strings"}
+    end
+  end
+
+  defp resolve_spawn_agent_tool_names(names) when is_list(names) do
+    with {:ok, normalized_names} <- normalize_spawn_agent_tool_names(names) do
+      available_specs = Map.new(specs_for_api(), &{&1["name"], &1})
+
+      case Enum.filter(normalized_names, &(not Map.has_key?(available_specs, &1))) do
+        [] ->
+          {:ok, normalized_names, Enum.map(normalized_names, &Map.fetch!(available_specs, &1))}
+
+        unknown ->
+          available =
+            available_specs
+            |> Map.keys()
+            |> Enum.sort()
+            |> Enum.join(", ")
+
+          {:error,
+           "unknown tool names: #{Enum.join(unknown, ", ")}. Available tools: #{available}"}
+      end
+    end
+  end
+
+  defp normalize_spawn_agent_tool_names(names) when is_list(names) do
+    Enum.reduce_while(names, {:ok, {MapSet.new(), []}}, fn
+      name, {:ok, {seen, acc}} when is_binary(name) ->
+        normalized_name =
+          name
+          |> String.trim()
+          |> canonical_spawn_agent_tool_name()
+
+        cond do
+          normalized_name == "" ->
+            {:halt, {:error, "tools must be an array of non-empty strings"}}
+
+          MapSet.member?(seen, normalized_name) ->
+            {:cont, {:ok, {seen, acc}}}
+
+          true ->
+            {:cont, {:ok, {MapSet.put(seen, normalized_name), acc ++ [normalized_name]}}}
+        end
+
+      _name, _acc ->
+        {:halt, {:error, "tools must be an array of strings"}}
+    end)
+    |> case do
+      {:ok, {_seen, acc}} -> {:ok, acc}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp canonical_spawn_agent_tool_name("shell"), do: "run_shell"
+  defp canonical_spawn_agent_tool_name(name), do: name
+
+  defp required_trimmed_string(input, key) when is_map(input) and is_binary(key) do
+    case optional_trimmed_string(input, key) do
+      {:ok, nil} -> {:error, "#{key} must be a non-empty string"}
+      other -> other
+    end
+  end
+
+  defp optional_trimmed_string(input, key) when is_map(input) and is_binary(key) do
+    case Map.get(input, key) do
+      nil ->
+        {:ok, nil}
+
+      value when is_binary(value) ->
+        trimmed = String.trim(value)
+        {:ok, if(trimmed == "", do: nil, else: trimmed)}
+
+      _value ->
+        {:error, "#{key} must be a string"}
+    end
+  end
+
   defp register_headlines(%{"date" => date, "headlines" => headlines}, chat_id, session_id, opts)
        when is_binary(date) and is_list(headlines) and is_binary(session_id) and
               is_integer(chat_id) do
     with {:ok, normalized_headlines} <- normalize_headlines(headlines) do
-      Span.execute(
-        [:froth, :headlines, :registered],
-        nil,
-        %{date: date, headlines: normalized_headlines},
-        %{count: length(normalized_headlines)}
-      )
+      case maybe_send_headlines_message(date, normalized_headlines, chat_id, session_id, opts) do
+        {:ok, _sent} ->
+          store_headlines_registered_event(date, chat_id, normalized_headlines)
 
-      {text, entities} = format_headlines_message(date, normalized_headlines)
-      send_message_fun = Keyword.get(opts, :send_message_fun, &BotAdapter.send_message/4)
+          Span.execute(
+            [:froth, :headlines, :registered],
+            nil,
+            %{date: date, chat_id: chat_id, headlines: normalized_headlines},
+            %{count: length(normalized_headlines)}
+          )
 
-      case send_message_fun.(session_id, chat_id, text, entities: entities) do
-        {:ok, _sent} -> {:ok, "Registered #{length(normalized_headlines)} headlines for #{date}"}
-        {:error, reason} -> {:error, inspect(reason)}
+          progress = headlines_progress(chat_id, date)
+
+          {:ok,
+           "Registered #{length(normalized_headlines)} headlines for #{date}. " <>
+             "Progress: #{progress.done_days}/#{progress.total_days} days done. " <>
+             next_unfinished_text(progress.next_unfinished)}
+
+        {:error, reason} ->
+          {:error, inspect(reason)}
       end
     end
   end
 
   defp register_headlines(_input, _chat_id, _session_id, _opts) do
     {:error, "register_headlines requires date and headlines"}
+  end
+
+  defp maybe_send_headlines_message(date, normalized_headlines, chat_id, session_id, opts)
+       when is_binary(date) and is_list(normalized_headlines) and is_integer(chat_id) and
+              is_binary(session_id) do
+    if Keyword.get(opts, :spam, true) do
+      {text, entities} = format_headlines_message(date, normalized_headlines)
+      send_message_fun = Keyword.get(opts, :send_message_fun, &BotAdapter.send_message/4)
+      reply_markup = headlines_reply_markup(opts)
+
+      send_message_opts =
+        [entities: entities]
+        |> maybe_put_send_message_opt(:reply_markup, reply_markup)
+
+      send_message_fun.(session_id, chat_id, text, send_message_opts)
+    else
+      {:ok, :suppressed}
+    end
   end
 
   defp normalize_headlines(headlines) when is_list(headlines) do
@@ -627,24 +926,39 @@ defmodule Froth.Inference.Tools do
     end)
   end
 
-  defp normalize_headline(%{"title" => title, "sentence" => sentence})
-       when is_binary(title) and is_binary(sentence) do
-    {:ok, %{"title" => String.trim(title), "sentence" => String.trim(sentence)}}
+  defp normalize_headline(%{
+         "emoji" => emoji,
+         "title" => title,
+         "sentence" => sentence,
+         "from_time" => from_time,
+         "to_time" => to_time
+       })
+       when is_binary(emoji) and is_binary(title) and is_binary(sentence) and
+              is_binary(from_time) and is_binary(to_time) do
+    normalize_headline_fields(emoji, title, sentence, from_time, to_time)
   end
 
-  defp normalize_headline(%{title: title, sentence: sentence})
-       when is_binary(title) and is_binary(sentence) do
-    {:ok, %{"title" => String.trim(title), "sentence" => String.trim(sentence)}}
+  defp normalize_headline(%{
+         emoji: emoji,
+         title: title,
+         sentence: sentence,
+         from_time: from_time,
+         to_time: to_time
+       })
+       when is_binary(emoji) and is_binary(title) and is_binary(sentence) and
+              is_binary(from_time) and is_binary(to_time) do
+    normalize_headline_fields(emoji, title, sentence, from_time, to_time)
   end
 
-  defp normalize_headline(_headline), do: {:error, "expected title and sentence strings"}
+  defp normalize_headline(_headline),
+    do: {:error, "expected emoji, title, sentence, from_time, and to_time strings"}
 
   defp format_headlines_message(date, headlines) when is_binary(date) and is_list(headlines) do
+    separator = "\n\n"
+
     body =
       headlines
-      |> Enum.map_join("\n", fn %{"title" => title, "sentence" => sentence} ->
-        "#{title} — #{sentence}"
-      end)
+      |> Enum.map_join(separator, &headline_line/1)
 
     text =
       case body do
@@ -652,21 +966,212 @@ defmodule Froth.Inference.Tools do
         _ -> date <> "\n\n" <> body
       end
 
-    header_entities = [bold_entity(0, String.length(date))]
+    header_entities = [bold_entity(0, utf16_length(date))]
 
     entities =
       headlines
-      |> Enum.reduce({header_entities, String.length(date) + 2}, fn headline, {acc, offset} ->
+      |> Enum.reduce({header_entities, utf16_length(date <> separator)}, fn headline,
+                                                                            {acc, offset} ->
         title = headline["title"]
-        sentence = headline["sentence"]
-        line = "#{title} — #{sentence}"
-        next_offset = offset + String.length(line) + 1
-        {acc ++ [bold_entity(offset, String.length(title))], next_offset}
+        line = headline_line(headline)
+        title_offset = offset + headline_title_offset(headline)
+        next_offset = offset + utf16_length(line) + utf16_length(separator)
+        {acc ++ [bold_entity(title_offset, utf16_length(title))], next_offset}
       end)
       |> elem(0)
 
     {text, entities}
   end
+
+  defp store_headlines_registered_event(date, chat_id, headlines)
+       when is_binary(date) and is_integer(chat_id) and is_list(headlines) do
+    %Event{}
+    |> Event.changeset(%{
+      event: "froth.headlines.registered",
+      metadata: %{
+        "date" => date,
+        "chat_id" => Integer.to_string(chat_id),
+        "headlines" => headlines
+      },
+      measurements: %{"count" => length(headlines)}
+    })
+    |> Repo.insert!(log: false)
+  end
+
+  defp normalize_headline_fields(emoji, title, sentence, from_time, to_time) do
+    with {:ok, normalized_emoji} <- normalize_headline_emoji(emoji),
+         {:ok, normalized_from_time, from_datetime} <-
+           normalize_iso8601_datetime(from_time, "from_time"),
+         {:ok, normalized_to_time, to_datetime} <- normalize_iso8601_datetime(to_time, "to_time"),
+         :ok <- validate_headline_time_range(from_datetime, to_datetime) do
+      {:ok,
+       %{
+         "emoji" => normalized_emoji,
+         "title" => String.trim(title),
+         "sentence" => String.trim(sentence),
+         "from_time" => normalized_from_time,
+         "to_time" => normalized_to_time
+       }}
+    end
+  end
+
+  defp normalize_headline_emoji(value) when is_binary(value) do
+    trimmed = String.trim(value)
+
+    cond do
+      trimmed == "" ->
+        {:error, "emoji must be a non-empty string"}
+
+      length(String.graphemes(trimmed)) != 1 ->
+        {:error, "emoji must be a single emoji"}
+
+      true ->
+        {:ok, trimmed}
+    end
+  end
+
+  defp normalize_iso8601_datetime(value, field_name) when is_binary(value) do
+    trimmed = String.trim(value)
+
+    if trimmed == "" do
+      {:error, "#{field_name} must be a non-empty ISO 8601 datetime"}
+    else
+      case parse_iso8601_datetime(trimmed) do
+        {:ok, datetime} -> {:ok, DateTime.to_iso8601(datetime), datetime}
+        :error -> {:error, "#{field_name} must be an ISO 8601 datetime"}
+      end
+    end
+  end
+
+  defp parse_iso8601_datetime(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, datetime, _offset} ->
+        {:ok, datetime}
+
+      {:error, _reason} ->
+        case NaiveDateTime.from_iso8601(value) do
+          {:ok, naive_datetime} -> {:ok, DateTime.from_naive!(naive_datetime, "Etc/UTC")}
+          {:error, _reason} -> :error
+        end
+    end
+  end
+
+  defp validate_headline_time_range(from_datetime, to_datetime)
+       when is_struct(from_datetime, DateTime) and is_struct(to_datetime, DateTime) do
+    case DateTime.compare(from_datetime, to_datetime) do
+      :gt -> {:error, "from_time must be before or equal to to_time"}
+      _ -> :ok
+    end
+  end
+
+  defp headline_line(%{
+         "emoji" => emoji,
+         "title" => title,
+         "from_time" => from_time,
+         "to_time" => to_time
+       }) do
+    "#{emoji} #{title} #{headline_time_window(from_time, to_time)}"
+  end
+
+  defp headline_title_offset(%{"emoji" => emoji}) when is_binary(emoji),
+    do: utf16_length("#{emoji} ")
+
+  defp headline_time_window(from_time, to_time)
+       when is_binary(from_time) and is_binary(to_time) do
+    {:ok, from_datetime} = parse_iso8601_datetime(from_time)
+    {:ok, to_datetime} = parse_iso8601_datetime(to_time)
+
+    "(" <>
+      Calendar.strftime(from_datetime, "%H:%M") <>
+      "-" <> Calendar.strftime(to_datetime, "%H:%M") <> " UTC)"
+  end
+
+  defp utf16_length(text) when is_binary(text) do
+    text
+    |> :unicode.characters_to_binary(:utf8, {:utf16, :little})
+    |> byte_size()
+    |> div(2)
+  end
+
+  defp headlines_progress(chat_id, current_date)
+       when is_integer(chat_id) and is_binary(current_date) do
+    summary_dates = available_summary_dates(chat_id)
+
+    registered_dates =
+      chat_id
+      |> registered_headline_dates()
+      |> Enum.reduce(MapSet.new(), &MapSet.put(&2, &1))
+      |> MapSet.put(current_date)
+
+    %{
+      done_days: MapSet.size(registered_dates),
+      total_days: length(summary_dates),
+      next_unfinished:
+        Enum.find(summary_dates, fn date -> not MapSet.member?(registered_dates, date) end)
+    }
+  end
+
+  defp available_summary_dates(chat_id) when is_integer(chat_id) do
+    Repo.all(
+      from(s in ChatSummary,
+        where: s.chat_id == ^chat_id,
+        distinct: fragment("timezone('UTC', to_timestamp(?))::date", s.from_date),
+        order_by: fragment("timezone('UTC', to_timestamp(?))::date", s.from_date),
+        select: fragment("timezone('UTC', to_timestamp(?))::date", s.from_date)
+      ),
+      log: false
+    )
+    |> Enum.map(&Date.to_iso8601/1)
+  end
+
+  defp registered_headline_dates(chat_id) when is_integer(chat_id) do
+    chat_id_string = Integer.to_string(chat_id)
+
+    Repo.all(
+      from(e in Event,
+        where:
+          e.event == "froth.headlines.registered" and
+            fragment("?->>'chat_id' = ?", e.metadata, ^chat_id_string),
+        distinct: fragment("?->>'date'", e.metadata),
+        order_by: fragment("?->>'date'", e.metadata),
+        select: fragment("?->>'date'", e.metadata)
+      ),
+      log: false
+    )
+  end
+
+  defp next_unfinished_text(nil), do: "Next unfinished: none."
+  defp next_unfinished_text(date), do: "Next unfinished: #{date}."
+
+  defp maybe_put_send_message_opt(keyword, _key, nil), do: keyword
+  defp maybe_put_send_message_opt(keyword, key, value), do: Keyword.put(keyword, key, value)
+
+  defp headlines_reply_markup(opts) when is_list(opts) do
+    cycle_id = opts[:cycle_id]
+    bot_id = opts[:bot_id]
+    bot_username = opts[:bot_username]
+
+    if is_binary(cycle_id) and cycle_id != "" and is_binary(bot_id) and bot_id != "" and
+         is_binary(bot_username) and bot_username != "" do
+      %{
+        "@type" => "replyMarkupInlineKeyboard",
+        "rows" => [
+          [
+            %{
+              "@type" => "inlineKeyboardButton",
+              "text" => "Open",
+              "type" => %{
+                "@type" => "inlineKeyboardButtonTypeUrl",
+                "url" => "https://t.me/#{bot_username}/tool?startapp=cycle_#{bot_id}_#{cycle_id}"
+              }
+            }
+          ]
+        ]
+      }
+    end
+  end
+
+  defp headlines_reply_markup(_opts), do: nil
 
   defp bold_entity(offset, length) when is_integer(offset) and is_integer(length) do
     %{
@@ -1415,6 +1920,24 @@ defmodule Froth.Inference.Tools do
     "tool_use #{name} id=#{id} input=#{preview_json(input, 700)}"
   end
 
+  defp format_role_block(
+         "assistant",
+         %{
+           "type" => "mcp_tool_use",
+           "name" => name,
+           "id" => id,
+           "input" => input
+         } = block
+       ) do
+    prefix =
+      case block["server_name"] do
+        server_name when is_binary(server_name) and server_name != "" -> "#{server_name}/"
+        _ -> ""
+      end
+
+    "mcp_tool_use #{prefix}#{name} id=#{id} input=#{preview_json(input, 700)}"
+  end
+
   defp format_role_block("assistant", %{"type" => "text", "text" => text}) when is_binary(text) do
     "text #{preview_text(text, 700)}"
   end
@@ -1435,6 +1958,19 @@ defmodule Froth.Inference.Tools do
     error_label = if block["is_error"] == true, do: " error=true", else: ""
 
     "tool_result id=#{tool_use_id}#{error_label} #{preview_text(normalize_tool_result(content), 700)}"
+  end
+
+  defp format_role_block(
+         _role,
+         %{
+           "type" => "mcp_tool_result",
+           "tool_use_id" => tool_use_id,
+           "content" => content
+         } = block
+       ) do
+    error_label = if block["is_error"] == true, do: " error=true", else: ""
+
+    "mcp_tool_result id=#{tool_use_id}#{error_label} #{preview_text(normalize_tool_result(content), 700)}"
   end
 
   defp format_role_block("user", %{"type" => "text", "text" => text}) when is_binary(text) do

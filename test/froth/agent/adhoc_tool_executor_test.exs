@@ -125,4 +125,30 @@ defmodule Froth.Agent.AdhocToolExecutorTest do
     assert second_execution.input["reply_to"] == 456
     refute Map.has_key?(second_execution.input, "control_prompt")
   end
+
+  test "spawn_agent inherits reply_to for delegated cycles" do
+    executor =
+      start_supervised!(
+        {AdhocToolExecutor,
+         bot_id: "charlie",
+         bot_username: "charliebuddybot",
+         session_id: "charlie",
+         chat_id: 123,
+         reply_to: 456,
+         prompt: "Delegate follow-up work",
+         model: "gpt-5.4-mini",
+         provider: "openai"}
+      )
+
+    tool_use = %ToolUse{
+      id: "call_1",
+      name: "spawn_agent",
+      input: %{"prompt" => "Investigate and summarize the issue"}
+    }
+
+    assert {:ok, %{execution: execution}} =
+             GenServer.call(executor, {:prepare_tool, tool_use, %{cycle_id: "cycle_1"}})
+
+    assert execution.input["reply_to"] == 456
+  end
 end

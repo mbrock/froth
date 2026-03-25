@@ -450,6 +450,7 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
   defp encode_tool(%{"type" => "url_context"} = tool), do: tool
   defp encode_tool(%{"type" => "computer_use"} = tool), do: tool
   defp encode_tool(%{"type" => "mcp_server"} = tool), do: tool
+  defp encode_tool(%{"type" => "mcp_endpoint"}), do: nil
   defp encode_tool(%{"googleSearchRetrieval" => _} = tool), do: tool
   defp encode_tool(%{"google_search_retrieval" => _} = tool), do: tool
 

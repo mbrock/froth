@@ -3,12 +3,15 @@ defmodule Froth.LLM.Providers.Anthropic do
 
   @behaviour Froth.LLM.Provider
 
+  alias Froth.LLM
   alias Froth.LLM.{Edit, Message, Request, Store}
 
   @api_url "https://api.anthropic.com/v1/messages"
 
   @impl true
   def build_request(%Request{} = request) do
+    {tools, mcp_servers} = split_tools(request.tools)
+
     body =
       %{
         "model" => request.model,
@@ -19,7 +22,8 @@ defmodule Froth.LLM.Providers.Anthropic do
       |> maybe_put("system", request.system, &present_string?/1)
       |> maybe_put("thinking", request.thinking, &is_map/1)
       |> maybe_put("output_config", request.output_config, &is_map/1)
-      |> maybe_put("tools", request.tools, &non_empty_list?/1)
+      |> maybe_put("tools", tools, &non_empty_list?/1)
+      |> maybe_put("mcp_servers", mcp_servers, &non_empty_list?/1)
       |> maybe_put("cache_control", request.cache_control, &is_map/1)
 
     {:ok, %{url: @api_url, headers: request.headers, body: body}}
@@ -96,7 +100,31 @@ defmodule Froth.LLM.Providers.Anthropic do
         %{
           "type" => "content_block_start",
           "index" => idx,
-          "content_block" => %{"type" => "tool_use"} = cb
+          "content_block" => %{"type" => type} = cb
+        } = payload,
+        _store
+      )
+      when is_integer(idx) and type in ["tool_use", "mcp_tool_use"] do
+    edits = [
+      %Edit{
+        op: :open,
+        resource: ["message", "blocks", idx],
+        attrs:
+          cb
+          |> Map.put_new("input", %{})
+          |> Map.put("__input_json_buf", ""),
+        raw: payload
+      }
+    ]
+
+    {edits, false}
+  end
+
+  def decode_payload(
+        %{
+          "type" => "content_block_start",
+          "index" => idx,
+          "content_block" => %{"type" => "mcp_tool_result"} = cb
         } = payload,
         _store
       )
@@ -107,8 +135,8 @@ defmodule Froth.LLM.Providers.Anthropic do
         resource: ["message", "blocks", idx],
         attrs:
           cb
-          |> Map.put_new("input", %{})
-          |> Map.put("__input_json_buf", ""),
+          |> Map.put_new("content", [])
+          |> Map.put_new("is_error", false),
         raw: payload
       }
     ]
@@ -249,9 +277,10 @@ defmodule Froth.LLM.Providers.Anthropic do
             }
           ]
 
-        %{"type" => "tool_use", "id" => id, "name" => name} ->
+        %{"type" => type, "id" => id, "name" => name} = tool_block
+        when type in ["tool_use", "mcp_tool_use"] ->
           input =
-            case block do
+            case tool_block do
               %{"input" => %{} = input} when map_size(input) > 0 ->
                 input
 
@@ -271,7 +300,23 @@ defmodule Froth.LLM.Providers.Anthropic do
             %Edit{
               op: :close,
               resource: block_path,
-              attrs: %{"type" => "tool_use", "id" => id, "name" => name, "input" => input},
+              attrs:
+                tool_block
+                |> Map.take(["server_name"])
+                |> Map.merge(%{"type" => type, "id" => id, "name" => name, "input" => input}),
+              raw: payload
+            }
+          ]
+
+        %{"type" => "mcp_tool_result"} = mcp_tool_result ->
+          [
+            %Edit{
+              op: :close,
+              resource: block_path,
+              attrs:
+                mcp_tool_result
+                |> Map.put_new("content", [])
+                |> Map.put_new("is_error", false),
               raw: payload
             }
           ]
@@ -376,10 +421,17 @@ defmodule Froth.LLM.Providers.Anthropic do
   def project_event(%Edit{
         op: :open,
         resource: ["message", "blocks", _idx],
-        attrs: %{"type" => "tool_use", "id" => id, "name" => name} = attrs
+        attrs: %{"type" => type, "id" => id, "name" => name} = attrs
       })
-      when is_binary(id) and is_binary(name) do
-    {:tool_use_start, %{"id" => id, "name" => name, "input" => Map.get(attrs, "input")}}
+      when is_binary(id) and is_binary(name) and type in ["tool_use", "mcp_tool_use"] do
+    {:tool_use_start,
+     %{
+       "type" => type,
+       "id" => id,
+       "name" => name,
+       "input" => Map.get(attrs, "input")
+     }
+     |> maybe_put("server_name", Map.get(attrs, "server_name"), &present_string?/1)}
   end
 
   def project_event(%Edit{
@@ -394,10 +446,17 @@ defmodule Froth.LLM.Providers.Anthropic do
   def project_event(%Edit{
         op: :close,
         resource: ["message", "blocks", _idx],
-        attrs: %{"type" => "tool_use", "id" => id, "name" => name, "input" => input}
+        attrs: %{"type" => type, "id" => id, "name" => name, "input" => input} = attrs
       })
-      when is_binary(id) and is_binary(name) do
-    {:tool_use_stop, %{"id" => id, "name" => name, "input" => input}}
+      when is_binary(id) and is_binary(name) and type in ["tool_use", "mcp_tool_use"] do
+    {:tool_use_stop,
+     %{
+       "type" => type,
+       "id" => id,
+       "name" => name,
+       "input" => input
+     }
+     |> maybe_put("server_name", Map.get(attrs, "server_name"), &present_string?/1)}
   end
 
   def project_event(_edit), do: nil
@@ -482,11 +541,131 @@ defmodule Froth.LLM.Providers.Anthropic do
     Enum.map(blocks, &encode_content_block/1)
   end
 
-  defp encode_content_block(%{"type" => "tool_result", "content" => content} = block) do
+  defp encode_content_block(%{"type" => type, "content" => content} = block)
+       when type in ["tool_result", "mcp_tool_result"] do
     Map.put(block, "content", encode_tool_result_content(content))
   end
 
   defp encode_content_block(block), do: block
+
+  defp split_tools(tools) when is_list(tools) do
+    tools
+    |> Enum.reduce({[], []}, fn
+      %{"type" => "mcp_endpoint"} = tool, {encoded_tools, mcp_servers} ->
+        {
+          [encode_mcp_toolset(tool) | encoded_tools],
+          [encode_mcp_server(tool) | mcp_servers]
+        }
+
+      tool, {encoded_tools, mcp_servers} when is_map(tool) ->
+        {[tool | encoded_tools], mcp_servers}
+
+      _, acc ->
+        acc
+    end)
+    |> then(fn {encoded_tools, mcp_servers} ->
+      {Enum.reverse(encoded_tools), Enum.reverse(mcp_servers)}
+    end)
+  end
+
+  defp split_tools(_tools), do: {[], []}
+
+  defp encode_mcp_server(tool) when is_map(tool) do
+    %{
+      "type" => "url",
+      "url" => mcp_server_url(tool),
+      "name" => mcp_server_name(tool)
+    }
+    |> maybe_put("authorization_token", mcp_authorization_token(tool), &present_string?/1)
+  end
+
+  defp encode_mcp_toolset(tool) when is_map(tool) do
+    default_config =
+      tool
+      |> mcp_default_config()
+      |> maybe_put_map("enabled", if(allowlist_present?(tool), do: false, else: nil))
+      |> maybe_put_map("defer_loading", Map.get(tool, "defer_loading", true))
+
+    configs =
+      tool
+      |> Map.get("configs", %{})
+      |> normalize_tool_configs()
+      |> maybe_enable_allowed_tools(mcp_allowed_tools(tool))
+
+    %{
+      "type" => "mcp_toolset",
+      "mcp_server_name" => mcp_server_name(tool)
+    }
+    |> maybe_put("default_config", default_config, &non_empty_map?/1)
+    |> maybe_put("configs", configs, &non_empty_map?/1)
+    |> maybe_put("cache_control", Map.get(tool, "cache_control"), &is_map/1)
+  end
+
+  defp mcp_default_config(%{"default_config" => %{} = default_config}),
+    do: stringify_map(default_config)
+
+  defp mcp_default_config(_tool), do: %{}
+
+  defp mcp_server_name(tool) when is_map(tool) do
+    Map.get(tool, "name") || Map.get(tool, "server_name")
+  end
+
+  defp mcp_server_url(tool) when is_map(tool) do
+    Map.get(tool, "url") || Map.get(tool, "server_url")
+  end
+
+  defp mcp_authorization_token(tool) when is_map(tool) do
+    Map.get(tool, "bearer_token") ||
+      Map.get(tool, "authorization_token") ||
+      resolve_bearer_token_provider(Map.get(tool, "bearer_token_provider"))
+  end
+
+  defp resolve_bearer_token_provider(provider) when is_binary(provider) and provider != "" do
+    LLM.active_api_key(provider)
+  end
+
+  defp resolve_bearer_token_provider(_provider), do: nil
+
+  defp mcp_allowed_tools(tool) when is_map(tool) do
+    tool
+    |> Map.get("allowed_tools", Map.get(tool, "tools"))
+    |> List.wrap()
+    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+  end
+
+  defp allowlist_present?(tool), do: mcp_allowed_tools(tool) != []
+
+  defp maybe_enable_allowed_tools(configs, []), do: configs
+
+  defp maybe_enable_allowed_tools(configs, allowed_tools) when is_map(configs) do
+    Enum.reduce(allowed_tools, configs, fn tool_name, acc ->
+      Map.update(acc, tool_name, %{"enabled" => true}, fn config ->
+        Map.put_new(config, "enabled", true)
+      end)
+    end)
+  end
+
+  defp normalize_tool_configs(configs) when is_map(configs) do
+    Map.new(configs, fn
+      {name, %{} = config} -> {to_string(name), stringify_map(config)}
+      {name, _config} -> {to_string(name), %{}}
+    end)
+  end
+
+  defp normalize_tool_configs(_configs), do: %{}
+
+  defp maybe_put_map(map, _key, nil), do: map
+  defp maybe_put_map(map, key, value), do: Map.put(map, key, value)
+
+  defp stringify_map(%{} = map) do
+    Map.new(map, fn {key, value} ->
+      {to_string(key), stringify_map_value(value)}
+    end)
+  end
+
+  defp stringify_map_value(%{} = map), do: stringify_map(map)
+  defp stringify_map_value(list) when is_list(list), do: Enum.map(list, &stringify_map_value/1)
+  defp stringify_map_value(value), do: value
 
   defp encode_tool_result_content(content) when is_binary(content), do: content
 
@@ -518,4 +697,5 @@ defmodule Froth.LLM.Providers.Anthropic do
   defp encode_role(:assistant), do: "assistant"
   defp present_string?(value), do: is_binary(value) and String.trim(value) != ""
   defp non_empty_list?(value), do: is_list(value) and value != []
+  defp non_empty_map?(value), do: is_map(value) and map_size(value) > 0
 end

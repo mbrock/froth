@@ -124,6 +124,61 @@ defmodule Froth.Follow.ProjectorTest do
     assert Entry.visible?(entry, :raw)
   end
 
+  test "hides noisy codex streaming events in smart mode but keeps them in raw mode" do
+    entry =
+      Projector.from_live(
+        [:froth, :codex, :data_chunk],
+        %{},
+        %{bytes: 512, complete_lines: 3, buffered_bytes: 22}
+      )
+
+    assert entry.family == "codex"
+    assert entry.summary == "streaming data"
+    assert entry.hidden
+    refute Entry.visible?(entry, :smart)
+    assert Entry.visible?(entry, :raw)
+  end
+
+  test "projects browser screenshots into readable hidden smart-mode entries" do
+    entry =
+      Projector.from_live(
+        [:froth, :browser, :session, :screenshot],
+        %{},
+        %{
+          browser_id: "browser:f4f02a04aecc",
+          path: "/home/mbrock/froth/priv/route_audit/screenshots/043-api.png"
+        }
+      )
+
+    assert entry.family == "browser"
+    assert entry.scope == "f4f02a04"
+    assert entry.summary == "captured screenshot"
+    assert entry.detail == "screenshots/043-api.png"
+    assert entry.hidden
+    refute Entry.visible?(entry, :smart)
+    assert Entry.visible?(entry, :raw)
+  end
+
+  test "projects browser cdp requests without false detail noise" do
+    entry =
+      Projector.from_live(
+        [:froth, :browser, :cdp, :request],
+        %{},
+        %{
+          id: 353,
+          method: "Page.navigate",
+          session_id: "C987F8DEA048A0065EBFDF357B2D31F6"
+        }
+      )
+
+    assert entry.family == "browser"
+    assert entry.scope == "Page.navigate"
+    assert entry.summary == "cdp Page.navigate"
+    assert entry.detail =~ "id=353"
+    assert entry.detail =~ "session=C987F8DE"
+    assert entry.hidden
+  end
+
   test "hides persisted tool spine rows in smart mode when a telemetry twin exists" do
     entry =
       Projector.from_row(%{
@@ -142,5 +197,66 @@ defmodule Froth.Follow.ProjectorTest do
     assert entry.hidden
     refute Entry.visible?(entry, :smart)
     assert Entry.visible?(entry, :raw)
+  end
+
+  test "renders tuple-shaped error metadata without crashing" do
+    entry =
+      Projector.from_live(
+        [:froth, :codex, :request_failed_to_send],
+        %{},
+        %{error: {:shutdown, {:remote, :boom}}, reason: {:error, :timeout}}
+      )
+
+    assert entry.family == "codex"
+    assert entry.level == :error
+    assert entry.detail =~ "{:error, :timeout}"
+    assert entry.detail =~ "{:shutdown, {:remote, :boom}}"
+  end
+
+  test "renders provider request exception tuples without crashing" do
+    entry =
+      Projector.from_live(
+        [:froth, :anthropic, :request, :exception],
+        %{},
+        %{
+          model: "claude-opus-4-6",
+          error:
+            {:provider_error, "anthropic",
+             %{
+               "error" => %{
+                 "message" => "Internal server error",
+                 "type" => "api_error"
+               }
+             }, %{}}
+        }
+      )
+
+    assert entry.family == "llm"
+    assert entry.level == :error
+    assert entry.summary == "request failed"
+    assert entry.detail =~ "model=claude-opus-4-6"
+    assert entry.detail =~ "Internal server error"
+  end
+
+  test "renders codex request errors with compact scope and previews" do
+    entry =
+      Projector.from_live(
+        [:froth, :codex, :request_error_response],
+        %{},
+        %{
+          method: "item/agentMessage/delta",
+          topic: "codex:wire:codex_384e409b",
+          id: 17,
+          error_preview: "%{\"message\" => \"boom\"}"
+        }
+      )
+
+    assert entry.family == "codex"
+    assert entry.scope == "agentMessage/delta"
+    assert entry.summary == "request error response"
+    assert entry.detail =~ "method=agentMessage/delta"
+    assert entry.detail =~ "topic=codex_384e409b"
+    assert entry.detail =~ "error=%{\"message\" => \"boom\"}"
+    refute entry.hidden
   end
 end

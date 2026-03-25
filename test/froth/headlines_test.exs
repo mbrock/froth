@@ -1,7 +1,11 @@
 defmodule Froth.HeadlinesTest do
   use ExUnit.Case, async: false
 
+  import Ecto.Query
+
+  alias Froth.Agent.Message, as: AgentMessage
   alias Froth.ChatSummary
+  alias Froth.Event
   alias Froth.Headlines
   alias Froth.Inference.Tools
   alias Froth.LLM.Message, as: LLMMessage
@@ -14,6 +18,148 @@ defmodule Froth.HeadlinesTest do
   end
 
   test "extract builds the summary prompt and passes the expected tools to adhoc" do
+    test_pid = self()
+    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
+    chat_id = unique_chat_id()
+
+    insert_summary(chat_id, ~D[2026-03-20], "The group launched a new project.")
+    insert_summary(chat_id, ~D[2026-03-21], "A long debugging session fixed the outage.")
+
+    %Event{}
+    |> Event.changeset(%{
+      event: "froth.headlines.registered",
+      metadata: %{
+        "date" => "2026-03-19",
+        "chat_id" => Integer.to_string(chat_id),
+        "headlines" => [
+          %{
+            "emoji" => "📰",
+            "title" => "Old scandal",
+            "sentence" => "An earlier headline was already filed.",
+            "from_time" => "2026-03-19T08:00:00Z",
+            "to_time" => "2026-03-19T08:30:00Z"
+          }
+        ]
+      },
+      measurements: %{"count" => 1}
+    })
+    |> Repo.insert!()
+
+    on_exit(fn ->
+      if previous_fun do
+        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
+      else
+        Application.delete_env(:froth, :llm_stream_single_fun)
+      end
+    end)
+
+    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
+      send(test_pid, {:llm_call, api_messages, opts})
+
+      {:ok,
+       %{
+         text: "done",
+         content: [%{"type" => "text", "text" => "done"}],
+         stop_reason: "stop",
+         usage: %{},
+         model: opts[:model],
+         message_id: "msg_headlines_1"
+       }}
+    end)
+
+    {_cycle, output} = Headlines.extract(chat_id: chat_id)
+
+    assert output == "done"
+    assert_receive {:llm_call, api_messages, opts}, 5_000
+
+    assert [
+             %LLMMessage{
+               role: :user,
+               content: [%{"type" => "text", "text" => prompt}]
+             }
+           ] = api_messages
+
+    assert prompt =~ ~s(<summary date="2026-03-20">)
+    assert prompt =~ "The group launched a new project."
+    assert prompt =~ ~s(<summary date="2026-03-21">)
+    assert prompt =~ "A long debugging session fixed the outage."
+    assert prompt =~ "<existing_headlines>"
+    assert prompt =~ ~s(<headlines date="2026-03-19">)
+    assert prompt =~ "<emoji>📰</emoji>"
+    assert prompt =~ "Old scandal"
+
+    assert prompt =~ "<objective>"
+    assert prompt =~ "Write tabloid headlines for EVERY summary date in the context."
+
+    assert prompt =~
+             "Existing registered headlines are included below in XML. Those days are already done."
+
+    assert prompt =~
+             "Recurring automated events (scheduled scans, hourly podcasts, Tototo sleeping) are NOT headlines unless something broke or changed."
+
+    assert prompt =~
+             "A day can have multiple real headlines. If a day has several distinct developments, register all of them together."
+
+    assert prompt =~
+             "Do not stop at one headline for a day unless that day truly has only one substantial development worth remembering."
+
+    assert prompt =~
+             "Before you register a date, make sure you have the complete set of worthy headlines for that day, not just the first good one you found."
+
+    assert prompt =~
+             "Only include items that are genuinely worth headlining, but include ALL of them once they clear that bar."
+
+    assert prompt =~
+             "Use read_log and search to investigate details and find an approximate UTC time range for each headline before registering it."
+
+    assert prompt =~
+             "Prefer targeted searches and narrow log windows. Avoid repeatedly pulling large log spans once you already have enough evidence for that day."
+
+    assert prompt =~
+             "You do not need to finish all research before you start registering. As soon as one day is sufficiently researched and complete, call register_headlines for that day and then continue to the next unfinished day."
+
+    assert prompt =~
+             "After you register a date, stop researching that date unless you uncover a clear miss."
+
+    assert prompt =~
+             "Each headline must include from_time and to_time as ISO 8601 UTC datetime strings bracketing when the event happened."
+
+    assert prompt =~ "You may register headlines in any order."
+
+    assert prompt =~ "Call register_headlines once per date."
+
+    assert prompt =~
+             "When you register a day, include the full set of worthy headlines for that day in a single register_headlines call."
+
+    assert prompt =~
+             "In the register_headlines arguments, the headlines array is the complete deliverable for that date. Put EVERY headline worth keeping for that date into that array."
+
+    assert prompt =~ "Do not submit a representative sample."
+
+    assert prompt =~
+             "A headlines array of length 1 is only correct when that date truly has exactly one worthy headline after investigation."
+
+    assert prompt =~
+             "The tool response will tell you what's left, so keep going until every available summary date is done."
+
+    assert opts[:provider] == :openai
+    assert opts[:model] == "gpt-5.4"
+    assert opts[:effort] == "medium"
+    assert opts[:reasoning_summary] == "auto"
+    assert Enum.map(opts[:tools], & &1["name"]) == ["read_log", "search", "register_headlines"]
+
+    register_headlines_tool = Enum.find(opts[:tools], &(&1["name"] == "register_headlines"))
+
+    assert get_in(register_headlines_tool, [
+             "input_schema",
+             "properties",
+             "headlines",
+             "items",
+             "required"
+           ]) == ["emoji", "title", "sentence", "from_time", "to_time"]
+  end
+
+  test "extract_all builds the multi-day prompt" do
     test_pid = self()
     previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
     chat_id = unique_chat_id()
@@ -39,14 +185,14 @@ defmodule Froth.HeadlinesTest do
          stop_reason: "stop",
          usage: %{},
          model: opts[:model],
-         message_id: "msg_headlines_1"
+         message_id: "msg_headlines_all_1"
        }}
     end)
 
-    {_cycle, output} = Headlines.extract(~D[2026-03-22], chat_id: chat_id)
+    {_cycle, output} = Headlines.extract_all(chat_id: chat_id)
 
     assert output == "done"
-    assert_receive {:llm_call, api_messages, opts}, 5_000
+    assert_receive {:llm_call, api_messages, _opts}, 5_000
 
     assert [
              %LLMMessage{
@@ -55,22 +201,116 @@ defmodule Froth.HeadlinesTest do
              }
            ] = api_messages
 
-    assert prompt =~ ~s(<summary date="2026-03-20">)
-    assert prompt =~ "The group launched a new project."
-    assert prompt =~ ~s(<summary date="2026-03-21">)
-    assert prompt =~ "A long debugging session fixed the outage."
-    assert prompt =~ "Extract the most significant and memorable events from 2026-03-22."
-    assert prompt =~ "call register_headlines exactly once with date=2026-03-22"
+    assert prompt =~ "Write tabloid headlines for EVERY summary date in the context."
 
-    assert opts[:provider] == :openai
-    assert opts[:model] == "gpt-5.4"
-    assert Enum.map(opts[:tools], & &1["name"]) == ["read_log", "search", "register_headlines"]
+    assert prompt =~ "You may register headlines in any order."
+
+    assert prompt =~
+             "A day can have multiple real headlines. If a day has several distinct developments, register all of them together."
+
+    assert prompt =~
+             "Do not stop at one headline for a day unless that day truly has only one substantial development worth remembering."
+
+    assert prompt =~
+             "Before you register a date, make sure you have the complete set of worthy headlines for that day, not just the first good one you found."
+
+    assert prompt =~
+             "Only include items that are genuinely worth headlining, but include ALL of them once they clear that bar."
+
+    assert prompt =~
+             "Prefer targeted searches and narrow log windows. Avoid repeatedly pulling large log spans once you already have enough evidence for that day."
+
+    assert prompt =~
+             "You do not need to finish all research before you start registering. As soon as one day is sufficiently researched and complete, call register_headlines for that day and then continue to the next unfinished day."
+
+    assert prompt =~
+             "In the register_headlines arguments, the headlines array is the complete deliverable for that date. Put EVERY headline worth keeping for that date into that array."
+
+    assert prompt =~
+             "The tool response will tell you what's left, so keep going until every available summary date is done."
   end
 
-  test "register_headlines emits telemetry and formats a chat message" do
+  test "start streams deltas and the final agent message" do
+    test_pid = self()
+    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
+    chat_id = unique_chat_id()
+
+    insert_summary(chat_id, ~D[2026-03-20], "The group launched a new project.")
+
+    on_exit(fn ->
+      if previous_fun do
+        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
+      else
+        Application.delete_env(:froth, :llm_stream_single_fun)
+      end
+    end)
+
+    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, on_event, opts ->
+      send(test_pid, {:llm_call, api_messages, opts})
+      on_event.({:thinking_delta, %{"delta" => "thinking..."}})
+      on_event.({:thinking_stop, %{}})
+      on_event.({:text_delta, "done"})
+
+      {:ok,
+       %{
+         text: "done",
+         content: [%{"type" => "text", "text" => "done"}],
+         stop_reason: "stop",
+         usage: %{},
+         model: opts[:model],
+         message_id: "msg_headlines_stream_1"
+       }}
+    end)
+
+    {cycle, stream} = Headlines.start(chat_id: chat_id, model: "gpt-5.4-mini")
+    items = Enum.to_list(stream)
+
+    assert is_binary(cycle.id)
+    assert_receive {:llm_call, _api_messages, opts}, 5_000
+    assert opts[:model] == "gpt-5.4-mini"
+    assert opts[:reasoning_summary] == "auto"
+
+    assert {:stream, {:thinking_delta, %{"delta" => "thinking..."}}} in items
+    assert {:stream, {:thinking_stop, %{}}} in items
+    assert {:stream, {:text_delta, "done"}} in items
+
+    assert Enum.any?(items, fn
+             {:event, _event, %AgentMessage{role: :agent} = message} ->
+               AgentMessage.extract_text(message) == "done"
+
+             _ ->
+               false
+           end)
+  end
+
+  test "register_headlines emits telemetry, formats the chat message, and reports progress" do
     test_pid = self()
     handler_id = "headlines-test-#{System.unique_integer([:positive])}"
     chat_id = unique_chat_id()
+
+    insert_summary(chat_id, ~D[2026-03-20], "An earlier scandal.")
+    insert_summary(chat_id, ~D[2026-03-21], "A middle scandal.")
+    insert_summary(chat_id, ~D[2026-03-22], "A fresh scandal.")
+
+    %Event{}
+    |> Event.changeset(%{
+      event: "froth.headlines.registered",
+      metadata: %{
+        "date" => "2026-03-20",
+        "chat_id" => Integer.to_string(chat_id),
+        "headlines" => []
+      },
+      measurements: %{"count" => 0}
+    })
+    |> Repo.insert!()
+
+    %Event{}
+    |> Event.changeset(%{
+      event: "froth.headlines.registered",
+      metadata: %{"date" => "2026-03-21", "headlines" => []},
+      measurements: %{"count" => 0}
+    })
+    |> Repo.insert!()
 
     :telemetry.attach(
       handler_id,
@@ -83,24 +323,35 @@ defmodule Froth.HeadlinesTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    assert {:ok, "Registered 2 headlines for 2026-03-22"} =
+    assert {:ok,
+            "Registered 2 headlines for 2026-03-22. Progress: 2/3 days done. " <>
+              "Next unfinished: 2026-03-21."} =
              Tools.execute(
                "register_headlines",
                %{
                  "date" => "2026-03-22",
                  "headlines" => [
                    %{
+                     "emoji" => "🚀",
                      "title" => "Launch day",
-                     "sentence" => "The team rolled out the feature to production."
+                     "sentence" => "The team rolled out the feature to production.",
+                     "from_time" => "2026-03-22T09:00:00Z",
+                     "to_time" => "2026-03-22T09:45:00Z"
                    },
                    %{
+                     "emoji" => "🛠️",
                      "title" => "Outage resolved",
-                     "sentence" => "A late-night fix restored the broken sync job."
+                     "sentence" => "A late-night fix restored the broken sync job.",
+                     "from_time" => "2026-03-22T22:15:00Z",
+                     "to_time" => "2026-03-22T23:05:00Z"
                    }
                  ]
                },
                chat_id,
                session_id: "charlie",
+               bot_id: "charlie",
+               bot_username: "charliebuddybot",
+               cycle_id: "cycle-123",
                send_message_fun: fn session_id, sent_chat_id, text, opts ->
                  send(test_pid, {:sent_message, session_id, sent_chat_id, text, opts})
                  {:ok, %{"id" => 1}}
@@ -109,18 +360,143 @@ defmodule Froth.HeadlinesTest do
 
     assert_receive {:telemetry, [:froth, :headlines, :registered], %{count: 2}, metadata}, 5_000
     assert metadata[:date] == "2026-03-22"
+    assert metadata[:chat_id] == chat_id
     assert length(metadata[:headlines]) == 2
 
     assert_receive {:sent_message, "charlie", ^chat_id, text, opts}, 5_000
 
     assert text ==
              "2026-03-22\n\n" <>
-               "Launch day — The team rolled out the feature to production.\n" <>
-               "Outage resolved — A late-night fix restored the broken sync job."
+               "🚀 Launch day (09:00-09:45 UTC)\n\n" <>
+               "🛠️ Outage resolved (22:15-23:05 UTC)"
 
     assert length(opts[:entities]) == 3
     assert Enum.all?(opts[:entities], &(get_in(&1, ["type", "@type"]) == "textEntityTypeBold"))
+    [date_entity, first_headline_entity, second_headline_entity] = opts[:entities]
+
+    assert date_entity["offset"] == 0
+    assert date_entity["length"] == utf16_length("2026-03-22")
+
+    assert first_headline_entity["offset"] == utf16_length("2026-03-22\n\n🚀 ")
+    assert first_headline_entity["length"] == utf16_length("Launch day")
+
+    assert second_headline_entity["offset"] ==
+             utf16_length("2026-03-22\n\n🚀 Launch day (09:00-09:45 UTC)\n\n🛠️ ")
+
+    assert second_headline_entity["length"] == utf16_length("Outage resolved")
+
+    assert get_in(opts[:reply_markup], ["rows", Access.at(0), Access.at(0), "text"]) == "Open"
+
+    assert get_in(opts[:reply_markup], [
+             "rows",
+             Access.at(0),
+             Access.at(0),
+             "type",
+             "url"
+           ]) == "https://t.me/charliebuddybot/tool?startapp=cycle_charlie_cycle-123"
+
     assert [:froth, :headlines, :registered] in Froth.Telemetry.events()
+  end
+
+  test "register_headlines progress accumulates across successive registrations" do
+    chat_id = unique_chat_id()
+
+    insert_summary(chat_id, ~D[2026-03-20], "An earlier scandal.")
+    insert_summary(chat_id, ~D[2026-03-21], "A middle scandal.")
+    insert_summary(chat_id, ~D[2026-03-22], "A fresh scandal.")
+
+    assert {:ok,
+            "Registered 1 headlines for 2026-03-20. Progress: 1/3 days done. " <>
+              "Next unfinished: 2026-03-21."} =
+             Tools.execute(
+               "register_headlines",
+               %{
+                 "date" => "2026-03-20",
+                 "headlines" => [
+                   %{
+                     "emoji" => "1️⃣",
+                     "title" => "Day one",
+                     "sentence" => "The first scandal landed.",
+                     "from_time" => "2026-03-20T09:00:00Z",
+                     "to_time" => "2026-03-20T09:30:00Z"
+                   }
+                 ]
+               },
+               chat_id,
+               session_id: "charlie",
+               send_message_fun: fn _session_id, _chat_id, _text, _opts -> {:ok, %{"id" => 1}} end
+             )
+
+    assert {:ok,
+            "Registered 1 headlines for 2026-03-21. Progress: 2/3 days done. " <>
+              "Next unfinished: 2026-03-22."} =
+             Tools.execute(
+               "register_headlines",
+               %{
+                 "date" => "2026-03-21",
+                 "headlines" => [
+                   %{
+                     "emoji" => "2️⃣",
+                     "title" => "Day two",
+                     "sentence" => "The second scandal followed.",
+                     "from_time" => "2026-03-21T10:00:00Z",
+                     "to_time" => "2026-03-21T10:45:00Z"
+                   }
+                 ]
+               },
+               chat_id,
+               session_id: "charlie",
+               send_message_fun: fn _session_id, _chat_id, _text, _opts -> {:ok, %{"id" => 1}} end
+             )
+  end
+
+  test "register_headlines can skip Telegram sending while still recording progress" do
+    chat_id = unique_chat_id()
+
+    insert_summary(chat_id, ~D[2026-03-20], "An earlier scandal.")
+    insert_summary(chat_id, ~D[2026-03-21], "A middle scandal.")
+
+    assert {:ok,
+            "Registered 1 headlines for 2026-03-20. Progress: 1/2 days done. " <>
+              "Next unfinished: 2026-03-21."} =
+             Tools.execute(
+               "register_headlines",
+               %{
+                 "date" => "2026-03-20",
+                 "headlines" => [
+                   %{
+                     "emoji" => "🧪",
+                     "title" => "Dry run",
+                     "sentence" => "The headline was recorded without posting to Telegram.",
+                     "from_time" => "2026-03-20T09:00:00Z",
+                     "to_time" => "2026-03-20T09:15:00Z"
+                   }
+                 ]
+               },
+               chat_id,
+               session_id: "charlie",
+               spam: false,
+               send_message_fun: fn _session_id, _chat_id, _text, _opts ->
+                 send(self(), :sent_message)
+                 {:ok, %{"id" => 1}}
+               end
+             )
+
+    refute_receive :sent_message
+
+    assert [%Event{metadata: metadata}] =
+             Repo.all(
+               from(e in Event,
+                 where:
+                   e.event == "froth.headlines.registered" and
+                     fragment("?->>'chat_id' = ?", e.metadata, ^Integer.to_string(chat_id)),
+                 order_by: [desc: e.inserted_at]
+               ),
+               log: false
+             )
+
+    assert metadata["date"] == "2026-03-20"
+    assert get_in(metadata, ["headlines", Access.at(0), "title"]) == "Dry run"
   end
 
   defp insert_summary(chat_id, date, text) do
@@ -141,5 +517,12 @@ defmodule Froth.HeadlinesTest do
 
   defp unique_chat_id do
     9_100_000_000 + System.unique_integer([:positive])
+  end
+
+  defp utf16_length(text) when is_binary(text) do
+    text
+    |> :unicode.characters_to_binary(:utf8, {:utf16, :little})
+    |> byte_size()
+    |> div(2)
   end
 end

@@ -1,9 +1,11 @@
 defmodule Froth.Inference.ToolsTest do
   use ExUnit.Case, async: false
 
+  alias Froth.ApiKey
   alias Froth.Agent
   alias Froth.Agent.{Cycle, Message}
   alias Froth.Inference.Tools
+  alias Froth.LLM.Message, as: LLMMessage
   alias Froth.Repo
   alias Froth.Task
   alias Froth.TaskEvent
@@ -14,6 +16,24 @@ defmodule Froth.Inference.ToolsTest do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
     Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
     :ok
+  end
+
+  test "specs_for_api includes the Wolfram MCP endpoint when a Wolfram key is available" do
+    Repo.insert!(%ApiKey{name: "wolfram", provider: "wolfram", key: "wolfram-token"})
+
+    spec =
+      Enum.find(Tools.specs_for_api(), fn
+        %{"type" => "mcp_endpoint", "name" => "wolfram"} -> true
+        _ -> false
+      end)
+
+    assert spec == %{
+             "type" => "mcp_endpoint",
+             "name" => "wolfram",
+             "url" => "https://services.wolfram.com/api/mcp",
+             "bearer_token_provider" => "wolfram",
+             "defer_loading" => true
+           }
   end
 
   test "read_tool_transcript includes prior cycle transcript and linked task output" do
@@ -143,6 +163,111 @@ defmodule Froth.Inference.ToolsTest do
 
     refute is_nil(spec)
     assert get_in(spec, ["input_schema", "required"]) == ["query"]
+  end
+
+  test "spawn_agent is exposed in tool specs" do
+    spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "spawn_agent"))
+
+    refute is_nil(spec)
+    assert get_in(spec, ["input_schema", "required"]) == ["prompt"]
+  end
+
+  test "spawn_agent starts an adhoc cycle with default tools and links it to the chat" do
+    test_pid = self()
+    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
+
+    on_exit(fn ->
+      if previous_fun do
+        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
+      else
+        Application.delete_env(:froth, :llm_stream_single_fun)
+      end
+    end)
+
+    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
+      send(test_pid, {:spawn_agent_llm_call, api_messages, opts})
+
+      {:ok,
+       %{
+         text: "delegated answer",
+         content: [%{"type" => "text", "text" => "delegated answer"}],
+         stop_reason: "stop",
+         usage: %{},
+         model: opts[:model],
+         message_id: "resp_spawn_agent_1"
+       }}
+    end)
+
+    chat_id = unique_chat_id()
+
+    assert {:ok, result} =
+             Tools.execute(
+               "spawn_agent",
+               %{"prompt" => "Say hi from the delegated agent"},
+               chat_id,
+               bot_id: "charlie",
+               bot_username: "charliebuddybot",
+               session_id: "charlie"
+             )
+
+    assert result["status"] == "started"
+    assert result["model"] == "gpt-5.4-mini"
+    assert result["tools"] == ["run_shell", "elixir_eval"]
+    assert result["check_tool"] == "read_tool_transcript"
+    assert result["open_url"] =~ result["cycle_id"]
+
+    assert result["check_input"] == %{
+             "cycle_id" => result["cycle_id"],
+             "include_messages" => true
+           }
+
+    assert_receive {:spawn_agent_llm_call, api_messages, opts}, 5_000
+
+    assert [%LLMMessage{role: :user, content: [%{"type" => "text", "text" => prompt}]}] =
+             api_messages
+
+    assert prompt == "Say hi from the delegated agent"
+    assert opts[:model] == "gpt-5.4-mini"
+
+    assert :ok = wait_for_cycle_status(result["cycle_id"], :completed)
+
+    cycle = Repo.get!(Cycle, result["cycle_id"])
+    assert cycle.status == :completed
+    assert cycle.model == "gpt-5.4-mini"
+    assert Enum.map(cycle.config["tool_specs"], & &1["name"]) == ["run_shell", "elixir_eval"]
+
+    assert Repo.get_by!(CycleLink,
+             cycle_id: result["cycle_id"],
+             bot_id: "charlie",
+             chat_id: chat_id
+           )
+
+    assert {:ok, transcript} =
+             Tools.execute(
+               "read_tool_transcript",
+               %{"cycle_id" => result["cycle_id"], "include_messages" => true},
+               chat_id,
+               bot_id: "charlie",
+               session_id: "charlie"
+             )
+
+    assert transcript =~ result["cycle_id"]
+    assert transcript =~ "delegated answer"
+  end
+
+  test "spawn_agent rejects unknown tool names" do
+    assert {:error, message} =
+             Tools.execute(
+               "spawn_agent",
+               %{"prompt" => "Delegate this", "tools" => ["shell", "definitely_not_real"]},
+               unique_chat_id(),
+               bot_id: "charlie",
+               bot_username: "charliebuddybot",
+               session_id: "charlie"
+             )
+
+    assert message =~ "unknown tool names: definitely_not_real"
+    assert message =~ "run_shell"
   end
 
   test "web_search executes triangulated search and returns tool payload" do
@@ -415,7 +540,50 @@ defmodule Froth.Inference.ToolsTest do
     refute transcript =~ huge_chunk
   end
 
+  test "run_shell falls back to the current working directory for an empty working_dir" do
+    {:ok, result} =
+      Tools.execute(
+        "run_shell",
+        %{"command" => "pwd", "working_dir" => ""},
+        unique_chat_id(),
+        []
+      )
+
+    assert [_, task_id, working_dir] =
+             Regex.run(~r/^Shell (.+?): `pwd`\n(.+)$/s, result)
+
+    task = Repo.get!(Task, task_id)
+
+    expected_stat = File.stat!(task.metadata["working_dir"])
+    actual_stat = File.stat!(working_dir)
+
+    assert {expected_stat.major_device, expected_stat.minor_device, expected_stat.inode} ==
+             {actual_stat.major_device, actual_stat.minor_device, actual_stat.inode}
+
+    assert working_dir != ""
+  end
+
   defp unique_chat_id do
     9_000_000_000 + System.unique_integer([:positive])
+  end
+
+  defp wait_for_cycle_status(cycle_id, status, attempts \\ 100)
+
+  defp wait_for_cycle_status(cycle_id, status, attempts)
+       when is_binary(cycle_id) and attempts > 0 do
+    case Repo.get!(Cycle, cycle_id).status do
+      ^status ->
+        :ok
+
+      _other ->
+        receive do
+        after
+          10 -> wait_for_cycle_status(cycle_id, status, attempts - 1)
+        end
+    end
+  end
+
+  defp wait_for_cycle_status(cycle_id, status, 0) do
+    flunk("cycle #{cycle_id} did not reach status #{inspect(status)} in time")
   end
 end

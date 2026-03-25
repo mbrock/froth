@@ -1,7 +1,7 @@
 defmodule FrothWeb.FollowLive do
   use FrothWeb, :live_view
 
-  alias Froth.Follow.{Entry, Filter, Projector, Source}
+  alias Froth.Follow.{Entry, Filter, Projector, Source, Timeline}
 
   @page_size 3000
   @max_entries 5000
@@ -135,7 +135,7 @@ defmodule FrothWeb.FollowLive do
         id="follow-reader"
         phx-hook="ToolScroll"
         data-follow-mode="always"
-        class="min-h-screen bg-[radial-gradient(circle_at_top,rgba(28,55,97,0.22),transparent_28%),linear-gradient(180deg,#09090b_0%,#050507_55%,#020203_100%)] font-mono text-zinc-100"
+        class="mini-shell safe-top flex min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(28,55,97,0.22),transparent_28%),linear-gradient(180deg,#09090b_0%,#050507_55%,#020203_100%)] font-[JetBrains_Mono,ui-monospace,SFMono-Regular,Menlo,Monaco,monospace] text-zinc-100"
       >
         <header class="sticky top-0 z-30 border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-xl">
           <div class="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-4 md:px-6">
@@ -279,129 +279,208 @@ defmodule FrothWeb.FollowLive do
           </div>
         </header>
 
-        <main id="follow-feed" class="mx-auto w-full max-w-6xl px-4 py-5 md:px-6 md:py-6">
-          <div id="follow-entries" phx-update="stream" class="space-y-4">
-            <div
-              id="follow-empty-state"
-              class="hidden rounded-3xl border border-dashed border-zinc-800 bg-zinc-950/80 px-6 py-10 text-center only:block"
-            >
-              <p class="text-[12px] uppercase tracking-[0.2em] text-zinc-500">No matching entries</p>
-              <p class="mt-2 text-[13px] leading-6 text-zinc-400">
-                Adjust the search, clear scope pinning, or wait for new telemetry.
-              </p>
-            </div>
+        <main
+          id="follow-feed"
+          data-scroll-body
+          class="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        >
+          <div class="mx-auto w-full max-w-6xl px-4 py-5 md:px-6 md:py-6">
+            <div id="follow-entries" phx-update="stream" class="space-y-4">
+              <div
+                id="follow-empty-state"
+                class="hidden rounded-3xl border border-dashed border-zinc-800 bg-zinc-950/80 px-6 py-10 text-center only:block"
+              >
+                <p class="text-[12px] uppercase tracking-[0.2em] text-zinc-500">
+                  No matching entries
+                </p>
+                <p class="mt-2 text-[13px] leading-6 text-zinc-400">
+                  Adjust the search, clear scope pinning, or wait for new telemetry.
+                </p>
+              </div>
 
-            <%= for {dom_id, item} <- @streams.entries do %>
-              <div id={dom_id}>
-                <div
-                  :if={item.group_break?}
-                  class="mb-2 flex items-center gap-3 px-1 text-[10px] uppercase tracking-[0.24em] text-zinc-500"
-                >
-                  <span class={group_label_class(item.group_kind)}>{item.group_label}</span>
-                  <div class="h-px flex-1 bg-zinc-800"></div>
-                </div>
-
-                <article class={entry_container_class(item.entry.family, item.expanded?)}>
-                  <button
-                    id={"follow-entry-toggle-#{item.entry.id}"}
-                    type="button"
-                    phx-click="toggle-entry"
-                    phx-value-id={entry_id(item.entry)}
-                    class="block w-full text-left"
-                  >
-                    <div class="flex items-start justify-between gap-3">
-                      <div class="min-w-0 flex-1">
-                        <div class="flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
-                          <span>{format_time(item.entry.at)}</span>
-                          <span class={family_badge_class(item.entry.family)}>
-                            {family_label(item.entry.family)}
-                          </span>
-                          <span
-                            :if={item.entry.duration_ms}
-                            class="rounded-full border border-zinc-700 bg-zinc-900/60 px-2 py-0.5 text-[10px] text-zinc-400"
-                          >
-                            {item.entry.duration_ms} ms
-                          </span>
-                        </div>
-
-                        <div class="mt-3 flex items-start gap-3">
-                          <div class={icon_wrap_class(item.entry.family)}>
-                            <.icon name={entry_icon(item.entry.family)} class="size-4" />
+              <%= for {dom_id, item} <- @streams.entries do %>
+                <div id={dom_id}>
+                  <%= if item.group_break? do %>
+                    <%= if item.group_kind == :cycle and item.cycle_summary do %>
+                      <section
+                        id={"follow-cycle-summary-#{item.cycle_summary.cycle_id}"}
+                        class={cycle_summary_container_class(item)}
+                      >
+                        <div class={cycle_summary_bar_class(item.cycle_accent)}></div>
+                        <div class="space-y-3 px-3 py-3">
+                          <div class="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                            <span class={cycle_summary_label_class(item.cycle_accent)}>
+                              cycle {item.cycle_summary.label}
+                            </span>
+                            <span class={status_badge_class(item.cycle_summary.status_level)}>
+                              {item.cycle_summary.status}
+                            </span>
+                            <span
+                              :if={item.cycle_summary.active?}
+                              class="inline-flex items-center gap-1 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-emerald-100"
+                            >
+                              <span class="inline-block size-1.5 rounded-full bg-emerald-300"></span>
+                              live
+                            </span>
                           </div>
 
-                          <div class="min-w-0 flex-1">
-                            <p class={summary_class(item.entry.level)}>
-                              {entry_title(item.entry, @view_mode)}
-                            </p>
-                            <p
-                              :if={entry_subtitle(item.entry, @view_mode)}
-                              class="mt-1 whitespace-pre-wrap break-words text-[12px] leading-5 text-zinc-400"
-                            >
-                              {entry_subtitle(item.entry, @view_mode)}
-                            </p>
+                          <div class="grid gap-2 sm:grid-cols-2">
+                            <div class="min-w-0 text-[11px] leading-5 text-zinc-200">
+                              <span :if={item.cycle_summary.provider || item.cycle_summary.model}>
+                                {cycle_identity_text(item.cycle_summary)}
+                              </span>
+                              <span :if={item.cycle_summary.provider || item.cycle_summary.model}>
+                                {" "}
+                              </span>
+                              <span class="text-zinc-400">
+                                tools {item.cycle_summary.tool_count}
+                              </span>
+                              <span :if={item.cycle_summary.llm_count > 0} class="text-zinc-400">
+                                {" "}llm {item.cycle_summary.llm_count}
+                              </span>
+                            </div>
+
+                            <div class="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-zinc-500 sm:justify-end">
+                              <span
+                                :if={item.cycle_summary.elapsed_ms}
+                                class="rounded-full border border-zinc-700 bg-zinc-900/80 px-2 py-0.5 text-zinc-300"
+                              >
+                                elapsed {format_elapsed(item.cycle_summary.elapsed_ms)}
+                              </span>
+                              <span class="rounded-full border border-zinc-800 bg-black/30 px-2 py-0.5 text-zinc-500">
+                                cycle summary
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+                    <% else %>
+                      <div class="mb-2 flex items-center gap-3 px-1 text-[10px] uppercase tracking-[0.24em] text-zinc-500">
+                        <span class={group_label_class(item.group_kind)}>{item.group_label}</span>
+                        <div class="h-px flex-1 bg-zinc-800"></div>
+                      </div>
+                    <% end %>
+                  <% end %>
+
+                  <article class={entry_container_class(item)}>
+                    <button
+                      id={"follow-entry-toggle-#{item.entry.id}"}
+                      type="button"
+                      phx-click="toggle-entry"
+                      phx-value-id={entry_id(item.entry)}
+                      class="block w-full text-left"
+                    >
+                      <div class="grid grid-cols-[5.05rem_3.9rem_5.6rem_minmax(0,1fr)] gap-x-2 gap-y-2 sm:grid-cols-[5.4rem_4.5rem_7.5rem_minmax(0,1fr)]">
+                        <span class="truncate text-[11px] tabular-nums text-zinc-500">
+                          {format_time(item.entry.at)}
+                        </span>
+
+                        <span class={family_column_class(item.entry)}>
+                          {family_short_label(item.entry.family)}
+                        </span>
+
+                        <span class={scope_column_class(item.entry)}>
+                          {item.entry.scope || "-"}
+                        </span>
+
+                        <div class="min-w-0">
+                          <div class="flex min-w-0 items-start gap-2">
+                            <span class={tree_prefix_class(item)}>
+                              {item.tree_prefix}
+                            </span>
+
+                            <div class="min-w-0 flex-1">
+                              <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0 flex-1">
+                                  <p class={summary_class(item.entry)}>
+                                    {entry_primary_text(item.entry, @view_mode)}
+                                  </p>
+                                  <p
+                                    :if={entry_secondary_text(item.entry, @view_mode)}
+                                    class={secondary_text_class(item.entry)}
+                                  >
+                                    {entry_secondary_text(item.entry, @view_mode)}
+                                  </p>
+                                </div>
+
+                                <span class="shrink-0 rounded-full border border-zinc-700 bg-zinc-900/70 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-zinc-400 transition group-hover:text-zinc-100">
+                                  {if(item.expanded?, do: "Hide", else: "Payload")}
+                                </span>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
+                    </button>
 
-                      <span class="shrink-0 rounded-full border border-zinc-700 bg-zinc-900/70 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-zinc-400 transition group-hover:text-zinc-100">
-                        {if(item.expanded?, do: "Hide", else: "Payload")}
+                    <div class="mt-2 flex flex-wrap items-center gap-2">
+                      <span
+                        :if={item.entry.duration_ms}
+                        class="rounded-full border border-zinc-700 bg-zinc-900/80 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-zinc-300"
+                      >
+                        {item.entry.duration_ms} ms
+                      </span>
+                      <span
+                        :if={exit_code(item.entry)}
+                        class={exit_badge_class(exit_code(item.entry))}
+                      >
+                        exit {exit_code(item.entry)}
+                      </span>
+                      <button
+                        :if={item.entry.cycle_id}
+                        id={"follow-pin-cycle-#{item.entry.id}"}
+                        type="button"
+                        phx-click="pin-cycle"
+                        phx-value-cycle={item.entry.cycle_id}
+                        class={pin_button_class(:cycle)}
+                      >
+                        <.icon name="hero-arrow-path-rounded-square" class="size-3.5" />
+                        cycle {truncate_id(item.entry.cycle_id, 10)}
+                      </button>
+                      <button
+                        :if={item.entry.span_id}
+                        id={"follow-pin-span-#{item.entry.id}"}
+                        type="button"
+                        phx-click="pin-span"
+                        phx-value-span={item.entry.span_id}
+                        class={pin_button_class(:span)}
+                      >
+                        <.icon name="hero-arrows-right-left" class="size-3.5" />
+                        span {truncate_id(item.entry.span_id, 10)}
+                      </button>
+                      <span
+                        :if={item.entry.parent_id}
+                        class="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-900/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-zinc-500"
+                      >
+                        <.icon name="hero-arrow-turn-down-right" class="size-3.5" />
+                        parent {truncate_id(item.entry.parent_id, 10)}
                       </span>
                     </div>
-                  </button>
 
-                  <div class="mt-3 flex flex-wrap items-center gap-2">
-                    <button
-                      :if={item.entry.cycle_id}
-                      id={"follow-pin-cycle-#{item.entry.id}"}
-                      type="button"
-                      phx-click="pin-cycle"
-                      phx-value-cycle={item.entry.cycle_id}
-                      class="inline-flex items-center gap-1 rounded-full border border-sky-400/30 bg-sky-400/10 px-3 py-1 text-[11px] text-sky-100 transition hover:bg-sky-400/20"
+                    <div
+                      :if={item.expanded?}
+                      id={"follow-entry-detail-#{item.entry.id}"}
+                      class="mt-4 border-t border-zinc-800/80 pt-4"
                     >
-                      <.icon name="hero-arrow-path-rounded-square" class="size-3.5 text-sky-300" />
-                      cycle {truncate_id(item.entry.cycle_id, 10)}
-                    </button>
-                    <button
-                      :if={item.entry.span_id}
-                      id={"follow-pin-span-#{item.entry.id}"}
-                      type="button"
-                      phx-click="pin-span"
-                      phx-value-span={item.entry.span_id}
-                      class="inline-flex items-center gap-1 rounded-full border border-violet-400/30 bg-violet-400/10 px-3 py-1 text-[11px] text-violet-100 transition hover:bg-violet-400/20"
-                    >
-                      <.icon name="hero-arrows-right-left" class="size-3.5 text-violet-300" />
-                      span {truncate_id(item.entry.span_id, 10)}
-                    </button>
-                    <span
-                      :if={item.entry.parent_id}
-                      class="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-900/60 px-3 py-1 text-[11px] text-zinc-400"
-                    >
-                      <.icon name="hero-arrow-turn-down-right" class="size-3.5 text-zinc-500" />
-                      parent {truncate_id(item.entry.parent_id, 10)}
-                    </span>
-                  </div>
-
-                  <div
-                    :if={item.expanded?}
-                    id={"follow-entry-detail-#{item.entry.id}"}
-                    class="mt-4 border-t border-zinc-800/80 pt-4"
-                  >
-                    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-                      <p class="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Full payload</p>
-                      <p class="break-all text-[11px] text-zinc-600">{item.entry.event}</p>
+                      <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p class="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                          Full payload
+                        </p>
+                        <p class="break-all text-[11px] text-zinc-600">{item.entry.event}</p>
+                      </div>
+                      <pre
+                        id={"follow-entry-json-#{item.entry.id}"}
+                        phx-no-curly-interpolation
+                        class="overflow-x-auto rounded-2xl border border-zinc-800 bg-black/60 p-4 text-[11px] leading-5 text-zinc-300"
+                      ><%= entry_payload_json(item.entry, @view_mode) %></pre>
                     </div>
-                    <pre
-                      id={"follow-entry-json-#{item.entry.id}"}
-                      phx-no-curly-interpolation
-                      class="overflow-x-auto rounded-2xl border border-zinc-800 bg-black/60 p-4 text-[11px] leading-5 text-zinc-300"
-                    ><%= entry_payload_json(item.entry, @view_mode) %></pre>
-                  </div>
-                </article>
-              </div>
-            <% end %>
-          </div>
+                  </article>
+                </div>
+              <% end %>
+            </div>
 
-          <div id="tool-feed-end"></div>
+            <div id="tool-feed-end" data-scroll-end></div>
+          </div>
         </main>
       </div>
     </Layouts.app>
@@ -414,39 +493,49 @@ defmodule FrothWeb.FollowLive do
   end
 
   defp sync_entries(socket) do
-    visible_entries =
+    matching_entries =
       socket.assigns.entries
-      |> visible_entries(
-        socket.assigns.follow_filter,
-        socket.assigns.filter_text,
-        socket.assigns.view_mode
-      )
+      |> matching_entries(socket.assigns.follow_filter, socket.assigns.filter_text)
 
-    stream_items = build_stream_items(visible_entries, socket.assigns.expanded_entry_id)
+    visible_entries = Enum.filter(matching_entries, &Entry.visible?(&1, socket.assigns.view_mode))
+    tree_map = Timeline.tree_map(visible_entries)
+    cycle_summaries = Timeline.cycle_summaries(matching_entries)
+
+    stream_items =
+      build_stream_items(
+        visible_entries,
+        socket.assigns.expanded_entry_id,
+        tree_map,
+        cycle_summaries
+      )
 
     socket
     |> assign(:entry_count, length(stream_items))
     |> stream(:entries, stream_items, reset: true)
   end
 
-  defp visible_entries(entries, %Filter{} = follow_filter, text_filter, mode) do
+  defp matching_entries(entries, %Filter{} = follow_filter, text_filter) do
     Enum.filter(entries, fn entry ->
-      Filter.matches?(entry, follow_filter) and
-        matches_text?(entry, text_filter) and
-        Entry.visible?(entry, mode)
+      Filter.matches?(entry, follow_filter) and matches_text?(entry, text_filter)
     end)
   end
 
-  defp build_stream_items(entries, expanded_entry_id) do
+  defp build_stream_items(entries, expanded_entry_id, tree_map, cycle_summaries) do
     {items, _previous} =
       Enum.map_reduce(entries, nil, fn entry, previous_entry ->
+        tree_info = Map.get(tree_map, entry_id(entry), %{depth: 0, prefix: ""})
+
         item = %{
           dom_id: "follow-entry-#{entry_id(entry)}",
           entry: entry,
           expanded?: entry_id(entry) == expanded_entry_id,
           group_break?: group_key(entry) != group_key(previous_entry),
           group_kind: group_kind(entry),
-          group_label: group_label(entry)
+          group_label: group_label(entry),
+          tree_prefix: tree_info.prefix,
+          depth: tree_info.depth,
+          cycle_summary: cycle_summaries[entry.cycle_id],
+          cycle_accent: cycle_accent(entry.cycle_id)
         }
 
         {item, entry}
@@ -545,43 +634,17 @@ defmodule FrothWeb.FollowLive do
 
   defp format_time(_), do: "--:--:--.---"
 
-  defp entry_title(entry, :raw), do: entry.event
+  defp entry_primary_text(entry, :raw), do: entry.event
+  defp entry_primary_text(%Entry{summary: summary}, _mode), do: summary
 
-  defp entry_title(%Entry{family: "tool", scope: scope, summary: summary}, mode)
-       when mode in [:smart, :errors],
-       do: join_sentence([scope, summary])
-
-  defp entry_title(%Entry{family: "llm", scope: scope, summary: summary}, mode)
-       when mode in [:smart, :errors],
-       do: join_sentence([scope, summary])
-
-  defp entry_title(%Entry{family: "cycle", cycle_id: cycle_id, summary: summary}, mode)
-       when mode in [:smart, :errors],
-       do: join_sentence(["cycle #{truncate_id(cycle_id, 10)}", summary])
-
-  defp entry_title(%Entry{family: "think", cycle_id: cycle_id, summary: summary}, mode)
-       when mode in [:smart, :errors],
-       do: join_sentence(["cycle #{truncate_id(cycle_id, 10)}", summary])
-
-  defp entry_title(%Entry{family: "control", cycle_id: cycle_id, summary: summary}, mode)
-       when mode in [:smart, :errors],
-       do: join_sentence(["cycle #{truncate_id(cycle_id, 10)}", summary])
-
-  defp entry_title(%Entry{family: "telegram", summary: summary, scope: scope}, mode)
-       when mode in [:smart, :errors],
-       do: join_sentence([scope, summary])
-
-  defp entry_title(%Entry{scope: scope, summary: summary}, mode) when mode in [:smart, :errors],
-    do: join_sentence([scope, summary])
-
-  defp entry_subtitle(entry, :raw) do
+  defp entry_secondary_text(entry, :raw) do
     join_sentence([
       raw_measurements(entry.measurements),
       raw_metadata(entry.metadata)
     ])
   end
 
-  defp entry_subtitle(%Entry{} = entry, mode) when mode in [:smart, :errors] do
+  defp entry_secondary_text(%Entry{} = entry, mode) when mode in [:smart, :errors] do
     join_sentence([
       entry.detail,
       smart_context(entry)
@@ -660,7 +723,7 @@ defmodule FrothWeb.FollowLive do
             metadata: entry.metadata
           }
 
-        :smart ->
+        mode when mode in [:smart, :errors] ->
           %{
             id: entry.id,
             at: iso8601(entry.at),
@@ -741,43 +804,81 @@ defmodule FrothWeb.FollowLive do
     do: "rounded-full border border-sky-400/20 bg-sky-400/10 px-3 py-1 text-sky-100"
 
   defp group_label_class(:tool),
-    do: "rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-amber-100"
-
-  defp group_label_class(:llm),
     do: "rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-emerald-100"
 
+  defp group_label_class(:llm),
+    do: "rounded-full border border-fuchsia-400/20 bg-fuchsia-400/10 px-3 py-1 text-fuchsia-100"
+
   defp group_label_class(:telegram),
-    do: "rounded-full border border-violet-400/20 bg-violet-400/10 px-3 py-1 text-violet-100"
+    do: "rounded-full border border-sky-400/20 bg-sky-400/10 px-3 py-1 text-sky-100"
 
   defp group_label_class(_),
     do: "rounded-full border border-zinc-700 bg-zinc-900/70 px-3 py-1 text-zinc-300"
 
-  defp entry_container_class(family, expanded?) do
+  defp entry_container_class(item) do
     [
-      "overflow-hidden rounded-3xl border px-4 py-4 shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition md:px-5",
-      family_surface_class(family),
-      expanded? && "ring-1 ring-inset ring-zinc-200/8"
+      "overflow-hidden rounded-2xl border border-l-4 px-3 py-3 shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition duration-150 hover:border-zinc-600/80 hover:bg-zinc-950/95 sm:px-4",
+      cycle_border_class(item.cycle_accent),
+      family_surface_class(item.entry),
+      item.expanded? && "ring-1 ring-inset ring-zinc-200/8"
     ]
   end
 
-  defp summary_class(:error), do: "text-[13px] font-semibold leading-5 text-rose-200"
-  defp summary_class(:warn), do: "text-[13px] font-semibold leading-5 text-amber-100"
-  defp summary_class(:info), do: "text-[13px] font-semibold leading-5 text-zinc-50"
-  defp summary_class(:debug), do: "text-[13px] font-semibold leading-5 text-zinc-300"
+  defp family_column_class(entry),
+    do: ["truncate text-[11px] uppercase tracking-[0.18em]", family_column_palette(entry)]
 
-  defp family_badge_class(family) do
+  defp scope_column_class(%Entry{family: "think"}),
+    do: "truncate text-[11px] text-cyan-200/70"
+
+  defp scope_column_class(%Entry{}), do: "truncate text-[11px] text-zinc-400"
+
+  defp tree_prefix_class(item) do
     [
-      "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em]",
-      family_badge_palette(family)
+      "shrink-0 whitespace-pre text-[11px] leading-5",
+      item.depth > 0 && cycle_tree_palette(item.cycle_accent),
+      item.depth == 0 && "text-zinc-700"
     ]
   end
 
-  defp icon_wrap_class(family) do
-    [
-      "mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-2xl border",
-      family_icon_wrap_palette(family)
-    ]
-  end
+  defp summary_class(%Entry{level: :error}),
+    do: "text-[13px] font-semibold leading-5 text-rose-200"
+
+  defp summary_class(%Entry{level: :warn}),
+    do: "text-[13px] font-semibold leading-5 text-amber-100"
+
+  defp summary_class(%Entry{family: "cycle"}),
+    do: "text-[13px] font-semibold leading-5 text-sky-100"
+
+  defp summary_class(%Entry{family: "think"}),
+    do: "text-[13px] font-medium leading-5 text-cyan-100/75"
+
+  defp summary_class(%Entry{family: "tool"}),
+    do: "text-[13px] font-semibold leading-5 text-emerald-100"
+
+  defp summary_class(%Entry{family: family}) when family in ["llm", "codex"],
+    do: "text-[13px] font-semibold leading-5 text-fuchsia-100"
+
+  defp summary_class(%Entry{family: "telegram"}),
+    do: "text-[13px] font-semibold leading-5 text-sky-100"
+
+  defp summary_class(%Entry{family: "task"}),
+    do: "text-[13px] font-semibold leading-5 text-teal-100"
+
+  defp summary_class(%Entry{}), do: "text-[13px] font-semibold leading-5 text-zinc-50"
+
+  defp secondary_text_class(%Entry{family: "think"}),
+    do: "mt-1 whitespace-pre-wrap break-words text-[11px] leading-5 text-cyan-100/55"
+
+  defp secondary_text_class(%Entry{level: :error}),
+    do: "mt-1 whitespace-pre-wrap break-words text-[11px] leading-5 text-rose-200/80"
+
+  defp secondary_text_class(%Entry{}),
+    do: "mt-1 whitespace-pre-wrap break-words text-[11px] leading-5 text-zinc-400"
+
+  defp family_short_label("control"), do: "ctrl"
+  defp family_short_label("message"), do: "msg"
+  defp family_short_label("telegram"), do: "tg"
+  defp family_short_label(family), do: family
 
   defp family_label(family) do
     case family do
@@ -798,60 +899,189 @@ defmodule FrothWeb.FollowLive do
     end
   end
 
-  defp entry_icon(family) do
-    case family do
-      "control" ->
-        "hero-bolt"
+  defp family_surface_class(%Entry{level: :error}),
+    do: "border-rose-500/30 bg-rose-950/25"
 
-      "message" ->
-        "hero-envelope"
+  defp family_surface_class(%Entry{level: :warn}),
+    do: "border-amber-500/25 bg-amber-950/18"
+
+  defp family_surface_class(%Entry{family: "cycle"}),
+    do: "border-sky-500/20 bg-sky-950/18"
+
+  defp family_surface_class(%Entry{family: "think"}),
+    do: "border-cyan-500/20 bg-cyan-950/10 opacity-80"
+
+  defp family_surface_class(%Entry{family: "tool"}),
+    do: "border-emerald-500/20 bg-emerald-950/16"
+
+  defp family_surface_class(%Entry{family: family}) when family in ["llm", "codex"],
+    do: "border-fuchsia-500/20 bg-fuchsia-950/16"
+
+  defp family_surface_class(%Entry{family: "telegram"}),
+    do: "border-sky-500/20 bg-sky-950/16"
+
+  defp family_surface_class(%Entry{family: "task"}),
+    do: "border-teal-500/20 bg-teal-950/14"
+
+  defp family_surface_class(%Entry{}), do: "border-zinc-800 bg-zinc-950/85"
+
+  defp family_column_palette(%Entry{level: :error}), do: "text-rose-200"
+  defp family_column_palette(%Entry{level: :warn}), do: "text-amber-100"
+  defp family_column_palette(%Entry{family: "cycle"}), do: "text-sky-100"
+  defp family_column_palette(%Entry{family: "think"}), do: "text-cyan-100/75"
+  defp family_column_palette(%Entry{family: "tool"}), do: "text-emerald-100"
+
+  defp family_column_palette(%Entry{family: family}) when family in ["llm", "codex"],
+    do: "text-fuchsia-100"
+
+  defp family_column_palette(%Entry{family: "telegram"}), do: "text-sky-100"
+  defp family_column_palette(%Entry{family: "task"}), do: "text-teal-100"
+  defp family_column_palette(%Entry{}), do: "text-zinc-300"
+
+  defp pin_button_class(:cycle),
+    do:
+      "inline-flex items-center gap-1 rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-sky-100 transition hover:bg-sky-400/20"
+
+  defp pin_button_class(:span),
+    do:
+      "inline-flex items-center gap-1 rounded-full border border-violet-400/30 bg-violet-400/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-violet-100 transition hover:bg-violet-400/20"
+
+  defp cycle_summary_container_class(item) do
+    [
+      "overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-950/90 shadow-[0_20px_50px_rgba(0,0,0,0.24)]",
+      cycle_summary_ring_class(item.cycle_accent)
+    ]
+  end
+
+  defp cycle_summary_bar_class(accent), do: ["h-1 w-full", accent.bg]
+
+  defp cycle_summary_label_class(accent) do
+    [
+      "inline-flex items-center rounded-full border px-2 py-0.5",
+      accent.badge
+    ]
+  end
+
+  defp status_badge_class(:error),
+    do:
+      "inline-flex items-center rounded-full border border-rose-400/30 bg-rose-400/10 px-2 py-0.5 text-rose-100"
+
+  defp status_badge_class(:warn),
+    do:
+      "inline-flex items-center rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-amber-100"
+
+  defp status_badge_class(_level),
+    do:
+      "inline-flex items-center rounded-full border border-zinc-700 bg-zinc-900/80 px-2 py-0.5 text-zinc-200"
+
+  defp cycle_identity_text(summary) do
+    case {summary.provider, summary.model} do
+      {provider, model} when is_binary(provider) and is_binary(model) -> "#{provider}:#{model}"
+      {provider, nil} when is_binary(provider) -> provider
+      {nil, model} when is_binary(model) -> model
+      _ -> nil
+    end
+  end
+
+  defp format_elapsed(value) when is_integer(value) and value >= 1_000,
+    do: :io_lib.format("~.1fs", [value / 1_000]) |> IO.iodata_to_binary()
+
+  defp format_elapsed(value) when is_integer(value), do: "#{value}ms"
+  defp format_elapsed(_value), do: nil
+
+  defp exit_code(%Entry{metadata: metadata}) do
+    case metadata["exit_code"] do
+      value when is_integer(value) ->
+        value
+
+      value when is_binary(value) ->
+        case Integer.parse(value) do
+          {parsed, ""} -> parsed
+          _ -> nil
+        end
 
       _ ->
-        case family_group_key(family) do
-          :agent -> "hero-sparkles"
-          :tool -> "hero-wrench-screwdriver"
-          :llm -> "hero-cpu-chip"
-          :telegram -> "hero-chat-bubble-left-right"
-          :system -> "hero-circle-stack"
-        end
+        nil
     end
   end
 
-  defp family_surface_class(family) do
-    case family_group_key(family) do
-      :agent -> "border-sky-500/20 bg-sky-950/20"
-      :tool -> "border-amber-500/20 bg-amber-950/20"
-      :llm -> "border-emerald-500/20 bg-emerald-950/20"
-      :telegram -> "border-violet-500/20 bg-violet-950/20"
-      :system -> "border-zinc-800 bg-zinc-950/80"
-    end
+  defp exit_badge_class(code) when is_integer(code) and code != 0,
+    do:
+      "rounded-full border border-rose-400/30 bg-rose-400/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-rose-100"
+
+  defp exit_badge_class(_code),
+    do:
+      "rounded-full border border-zinc-700 bg-zinc-900/80 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-zinc-300"
+
+  defp cycle_accent(nil) do
+    %{
+      bg: "bg-zinc-700",
+      badge: "border-zinc-700 bg-zinc-900/80 text-zinc-300",
+      ring: "ring-zinc-700/40",
+      border: "border-l-zinc-700",
+      tree: "text-zinc-600"
+    }
   end
 
-  defp family_badge_palette(family) do
-    case family_group_key(family) do
-      :agent -> "border-sky-400/25 bg-sky-400/10 text-sky-100"
-      :tool -> "border-amber-400/25 bg-amber-400/10 text-amber-100"
-      :llm -> "border-emerald-400/25 bg-emerald-400/10 text-emerald-100"
-      :telegram -> "border-violet-400/25 bg-violet-400/10 text-violet-100"
-      :system -> "border-zinc-700 bg-zinc-900/80 text-zinc-300"
-    end
+  defp cycle_accent(cycle_id) do
+    palettes = [
+      %{
+        bg: "bg-sky-400/80",
+        badge: "border-sky-400/30 bg-sky-400/10 text-sky-100",
+        ring: "ring-sky-400/20",
+        border: "border-l-sky-400",
+        tree: "text-sky-200/80"
+      },
+      %{
+        bg: "bg-cyan-400/80",
+        badge: "border-cyan-400/30 bg-cyan-400/10 text-cyan-100",
+        ring: "ring-cyan-400/20",
+        border: "border-l-cyan-400",
+        tree: "text-cyan-200/80"
+      },
+      %{
+        bg: "bg-emerald-400/80",
+        badge: "border-emerald-400/30 bg-emerald-400/10 text-emerald-100",
+        ring: "ring-emerald-400/20",
+        border: "border-l-emerald-400",
+        tree: "text-emerald-200/80"
+      },
+      %{
+        bg: "bg-fuchsia-400/80",
+        badge: "border-fuchsia-400/30 bg-fuchsia-400/10 text-fuchsia-100",
+        ring: "ring-fuchsia-400/20",
+        border: "border-l-fuchsia-400",
+        tree: "text-fuchsia-200/80"
+      },
+      %{
+        bg: "bg-amber-400/80",
+        badge: "border-amber-400/30 bg-amber-400/10 text-amber-100",
+        ring: "ring-amber-400/20",
+        border: "border-l-amber-400",
+        tree: "text-amber-200/80"
+      },
+      %{
+        bg: "bg-rose-400/80",
+        badge: "border-rose-400/30 bg-rose-400/10 text-rose-100",
+        ring: "ring-rose-400/20",
+        border: "border-l-rose-400",
+        tree: "text-rose-200/80"
+      }
+    ]
+
+    Enum.at(palettes, :erlang.phash2(cycle_id, length(palettes)))
   end
 
-  defp family_icon_wrap_palette(family) do
-    case family_group_key(family) do
-      :agent -> "border-sky-400/20 bg-sky-400/10 text-sky-200"
-      :tool -> "border-amber-400/20 bg-amber-400/10 text-amber-200"
-      :llm -> "border-emerald-400/20 bg-emerald-400/10 text-emerald-200"
-      :telegram -> "border-violet-400/20 bg-violet-400/10 text-violet-200"
-      :system -> "border-zinc-700 bg-zinc-900/80 text-zinc-300"
-    end
-  end
+  defp cycle_summary_ring_class(accent), do: ["ring-1 ring-inset", accent.ring]
+  defp cycle_border_class(accent), do: accent.border
+  defp cycle_tree_palette(accent), do: accent.tree
 
   defp family_group_key(family) when family in ["cycle", "think", "control", "message"],
     do: :agent
 
   defp family_group_key("tool"), do: :tool
   defp family_group_key("llm"), do: :llm
+  defp family_group_key("codex"), do: :llm
   defp family_group_key("telegram"), do: :telegram
   defp family_group_key(_), do: :system
 end

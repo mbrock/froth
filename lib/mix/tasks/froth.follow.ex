@@ -4,9 +4,10 @@ defmodule Mix.Tasks.Froth.Follow do
 
   use Mix.Task
 
-  alias Froth.Follow.{Entry, Filter, Projector, Renderer, Source}
+  alias Froth.Follow.{Entry, Filter, Projector, Renderer, Source, Timeline}
 
   @handler_id "froth-follow"
+  @render_state_limit 2_000
 
   @impl Mix.Task
   def run(args) do
@@ -72,8 +73,14 @@ defmodule Mix.Tasks.Froth.Follow do
     Process.flag(:trap_exit, true)
 
     try do
-      render_recent_history(mode, filter, tail)
-      loop(mode, filter)
+      state = render_recent_history(mode, filter, tail)
+
+      loop(%{
+        mode: mode,
+        filter: filter,
+        matched_entries: state.matched_entries,
+        visible_entries: state.visible_entries
+      })
     after
       :rpc.call(node, :telemetry, :detach, [handler_id])
     end
@@ -108,37 +115,72 @@ defmodule Mix.Tasks.Froth.Follow do
     end)
   end
 
-  defp loop(mode, filter) do
+  defp loop(%{mode: mode, filter: filter} = state) do
     receive do
       {:telemetry_event, event_name, measurements, metadata} ->
         entry = Projector.from_live(event_name, measurements, metadata)
 
-        if Filter.matches?(entry, filter) and Entry.visible?(entry, mode) do
-          IO.write(Renderer.to_ansi(entry, mode))
-          IO.write("\n")
-        end
+        state = update_render_state(state, entry, filter, mode)
+        loop(state)
     end
-
-    loop(mode, filter)
   end
 
-  defp render_recent_history(_mode, _filter, 0), do: :ok
+  defp render_recent_history(_mode, _filter, 0) do
+    %{matched_entries: [], visible_entries: []}
+  end
 
   defp render_recent_history(mode, filter, tail) do
-    entries =
+    matched_entries =
       Source.recent_entries(filter: filter, limit: tail)
-      |> Enum.filter(&Entry.visible?(&1, mode))
       |> Enum.reverse()
 
-    if entries != [] do
+    visible_entries = Enum.filter(matched_entries, &Entry.visible?(&1, mode))
+
+    if visible_entries != [] do
       Mix.shell().info("Recent matching entries:\n")
 
-      Enum.each(entries, fn entry ->
-        IO.write(Renderer.to_ansi(entry, mode))
+      tree_map = Timeline.tree_map(visible_entries)
+      cycle_summaries = Timeline.cycle_summaries(matched_entries)
+
+      Enum.each(visible_entries, fn entry ->
+        IO.write(Renderer.to_ansi(entry, mode, tree_prefix: tree_prefix(tree_map, entry)))
         IO.write("\n")
+        maybe_render_cycle_summary(entry, cycle_summaries, mode)
       end)
 
       IO.write("\n")
+    end
+
+    %{
+      matched_entries: limit_entries(matched_entries),
+      visible_entries: limit_entries(visible_entries)
+    }
+  end
+
+  defp update_render_state(state, entry, filter, mode) do
+    if Filter.matches?(entry, filter) do
+      matched_entries = limit_entries(state.matched_entries ++ [entry])
+      visible? = Entry.visible?(entry, mode)
+
+      visible_entries =
+        if visible? do
+          limit_entries(state.visible_entries ++ [entry])
+        else
+          state.visible_entries
+        end
+
+      if visible? do
+        tree_map = Timeline.tree_map(visible_entries)
+        cycle_summaries = Timeline.cycle_summaries(matched_entries)
+
+        IO.write(Renderer.to_ansi(entry, mode, tree_prefix: tree_prefix(tree_map, entry)))
+        IO.write("\n")
+        maybe_render_cycle_summary(entry, cycle_summaries, mode)
+      end
+
+      %{state | matched_entries: matched_entries, visible_entries: visible_entries}
+    else
+      state
     end
   end
 
@@ -167,6 +209,32 @@ defmodule Mix.Tasks.Froth.Follow do
   defp unique_handler_id do
     "#{@handler_id}-#{System.pid()}-#{System.unique_integer([:positive])}"
   end
+
+  defp limit_entries(entries), do: Enum.take(entries, -@render_state_limit)
+
+  defp tree_prefix(tree_map, entry) do
+    entry
+    |> entry_id()
+    |> then(&Map.get(tree_map, &1, %{prefix: ""}))
+    |> Map.fetch!(:prefix)
+  end
+
+  defp entry_id(%Entry{id: id}), do: to_string(id)
+
+  defp maybe_render_cycle_summary(entry, cycle_summaries, mode)
+       when mode in [:smart, :errors] and entry.family == "cycle" and
+              entry.kind in ["stop", "completed", "failed", "cancelled"] do
+    case Map.get(cycle_summaries, entry.cycle_id) do
+      nil ->
+        :ok
+
+      summary ->
+        IO.write(Renderer.cycle_summary_to_ansi(summary))
+        IO.write("\n")
+    end
+  end
+
+  defp maybe_render_cycle_summary(_entry, _cycle_summaries, _mode), do: :ok
 
   defp abort(message) do
     Mix.shell().error(message)

@@ -37,12 +37,13 @@ const ToolScroll = {
     this.raf = null
     this.mutationObserver = null
     this.observedNode = null
+    this.mutationTicking = false
     this.scrollBody = null
     this.scrollTarget = null
     this.endMarker = null
     this.updateFollowMode()
-    this.resolveScrollElements()
     this.onScroll = () => this.updateAtBottom()
+    this.resolveScrollElements()
     this.onResize = () => {
       this.updateFollowMode()
       this.resolveScrollElements()
@@ -87,9 +88,8 @@ const ToolScroll = {
   },
 
   resolveScrollElements() {
-    const body = this.el.querySelector("[data-scroll-body]") ||
-      document.scrollingElement ||
-      document.documentElement
+    const explicitBody = this.el.querySelector("[data-scroll-body]")
+    const body = explicitBody || this.pickScrollBody()
 
     const target =
       body === document.documentElement || body === document.body
@@ -102,19 +102,26 @@ const ToolScroll = {
   },
 
   observeMutations() {
-    const node = this.scrollBody
+    const node = this.el
     if (!node) return
     if (this.observedNode === node && this.mutationObserver) return
 
     this.disconnectMutationObserver()
 
     this.mutationObserver = new MutationObserver(() => {
-      const shouldStick = this.followMode === "always" || (this.followMode === "smart" && this.atBottom)
-      this.updateAtBottom()
+      if (this.mutationTicking) return
+      this.mutationTicking = true
 
-      if (shouldStick) {
-        this.scheduleScroll(this.followMode === "always" ? "auto" : "smooth")
-      }
+      window.requestAnimationFrame(() => {
+        this.mutationTicking = false
+        const shouldStick = this.followMode === "always" || (this.followMode === "smart" && this.atBottom)
+        this.resolveScrollElements()
+        this.updateAtBottom()
+
+        if (shouldStick) {
+          this.scheduleScroll(this.followMode === "always" ? "auto" : "smooth")
+        }
+      })
     })
 
     this.mutationObserver.observe(node, {
@@ -130,6 +137,36 @@ const ToolScroll = {
     if (this.mutationObserver) this.mutationObserver.disconnect()
     this.mutationObserver = null
     this.observedNode = null
+    this.mutationTicking = false
+  },
+
+  pickScrollBody() {
+    const candidates = [
+      this.el,
+      document.scrollingElement,
+      document.documentElement,
+      document.body,
+    ].filter(Boolean)
+
+    return candidates.find(node => this.canScrollNode(node)) ||
+      document.scrollingElement ||
+      document.documentElement
+  },
+
+  canScrollNode(node) {
+    if (!node) return false
+
+    if (node === document.documentElement || node === document.body || node === document.scrollingElement) {
+      const root = document.scrollingElement || document.documentElement
+      const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight
+      return root.scrollHeight - viewportHeight > 1
+    }
+
+    const style = window.getComputedStyle(node)
+    const overflowY = style.overflowY || style.overflow
+    const scrollableOverflow = ["auto", "scroll", "overlay"].includes(overflowY)
+
+    return scrollableOverflow && node.scrollHeight - node.clientHeight > 1
   },
 
   bindScrollTarget(target) {
@@ -165,17 +202,50 @@ const ToolScroll = {
     const body = this.scrollBody || document.scrollingElement || document.documentElement
 
     if (body !== document.documentElement && body !== document.body) {
-      body.scrollTo({top: body.scrollHeight, behavior: effectiveBehavior})
+      this.scrollElementTo(body, body.scrollHeight, effectiveBehavior)
+      this.atBottom = true
       return
     }
 
     if (this.endMarker) {
-      this.endMarker.scrollIntoView({block: "end", behavior: effectiveBehavior})
+      try {
+        this.endMarker.scrollIntoView({block: "end", behavior: effectiveBehavior})
+      } catch (_error) {
+        this.endMarker.scrollIntoView(false)
+      }
+
+      this.scrollRootTo((document.scrollingElement || document.documentElement).scrollHeight, effectiveBehavior)
+      this.atBottom = true
       return
     }
 
     const root = document.scrollingElement || document.documentElement
-    window.scrollTo({top: root.scrollHeight, behavior: effectiveBehavior})
+    this.scrollRootTo(root.scrollHeight, effectiveBehavior)
+    this.atBottom = true
+  },
+
+  scrollElementTo(element, top, behavior) {
+    try {
+      if (typeof element.scrollTo === "function") {
+        element.scrollTo({top, behavior})
+      } else {
+        element.scrollTop = top
+      }
+    } catch (_error) {
+      element.scrollTop = top
+    }
+  },
+
+  scrollRootTo(top, behavior) {
+    const root = document.scrollingElement || document.documentElement
+
+    try {
+      window.scrollTo({top, behavior})
+    } catch (_error) {
+      window.scrollTo(0, top)
+    }
+
+    root.scrollTop = top
   },
 }
 

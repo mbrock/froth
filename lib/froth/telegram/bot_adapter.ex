@@ -104,68 +104,37 @@ defmodule Froth.Telegram.BotAdapter do
 
   def send_message(session_id, chat_id, text, opts \\ [])
       when is_binary(session_id) and is_integer(chat_id) and is_binary(text) and is_list(opts) do
-    payload = %{
-      "@type" => "sendMessage",
-      "chat_id" => chat_id,
-      "input_message_content" => %{
-        "@type" => "inputMessageText",
-        "text" => %{
-          "@type" => "formattedText",
-          "text" => text
-        }
-      }
-    }
+    formatted_text = plain_formatted_text(text, opts[:entities])
+    send_formatted_message(session_id, chat_id, formatted_text, opts)
+  end
 
-    payload =
-      case reply_to_msg(opts[:reply_to]) do
-        reply_to when is_map(reply_to) -> Map.put(payload, "reply_to", reply_to)
-        _ -> payload
-      end
+  def send_markdown(session_id, chat_id, reply_to, text, opts \\ [])
+      when is_binary(session_id) and is_integer(chat_id) and is_binary(text) and is_list(opts) do
+    opts = Keyword.put(opts, :reply_to, reply_to)
 
-    payload =
-      case opts[:entities] do
-        entities when is_list(entities) ->
-          put_in(payload, ["input_message_content", "text", "entities"], entities)
+    case parse_markdown(session_id, text) do
+      {:ok, %{} = formatted_text} ->
+        send_formatted_message(session_id, chat_id, formatted_text, opts)
 
-        _ ->
-          payload
-      end
-
-    payload =
-      case opts[:reply_markup] do
-        markup when is_map(markup) -> Map.put(payload, "reply_markup", markup)
-        _ -> payload
-      end
-
-    session_id
-    |> Froth.Telegram.call(payload)
-    |> normalize_tdlib_result()
+      {:error, _reason} = error ->
+        error
+    end
   end
 
   def edit_message_text(session_id, chat_id, message_id, text, opts \\ [])
       when is_binary(session_id) and is_integer(chat_id) and is_integer(message_id) and
              is_binary(text) and is_list(opts) do
+    formatted_text = plain_formatted_text(text, opts[:entities])
+
     payload = %{
       "@type" => "editMessageText",
       "chat_id" => chat_id,
       "message_id" => message_id,
       "input_message_content" => %{
         "@type" => "inputMessageText",
-        "text" => %{
-          "@type" => "formattedText",
-          "text" => text
-        }
+        "text" => formatted_text
       }
     }
-
-    payload =
-      case opts[:entities] do
-        entities when is_list(entities) ->
-          put_in(payload, ["input_message_content", "text", "entities"], entities)
-
-        _ ->
-          payload
-      end
 
     payload =
       case opts[:reply_markup] do
@@ -248,6 +217,65 @@ defmodule Froth.Telegram.BotAdapter do
       "callback_query_id" => callback_query_id,
       "url" => url
     })
+  end
+
+  defp send_formatted_message(session_id, chat_id, formatted_text, opts)
+       when is_binary(session_id) and is_integer(chat_id) and is_map(formatted_text) and
+              is_list(opts) do
+    payload = %{
+      "@type" => "sendMessage",
+      "chat_id" => chat_id,
+      "input_message_content" => %{
+        "@type" => "inputMessageText",
+        "text" => formatted_text
+      }
+    }
+
+    payload =
+      case reply_to_msg(opts[:reply_to]) do
+        reply_to when is_map(reply_to) -> Map.put(payload, "reply_to", reply_to)
+        _ -> payload
+      end
+
+    payload =
+      case opts[:reply_markup] do
+        markup when is_map(markup) -> Map.put(payload, "reply_markup", markup)
+        _ -> payload
+      end
+
+    session_id
+    |> Froth.Telegram.call(payload)
+    |> normalize_tdlib_result()
+  end
+
+  defp plain_formatted_text(text, entities) when is_binary(text) do
+    case entities do
+      entities when is_list(entities) ->
+        %{
+          "@type" => "formattedText",
+          "text" => text,
+          "entities" => entities
+        }
+
+      _ ->
+        %{
+          "@type" => "formattedText",
+          "text" => text
+        }
+    end
+  end
+
+  defp parse_markdown(session_id, text) when is_binary(session_id) and is_binary(text) do
+    session_id
+    |> Froth.Telegram.call(%{
+      "@type" => "parseTextEntities",
+      "text" => text,
+      "parse_mode" => %{
+        "@type" => "textParseModeMarkdown",
+        "version" => 2
+      }
+    })
+    |> normalize_tdlib_result()
   end
 
   defp reply_to_msg(nil), do: nil

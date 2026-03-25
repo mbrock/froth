@@ -2,6 +2,7 @@ defmodule Froth.SSEReplay do
   @moduledoc false
 
   alias Froth.Anthropic.SSE
+  alias Froth.LLM.Store
 
   @fixtures_dir Path.expand("../fixtures/sse", __DIR__)
 
@@ -42,13 +43,19 @@ defmodule Froth.SSEReplay do
         {st, events, _done?} = SSE.consume_events(state, data)
         Enum.each(events, on_event)
 
-        {:ok,
-         %{
-           text: st.text,
-           content: SSE.blocks_to_content(st.blocks),
-           stop_reason: st.stop_reason,
-           usage: Map.get(st, :usage, %{})
-         }}
+        case Store.get(st.store, ["message", "error"]) do
+          %{} = error when map_size(error) > 0 ->
+            {:error, {:provider_error, "anthropic", error, %{}}}
+
+          _ ->
+            {:ok,
+             %{
+               text: st.text,
+               content: SSE.blocks_to_content(st.blocks),
+               stop_reason: st.stop_reason,
+               usage: Map.get(st, :usage, %{})
+             }}
+        end
 
       {:error, reason} ->
         {:error, {:fixture_missing, path, reason}}

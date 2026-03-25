@@ -1,6 +1,8 @@
 defmodule Froth.Anthropic do
   @moduledoc false
 
+  require Logger
+
   alias Froth.LLM
   alias Froth.LLM.Message
   alias Froth.LLM.Providers.Anthropic, as: AnthropicProvider
@@ -8,7 +10,12 @@ defmodule Froth.Anthropic do
   alias Froth.Telemetry.Span
 
   @anthropic_version "2023-06-01"
+  @context_beta "context-1m-2025-08-07"
+  @mcp_beta "mcp-client-2025-11-20"
   @default_max_tokens 16_384
+  @default_max_retries 5
+  @default_retry_base_ms 2_000
+  @default_retry_max_ms 30_000
 
   @default_system_prompt """
   Froth is a thinking interface. It accepts text and returns text. The text it returns continues the thought that was entered, drawing on a body of knowledge larger than what the person had available.
@@ -55,7 +62,14 @@ defmodule Froth.Anthropic do
       Span.span([:froth, :anthropic, :request], parent_id, meta, fn span_id ->
         request = %{request | parent_id: span_id}
 
-        case stream_sse_events(request, transport_request, on_event, span_id) do
+        case stream_sse_events_with_retries(
+               request,
+               transport_request,
+               on_event,
+               span_id,
+               opts,
+               0
+             ) do
           {:ok, result} ->
             stop_meta = %{
               ok: true,
@@ -74,11 +88,11 @@ defmodule Froth.Anthropic do
     end
   end
 
-  defp base_headers(api_key) do
+  defp base_headers(api_key, tools) do
     [
       {"x-api-key", api_key},
       {"anthropic-version", @anthropic_version},
-      {"anthropic-beta", "context-1m-2025-08-07"}
+      {"anthropic-beta", anthropic_beta_header(tools)}
     ]
   end
 
@@ -89,8 +103,8 @@ defmodule Froth.Anthropic do
 
     api_key =
       Keyword.get(overrides, :api_key) ||
-        active_api_key() ||
-        Keyword.get(cfg, :api_key)
+        Keyword.get(cfg, :api_key) ||
+        active_api_key()
 
     if is_nil(api_key) or api_key == "" do
       {:error, :missing_api_key}
@@ -138,7 +152,7 @@ defmodule Froth.Anthropic do
          max_tokens: max_tokens,
          tools: tools,
          cache_control: cache_control,
-         headers: base_headers(api_key) ++ [{"accept", "text/event-stream"}]
+         headers: base_headers(api_key, tools) ++ [{"accept", "text/event-stream"}]
        }}
     end
   end
@@ -200,6 +214,21 @@ defmodule Froth.Anthropic do
 
   defp thinking_budget(_), do: nil
 
+  defp anthropic_beta_header(tools) when is_list(tools) do
+    [@context_beta]
+    |> maybe_append_mcp_beta(tools)
+    |> Enum.join(",")
+  end
+
+  defp anthropic_beta_header(_tools), do: @context_beta
+
+  defp maybe_append_mcp_beta(betas, tools) when is_list(tools) do
+    if Enum.any?(tools, &mcp_tool_spec?/1), do: betas ++ [@mcp_beta], else: betas
+  end
+
+  defp mcp_tool_spec?(%{"type" => "mcp_endpoint"}), do: true
+  defp mcp_tool_spec?(_tool), do: false
+
   defp ensure_max_tokens_above_thinking(max_tokens, thinking_budget)
        when is_integer(max_tokens) and is_integer(thinking_budget) do
     if max_tokens > thinking_budget, do: max_tokens, else: thinking_budget + 1024
@@ -246,6 +275,46 @@ defmodule Froth.Anthropic do
     end
   end
 
+  defp stream_sse_events_with_retries(
+         request,
+         transport_request,
+         on_event,
+         parent_id,
+         opts,
+         attempt
+       )
+       when is_integer(attempt) and attempt >= 0 do
+    cfg = Application.get_env(:froth, __MODULE__, [])
+
+    case stream_sse_events(request, transport_request, on_event, parent_id) do
+      {:error, reason} = error ->
+        case retry_delay_ms(reason, attempt, opts, cfg) do
+          nil ->
+            error
+
+          delay_ms ->
+            Logger.warning(
+              "Anthropic request retry #{attempt + 1}/#{max_retries(opts, cfg)} in #{delay_ms}ms: " <>
+                retry_reason_summary(reason)
+            )
+
+            if delay_ms > 0, do: Process.sleep(delay_ms)
+
+            stream_sse_events_with_retries(
+              request,
+              transport_request,
+              on_event,
+              parent_id,
+              opts,
+              attempt + 1
+            )
+        end
+
+      result ->
+        result
+    end
+  end
+
   defp do_req_stream_sse_events(%Request{} = request, transport_request, on_event, parent_id) do
     http_meta = %{
       method: :post,
@@ -267,5 +336,77 @@ defmodule Froth.Anthropic do
           {err, %{error: reason}}
       end
     end)
+  end
+
+  defp retry_delay_ms({:provider_error, "anthropic", error, _diagnostics}, attempt, opts, cfg)
+       when is_integer(attempt) do
+    if attempt < max_retries(opts, cfg) and retryable_anthropic_error?(error) do
+      base_ms = max(0, retry_base_ms(opts, cfg))
+      max_ms = max(base_ms, retry_max_ms(opts, cfg))
+      min(max_ms, base_ms * Integer.pow(2, attempt))
+    end
+  end
+
+  defp retry_delay_ms({:http_error, status, _decoded}, attempt, opts, cfg)
+       when is_integer(attempt) and status in [429, 500, 502, 503, 504] do
+    if attempt < max_retries(opts, cfg) do
+      base_ms = max(0, retry_base_ms(opts, cfg))
+      max_ms = max(base_ms, retry_max_ms(opts, cfg))
+      min(max_ms, base_ms * Integer.pow(2, attempt))
+    end
+  end
+
+  defp retry_delay_ms(_reason, _attempt, _opts, _cfg), do: nil
+
+  defp retryable_anthropic_error?(%{"error" => %{} = error}),
+    do: retryable_anthropic_error?(error)
+
+  defp retryable_anthropic_error?(%{} = error) do
+    type = error["type"] || error[:type]
+    message = String.downcase(to_string(error["message"] || error[:message] || ""))
+
+    type in ["api_error", "overloaded_error", "rate_limit_error"] or
+      String.contains?(message, "internal server error") or
+      String.contains?(message, "overloaded") or
+      String.contains?(message, "rate limit") or
+      String.contains?(message, "try again later")
+  end
+
+  defp retryable_anthropic_error?(_error), do: false
+
+  defp retry_reason_summary({:provider_error, "anthropic", error, _diagnostics}) do
+    provider_error_summary(error)
+  end
+
+  defp retry_reason_summary({:http_error, status, decoded}) do
+    "http #{status}: #{provider_error_summary(decoded)}"
+  end
+
+  defp retry_reason_summary(reason), do: inspect(reason)
+
+  defp provider_error_summary(%{"error" => %{} = error}), do: provider_error_summary(error)
+
+  defp provider_error_summary(%{} = error) do
+    [
+      error["type"] || error[:type],
+      error["message"] || error[:message]
+    ]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.map(&to_string/1)
+    |> Enum.join(": ")
+  end
+
+  defp provider_error_summary(error), do: inspect(error)
+
+  defp max_retries(opts, cfg) do
+    Keyword.get(opts, :max_retries, Keyword.get(cfg, :max_retries, @default_max_retries))
+  end
+
+  defp retry_base_ms(opts, cfg) do
+    Keyword.get(opts, :retry_base_ms, Keyword.get(cfg, :retry_base_ms, @default_retry_base_ms))
+  end
+
+  defp retry_max_ms(opts, cfg) do
+    Keyword.get(opts, :retry_max_ms, Keyword.get(cfg, :retry_max_ms, @default_retry_max_ms))
   end
 end

@@ -4,11 +4,8 @@ defmodule FrothWeb.ToolLive do
   alias Froth.Agent
   alias Froth.Agent.Cycle
   alias Froth.Agent.Message, as: AgentMessage
-
-  @elixir_keywords ~w(
-    alias after case catch cond def defmodule defp do else end fn for if import in nil quote
-    raise receive rescue require super try unquote unless use when with true false
-  )
+  alias Froth.Repo
+  alias Froth.Telegram.CycleLink
 
   @impl true
   def mount(params, _session, socket) do
@@ -36,6 +33,10 @@ defmodule FrothWeb.ToolLive do
       |> assign(:live_io, "")
       |> assign(:live_result, nil)
       |> assign(:live_result_error, false)
+      |> assign(:follow_tail?, true)
+      |> assign(:chat_id, nil)
+      |> assign(:reply_to, nil)
+      |> assign(:steer_form, to_form(%{"prompt" => ""}, as: :steer))
 
     {:ok, setup_loop(socket, token), layout: {FrothWeb.Layouts, :mini}}
   end
@@ -66,6 +67,36 @@ defmodule FrothWeb.ToolLive do
 
   def handle_event("refresh", _, socket) do
     {:noreply, refresh_loop(socket)}
+  end
+
+  def handle_event("toggle_follow_tail", _, socket) do
+    {:noreply, assign(socket, :follow_tail?, !socket.assigns.follow_tail?)}
+  end
+
+  def handle_event("send_steer", %{"steer" => %{"prompt" => raw_prompt}}, socket) do
+    prompt = String.trim(raw_prompt || "")
+
+    socket =
+      cond do
+        prompt == "" ->
+          socket
+
+        show_steer_input?(
+          socket.assigns.loop_status,
+          socket.assigns.chat_id,
+          socket.assigns.cycle_id
+        ) ->
+          cast_bot(socket, {:start_inference_session, steer_message(socket, prompt)})
+
+          socket
+          |> assign(:agent_events, socket.assigns.agent_events ++ [local_steer_event(prompt)])
+          |> assign(:loop_status, :running)
+
+        true ->
+          put_flash(socket, :error, "Steering is unavailable for this run.")
+      end
+
+    {:noreply, assign(socket, :steer_form, to_form(%{"prompt" => ""}, as: :steer))}
   end
 
   def handle_event("close", _, socket) do
@@ -169,127 +200,285 @@ defmodule FrothWeb.ToolLive do
       <div
         id="tool-loop-viewer"
         phx-hook="ToolScroll"
-        data-follow-mode={follow_mode(@loop_status)}
-        class="min-h-screen bg-black text-zinc-100 text-[13px] font-mono flex flex-col leading-tight"
+        data-follow-mode={follow_mode(@follow_tail?)}
+        class="mini-shell safe-top flex min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(24,24,34,0.72),rgba(5,5,8,1)_46%)] text-zinc-100"
       >
-        <div id="tool-feed" class="flex-1 px-2 py-2">
-          <%= for {item, idx} <- Enum.with_index(timeline_items(assigns)) do %>
-            <div class={[idx > 0 && "mt-2 pt-2 border-t border-zinc-900/60"]}>
-              <%= cond do %>
-                <% item.kind == :thinking -> %>
-                  <div class="pl-1 whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-400/80 italic">
-                    {item.body}
-                  </div>
-                <% item.kind == :assistant_text -> %>
-                  <div class="max-w-[94%] whitespace-pre-wrap leading-relaxed text-zinc-100">
-                    {item.body}
-                  </div>
-                <% item.kind == :user_text -> %>
-                  <div class="max-w-[94%] whitespace-pre-wrap leading-relaxed text-zinc-500/90">
-                    {item.body}
-                  </div>
-                <% item.kind == :sent_message -> %>
-                  <div class="ml-auto max-w-[94%] whitespace-pre-wrap leading-relaxed text-right text-emerald-200/95">
-                    {item.body}
-                  </div>
-                <% item.kind == :delivery_status -> %>
-                  <pre class={[
-                    "whitespace-pre-wrap text-[12px] pl-1 leading-snug",
-                    if(item.is_error, do: "text-red-300/80", else: "text-zinc-400/70")
-                  ]}>{item.result}</pre>
-                <% item.kind == :queue_tool -> %>
-                  <div class={[
-                    "pl-3 space-y-2 border-l transition-opacity",
-                    item.active && "border-zinc-500/80",
-                    item.future && "border-zinc-700/40 opacity-45",
-                    !item.active && !item.future && "border-zinc-700/60"
-                  ]}>
-                    <div class="flex items-center justify-between gap-2">
-                      <span class="text-[12px] text-zinc-300/90">
-                        {queue_action_title(item.name)}
-                      </span>
-                      <span class={[
-                        "text-[10px] uppercase tracking-wide",
-                        tool_status_color(item.status, item.is_error)
-                      ]}>
-                        {queue_status_text(item.status)}
-                      </span>
-                    </div>
+        <header class="sticky top-0 z-30 border-b border-zinc-800/70 bg-zinc-950/92 backdrop-blur">
+          <div class="mx-auto w-full max-w-3xl px-2 py-1.5">
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
+                  <span class={loop_status_badge_class(@loop_status)}>
+                    {loop_status_badge_text(@loop_status)}
+                  </span>
+                  <span :if={is_binary(@cycle_id)} class="text-zinc-500">
+                    {short_cycle_id(@cycle_id)}
+                  </span>
+                  <span :if={tool_progress_label(@agent_events)} class="text-zinc-500">
+                    {tool_progress_label(@agent_events)}
+                  </span>
+                  <span
+                    :if={loop_working?(@loop_status)}
+                    class="inline-flex items-center gap-1 text-sky-200/90"
+                  >
+                    <span>live</span>
+                    <.working_dots />
+                  </span>
+                </div>
+                <p class="mt-0.5 truncate text-[11px] text-zinc-400">
+                  {dock_text(@loop_status, @cycle_id)}
+                </p>
+              </div>
 
-                    <div
-                      :if={item.narration}
-                      class="text-[12px] italic leading-relaxed text-amber-200/70 mb-1"
-                    >
-                      {item.narration}
-                    </div>
-                    <pre
-                      :if={item.code}
-                      class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-100"
-                    ><%= highlight_elixir(item.code) %></pre>
-                    <pre
-                      :if={is_nil(item.code) and is_binary(item.preview) and item.preview != ""}
-                      class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-300/90"
-                    >{item.preview}</pre>
-
-                    <%= if item.io_output != "" or item.result != "" do %>
-                      <pre
-                        :if={item.io_output != ""}
-                        class="whitespace-pre-wrap text-[12px] font-mono leading-snug text-zinc-400/85"
-                      >{item.io_output}</pre>
-                      <.result_value result={item.result || ""} is_error={item.is_error} />
-                    <% end %>
-                  </div>
-              <% end %>
+              <label class="mini-toggle shrink-0" data-active={to_string(@follow_tail?)}>
+                <input
+                  id="tool-follow-tail"
+                  type="checkbox"
+                  checked={@follow_tail?}
+                  phx-click="toggle_follow_tail"
+                />
+                <span>Latest</span>
+              </label>
             </div>
-          <% end %>
-
-          <div :if={@loop_status == :not_found} class="py-8 text-center text-zinc-500">
-            cycle not found
           </div>
-          <div :if={@loop_status == :loading} class="py-8 text-center text-zinc-500">...</div>
-          <div id="tool-feed-end"></div>
-        </div>
+        </header>
 
-        <div id="loop-now-dock" class="border-t border-zinc-800/80 bg-black/98">
-          <div class="px-3 py-2 flex flex-wrap items-center gap-2">
-            <div class="flex items-center gap-2 min-w-0 grow">
-              <span
-                :if={show_dock_spinner?(@loop_status)}
-                class="inline-block size-2.5 rounded-full border border-zinc-500 border-t-zinc-100 animate-spin"
+        <main
+          id="tool-feed"
+          data-scroll-body
+          class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1.5 py-1.5"
+        >
+          <div class="mx-auto w-full max-w-3xl space-y-1.5">
+            <%= for {item, idx} <- Enum.with_index(timeline_items(assigns)) do %>
+              <div id={"tool-item-#{idx}"}>
+                <%= cond do %>
+                  <% item.kind == :thinking -> %>
+                    <div class="rounded-xl border border-zinc-800/70 bg-zinc-950/45 px-2.5 py-1.5 text-[11px] italic leading-5 text-zinc-400/80">
+                      {item.body}
+                    </div>
+                  <% item.kind == :assistant_text -> %>
+                    <.transcript_text body={item.body} tone={:assistant} />
+                  <% item.kind == :user_text -> %>
+                    <.transcript_text body={item.body} tone={:user} />
+                  <% item.kind == :sent_message -> %>
+                    <.transcript_text body={item.body} tone={:sent} />
+                  <% item.kind == :delivery_status -> %>
+                    <div class={[
+                      "max-w-[96%] rounded-xl border px-2.5 py-1.5 text-[11px] leading-5",
+                      if(item.is_error,
+                        do: "border-rose-500/35 bg-rose-950/35 text-rose-100",
+                        else: "border-zinc-800/80 bg-zinc-950/60 text-zinc-300"
+                      )
+                    ]}>
+                      {item.result}
+                    </div>
+                  <% item.kind == :queue_tool -> %>
+                    <.tool_card item={item} />
+                <% end %>
+              </div>
+            <% end %>
+
+            <div :if={@loop_status == :not_found} class="py-8 text-center text-[12px] text-zinc-500">
+              cycle not found
+            </div>
+            <div :if={@loop_status == :loading} class="py-8 text-center text-[12px] text-zinc-500">
+              ...
+            </div>
+            <div id="tool-feed-end" data-scroll-end></div>
+          </div>
+        </main>
+
+        <div
+          id="loop-now-dock"
+          class="safe-bottom border-t border-zinc-800/80 bg-zinc-950/95 backdrop-blur"
+        >
+          <div class="mx-auto w-full max-w-3xl px-2 py-2">
+            <div class="flex flex-wrap items-center justify-end gap-1.5">
+              <button
+                :if={can_stop?(@loop_status, @cycle_id)}
+                id="loop-stop"
+                phx-click="stop"
+                class="mini-btn mini-btn--danger"
               >
-              </span>
-              <span class="text-[11px] text-zinc-300 truncate">
-                {dock_text(@loop_status, @cycle_id)}
-              </span>
+                Stop
+              </button>
+              <button id="loop-refresh" phx-click="refresh" class="mini-btn">
+                Refresh
+              </button>
+              <button
+                :if={@loop_status in [:done, :stopped, :stopping, :error, :not_found]}
+                id="loop-close"
+                phx-click="close"
+                class="mini-btn"
+              >
+                Close
+              </button>
             </div>
 
-            <button
-              :if={can_stop?(@loop_status, @cycle_id)}
-              id="loop-stop"
-              phx-click="stop"
-              class="min-h-9 px-3 text-[12px] text-red-200/90 border border-red-500/35 rounded-sm hover:bg-red-500/10 transition-colors"
+            <.form
+              :if={show_steer_input?(@loop_status, @chat_id, @cycle_id)}
+              for={@steer_form}
+              id="loop-steer-form"
+              phx-submit="send_steer"
+              class="mt-1.5 flex items-end gap-2 pb-[calc(0.2rem+var(--kb,0px))]"
             >
-              Stop
-            </button>
-            <button
-              id="loop-refresh"
-              phx-click="refresh"
-              class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
-            >
-              Refresh
-            </button>
-            <button
-              :if={@loop_status in [:done, :stopped, :stopping, :error, :not_found]}
-              id="loop-close"
-              phx-click="close"
-              class="min-h-9 px-2 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
-            >
-              Close
-            </button>
+              <.input
+                field={@steer_form[:prompt]}
+                type="textarea"
+                rows="1"
+                placeholder="Steer this run..."
+                enterkeyhint="send"
+                class="mini-input min-h-[2.75rem] resize-none"
+              />
+              <button id="loop-steer" type="submit" class="mini-btn mini-btn--accent min-h-[2.75rem]">
+                Steer
+              </button>
+            </.form>
           </div>
         </div>
       </div>
     </Layouts.app>
+    """
+  end
+
+  attr :body, :string, required: true
+  attr :tone, :atom, required: true
+
+  defp transcript_text(assigns) do
+    {text, footer} = split_cost_footer(assigns.body)
+
+    assigns =
+      assigns
+      |> assign(:text, text)
+      |> assign(:footer, footer)
+      |> assign(:html, render_markdown_html(text))
+
+    ~H"""
+    <%= if @text do %>
+      <div class={transcript_card_class(@tone)}>
+        <div class={transcript_text_class(@tone)}>{raw(@html)}</div>
+        <div :if={@footer} class="mt-1.5">
+          <.metadata_footer footer={@footer} />
+        </div>
+      </div>
+    <% else %>
+      <.metadata_footer :if={@footer} footer={@footer} />
+    <% end %>
+    """
+  end
+
+  attr :footer, :string, required: true
+
+  defp metadata_footer(assigns) do
+    ~H"""
+    <div class="inline-flex rounded-full border border-zinc-700/80 bg-zinc-950/90 px-2 py-0.5 font-mono text-[10px] text-zinc-400">
+      {@footer}
+    </div>
+    """
+  end
+
+  attr :class, :string, default: nil
+
+  defp working_dots(assigns) do
+    ~H"""
+    <span class={["mini-dots", @class]}>
+      <span></span>
+      <span></span>
+      <span></span>
+    </span>
+    """
+  end
+
+  attr :item, :map, required: true
+
+  defp tool_card(assigns) do
+    assigns =
+      assigns
+      |> assign(:card_class, tool_card_class(assigns.item))
+      |> assign(:badge_class, tool_badge_class(assigns.item))
+      |> assign(:badge_text, tool_badge_text(assigns.item))
+      |> assign(:summary, tool_primary_summary(assigns.item))
+      |> assign(:error_note, tool_error_note(assigns.item))
+
+    ~H"""
+    <div class={@card_class}>
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-1.5">
+            <.icon name="hero-wrench-screwdriver" class="size-3.5 shrink-0 text-amber-300/85" />
+            <p class="truncate text-[12px] font-semibold tracking-[0.02em] text-zinc-50">
+              {queue_action_title(@item.name)}
+            </p>
+            <span class="shrink-0 rounded-full border border-zinc-700/80 bg-zinc-950/85 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
+              {@item.name}
+            </span>
+          </div>
+
+          <p
+            :if={@item.narration}
+            class="mt-1 font-sans text-[13px] italic leading-[1.45] text-zinc-200/90"
+          >
+            {@item.narration}
+          </p>
+
+          <div
+            :if={@summary}
+            class="mt-1 rounded-lg border border-zinc-800/80 bg-black/20 px-2 py-1 font-mono text-[11px] leading-5 text-zinc-300/85"
+          >
+            {@summary}
+          </div>
+
+          <p
+            :if={@error_note}
+            class="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-200/90"
+          >
+            {@error_note}
+          </p>
+        </div>
+
+        <span class={@badge_class}>
+          {@badge_text}
+        </span>
+      </div>
+
+      <details
+        :if={tool_has_input?(@item)}
+        id={"tool-input-#{@item.tool_use_id || @item.ref || @item.id}"}
+        class="mt-1.5 rounded-lg border border-zinc-800/80 bg-black/15"
+        open
+      >
+        <summary class="cursor-pointer list-none px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-400 [&::-webkit-details-marker]:hidden">
+          Input
+        </summary>
+        <div class="border-t border-zinc-800/80 px-2 py-2">
+          <pre class="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5 text-zinc-300/90">{@item.input_json}</pre>
+        </div>
+      </details>
+
+      <details
+        :if={tool_has_output?(@item)}
+        id={"tool-output-#{@item.tool_use_id || @item.ref || @item.id}"}
+        class="mt-1.5 rounded-lg border border-zinc-800/80 bg-black/15"
+        open
+      >
+        <summary class="cursor-pointer list-none px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-400 [&::-webkit-details-marker]:hidden">
+          Output
+        </summary>
+        <div class="space-y-2 border-t border-zinc-800/80 px-2 py-2">
+          <div :if={@item.io_output != ""}>
+            <p class="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">IO</p>
+            <pre class="max-h-56 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5 text-zinc-400/90">{@item.io_output}</pre>
+          </div>
+
+          <div :if={@item.result != ""}>
+            <p class="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+              Result
+            </p>
+            <.result_value result={@item.result || ""} is_error={tool_failure?(@item)} />
+          </div>
+        </div>
+      </details>
+    </div>
     """
   end
 
@@ -359,12 +548,13 @@ defmodule FrothWeb.ToolLive do
     append_timeline_text(state, :user_text, text, event_id, idx)
   end
 
-  defp apply_agent_block(role, event_id, %{"type" => "tool_use"} = block, idx, state)
-       when role == :agent do
+  defp apply_agent_block(role, event_id, %{"type" => type} = block, idx, state)
+       when role == :agent and type in ["tool_use", "mcp_tool_use"] do
     apply_tool_use(state, event_id, idx, block)
   end
 
-  defp apply_agent_block(_role, event_id, %{"type" => "tool_result"} = block, idx, state) do
+  defp apply_agent_block(_role, event_id, %{"type" => type} = block, idx, state)
+       when type in ["tool_result", "mcp_tool_result"] do
     apply_tool_result(state, event_id, idx, block)
   end
 
@@ -372,7 +562,8 @@ defmodule FrothWeb.ToolLive do
 
   defp apply_tool_use(state, event_id, idx, block) when is_map(block) do
     tool_use_id = block["id"] || "#{event_id}-tool-#{idx}"
-    name = block["name"] || "tool"
+    name = format_tool_block_name(block)
+    input = Map.get(block, "input")
 
     if name == "send_message" do
       state =
@@ -396,9 +587,9 @@ defmodule FrothWeb.ToolLive do
         tool_use_id: tool_use_id,
         name: name,
         status: "executing",
-        code: get_in(block, ["input", "code"]),
         narration: get_in(block, ["input", "narration"]),
-        preview: safe_input_preview(block["input"])
+        summary: tool_input_summary(name, input),
+        input_json: pretty_tool_input(input)
       })
       |> ensure_tool_entry(tool_use_id)
     end
@@ -441,6 +632,14 @@ defmodule FrothWeb.ToolLive do
       |> ensure_tool_entry(key)
     end
   end
+
+  defp format_tool_block_name(%{"server_name" => server_name, "name" => name})
+       when is_binary(server_name) and server_name != "" and is_binary(name) do
+    "#{server_name}/#{name}"
+  end
+
+  defp format_tool_block_name(%{"name" => name}) when is_binary(name), do: name
+  defp format_tool_block_name(_block), do: "tool"
 
   defp finalize_tool_cards(state, assigns) do
     active_key =
@@ -513,9 +712,9 @@ defmodule FrothWeb.ToolLive do
       tool_use_id: nil,
       name: "tool",
       status: "pending",
-      code: nil,
-      preview: nil,
       narration: nil,
+      summary: nil,
+      input_json: nil,
       queue_idx: nil,
       queue_total: nil,
       active: false,
@@ -641,9 +840,12 @@ defmodule FrothWeb.ToolLive do
 
       _cycle ->
         events = load_agent_cycle_events(cycle_id)
+        cycle_link = load_cycle_link(cycle_id)
 
         socket
         |> assign(:agent_events, events)
+        |> assign(:chat_id, cycle_link && cycle_link.chat_id)
+        |> assign(:reply_to, cycle_link && cycle_link.reply_to)
         |> assign(
           :loop_status,
           derive_cycle_status(events, socket.assigns.live_thinking, socket.assigns.live_text)
@@ -666,6 +868,9 @@ defmodule FrothWeb.ToolLive do
     |> assign(:live_io, "")
     |> assign(:live_result, nil)
     |> assign(:live_result_error, false)
+    |> assign(:chat_id, nil)
+    |> assign(:reply_to, nil)
+    |> assign(:steer_form, to_form(%{"prompt" => ""}, as: :steer))
   end
 
   defp maybe_subscribe_cycle(socket, cycle_id) when is_binary(cycle_id) do
@@ -709,16 +914,21 @@ defmodule FrothWeb.ToolLive do
 
       _cycle ->
         events = load_agent_cycle_events(cycle_id)
+        cycle_link = load_cycle_link(cycle_id)
+        resolved_bot_id = (cycle_link && cycle_link.bot_id) || bot_id
 
         socket
         |> assign(:cycle_id, cycle_id)
-        |> assign(:bot_id, bot_id)
+        |> assign(:bot_id, resolved_bot_id)
         |> assign(:agent_events, events)
         |> assign(:live_thinking, "")
         |> assign(:live_text, "")
         |> assign(:live_io, "")
         |> assign(:live_result, nil)
         |> assign(:live_result_error, false)
+        |> assign(:chat_id, cycle_link && cycle_link.chat_id)
+        |> assign(:reply_to, cycle_link && cycle_link.reply_to)
+        |> assign(:steer_form, to_form(%{"prompt" => ""}, as: :steer))
         |> assign(:loop_status, derive_cycle_status(events))
         |> maybe_subscribe_cycle(cycle_id)
     end
@@ -733,6 +943,12 @@ defmodule FrothWeb.ToolLive do
   end
 
   defp load_agent_cycle_events(_), do: []
+
+  defp load_cycle_link(cycle_id) when is_binary(cycle_id) do
+    Repo.get_by(CycleLink, cycle_id: cycle_id)
+  end
+
+  defp load_cycle_link(_), do: nil
 
   defp parse_agent_cycle_token(token) when is_binary(token) do
     case Regex.run(~r/^cycle_([^_]+)_(.+)$/, token, capture: :all_but_first) do
@@ -793,14 +1009,16 @@ defmodule FrothWeb.ToolLive do
         blocks = event[:blocks] || []
 
         Enum.reduce(blocks, acc, fn
-          %{"type" => "tool_use", "id" => id, "name" => name}, pending
-          when is_binary(id) and is_binary(name) ->
+          %{"type" => type, "id" => id, "name" => name}, pending
+          when type in ["tool_use", "mcp_tool_use"] and is_binary(id) and is_binary(name) ->
             if name == "send_message", do: pending, else: MapSet.put(pending, id)
 
-          %{"type" => "tool_use", "id" => id}, pending when is_binary(id) ->
+          %{"type" => type, "id" => id}, pending
+          when type in ["tool_use", "mcp_tool_use"] and is_binary(id) ->
             MapSet.put(pending, id)
 
-          %{"type" => "tool_result", "tool_use_id" => id}, pending when is_binary(id) ->
+          %{"type" => type, "tool_use_id" => id}, pending
+          when type in ["tool_result", "mcp_tool_result"] and is_binary(id) ->
             MapSet.delete(pending, id)
 
           _, pending ->
@@ -899,17 +1117,38 @@ defmodule FrothWeb.ToolLive do
     |> Enum.reject(&(&1 == ""))
   end
 
+  defp local_steer_event(prompt) when is_binary(prompt) do
+    %{
+      id: "steer-" <> Integer.to_string(System.unique_integer([:positive])),
+      role: :user,
+      blocks: [%{"type" => "text", "text" => prompt}]
+    }
+  end
+
   defp can_stop?(status, cycle_id)
        when is_binary(cycle_id) and status not in [:stopped, :stopping, :not_found],
        do: true
 
   defp can_stop?(_status, _cycle_id), do: false
 
-  defp show_dock_spinner?(loop_status),
-    do: loop_status in [:running, :thinking, :loading, :stopping]
+  defp loop_working?(loop_status), do: loop_status in [:running, :thinking, :loading, :stopping]
 
-  defp follow_mode(loop_status),
-    do: if(loop_status in [:running, :thinking, :stopping], do: "always", else: "smart")
+  defp show_steer_input?(loop_status, chat_id, cycle_id),
+    do:
+      loop_status in [:running, :thinking, :stopping] and is_integer(chat_id) and
+        is_binary(cycle_id)
+
+  defp follow_mode(true), do: "always"
+  defp follow_mode(false), do: "manual"
+  defp follow_mode(_), do: "always"
+
+  defp steer_message(socket, prompt) do
+    %{
+      "chat_id" => socket.assigns.chat_id,
+      "id" => socket.assigns.reply_to || 0,
+      "content" => %{"text" => %{"text" => prompt}}
+    }
+  end
 
   defp dock_text(:loading, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} loading..."
   defp dock_text(:running, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} running..."
@@ -927,12 +1166,43 @@ defmodule FrothWeb.ToolLive do
   defp dock_text(_, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id}"
   defp dock_text(_, _), do: "waiting"
 
-  defp tool_status_color("executing", _), do: "text-yellow-300/80"
-  defp tool_status_color("pending", _), do: "text-amber-300/80"
-  defp tool_status_color("resolved", true), do: "text-red-300/80"
-  defp tool_status_color("resolved", _), do: "text-green-300/80"
-  defp tool_status_color("stopped", _), do: "text-orange-300/80"
-  defp tool_status_color(_, _), do: "text-white/40"
+  defp loop_status_badge_class(:running),
+    do:
+      "inline-flex items-center rounded-full border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-amber-200"
+
+  defp loop_status_badge_class(:thinking),
+    do:
+      "inline-flex items-center rounded-full border border-sky-500/35 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-sky-200"
+
+  defp loop_status_badge_class(:done),
+    do:
+      "inline-flex items-center rounded-full border border-emerald-500/35 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-emerald-200"
+
+  defp loop_status_badge_class(:error),
+    do:
+      "inline-flex items-center rounded-full border border-rose-500/35 bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-rose-200"
+
+  defp loop_status_badge_class(:not_found),
+    do:
+      "inline-flex items-center rounded-full border border-zinc-700/80 bg-zinc-900/80 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-zinc-400"
+
+  defp loop_status_badge_class(:stopping),
+    do:
+      "inline-flex items-center rounded-full border border-orange-500/35 bg-orange-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-orange-200"
+
+  defp loop_status_badge_class(_),
+    do:
+      "inline-flex items-center rounded-full border border-zinc-700/80 bg-zinc-900/80 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-zinc-400"
+
+  defp loop_status_badge_text(:thinking), do: "thinking"
+  defp loop_status_badge_text(:running), do: "running"
+  defp loop_status_badge_text(:done), do: "done"
+  defp loop_status_badge_text(:error), do: "error"
+  defp loop_status_badge_text(:loading), do: "loading"
+  defp loop_status_badge_text(:not_found), do: "missing"
+  defp loop_status_badge_text(:stopping), do: "stopping"
+  defp loop_status_badge_text(:stopped), do: "stopped"
+  defp loop_status_badge_text(_), do: "waiting"
 
   defp tool_label("read_log"), do: "Read log"
   defp tool_label("search"), do: "Search history"
@@ -954,155 +1224,260 @@ defmodule FrothWeb.ToolLive do
   defp queue_status_text(status) when is_binary(status), do: status
   defp queue_status_text(_), do: ""
 
-  defp highlight_elixir(code) when is_binary(code) do
-    chars = String.to_charlist(code)
-    offsets = line_offsets(code)
+  defp transcript_card_class(:assistant),
+    do:
+      "max-w-[96%] rounded-[0.9rem] border border-zinc-800/80 bg-zinc-950/70 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
 
-    ranges =
-      case :elixir_tokenizer.tokenize(chars, 1, []) do
-        {:ok, _line, _column, _warnings, tokens, _terminators} ->
-          tokens
-          |> Enum.reverse()
-          |> Enum.flat_map(&token_range(&1, offsets, chars))
+  defp transcript_card_class(:user),
+    do:
+      "ml-auto max-w-[96%] rounded-[0.9rem] border border-zinc-800/80 bg-zinc-950/50 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
 
-        _ ->
-          []
-      end
+  defp transcript_card_class(:sent),
+    do:
+      "ml-auto max-w-[96%] rounded-[0.9rem] border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
 
-    Phoenix.HTML.raw(render_highlighted(chars, ranges))
-  end
+  defp transcript_card_class(_),
+    do:
+      "max-w-[96%] rounded-[0.9rem] border border-zinc-800/80 bg-zinc-950/70 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
 
-  defp highlight_elixir(_), do: ""
+  defp transcript_text_class(:assistant),
+    do: "mini-markdown md-prose font-sans text-[13px] leading-[1.48] text-zinc-100"
 
-  defp line_offsets(code) do
-    code
-    |> String.split("\n", trim: false)
-    |> Enum.with_index(1)
-    |> Enum.reduce({%{}, 0}, fn {line, line_no}, {acc, offset} ->
-      len = line |> String.to_charlist() |> length()
-      {Map.put(acc, line_no, offset), offset + len + 1}
-    end)
-    |> elem(0)
-  end
+  defp transcript_text_class(:user),
+    do:
+      "mini-markdown md-prose font-sans text-[13px] leading-[1.48] text-zinc-300/90 text-right [&_*]:text-right"
 
-  defp token_range(token, offsets, chars) do
-    with {line, col} <- token_position(token),
-         class when is_binary(class) <- token_class(token),
-         start when is_integer(start) <- position_to_index(offsets, line, col),
-         len when is_integer(len) and len > 0 <- token_length(token),
-         true <- start + len <= length(chars) do
-      [%{start: start, len: len, class: class}]
-    else
-      _ -> []
+  defp transcript_text_class(:sent),
+    do:
+      "mini-markdown md-prose font-sans text-[13px] leading-[1.48] text-right text-emerald-50 [&_*]:text-right"
+
+  defp transcript_text_class(_),
+    do: "mini-markdown md-prose font-sans text-[13px] leading-[1.48] text-zinc-100"
+
+  defp split_cost_footer(text) when is_binary(text) do
+    trimmed = String.trim(text)
+
+    case Regex.run(
+           ~r/^(.*?)(?:\n{2,}|\n)?(\[[0-9]+(?:\.[0-9]+)?s \| [^\]\n]+ in \| [^\]\n]+ out \| \$[0-9]+(?:\.[0-9]+)?\])$/s,
+           trimmed,
+           capture: :all_but_first
+         ) do
+      [body, footer] ->
+        {blank_to_nil(body), footer}
+
+      _ ->
+        {blank_to_nil(trimmed), nil}
     end
   end
 
-  defp token_position({_type, {line, col, _meta}}) when is_integer(line) and is_integer(col),
-    do: {line, col}
+  defp split_cost_footer(_), do: {nil, nil}
 
-  defp token_position({_type, {line, col, _meta}, _value})
-       when is_integer(line) and is_integer(col),
-       do: {line, col}
+  defp render_markdown_html(text) when is_binary(text) do
+    escaped_text =
+      text
+      |> Phoenix.HTML.html_escape()
+      |> Phoenix.HTML.safe_to_string()
 
-  defp token_position(_), do: nil
+    options = %Earmark.Options{
+      breaks: true,
+      code_class_prefix: "language-",
+      escape: false,
+      smartypants: false
+    }
 
-  defp position_to_index(offsets, line, col) when is_integer(line) and is_integer(col) do
-    case Map.fetch(offsets, line) do
-      {:ok, offset} -> offset + col - 1
-      :error -> nil
+    case Earmark.as_html(escaped_text, options) do
+      {:ok, html, _} -> html
+      {:error, html, _} -> html
+      _ -> escaped_text
     end
   end
 
-  defp token_class({type, _}) when type in [:alias], do: "text-sky-300"
-  defp token_class({type, _, _}) when type in [:alias], do: "text-sky-300"
-  defp token_class({type, _, _}) when type in [:atom], do: "text-cyan-300"
-  defp token_class({type, _, _}) when type in [:int, :float], do: "text-amber-300"
-  defp token_class({:at_op, _, _}), do: "text-fuchsia-300"
-  defp token_class({:bin_string, _, _}), do: "text-emerald-300"
+  defp render_markdown_html(_), do: ""
 
-  defp token_class({:identifier, _pos, ident}) when ident in [true, false, nil],
-    do: "text-fuchsia-300"
+  defp tool_progress_label(events) do
+    {total, resolved} = tool_progress(events)
 
-  defp token_class({:identifier, _pos, ident}) when is_atom(ident) do
-    if Atom.to_string(ident) in @elixir_keywords, do: "text-fuchsia-300", else: nil
-  end
-
-  defp token_class({:kw_identifier, _pos, _ident}), do: "text-fuchsia-300"
-  defp token_class({type, _pos}) when type in [:do, :end], do: "text-fuchsia-300"
-  defp token_class(_), do: nil
-
-  defp token_length({:identifier, {_, _, text}, _}) when is_list(text), do: length(text)
-  defp token_length({:paren_identifier, {_, _, text}, _}) when is_list(text), do: length(text)
-  defp token_length({:kw_identifier, {_, _, text}, _}) when is_list(text), do: length(text)
-  defp token_length({:alias, {_, _, text}, _}) when is_list(text), do: length(text)
-  defp token_length({:atom, {_, _, text}, _}) when is_list(text), do: length(text) + 1
-  defp token_length({:int, _meta, text}) when is_list(text), do: length(text)
-  defp token_length({:float, _meta, text}) when is_list(text), do: length(text)
-  defp token_length({:at_op, _meta, _}), do: 1
-
-  defp token_length({:bin_string, _meta, parts}) when is_list(parts) do
-    case bin_string_parts_len(parts) do
-      {:ok, content_len} -> content_len + 2
-      :error -> nil
+    cond do
+      total <= 0 -> nil
+      resolved >= total -> "#{total} tools"
+      true -> "#{resolved}/#{total} tools"
     end
   end
 
-  defp token_length({type, {_line, _col, _meta}}) when is_atom(type) do
-    Atom.to_string(type) |> String.to_charlist() |> length()
-  end
+  defp tool_progress(events) when is_list(events) do
+    {calls, resolved} =
+      Enum.reduce(events, {MapSet.new(), MapSet.new()}, fn event, {calls, resolved} ->
+        blocks = event[:blocks] || []
 
-  defp token_length(_), do: nil
+        Enum.reduce(blocks, {calls, resolved}, fn
+          %{"type" => type, "id" => id, "name" => name}, {call_acc, result_acc}
+          when type in ["tool_use", "mcp_tool_use"] and is_binary(id) and is_binary(name) ->
+            if name == "send_message",
+              do: {call_acc, result_acc},
+              else: {MapSet.put(call_acc, id), result_acc}
 
-  defp bin_string_parts_len(parts) when is_list(parts) do
-    Enum.reduce_while(parts, {:ok, 0}, fn part, {:ok, acc} ->
-      case bin_string_part_len(part) do
-        {:ok, len} -> {:cont, {:ok, acc + len}}
-        :error -> {:halt, :error}
-      end
-    end)
-  end
+          %{"type" => type, "tool_use_id" => id}, {call_acc, result_acc}
+          when type in ["tool_result", "mcp_tool_result"] and is_binary(id) ->
+            {call_acc, MapSet.put(result_acc, id)}
 
-  defp bin_string_part_len(part) when is_binary(part) do
-    {:ok, part |> String.to_charlist() |> length()}
-  end
-
-  defp bin_string_part_len(part) when is_list(part) do
-    if List.ascii_printable?(part) do
-      {:ok, length(part)}
-    else
-      :error
-    end
-  end
-
-  defp bin_string_part_len(_), do: :error
-
-  defp render_highlighted(chars, ranges) do
-    ranges = Enum.sort_by(ranges, & &1.start)
-    total = length(chars)
-
-    {pieces, cursor} =
-      Enum.reduce(ranges, {[], 0}, fn %{start: start, len: len, class: class}, {acc, pos} ->
-        if start < pos or start >= total do
-          {acc, pos}
-        else
-          plain = slice_escaped(chars, pos, start - pos)
-          token_text = slice_escaped(chars, start, len)
-          span = "<span class=\"#{class}\">#{token_text}</span>"
-          {[acc, plain, span], start + len}
-        end
+          _, acc ->
+            acc
+        end)
       end)
 
-    tail = slice_escaped(chars, cursor, total - cursor)
-    IO.iodata_to_binary([pieces, tail])
+    {MapSet.size(calls), MapSet.size(MapSet.intersection(calls, resolved))}
   end
 
-  defp slice_escaped(_chars, _start, len) when len <= 0, do: ""
+  defp tool_progress(_), do: {0, 0}
 
-  defp slice_escaped(chars, start, len) do
-    chars
-    |> Enum.slice(start, len)
-    |> to_string()
-    |> Phoenix.HTML.html_escape()
-    |> Phoenix.HTML.safe_to_string()
+  defp short_cycle_id(cycle_id) when is_binary(cycle_id), do: String.slice(cycle_id, 0, 12)
+  defp short_cycle_id(_), do: nil
+
+  defp tool_card_class(item) do
+    cond do
+      tool_failure?(item) ->
+        "rounded-[0.9rem] border border-rose-500/35 bg-rose-950/30 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+
+      item.status == "executing" ->
+        "rounded-[0.9rem] border border-amber-500/30 bg-amber-950/20 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+
+      true ->
+        "rounded-[0.9rem] border border-zinc-800/80 bg-zinc-950/68 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+    end
   end
+
+  defp tool_badge_class(item) do
+    cond do
+      tool_failure?(item) ->
+        "inline-flex items-center rounded-full border border-rose-500/35 bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-rose-100"
+
+      item.status == "executing" ->
+        "inline-flex items-center rounded-full border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-amber-100"
+
+      true ->
+        "inline-flex items-center rounded-full border border-emerald-500/35 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-emerald-100"
+    end
+  end
+
+  defp tool_badge_text(item) do
+    exit_code = tool_exit_code(item)
+
+    cond do
+      item.status == "executing" -> "running"
+      is_integer(exit_code) and exit_code > 0 -> "exit #{exit_code}"
+      tool_failure?(item) -> "error"
+      true -> queue_status_text(item.status)
+    end
+  end
+
+  defp tool_error_note(item) do
+    case tool_exit_code(item) do
+      139 -> "Likely segfault"
+      code when is_integer(code) and code > 0 -> "Non-zero exit"
+      _ when item.is_error == true -> "Tool returned an error"
+      _ -> nil
+    end
+  end
+
+  defp tool_primary_summary(%{summary: summary}) when is_binary(summary) and summary != "",
+    do: summary
+
+  defp tool_primary_summary(%{preview: preview}) when is_binary(preview) and preview != "",
+    do: preview
+
+  defp tool_primary_summary(_), do: nil
+
+  defp tool_has_input?(%{input_json: text}) when is_binary(text) and text != "", do: true
+  defp tool_has_input?(_), do: false
+
+  defp tool_has_output?(%{io_output: io_output, result: result}) do
+    (is_binary(io_output) and io_output != "") or (is_binary(result) and result != "")
+  end
+
+  defp tool_has_output?(_), do: false
+
+  defp tool_failure?(item) when is_map(item) do
+    item.is_error == true or
+      item.status == "stopped" or
+      match?(code when is_integer(code) and code > 0, tool_exit_code(item))
+  end
+
+  defp tool_failure?(_), do: false
+
+  defp tool_exit_code(item) when is_map(item) do
+    Enum.find_value([item.result, item.io_output], &extract_exit_code/1)
+  end
+
+  defp tool_exit_code(_), do: nil
+
+  defp extract_exit_code(text) when is_binary(text) do
+    case Regex.run(~r/\bexit(?:\s+code)?[:\s\)]*(\d+)\b/i, text, capture: :all_but_first) do
+      [value] ->
+        String.to_integer(value)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp extract_exit_code(_), do: nil
+
+  defp tool_input_summary("run_shell", input) when is_map(input) do
+    input["command"]
+    |> normalize_message_text()
+    |> summarize_preview()
+  end
+
+  defp tool_input_summary("elixir_eval", input) when is_map(input) do
+    input["code"]
+    |> normalize_message_text()
+    |> summarize_preview()
+  end
+
+  defp tool_input_summary(_name, input) when is_map(input) do
+    input
+    |> Map.drop(["narration"])
+    |> safe_input_preview()
+    |> summarize_preview()
+  end
+
+  defp tool_input_summary(_name, _input), do: nil
+
+  defp pretty_tool_input(input) when is_map(input) or is_list(input) do
+    case Jason.encode(input, pretty: true) do
+      {:ok, json} -> json
+      _ -> inspect(input, pretty: true, limit: 100, printable_limit: 5000)
+    end
+  end
+
+  defp pretty_tool_input(input) when is_binary(input), do: input
+  defp pretty_tool_input(nil), do: nil
+
+  defp pretty_tool_input(input),
+    do: inspect(input, pretty: true, limit: 100, printable_limit: 5000)
+
+  defp summarize_preview(text) when is_binary(text) do
+    text
+    |> String.trim()
+    |> case do
+      "" ->
+        nil
+
+      trimmed ->
+        lines = trimmed |> String.split("\n", trim: false) |> Enum.take(3)
+        preview = Enum.join(lines, "\n")
+        if String.length(trimmed) > String.length(preview), do: preview <> "\n...", else: preview
+    end
+  end
+
+  defp summarize_preview(_), do: nil
+
+  defp blank_to_nil(text) when is_binary(text) do
+    case String.trim(text) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp blank_to_nil(_), do: nil
 end

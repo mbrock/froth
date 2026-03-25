@@ -7,8 +7,10 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
 
   @behaviour Froth.LLM.Provider
 
-  alias Froth.LLM.{Message, Request}
+  alias Froth.LLM.{Edit, Message, Request, Store}
   alias Froth.LLM.Providers.XAIResponses
+
+  @retryable_response_statuses ["failed", "incomplete"]
 
   @impl true
   def build_request(%Request{} = request) do
@@ -16,25 +18,121 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
       %{
         "model" => request.model,
         "input" => encode_messages(request.messages),
+        "store" => true,
         "stream" => true
       }
       |> maybe_put("instructions", normalize_instructions(request.system))
       |> maybe_put("tools", encode_tools(request.tools))
       |> maybe_put("max_output_tokens", normalize_max_output_tokens(request.max_tokens))
-      |> maybe_put("reasoning", reasoning_config(request.provider_options["reasoning_effort"]))
+      |> maybe_put(
+        "reasoning",
+        reasoning_config(
+          request.provider_options["reasoning_effort"],
+          request.provider_options["reasoning_summary"]
+        )
+      )
+      |> maybe_put("previous_response_id", request.provider_options["previous_response_id"])
       |> maybe_put("text", text_config(request.provider_options["text_verbosity"]))
 
     {:ok, %{url: request.endpoint, headers: request.headers, body: body}}
   end
 
   @impl true
-  defdelegate decode_payload(payload, store), to: XAIResponses
+  def decode_payload(%{"type" => "error", "error" => %{} = error} = payload, _store) do
+    {provider_error_edits(%{"error" => error}, payload), true}
+  end
+
+  def decode_payload(
+        %{"type" => "response.failed", "response" => %{"error" => %{} = error} = response} =
+          payload,
+        _store
+      ) do
+    error_value =
+      %{"error" => error}
+      |> maybe_put("response_id", response["id"])
+      |> maybe_put("status", response["status"])
+
+    {provider_error_edits(error_value, payload), true}
+  end
+
+  def decode_payload(
+        %{"type" => "response.completed", "response" => %{"error" => %{} = error} = response} =
+          payload,
+        _store
+      ) do
+    if response["status"] in @retryable_response_statuses do
+      error_value =
+        %{"error" => error}
+        |> maybe_put("response_id", response["id"])
+        |> maybe_put("status", response["status"])
+
+      {provider_error_edits(error_value, payload), true}
+    else
+      {[], false}
+    end
+  end
+
+  def decode_payload(%{"type" => "response.completed", "response" => resp} = payload, store)
+      when is_map(resp) do
+    {edits, done?} = XAIResponses.decode_payload(payload, store)
+
+    response_id_edits =
+      case Map.get(resp, "id") do
+        response_id when is_binary(response_id) and response_id != "" ->
+          [
+            %Edit{op: :set, resource: ["message"], path: ["response_id"], value: response_id},
+            %Edit{op: :set, resource: ["message"], path: ["id"], value: response_id}
+          ]
+
+        _ ->
+          []
+      end
+
+    reasoning_summary_edits = reasoning_summary_edits(resp["output"])
+
+    {edits ++ response_id_edits ++ reasoning_summary_edits, done?}
+  end
+
+  def decode_payload(payload, store), do: XAIResponses.decode_payload(payload, store)
 
   @impl true
-  defdelegate finalize(store), to: XAIResponses
+  def finalize(%Store{} = store) do
+    result = XAIResponses.finalize(store)
+    response_id = Store.get(store, ["message", "response_id"])
+    reasoning_summary = Store.get(store, ["message", "reasoning_summary"])
+    content = maybe_prepend_reasoning_block(result[:content] || [], reasoning_summary)
+
+    result
+    |> Map.put(:content, content)
+    |> maybe_put(:reasoning_summary, reasoning_summary)
+    |> maybe_put(:response_id, response_id)
+    |> maybe_put(:message_id, response_id)
+  end
 
   @impl true
-  defdelegate project_event(edit), to: XAIResponses
+  def project_event(%Edit{
+        op: :set,
+        resource: ["message"],
+        path: ["reasoning_summary"],
+        value: reasoning_summary
+      })
+      when is_binary(reasoning_summary) and reasoning_summary != "" do
+    {:thinking_summary, %{"thinking" => reasoning_summary}}
+  end
+
+  def project_event(edit), do: XAIResponses.project_event(edit)
+
+  defp provider_error_edits(error_value, payload) when is_map(error_value) do
+    [
+      %Edit{
+        op: :set,
+        resource: ["message"],
+        path: ["error"],
+        value: error_value,
+        raw: payload
+      }
+    ]
+  end
 
   defp encode_messages(messages) when is_list(messages) do
     Enum.flat_map(messages, &encode_message/1)
@@ -167,20 +265,27 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
   defp encode_tools(tools) when is_list(tools) do
     tools
     |> Enum.reject(&is_nil/1)
-    |> Enum.map(fn
+    |> Enum.flat_map(fn
+      %{"type" => "mcp_endpoint"} ->
+        []
+
       %{"type" => type} = tool when type != "function" ->
-        Map.drop(
-          tool,
-          Enum.filter(["name", "description", "input_schema"], &Map.has_key?(tool, &1))
-        )
+        [
+          Map.drop(
+            tool,
+            Enum.filter(["name", "description", "input_schema"], &Map.has_key?(tool, &1))
+          )
+        ]
 
       tool ->
-        %{
-          "type" => "function",
-          "name" => tool["name"],
-          "description" => tool["description"],
-          "parameters" => tool["input_schema"]
-        }
+        [
+          %{
+            "type" => "function",
+            "name" => tool["name"],
+            "description" => tool["description"],
+            "parameters" => tool["input_schema"]
+          }
+        ]
     end)
   end
 
@@ -255,10 +360,74 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
 
   defp normalize_max_output_tokens(_), do: nil
 
-  defp reasoning_config(nil), do: nil
-  defp reasoning_config(""), do: nil
-  defp reasoning_config(effort) when is_binary(effort), do: %{"effort" => effort}
-  defp reasoning_config(_), do: nil
+  defp reasoning_summary_edits(output) when is_list(output) do
+    case extract_reasoning_summary(output) do
+      "" ->
+        []
+
+      reasoning_summary ->
+        [
+          %Edit{
+            op: :set,
+            resource: ["message"],
+            path: ["reasoning_summary"],
+            value: reasoning_summary
+          }
+        ]
+    end
+  end
+
+  defp reasoning_summary_edits(_output), do: []
+
+  defp extract_reasoning_summary(output) when is_list(output) do
+    output
+    |> Enum.flat_map(fn
+      %{"type" => "reasoning", "summary" => summary} when is_list(summary) ->
+        Enum.flat_map(summary, &extract_reasoning_summary_part/1)
+
+      _ ->
+        []
+    end)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n\n")
+  end
+
+  defp extract_reasoning_summary_part(%{"type" => "summary_text", "text" => text})
+       when is_binary(text) do
+    [text]
+  end
+
+  defp extract_reasoning_summary_part(%{"text" => text}) when is_binary(text), do: [text]
+  defp extract_reasoning_summary_part(_part), do: []
+
+  defp maybe_prepend_reasoning_block(content, reasoning_summary)
+       when is_list(content) and is_binary(reasoning_summary) and reasoning_summary != "" do
+    [%{"type" => "thinking", "thinking" => reasoning_summary} | content]
+  end
+
+  defp maybe_prepend_reasoning_block(content, _reasoning_summary) when is_list(content),
+    do: content
+
+  defp reasoning_config(nil, nil), do: nil
+  defp reasoning_config("", nil), do: nil
+
+  defp reasoning_config(effort, summary) do
+    %{}
+    |> maybe_put("effort", blank_to_nil(effort))
+    |> maybe_put("summary", blank_to_nil(summary))
+    |> case do
+      config when map_size(config) == 0 -> nil
+      config -> config
+    end
+  end
+
+  defp blank_to_nil(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed == "", do: nil, else: trimmed
+  end
+
+  defp blank_to_nil(nil), do: nil
+  defp blank_to_nil(value), do: value
 
   defp text_config(nil), do: nil
   defp text_config(""), do: nil

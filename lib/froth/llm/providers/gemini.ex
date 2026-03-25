@@ -351,6 +351,7 @@ defmodule Froth.LLM.Providers.Gemini do
   defp encode_tool(%{"googleSearchRetrieval" => _} = tool), do: {:builtin, tool}
   defp encode_tool(%{"google_search_retrieval" => _} = tool), do: {:builtin, tool}
   defp encode_tool(%{"codeExecution" => _} = tool), do: {:builtin, tool}
+  defp encode_tool(%{"type" => "mcp_endpoint"}), do: :skip
 
   defp encode_tool(tool) when is_map(tool) do
     {:function,

@@ -160,6 +160,62 @@ defmodule Froth.AnthropicTest do
     end
   end
 
+  describe "mcp connector request wiring" do
+    test "adds the MCP beta header and encodes remote MCP endpoints" do
+      pid = self()
+
+      Application.put_env(:froth, :sse_stream_fun, fn _url, headers, body, _on_event ->
+        send(pid, {:api_call_headers, headers})
+        send(pid, {:api_call_body, body})
+
+        Froth.SSEReplay.replay_fixture(fixture_path("simple_reply/turn_0.sse"), fn _event ->
+          :ok
+        end)
+      end)
+
+      {:ok, _result} =
+        Anthropic.stream_single(
+          [%{"role" => "user", "content" => "hello"}],
+          fn _event -> :ok end,
+          tools: [
+            %{
+              "type" => "mcp_endpoint",
+              "name" => "wolfram",
+              "url" => "https://services.wolfram.com/api/mcp",
+              "bearer_token" => "wolfram-token",
+              "defer_loading" => true
+            }
+          ]
+        )
+
+      assert_receive {:api_call_headers, headers}
+      assert_receive {:api_call_body, body}
+
+      assert {"anthropic-beta", beta_header} =
+               Enum.find(headers, fn {name, _value} -> name == "anthropic-beta" end)
+
+      assert beta_header =~ "context-1m-2025-08-07"
+      assert beta_header =~ "mcp-client-2025-11-20"
+
+      assert body["mcp_servers"] == [
+               %{
+                 "type" => "url",
+                 "url" => "https://services.wolfram.com/api/mcp",
+                 "name" => "wolfram",
+                 "authorization_token" => "wolfram-token"
+               }
+             ]
+
+      assert body["tools"] == [
+               %{
+                 "type" => "mcp_toolset",
+                 "mcp_server_name" => "wolfram",
+                 "default_config" => %{"defer_loading" => true}
+               }
+             ]
+    end
+  end
+
   describe "max_tokens config" do
     test "sends configured max_tokens to Anthropic" do
       pid = self()
@@ -202,6 +258,62 @@ defmodule Froth.AnthropicTest do
     end
   end
 
+  describe "provider errors" do
+    test "returns streamed provider errors instead of an empty success" do
+      Application.put_env(:froth, :sse_stream_fun, Froth.SSEReplay.stream_fun("error_reply"))
+
+      assert {:error, {:provider_error, "anthropic", error, _diagnostics}} =
+               Anthropic.stream_single(
+                 [%{"role" => "user", "content" => "hello"}],
+                 fn _event -> :ok end,
+                 max_retries: 0
+               )
+
+      assert get_in(error, ["error", "type"]) == "overloaded_error"
+      assert get_in(error, ["error", "message"]) == "Overloaded"
+    end
+
+    test "retries transient api_error responses" do
+      pid = self()
+      counter = :counters.new(1, [:atomics])
+
+      Application.put_env(:froth, :sse_stream_fun, fn _url, _headers, _body, _on_event ->
+        turn = :counters.get(counter, 1)
+        :counters.add(counter, 1, 1)
+        send(pid, {:attempt, turn})
+
+        case turn do
+          0 ->
+            {:error,
+             {:provider_error, "anthropic",
+              %{
+                "error" => %{
+                  "message" => "Internal server error",
+                  "type" => "api_error"
+                }
+              }, %{}}}
+
+          _ ->
+            Froth.SSEReplay.replay_fixture(fixture_path("simple_reply/turn_0.sse"), fn _event ->
+              :ok
+            end)
+        end
+      end)
+
+      assert {:ok, %{text: text}} =
+               Anthropic.stream_single(
+                 [%{"role" => "user", "content" => "hello"}],
+                 fn _event -> :ok end,
+                 retry_base_ms: 0,
+                 retry_max_ms: 0
+               )
+
+      assert text =~ "transistor"
+      assert_receive {:attempt, 0}
+      assert_receive {:attempt, 1}
+    end
+  end
+
   defp collect_events(type) do
     collect_events(type, [])
   end
@@ -213,4 +325,6 @@ defmodule Froth.AnthropicTest do
       0 -> Enum.reverse(acc)
     end
   end
+
+  defp fixture_path(name), do: Path.join([__DIR__, "..", "fixtures", "sse", name])
 end

@@ -58,7 +58,7 @@ if System.get_env("PHX_SERVER") do
 end
 
 config :froth, FrothWeb.Endpoint, http: endpoint_http
-config :froth, Froth.Telemetry.Store, enabled: node_role != :worker
+config :froth, Froth.Telemetry.Store, enabled: config_env() != :test and node_role != :worker
 
 config :froth, Froth.Replicate, api_token: System.get_env("REPLICATE_API_TOKEN")
 

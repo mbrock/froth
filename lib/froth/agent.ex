@@ -12,38 +12,20 @@ defmodule Froth.Agent do
   @preview_string_limit 320
   @preview_list_limit 8
 
-  @spec run(Message.t(), Config.t()) :: {Cycle.t(), Enumerable.t()}
+  @spec run(Message.t() | Cycle.t(), Config.t()) :: {Cycle.t(), Enumerable.t()}
   def run(%Message{id: id} = message, %Config{} = config) when not is_nil(id) do
-    cycle = begin_cycle(message, config)
+    message
+    |> begin_cycle(config)
+    |> run(config)
+  end
 
-    stream =
-      Stream.resource(
-        fn ->
-          Phoenix.PubSub.subscribe(Froth.PubSub, "cycle:#{cycle.id}")
-          {:ok, pid} = Worker.start_link({cycle, config})
-          {pid, Process.monitor(pid)}
-        end,
-        fn {pid, ref} ->
-          receive do
-            {:stream, event} ->
-              {[{:stream, event}], {pid, ref}}
+  def run(%Cycle{id: id} = cycle, %Config{} = config) when not is_nil(id) do
+    {cycle, cycle_stream(cycle, config)}
+  end
 
-            {:event, event, msg} ->
-              {[{:event, event, msg}], {pid, ref}}
-
-            {:DOWN, ^ref, :process, ^pid, :normal} ->
-              {:halt, {pid, ref}}
-
-            {:DOWN, ^ref, :process, ^pid, reason} ->
-              exit(reason)
-          end
-        end,
-        fn {_pid, _ref} ->
-          Phoenix.PubSub.unsubscribe(Froth.PubSub, "cycle:#{cycle.id}")
-        end
-      )
-
-    {cycle, stream}
+  @spec run_adhoc(String.t(), keyword()) :: {Cycle.t(), term()}
+  def run_adhoc(prompt, opts \\ []) when is_binary(prompt) and is_list(opts) do
+    Froth.Agent.Adhoc.run(prompt, opts)
   end
 
   @spec begin_cycle(Message.t(), Config.t()) :: Cycle.t()
@@ -66,6 +48,34 @@ defmodule Froth.Agent do
       )
 
     cycle
+  end
+
+  defp cycle_stream(%Cycle{} = cycle, %Config{} = config) do
+    Stream.resource(
+      fn ->
+        Phoenix.PubSub.subscribe(Froth.PubSub, "cycle:#{cycle.id}")
+        {:ok, pid} = Worker.start_link({cycle, config})
+        {pid, Process.monitor(pid)}
+      end,
+      fn {pid, ref} ->
+        receive do
+          {:stream, event} ->
+            {[{:stream, event}], {pid, ref}}
+
+          {:event, event, msg} ->
+            {[{:event, event, msg}], {pid, ref}}
+
+          {:DOWN, ^ref, :process, ^pid, :normal} ->
+            {:halt, {pid, ref}}
+
+          {:DOWN, ^ref, :process, ^pid, reason} ->
+            exit(reason)
+        end
+      end,
+      fn {_pid, _ref} ->
+        Phoenix.PubSub.unsubscribe(Froth.PubSub, "cycle:#{cycle.id}")
+      end
+    )
   end
 
   @spec update_cycle(Cycle.t(), map()) :: Cycle.t()
@@ -219,13 +229,15 @@ defmodule Froth.Agent do
           %{"type" => "tool_use", "name" => "send_message"} ->
             []
 
-          %{"type" => "tool_use", "name" => name, "input" => input} ->
+          %{"type" => type, "input" => input} = block
+          when type in ["tool_use", "mcp_tool_use"] ->
             narration = Map.get(input, "narration")
+            tool = format_trace_tool_name(block)
 
             [
               %{
                 kind: :call,
-                tool: name,
+                tool: tool,
                 input_json: encode_tool_input(input),
                 narration: narration
               }
@@ -237,7 +249,8 @@ defmodule Froth.Agent do
 
       %{"role" => "user", "content" => content} when is_list(content) ->
         Enum.flat_map(content, fn
-          %{"type" => "tool_result", "content" => result_content, "tool_use_id" => _id} ->
+          %{"type" => type, "content" => result_content, "tool_use_id" => _id}
+          when type in ["tool_result", "mcp_tool_result"] ->
             text = tool_result_text(result_content)
 
             if String.trim(text) == "sent" do
@@ -256,6 +269,13 @@ defmodule Froth.Agent do
   end
 
   def extract_trace_entries(_), do: []
+
+  defp format_trace_tool_name(%{"server_name" => server_name, "name" => name})
+       when is_binary(server_name) and server_name != "" and is_binary(name) do
+    "#{server_name}/#{name}"
+  end
+
+  defp format_trace_tool_name(%{"name" => name}) when is_binary(name), do: name
 
   @doc false
   @spec next_event_seq(Cycle.t()) :: non_neg_integer()

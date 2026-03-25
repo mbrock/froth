@@ -755,6 +755,7 @@ defmodule Froth.Telegram.Bot do
                name: name,
                input: input,
                bot_id: bc.id,
+               bot_username: bc.bot_username,
                session_id: bc.session_id,
                chat_id: chat_id,
                reply_to: reply_to,
@@ -779,6 +780,7 @@ defmodule Froth.Telegram.Bot do
                    reply_to
                  ),
                bot_id: bc.id,
+               bot_username: bc.bot_username,
                session_id: bc.session_id,
                chat_id: chat_id,
                reply_to: reply_to,
@@ -802,6 +804,19 @@ defmodule Froth.Telegram.Bot do
                    reply_to
                  ),
                bot_id: bc.id,
+               bot_username: bc.bot_username,
+               session_id: bc.session_id,
+               chat_id: chat_id,
+               reply_to: reply_to,
+               cycle_id: cycle_id
+             }, state}
+
+          "spawn_agent" ->
+            {%{
+               name: name,
+               input: Map.put(input, "reply_to", reply_to),
+               bot_id: bc.id,
+               bot_username: bc.bot_username,
                session_id: bc.session_id,
                chat_id: chat_id,
                reply_to: reply_to,
@@ -813,6 +828,7 @@ defmodule Froth.Telegram.Bot do
                name: name,
                input: input,
                bot_id: bc.id,
+               bot_username: bc.bot_username,
                session_id: bc.session_id,
                chat_id: chat_id,
                reply_to: reply_to,
@@ -1735,6 +1751,7 @@ defmodule Froth.Telegram.Bot do
     blocks
     |> Enum.flat_map(fn
       %{"type" => "tool_use", "name" => name} when is_binary(name) -> [name]
+      %{"type" => "mcp_tool_use", "name" => name} when is_binary(name) -> [name]
       _ -> []
     end)
     |> Enum.take(3)

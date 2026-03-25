@@ -39,7 +39,10 @@ defmodule Froth.TestSupport.FakeCodexSession do
   end
 
   def snapshot(session_id) when is_binary(session_id) do
-    GenServer.call(via(session_id), :snapshot)
+    case GenServer.call(via(session_id), :snapshot) do
+      snapshot when is_map(snapshot) -> {:ok, snapshot}
+      other -> other
+    end
   end
 
   def whereis(session_id) when is_binary(session_id) do
@@ -75,7 +78,7 @@ defmodule Froth.TestSupport.FakeCodexSession do
 
   @impl true
   def handle_call(:snapshot, _from, state) do
-    {:reply, {:ok, state.snapshot}, state}
+    {:reply, state.snapshot, state}
   end
 
   def handle_call({:send_prompt, _prompt}, _from, state) do

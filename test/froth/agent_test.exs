@@ -283,7 +283,10 @@ defmodule Froth.Agent.WorkerTest do
 
       wait_for_exit(pid)
 
-      events = cycle_events(cycle.id)
+      events =
+        cycle.id
+        |> cycle_events()
+        |> Enum.reject(&is_nil(event_seq(&1)))
 
       assert Enum.map(events, &event_seq/1) == Enum.to_list(0..(length(events) - 1))
     end
@@ -463,6 +466,94 @@ defmodule Froth.Agent.WorkerTest do
 
       messages = cycle_messages(cycle.id)
       assert Enum.map(messages, & &1.role) == [:user, :agent, :user, :agent]
+    end
+
+    test "continues after provider-managed MCP tools without invoking the local executor" do
+      test_pid = self()
+      counter = start_supervised!({Elixir.Agent, fn -> 0 end})
+      previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
+
+      on_exit(fn ->
+        if previous_fun do
+          Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
+        else
+          Application.delete_env(:froth, :llm_stream_single_fun)
+        end
+      end)
+
+      Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
+        call =
+          Elixir.Agent.get_and_update(counter, fn current ->
+            {current, current + 1}
+          end)
+
+        send(test_pid, {:llm_call, call, api_messages})
+
+        case call do
+          0 ->
+            {:ok,
+             %{
+               text: "",
+               content: [
+                 %{
+                   "type" => "mcp_tool_use",
+                   "id" => "mcptoolu_1",
+                   "name" => "compute",
+                   "server_name" => "wolfram",
+                   "input" => %{"query" => "2+2"}
+                 },
+                 %{
+                   "type" => "mcp_tool_result",
+                   "tool_use_id" => "mcptoolu_1",
+                   "content" => [%{"type" => "text", "text" => "4"}]
+                 }
+               ],
+               stop_reason: "pause_turn",
+               usage: %{},
+               model: opts[:model],
+               message_id: "msg_mcp_1"
+             }}
+
+          1 ->
+            {:ok,
+             %{
+               text: "The answer is 4.",
+               content: [%{"type" => "text", "text" => "The answer is 4."}],
+               stop_reason: "end_turn",
+               usage: %{},
+               model: opts[:model],
+               message_id: "msg_mcp_2"
+             }}
+        end
+      end)
+
+      executor =
+        start_executor(fn tool_use, _context ->
+          send(test_pid, {:tool_executed, tool_use})
+          "unexpected"
+        end)
+
+      {pid, cycle} =
+        start_worker([Message.user("what is 2+2?")], "simple_reply", executor: executor)
+
+      ref = Process.monitor(pid)
+
+      assert_receive {:llm_call, 0, [%LLMMessage{role: :user}]}, 5_000
+      assert_receive {:llm_call, 1, api_messages}, 5_000
+      refute_receive {:tool_executed, _tool_use}, 200
+
+      assert %LLMMessage{role: :assistant, content: assistant_blocks} = List.last(api_messages)
+      assert Enum.any?(assistant_blocks, &(&1["type"] == "mcp_tool_use"))
+      assert Enum.any?(assistant_blocks, &(&1["type"] == "mcp_tool_result"))
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
+
+      messages = cycle_messages(cycle.id)
+      assert Enum.map(messages, & &1.role) == [:user, :agent, :agent]
+      assert Enum.any?(hd(tl(messages)).content["_wrapped"], &(&1["type"] == "mcp_tool_use"))
+
+      cycle = Repo.get!(Cycle, cycle.id)
+      assert cycle.status == :completed
     end
 
     test "stops the cycle only on an explicit yield result" do
@@ -961,6 +1052,164 @@ defmodule Froth.Agent.WorkerTest do
       events = Enum.filter(all, &match?({:event, _, _}, &1))
       {:event, _event, last_msg} = List.last(events)
       assert last_msg.role == :agent
+    end
+  end
+
+  describe "run_adhoc/2" do
+    test "creates a completed anthropic cycle and returns the final output" do
+      test_pid = self()
+      previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
+
+      on_exit(fn ->
+        if previous_fun do
+          Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
+        else
+          Application.delete_env(:froth, :llm_stream_single_fun)
+        end
+      end)
+
+      Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, on_event, opts ->
+        send(test_pid, {:llm_call, api_messages, opts})
+        on_event.({:text_delta, "hello from anthropic"})
+
+        {:ok,
+         %{
+           text: "hello from anthropic",
+           content: [%{"type" => "text", "text" => "hello from anthropic"}],
+           stop_reason: "stop",
+           usage: %{},
+           model: opts[:model],
+           message_id: "msg_adhoc_1"
+         }}
+      end)
+
+      {cycle, output} =
+        Agent.run_adhoc("say hello",
+          provider: :anthropic,
+          model: "claude-opus-4-6",
+          effort: "low"
+        )
+
+      assert output == "hello from anthropic"
+
+      assert_receive {:llm_call, api_messages, opts}, 5000
+
+      assert [%LLMMessage{role: :user, content: [%{"type" => "text", "text" => "say hello"}]}] =
+               api_messages
+
+      assert opts[:provider] == :anthropic
+      assert opts[:model] == "claude-opus-4-6"
+      assert opts[:effort] == "low"
+
+      cycle = Repo.get!(Cycle, cycle.id)
+      assert cycle.status == :completed
+      assert cycle.provider == "anthropic"
+
+      messages = cycle_messages(cycle.id)
+      assert Enum.map(messages, & &1.role) == [:user, :agent]
+      assert hd(messages).role == :user
+      assert List.last(messages).role == :agent
+    end
+
+    test "supports openai provider with a lightweight run_shell tool executor" do
+      test_pid = self()
+      counter = start_supervised!({Elixir.Agent, fn -> 0 end})
+      previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
+
+      on_exit(fn ->
+        if previous_fun do
+          Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
+        else
+          Application.delete_env(:froth, :llm_stream_single_fun)
+        end
+      end)
+
+      Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
+        call =
+          Elixir.Agent.get_and_update(counter, fn current ->
+            {current, current + 1}
+          end)
+
+        send(test_pid, {:llm_call, call, api_messages, opts})
+
+        case call do
+          0 ->
+            {:ok,
+             %{
+               text: "",
+               content: [
+                 %{
+                   "type" => "tool_use",
+                   "id" => "call_1",
+                   "name" => "run_shell",
+                   "input" => %{
+                     "command" => "printf 'froth-adhoc\\n'",
+                     "narration" => "I should inspect the shell output before replying."
+                   }
+                 }
+               ],
+               stop_reason: "tool_use",
+               usage: %{},
+               model: opts[:model],
+               message_id: "resp_adhoc_tool_1",
+               response_id: "resp_adhoc_tool_1"
+             }}
+
+          1 ->
+            {:ok,
+             %{
+               text: "shell finished",
+               content: [%{"type" => "text", "text" => "shell finished"}],
+               stop_reason: "stop",
+               usage: %{},
+               model: opts[:model],
+               message_id: "resp_adhoc_tool_2",
+               response_id: "resp_adhoc_tool_2"
+             }}
+        end
+      end)
+
+      run_shell_spec =
+        Enum.find(Froth.Inference.Tools.specs_for_api(), &(&1["name"] == "run_shell"))
+
+      {cycle, output} =
+        Agent.run_adhoc("run a quick shell command and summarize it",
+          provider: :openai,
+          model: "gpt-5.4-nano",
+          effort: "high",
+          tools: [run_shell_spec]
+        )
+
+      assert output == "shell finished"
+
+      assert_receive {:llm_call, 0, first_messages, first_opts}, 5000
+      assert [%LLMMessage{role: :user}] = first_messages
+      assert first_opts[:provider] == :openai
+      assert first_opts[:model] == "gpt-5.4-nano"
+      assert first_opts[:effort] == "high"
+      assert first_opts[:previous_response_id] == nil
+
+      assert_receive {:llm_call, 1, second_messages, second_opts}, 5000
+      assert second_opts[:provider] == :openai
+      assert second_opts[:previous_response_id] == "resp_adhoc_tool_1"
+      assert length(second_messages) == 1
+
+      assert %LLMMessage{
+               role: :user,
+               content: [
+                 %{"type" => "tool_result", "tool_use_id" => "call_1", "content" => content}
+               ]
+             } = List.last(second_messages)
+
+      assert content =~ "froth-adhoc"
+
+      cycle = Repo.get!(Cycle, cycle.id)
+      assert cycle.status == :completed
+      assert cycle.provider == "openai"
+
+      messages = cycle_messages(cycle.id)
+      assert Enum.map(messages, & &1.role) == [:user, :agent, :user, :agent]
+      assert Enum.at(messages, 1).metadata["response_id"] == "resp_adhoc_tool_1"
     end
   end
 end

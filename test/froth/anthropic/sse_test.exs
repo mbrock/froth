@@ -124,6 +124,62 @@ defmodule Froth.Anthropic.SSETest do
     end
   end
 
+  describe "consume_payload/2 with MCP tool blocks" do
+    test "parses streamed mcp_tool_use blocks" do
+      state = SSE.initial_state()
+
+      {state, start_events, _done?} =
+        SSE.consume_payload(state, %{
+          "type" => "content_block_start",
+          "index" => 0,
+          "content_block" => %{
+            "type" => "mcp_tool_use",
+            "id" => "mcptoolu_1",
+            "name" => "compute",
+            "server_name" => "wolfram",
+            "input" => %{}
+          }
+        })
+
+      {state, delta_events, _done?} =
+        SSE.consume_payload(state, %{
+          "type" => "content_block_delta",
+          "index" => 0,
+          "delta" => %{"type" => "input_json_delta", "partial_json" => "{\"query\":\"2+2\"}"}
+        })
+
+      {state, stop_events, _done?} =
+        SSE.consume_payload(state, %{
+          "type" => "content_block_stop",
+          "index" => 0
+        })
+
+      events = start_events ++ delta_events ++ stop_events
+
+      assert {:tool_use_start, start} = Enum.find(events, &match?({:tool_use_start, _}, &1))
+      assert start["type"] == "mcp_tool_use"
+      assert start["server_name"] == "wolfram"
+
+      assert {:tool_use_stop, stop} = Enum.find(events, &match?({:tool_use_stop, _}, &1))
+      assert stop["type"] == "mcp_tool_use"
+      assert stop["name"] == "compute"
+      assert stop["server_name"] == "wolfram"
+      assert stop["input"] == %{"query" => "2+2"}
+
+      content = SSE.blocks_to_content(state.blocks)
+
+      assert content == [
+               %{
+                 "type" => "mcp_tool_use",
+                 "id" => "mcptoolu_1",
+                 "name" => "compute",
+                 "server_name" => "wolfram",
+                 "input" => %{"query" => "2+2"}
+               }
+             ]
+    end
+  end
+
   describe "blocks_to_content/1" do
     test "sorts by index and cleans internal keys" do
       blocks = %{

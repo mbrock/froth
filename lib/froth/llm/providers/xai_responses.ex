@@ -241,19 +241,24 @@ defmodule Froth.LLM.Providers.XAIResponses do
   defp encode_tools(tools) when is_list(tools) do
     tools
     |> Enum.reject(&is_nil/1)
-    |> Enum.map(fn
+    |> Enum.flat_map(fn
+      %{"type" => "mcp_endpoint"} ->
+        []
+
       # Built-in tools pass through
       %{"type" => type} when type in ["x_search", "web_search", "code_interpreter"] ->
-        %{"type" => type}
+        [%{"type" => type}]
 
       # Function tools get reformatted for Responses API
       tool ->
-        %{
-          "type" => "function",
-          "name" => tool["name"],
-          "description" => tool["description"],
-          "parameters" => tool["input_schema"]
-        }
+        [
+          %{
+            "type" => "function",
+            "name" => tool["name"],
+            "description" => tool["description"],
+            "parameters" => tool["input_schema"]
+          }
+        ]
     end)
   end
 

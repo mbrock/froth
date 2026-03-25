@@ -316,19 +316,24 @@ defmodule Froth.LLM.Providers.OpenAICompat do
   defp assistant_tool_calls(_content), do: []
 
   defp encode_tools(tools) when is_list(tools) do
-    Enum.map(tools, fn
+    Enum.flat_map(tools, fn
+      %{"type" => "mcp_endpoint"} ->
+        []
+
       %{"type" => type} = tool when type != "function" ->
-        tool
+        [tool]
 
       tool ->
-        %{
-          "type" => "function",
-          "function" => %{
-            "name" => tool["name"],
-            "description" => tool["description"],
-            "parameters" => tool["input_schema"]
+        [
+          %{
+            "type" => "function",
+            "function" => %{
+              "name" => tool["name"],
+              "description" => tool["description"],
+              "parameters" => tool["input_schema"]
+            }
           }
-        }
+        ]
     end)
   end
 

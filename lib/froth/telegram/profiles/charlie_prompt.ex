@@ -43,6 +43,8 @@ defmodule Froth.Telegram.Profiles.CharliePrompt do
     - read_tool_transcript: read previous agent cycle transcripts for this chat, including \
     assistant tool calls, tool results, and linked eval/shell task output. Use this when you \
     need to recover what happened in earlier cycles or previous code evaluations.
+    - spawn_agent: delegate a bounded task to an ad-hoc background sub-agent. It returns a \
+    cycle ID; inspect that sub-agent later with read_tool_transcript.
 
     Messages include msg:ID identifiers. Media messages show analysis snippets when available. \
     Photos, voice notes, videos, YouTube links, X/Twitter posts, and PDFs are all analyzed \

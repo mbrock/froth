@@ -498,14 +498,113 @@ defmodule Froth.Follow.Projector do
       kind: kind,
       scope: "cnode",
       summary: "cnode #{humanize(kind)}",
-      detail: data && truncate(to_string(data), 120),
+      detail: data && truncate(safe_string(data), 120),
       level: if(kind in ["unexpected", "exited", "node_down"], do: :warn, else: :info),
       hidden: hidden
     }
   end
 
+  defp classify(["froth", "browser", "instance", kind], _m, metadata, _duration_ms) do
+    browser_id = short_browser_id(metadata["browser_id"])
+    exit_code = integer_or_nil(metadata["exit_code"])
+
+    {summary, level} =
+      case kind do
+        "started" ->
+          {"browser started", :info}
+
+        "stopped" ->
+          {"browser stopped", if(exit_code in [nil, 0], do: :info, else: :warn)}
+
+        _ ->
+          {"browser #{humanize(kind)}", level_for_parts(["froth", "browser", "instance", kind])}
+      end
+
+    %{
+      family: "browser",
+      kind: kind,
+      scope: browser_id || "browser",
+      summary: summary,
+      detail:
+        join_detail([
+          metadata["profile"] && "profile=#{metadata["profile"]}",
+          metadata["debug_port"] && "port=#{metadata["debug_port"]}",
+          metadata["os_pid"] && "pid=#{metadata["os_pid"]}",
+          is_integer(exit_code) && "exit=#{exit_code}"
+        ]),
+      level: level,
+      hidden: false
+    }
+  end
+
+  defp classify(["froth", "browser", "session", kind], _m, metadata, _duration_ms) do
+    browser_id = short_browser_id(metadata["browser_id"])
+
+    {summary, detail} =
+      case kind do
+        "screenshot" ->
+          {"captured screenshot", metadata["path"] && display_path_tail(metadata["path"])}
+
+        "navigated" ->
+          {"navigated", metadata["url"] && display_url(metadata["url"])}
+
+        _ ->
+          {"session #{humanize(kind)}",
+           join_detail([
+             metadata["url"] && "url=#{display_url(metadata["url"])}",
+             metadata["path"] && "path=#{display_path_tail(metadata["path"])}"
+           ])}
+      end
+
+    %{
+      family: "browser",
+      kind: kind,
+      scope: browser_id || "browser",
+      summary: summary,
+      detail: detail,
+      level: :info,
+      hidden: kind in ["navigated", "screenshot"]
+    }
+  end
+
+  defp classify(["froth", "browser", "cdp", kind], _m, metadata, _duration_ms) do
+    method = browser_method_scope(metadata["method"])
+    session_id = short_id(metadata["session_id"])
+
+    {summary, detail} =
+      case kind do
+        "request" ->
+          {"cdp #{method || "request"}",
+           join_detail([
+             metadata["id"] && "id=#{metadata["id"]}",
+             session_id && "session=#{session_id}"
+           ])}
+
+        "event" ->
+          {"cdp #{method || "event"}", join_detail([session_id && "session=#{session_id}"])}
+
+        _ ->
+          {"cdp #{humanize(kind)}",
+           join_detail([
+             method && "method=#{method}",
+             session_id && "session=#{session_id}"
+           ])}
+      end
+
+    %{
+      family: "browser",
+      kind: kind,
+      scope: method || session_id || "cdp",
+      summary: summary,
+      detail: detail,
+      level: :debug,
+      hidden: true
+    }
+  end
+
   defp classify(["froth", "tasks", kind], _m, metadata, duration_ms) do
     task_id = metadata["task_id"] || metadata["id"]
+    exit_code = integer_or_nil(metadata["exit_code"])
 
     %{
       family: "task",
@@ -517,10 +616,13 @@ defmodule Froth.Follow.Projector do
           duration_ms && "#{duration_ms}ms",
           metadata["type"] && "type=#{metadata["type"]}",
           metadata["status"] && "status=#{metadata["status"]}",
+          is_integer(exit_code) && "exit=#{exit_code}",
           metadata["error"] && "error=#{truncate(metadata["error"], 120)}"
         ]),
       level:
-        if(kind in ["failed", "stopped", "eval_crashed", "video_crashed"],
+        if(
+          kind in ["failed", "stopped", "eval_crashed", "video_crashed"] or
+            (is_integer(exit_code) and exit_code != 0),
           do: :error,
           else: :info
         ),
@@ -573,17 +675,100 @@ defmodule Froth.Follow.Projector do
     }
   end
 
+  defp classify(["froth", "codex", kind], _m, metadata, duration_ms) do
+    {summary, level} =
+      case kind do
+        "pubsub_subscribe" -> {"subscribed", :debug}
+        "pubsub_unsubscribe" -> {"unsubscribed", :debug}
+        "started" -> {"session started", :info}
+        "start_failed" -> {"start failed", :error}
+        "notify_send" -> {"notification queued", :debug}
+        "notify_sent" -> {"notification sent", :debug}
+        "notify_failed" -> {"notification failed", :error}
+        "request_send" -> {"request sent", :info}
+        "request_queued" -> {"request queued", :info}
+        "request_failed_to_send" -> {"request failed to send", :error}
+        "data_chunk" -> {"streaming data", :debug}
+        "server_exited" -> {"server exited", :error}
+        "request_timeout" -> {"request timed out", :error}
+        "terminate" -> {"session terminated", :warn}
+        "response_received" -> {"response received", :info}
+        "notification_received" -> {"notification received", :debug}
+        "unknown_message" -> {"unknown message", :warn}
+        "invalid_json" -> {"invalid json", :error}
+        "unexpected_response" -> {"unexpected response", :warn}
+        "request_error_response" -> {"request error response", :error}
+        "request_ok_response" -> {"request ok response", :info}
+        "send_raw" -> {"raw message sent", :debug}
+        "send_failed" -> {"send failed", :error}
+        "fail_pending" -> {"failed pending requests", :warn}
+        "task_started" -> {"task started", :info}
+        "session_codex_exit" -> {"session exited", :warn}
+        "notification_failed" -> {"notification failed", :error}
+        "events_load_failed" -> {"events load failed", :error}
+        "events_list_failed" -> {"events list failed", :error}
+        "events_upsert_failed" -> {"events upsert failed", :error}
+        "raw_events_list_failed" -> {"raw events list failed", :error}
+        "raw_events_append_failed" -> {"raw events append failed", :error}
+        _ -> {humanize(kind), level_for_parts(["froth", "codex", kind])}
+      end
+
+    detail =
+      join_detail([
+        duration_ms && "#{duration_ms}ms",
+        metadata["method"] && "method=#{browser_method_scope(metadata["method"])}",
+        metadata["topic"] && "topic=#{codex_topic_scope(metadata["topic"])}",
+        metadata["id"] && "id=#{metadata["id"]}",
+        metadata["pending_count"] && "pending=#{metadata["pending_count"]}",
+        metadata["timeout_ms"] && "timeout=#{metadata["timeout_ms"]}ms",
+        metadata["bytes"] && "bytes=#{metadata["bytes"]}",
+        metadata["complete_lines"] && "lines=#{metadata["complete_lines"]}",
+        metadata["buffered_bytes"] && "buffered=#{metadata["buffered_bytes"]}",
+        metadata["status"] && "status=#{metadata["status"]}",
+        metadata["task_id"] && "task=#{short_id(metadata["task_id"])}",
+        metadata["cwd"] && "cwd=#{path_label(metadata["cwd"])}",
+        metadata["executable"] && "exec=#{path_label(metadata["executable"])}",
+        metadata["params_preview"] &&
+          "params=#{truncate(safe_string(metadata["params_preview"]), 120)}",
+        metadata["raw_preview"] && "reply=#{truncate(safe_string(metadata["raw_preview"]), 120)}",
+        metadata["response_preview"] &&
+          "reply=#{truncate(safe_string(metadata["response_preview"]), 120)}",
+        metadata["error_preview"] &&
+          "error=#{truncate(safe_string(metadata["error_preview"]), 120)}",
+        metadata["message_preview"] &&
+          "message=#{truncate(safe_string(metadata["message_preview"]), 120)}",
+        metadata["line_preview"] && "line=#{truncate(safe_string(metadata["line_preview"]), 120)}",
+        metadata["reason"] && "reason=#{truncate(safe_string(metadata["reason"]), 120)}",
+        metadata["error"] && "error=#{truncate(safe_string(metadata["error"]), 120)}"
+      ])
+
+    %{
+      family: "codex",
+      kind: kind,
+      scope: codex_scope(metadata),
+      summary: summary,
+      detail: detail,
+      level: level,
+      hidden: codex_hidden?(kind)
+    }
+  end
+
   defp classify(parts, _m, metadata, duration_ms) do
     family = family_for_parts(parts)
     kind = List.last(parts) || "event"
+    exit_code = integer_or_nil(metadata["exit_code"])
 
     %{
       family: family,
       kind: kind,
       scope: metadata["bot_id"] || metadata["model"] || short_id(metadata["cycle_id"]),
       summary: humanize(kind),
-      detail: join_detail([duration_ms && "#{duration_ms}ms"]),
-      level: level_for_parts(parts),
+      detail:
+        join_detail([
+          duration_ms && "#{duration_ms}ms",
+          is_integer(exit_code) && "exit=#{exit_code}"
+        ]),
+      level: exit_level(exit_code) || level_for_parts(parts),
       hidden: hidden_by_default?(parts, metadata)
     }
   end
@@ -595,6 +780,8 @@ defmodule Froth.Follow.Projector do
   defp family_for_parts(["froth", "agent", "llm" | _]), do: "llm"
   defp family_for_parts(["froth", "agent", "message" | _]), do: "message"
   defp family_for_parts(["froth", "tasks" | _]), do: "task"
+  defp family_for_parts(["froth", "codex" | _]), do: "codex"
+  defp family_for_parts(["froth", "browser" | _]), do: "browser"
   defp family_for_parts(["froth", "telegram" | _]), do: "telegram"
   defp family_for_parts(["froth", "http" | _]), do: "transport"
 
@@ -616,19 +803,43 @@ defmodule Froth.Follow.Projector do
   end
 
   defp hidden_by_default?(["froth", "llm", "edit"], _metadata), do: true
+  defp hidden_by_default?(["froth", "browser", "cdp" | _], _metadata), do: true
+  defp hidden_by_default?(["froth", "codex", "data_chunk"], _metadata), do: true
+  defp hidden_by_default?(["froth", "codex", "notification_received"], _metadata), do: true
+  defp hidden_by_default?(["froth", "codex", "send_raw"], _metadata), do: true
   defp hidden_by_default?(["froth", "http", "sse" | _], _metadata), do: true
   defp hidden_by_default?(["froth", "http", "request" | _], _metadata), do: true
   defp hidden_by_default?(["froth", "telegram", "cnode", "output"], _metadata), do: true
 
   defp hidden_by_default?(["froth", "telegram", "bot", "update"], metadata) do
     metadata["action"] == "ignore" and
-      MapSet.member?(@telegram_noise_updates, to_string(metadata["update_type"] || ""))
+      MapSet.member?(@telegram_noise_updates, safe_string(metadata["update_type"] || ""))
   end
 
   defp hidden_by_default?(_, _metadata), do: false
 
-  defp provider_label(provider, nil), do: provider
-  defp provider_label(provider, model), do: "#{provider}:#{model}"
+  defp provider_label(provider, nil), do: normalize_string(provider)
+  defp provider_label(provider, model), do: "#{safe_string(provider)}:#{safe_string(model)}"
+
+  defp codex_scope(metadata) do
+    browser_method_scope(metadata["method"]) ||
+      codex_topic_scope(metadata["topic"]) ||
+      short_id(metadata["task_id"]) ||
+      (metadata["id"] && "req:#{metadata["id"]}") ||
+      "codex"
+  end
+
+  defp codex_hidden?(kind) do
+    kind in [
+      "data_chunk",
+      "notification_received",
+      "send_raw",
+      "pubsub_subscribe",
+      "pubsub_unsubscribe",
+      "notify_send",
+      "notify_sent"
+    ]
+  end
 
   defp fallback_scope(cycle_id, span_id), do: short_id(cycle_id) || short_id(span_id)
 
@@ -647,7 +858,7 @@ defmodule Froth.Follow.Projector do
 
   defp stringify_keys(map) when is_map(map) do
     Map.new(map, fn {key, value} ->
-      {to_string(key), stringify_value(value)}
+      {safe_string(key), stringify_value(value)}
     end)
   end
 
@@ -661,20 +872,114 @@ defmodule Froth.Follow.Projector do
   defp nested_map(value) when is_map(value), do: stringify_keys(value)
   defp nested_map(_), do: %{}
 
+  defp integer_or_nil(value) when is_integer(value), do: value
+
+  defp integer_or_nil(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} -> parsed
+      _ -> nil
+    end
+  end
+
+  defp integer_or_nil(_value), do: nil
+
   defp normalize_string(nil), do: nil
   defp normalize_string(value) when is_binary(value), do: value
-  defp normalize_string(value), do: to_string(value)
+  defp normalize_string(value), do: safe_string(value)
 
   defp stringify_or_nil(nil), do: nil
   defp stringify_or_nil(value) when is_binary(value), do: value
-  defp stringify_or_nil(value), do: to_string(value)
+  defp stringify_or_nil(value), do: safe_string(value)
 
   defp short_id(nil), do: nil
 
   defp short_id(value) do
     value
-    |> to_string()
+    |> safe_string()
     |> String.slice(0, 8)
+  end
+
+  defp safe_string(value) when is_binary(value), do: value
+
+  defp safe_string(value) do
+    try do
+      to_string(value)
+    rescue
+      Protocol.UndefinedError -> inspect(value, limit: 8, printable_limit: 160)
+      ArgumentError -> inspect(value, limit: 8, printable_limit: 160)
+    end
+  end
+
+  defp short_browser_id(nil), do: nil
+
+  defp short_browser_id(value) do
+    value
+    |> safe_string()
+    |> String.split(":", parts: 2)
+    |> List.last()
+    |> short_id()
+  end
+
+  defp browser_method_scope(nil), do: nil
+
+  defp browser_method_scope(value) do
+    value
+    |> safe_string()
+    |> tail_segments("/", 2)
+  end
+
+  defp codex_topic_scope(nil), do: nil
+
+  defp codex_topic_scope(value) do
+    value
+    |> safe_string()
+    |> tail_segments(":", 1)
+  end
+
+  defp tail_segments(value, separator, count)
+       when is_binary(value) and is_integer(count) and count > 0 do
+    value
+    |> String.split(separator, trim: true)
+    |> Enum.take(-count)
+    |> Enum.join(separator)
+  end
+
+  defp path_label(nil), do: nil
+
+  defp path_label(value) do
+    value
+    |> safe_string()
+    |> Path.basename()
+  end
+
+  defp display_path_tail(nil), do: nil
+
+  defp display_path_tail(value) do
+    value
+    |> safe_string()
+    |> Path.split()
+    |> Enum.take(-2)
+    |> Path.join()
+  end
+
+  defp display_url(nil), do: nil
+
+  defp display_url(value) do
+    uri = URI.parse(safe_string(value))
+
+    cond do
+      is_binary(uri.host) and is_binary(uri.path) and uri.path not in ["", "/"] ->
+        uri.host <> uri.path
+
+      is_binary(uri.host) ->
+        uri.host
+
+      is_binary(uri.path) and uri.path != "" ->
+        uri.path
+
+      true ->
+        safe_string(value)
+    end
   end
 
   defp humanize(value) when is_binary(value) do
@@ -682,19 +987,27 @@ defmodule Froth.Follow.Projector do
     |> String.replace("_", " ")
   end
 
+  defp exit_level(code) when is_integer(code) and code != 0, do: :error
+  defp exit_level(_code), do: nil
+
   defp join_detail(parts) do
-    case Enum.reject(parts, &is_nil_or_empty/1) do
+    parts
+    |> Enum.map(&normalize_string/1)
+    |> Enum.reject(&is_nil_or_empty/1)
+    |> case do
       [] -> nil
       kept -> Enum.join(kept, " ")
     end
   end
 
   defp is_nil_or_empty(nil), do: true
+  defp is_nil_or_empty(false), do: true
   defp is_nil_or_empty(""), do: true
   defp is_nil_or_empty(_), do: false
 
   defp truncate(value, max) when is_binary(value) and byte_size(value) > max,
     do: String.slice(value, 0, max) <> "..."
 
-  defp truncate(value, _max), do: value
+  defp truncate(value, _max) when is_binary(value), do: value
+  defp truncate(value, max), do: value |> safe_string() |> truncate(max)
 end

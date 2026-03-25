@@ -11,41 +11,51 @@ defmodule Froth.Agent.Adhoc do
   @default_session_id "charlie"
   @default_system "You are a helpful assistant. Use the available tools when needed."
 
-  @spec run(String.t(), keyword()) :: {Cycle.t(), term()}
-  def run(prompt, opts \\ []) when is_binary(prompt) and is_list(opts) do
+  @spec start(String.t(), keyword()) :: {Cycle.t(), Enumerable.t()}
+  def start(prompt, opts \\ []) when is_binary(prompt) and is_list(opts) do
     resolved = resolve_options(prompt, opts)
 
-    with_tool_executor(opts, resolved, fn tool_executor ->
-      config = build_config(resolved, tool_executor)
-      cycle = create_cycle(config)
-      {_message, _head_id} = Agent.append_message(cycle, nil, :user, prompt)
-      {cycle, stream} = Agent.run(cycle, config)
-
-      last_agent_message =
-        Enum.reduce(stream, nil, fn
-          {:event, _event, %Message{role: :agent} = message}, _acc -> message
-          _item, acc -> acc
-        end)
-
-      {Repo.get!(Cycle, cycle.id), output_for(last_agent_message)}
-    end)
-  end
-
-  defp with_tool_executor(opts, resolved, fun)
-       when is_list(opts) and is_map(resolved) and is_function(fun, 1) do
     case resolve_tool_executor(opts, resolved) do
       {:existing, tool_executor} ->
-        fun.(tool_executor)
+        start_with_tool_executor(resolved, tool_executor)
 
       {:started, pid} ->
-        try do
-          fun.(pid)
-        after
-          if Process.alive?(pid) do
-            GenServer.stop(pid, :normal, 5_000)
-          end
-        end
+        {cycle, stream} = start_with_tool_executor(resolved, pid)
+        {cycle, stream_with_cleanup(stream, pid)}
     end
+  end
+
+  @spec run(String.t(), keyword()) :: {Cycle.t(), term()}
+  def run(prompt, opts \\ []) when is_binary(prompt) and is_list(opts) do
+    {cycle, stream} = start(prompt, opts)
+
+    last_agent_message =
+      Enum.reduce(stream, nil, fn
+        {:event, _event, %Message{role: :agent} = message}, _acc -> message
+        _item, acc -> acc
+      end)
+
+    {Repo.get!(Cycle, cycle.id), output_for(last_agent_message)}
+  end
+
+  defp start_with_tool_executor(%{prompt: prompt} = resolved, tool_executor) do
+    config = build_config(resolved, tool_executor)
+    cycle = create_cycle(config)
+    {_message, _head_id} = Agent.append_message(cycle, nil, :user, prompt)
+    Agent.run(cycle, config)
+  end
+
+  defp stream_with_cleanup(stream, pid) when is_pid(pid) do
+    Stream.transform(
+      stream,
+      fn -> nil end,
+      fn item, acc -> {[item], acc} end,
+      fn _acc ->
+        if Process.alive?(pid) do
+          GenServer.stop(pid, :normal, 5_000)
+        end
+      end
+    )
   end
 
   defp resolve_tool_executor(opts, %{runtime: runtime} = resolved)
@@ -61,7 +71,8 @@ defmodule Froth.Agent.Adhoc do
             reply_to: runtime.reply_to,
             prompt: resolved.prompt,
             model: resolved.model,
-            provider: resolved.provider_name
+            provider: resolved.provider_name,
+            spam: Keyword.get(opts, :spam, true)
           )
 
         {:started, pid}
@@ -92,7 +103,8 @@ defmodule Froth.Agent.Adhoc do
       context: context,
       parent_span_id: resolved.parent_span_id,
       thinking: resolved.thinking,
-      effort: resolved.effort
+      effort: resolved.effort,
+      reasoning_summary: resolved.reasoning_summary
     }
   end
 
@@ -124,6 +136,7 @@ defmodule Froth.Agent.Adhoc do
       parent_span_id: Keyword.get(opts, :parent_span_id),
       thinking: normalize_map(Keyword.get(opts, :thinking)),
       effort: Keyword.get(opts, :effort),
+      reasoning_summary: string_option(opts, :reasoning_summary),
       runtime: resolve_runtime(opts)
     }
   end

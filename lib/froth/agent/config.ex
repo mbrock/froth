@@ -9,7 +9,8 @@ defmodule Froth.Agent.Config do
           context: map() | nil,
           parent_span_id: String.t() | nil,
           thinking: map() | nil,
-          effort: String.t() | nil
+          effort: String.t() | nil,
+          reasoning_summary: String.t() | nil
         }
 
   defstruct [
@@ -22,6 +23,7 @@ defmodule Froth.Agent.Config do
     :parent_span_id,
     :thinking,
     :effort,
+    :reasoning_summary,
     tools: []
   ]
 end

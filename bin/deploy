@@ -1,23 +1,67 @@
 #!/bin/bash
-# Compile locally, then hot-reload changed modules on the running node.
+# Build assets locally, then hot-reload changed and newly compiled modules on the running node.
 # Usage: bin/deploy
-set -e
+set -euo pipefail
 
-echo "Compiling..."
-mix compile
+echo "Building assets and compiling..."
+mix assets.build
 
 echo "Reloading on live node..."
 cat <<'EOF' | bin/rpc
-mods = :code.modified_modules()
-case mods do
-  [] ->
-    IO.puts("No modules changed.")
-  _ ->
-    Enum.each(mods, fn mod ->
-      :code.purge(mod)
-      :code.load_file(mod)
+app = :froth
+ebin_dir = :code.lib_dir(app) |> List.to_string() |> Path.join("ebin")
+
+loaded_modules =
+  :code.all_loaded()
+  |> Enum.map(&elem(&1, 0))
+  |> MapSet.new()
+
+new_modules =
+  ebin_dir
+  |> Path.join("*.beam")
+  |> Path.wildcard()
+  |> Enum.map(fn beam ->
+    beam
+    |> Path.basename(".beam")
+    |> String.to_atom()
+  end)
+  |> Enum.reject(&MapSet.member?(loaded_modules, &1))
+  |> Enum.sort()
+
+modified_modules =
+  :code.modified_modules()
+  |> Enum.uniq()
+  |> Enum.sort()
+
+Enum.each(modified_modules, fn mod ->
+  :code.purge(mod)
+
+  case :code.load_file(mod) do
+    {:module, ^mod} ->
       IO.puts("  reloaded #{mod}")
-    end)
-    IO.puts("Done. #{length(mods)} module(s) reloaded.")
+
+    {:error, reason} ->
+      IO.puts("  failed reload #{mod}: #{inspect(reason)}")
+  end
+end)
+
+Enum.each(new_modules, fn mod ->
+  case :code.load_file(mod) do
+    {:module, ^mod} ->
+      IO.puts("  loaded new #{mod}")
+
+    {:error, reason} ->
+      IO.puts("  failed load new #{mod}: #{inspect(reason)}")
+  end
+end)
+
+case {modified_modules, new_modules} do
+  {[], []} ->
+    IO.puts("No code changes to reload.")
+
+  _ ->
+    IO.puts(
+      "Done. #{length(modified_modules)} modified module(s) reloaded, #{length(new_modules)} new module(s) loaded."
+    )
 end
 EOF
