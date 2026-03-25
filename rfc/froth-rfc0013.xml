@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0013" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0013: Prompt Context Architecture</title>
+    <status>DRAFT</status>
+    <author>Charlie (@charliebuddybot)</author>
+    <date>2026-03-25</date>
+    <related>FROTH-RFC-0006</related>
+  </meta>
+
+  <section title="Problem" id="problem">
+    <p>The current prompt is a two-layer sandwich: one static lore file (18KB, last updated March 20) and 200 raw messages. The lore file claims <c>Runs on Hetzner in Falkenstein at 37.27.71.35 (charlie.1.foo)</c> when the web-facing hostname is <c>less.rest</c>. It says <c>Currently building the distributed compute system</c> about something Mikael finished days ago. It describes Lennart as <c>RELOCATED FROM GOTHENBURG TO MONTREAL</c> like this just happened — it happened March 20. The infrastructure section lists <c>swa.sh — not yet clustered</c> which may or may not still be true.</p>
+    <p>The 200-message window includes every narration message the bot sends about its own tool calls (<c>I am running code and tools before I reply</c>, <c>Checking the exact function signature for send_video</c>) which are pure noise that cost tokens and teach nothing.</p>
+    <p>The summaries exist in the database (54 days, 560K chars) but the bot never sees them — the config uses <c>lore_file</c> mode which replaces all summaries with the single static file. The Headlines pipeline exists at <c>less.rest/froth/headlines</c> but is not wired into the prompt at all.</p>
+  </section>
+
+  <section title="Proposed Layers" id="layers">
+    <section title="Layer 1: Foundation" id="foundation">
+      <p>Approximately 6KB. Near-permanent. Updated monthly or less. Contains identity, personality, voice, operational rules, the vibe theory, document format specs, voice transcription registry. The parts of the lore that do not decay. Everything in the current file's <em>Operational Rules</em>, <em>The Vibe Theory</em>, <em>Document Formats</em>, and <em>Voice Transcription Registry</em> sections belongs here. Character descriptions from <em>The Family</em> section belong here but stripped of time-bound claims.</p>
+    </section>
+
+    <section title="Layer 2: Headlines" id="headlines">
+      <p>Approximately 5KB. Slow-decay. Covers day 1 through N-4 days ago. One-line-per-day tabloid headlines from the existing pipeline. 54 days at roughly 100 bytes per day instead of roughly 10K bytes per day. The fossil layer. Events like <c>THE DEAD POSTMAN</c>, <c>THE XPATH FAMILY TREE</c>, <c>LENNART'S MIGRATION</c> belong here as compressed headlines, not as multi-paragraph narratives in the foundation.</p>
+    </section>
+
+    <section title="Layer 3: Full Summaries" id="summaries">
+      <p>Approximately 40KB. Medium-decay. The real daily summaries for the most recent N days (default 4). Where the bot learns what actually changed. These already exist in the <c>chat_summaries</c> table.</p>
+    </section>
+
+    <section title="Layer 4: Recent Messages" id="messages">
+      <p>Fast-decay. The raw message window but filtered: strip the bot's own narration noise, old cycle traces, and trim multi-page audit posts to their first paragraph. Cap at 200 messages after filtering, not before.</p>
+    </section>
+
+    <section title="Layer 5: Ephemeral State" id="ephemeral">
+      <p>Regenerated per cycle. Current infrastructure status, running tasks, actual hostnames, pending Codex sessions. A short paragraph covering the last 10 minutes of activity. The layer that prevents stale claims like <c>Israel-Iran war day 20</c> persisting five days after it was written.</p>
+    </section>
+  </section>
+
+  <section title="Rendering Order" id="rendering">
+    <p>Foundation, Headlines, Full Summaries, Chat Context metadata, Ephemeral State, Recent Messages. Each layer boundary is a prompt cache break point. Foundation and Headlines are cache-stable across hours. Full Summaries are cache-stable across a day. Only Ephemeral and Messages change per cycle. Net cost decreases because the cache hit rate increases substantially.</p>
+  </section>
+
+  <section title="Implementation" id="implementation">
+    <p>Modify <c>BotContext.build/2</c> to accept a list of context layer modules instead of the binary <c>lore_file</c>-or-<c>summaries</c> switch. Each layer implements a <c>render/2</c> callback. The <c>BotContextHTML</c> template gains one component per layer. The lore file is split: foundation content stays as a smaller file, historical events are replaced by the headlines query, and ephemeral state is generated live from database queries at cycle start.</p>
+  </section>
+
+  <section title="Lore Audit" id="lore-audit">
+    <p>The current lore file at <c>priv/charlie_lore.md</c> is 18,199 bytes / 2,782 words. Here is what moves where:</p>
+
+    <section title="Keep in Foundation" id="keep">
+      <p>The Family section (character descriptions, stripped of time-bound claims). The Vibe Theory. All Operational Rules. Document Formats. Voice Transcription Registry. Key Documents list (URLs only).</p>
+    </section>
+
+    <section title="Change" id="change">
+      <p><c>Runs on Hetzner in Falkenstein at 37.27.71.35 (charlie.1.foo)</c> — add that <c>less.rest</c> is the web hostname. <c>Every message costs $4-20</c> — now $1-3 with lore compression, will improve further with caching. <c>Currently building the distributed compute system</c> — built, past tense. <c>RELOCATED FROM GOTHENBURG TO MONTREAL</c> — just say lives in Montreal.</p>
+    </section>
+
+    <section title="Move to Headlines" id="move">
+      <p>All named historical events: THE DEAD POSTMAN, THE $200,000 BILL, THE OPEL, THE LAPTOP AND THE CLERK, THE WHALE AND THE HYMNAL, THE HOURLY PODCAST, THE REEL FORMAT, THE IMMANENTIZATION THESIS, THE DISTRIBUTED COMPUTE SYSTEM, LENNART'S MIGRATION, THE XPATH FAMILY TREE, THE CARROT MANIFESTO. The entire Current Situation section (stale by definition). These become one-line headlines in Layer 2.</p>
+    </section>
+  </section>
+</rfc>
