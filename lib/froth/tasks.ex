@@ -6,6 +6,7 @@ defmodule Froth.Tasks do
   """
 
   alias Froth.{Repo, Task, TaskEvent, TaskTelegramLink}
+  alias Froth.Telegram.SyntheticMessage
   alias Froth.Telemetry.Span
   import Ecto.Query
 
@@ -67,15 +68,21 @@ defmodule Froth.Tasks do
     :ok
   end
 
-  def fail(task_id, reason) when is_binary(task_id) and is_binary(reason) do
+  def fail(task_id, reason, metadata_updates \\ %{})
+      when is_binary(task_id) and is_binary(reason) and is_map(metadata_updates) do
     now = DateTime.utc_now()
 
     from(t in Task, where: t.task_id == ^task_id)
     |> Repo.update_all(set: [status: "failed", finished_at: now])
 
+    if metadata_updates != %{} do
+      merge_metadata(task_id, metadata_updates)
+    end
+
     Span.execute([:froth, :tasks, :failed], nil, %{
       task_id: task_id,
-      reason: String.slice(reason, 0, 200)
+      reason: String.slice(reason, 0, 200),
+      metadata: metadata_updates
     })
 
     append(task_id, "status", "failed: #{reason}")
@@ -83,13 +90,18 @@ defmodule Froth.Tasks do
     :ok
   end
 
-  def stop(task_id) when is_binary(task_id) do
+  def stop(task_id, metadata_updates \\ %{})
+      when is_binary(task_id) and is_map(metadata_updates) do
     now = DateTime.utc_now()
 
     from(t in Task, where: t.task_id == ^task_id)
     |> Repo.update_all(set: [status: "stopped", finished_at: now])
 
-    Span.execute([:froth, :tasks, :stopped], nil, %{task_id: task_id})
+    if metadata_updates != %{} do
+      merge_metadata(task_id, metadata_updates)
+    end
+
+    Span.execute([:froth, :tasks, :stopped], nil, %{task_id: task_id, metadata: metadata_updates})
     append(task_id, "status", "stopped")
     fire_notifications(task_id)
     :ok
@@ -261,8 +273,29 @@ defmodule Froth.Tasks do
     |> Repo.insert()
   end
 
-  def subscribe_telegram(task_id, bot_id, chat_id, expect_minutes \\ nil)
+  def subscribe_telegram(task_id, bot_id, chat_id)
       when is_binary(task_id) and is_binary(bot_id) do
+    subscribe_telegram(task_id, bot_id, chat_id, nil, [])
+  end
+
+  def subscribe_telegram(task_id, bot_id, chat_id, opts) when is_list(opts) do
+    expect_minutes = Keyword.get(opts, :expect_minutes)
+    subscribe_telegram(task_id, bot_id, chat_id, expect_minutes, opts)
+  end
+
+  def subscribe_telegram(task_id, bot_id, chat_id, expect_minutes)
+      when is_binary(task_id) and is_binary(bot_id) do
+    subscribe_telegram(task_id, bot_id, chat_id, expect_minutes, [])
+  end
+
+  def subscribe_telegram(task_id, bot_id, chat_id, expect_minutes, opts)
+      when is_binary(task_id) and is_binary(bot_id) and is_list(opts) do
+    message_id =
+      case Keyword.get(opts, :message_id) do
+        id when is_integer(id) and id > 0 -> id
+        _ -> nil
+      end
+
     existing =
       from(l in TaskTelegramLink,
         where: l.task_id == ^task_id and l.bot_id == ^bot_id and l.chat_id == ^chat_id
@@ -274,12 +307,20 @@ defmodule Froth.Tasks do
         link_telegram(task_id, bot_id,
           chat_id: chat_id,
           notify: true,
-          expect_minutes: expect_minutes
+          expect_minutes: expect_minutes,
+          message_id: message_id
         )
 
       link ->
+        attrs =
+          %{
+            notify: true,
+            expect_minutes: expect_minutes
+          }
+          |> maybe_put_task_link_attr(:message_id, message_id)
+
         link
-        |> Ecto.Changeset.change(%{notify: true, expect_minutes: expect_minutes})
+        |> Ecto.Changeset.change(attrs)
         |> Repo.update()
     end
   end
@@ -305,9 +346,11 @@ defmodule Froth.Tasks do
           task_status: task.status
         })
 
-        output_preview = recent_output_text(task_id, 10)
-        message_text = "[Task completed] #{task_id} #{task.status}.\n\n#{output_preview}"
-        synthetic_message = synthetic_message(link.chat_id, message_text)
+        output_preview = notification_preview(task)
+        message_text = build_notification_message(task, output_preview)
+
+        synthetic_message =
+          SyntheticMessage.build(link.chat_id, message_text, reply_to: link.message_id)
 
         Froth.Telegram.Bots.cast(link.bot_id, {:start_inference_session, synthetic_message})
       end
@@ -349,7 +392,8 @@ defmodule Froth.Tasks do
         message_text =
           "Task #{task.task_id} is still running after #{link.expect_minutes} minutes (elapsed: #{elapsed})."
 
-        synthetic_message = synthetic_message(link.chat_id, message_text)
+        synthetic_message =
+          SyntheticMessage.build(link.chat_id, message_text, reply_to: link.message_id)
 
         Froth.Telegram.Bots.cast(link.bot_id, {:start_inference_session, synthetic_message})
       end
@@ -413,21 +457,59 @@ defmodule Froth.Tasks do
   end
 
   def recent_output_text(task_id, limit) do
-    recent_output(task_id, limit)
-    |> Enum.map_join("\n", & &1.content)
+    task_id
+    |> recent_output_preview(limit)
+    |> case do
+      "" -> recent_status_text(task_id, limit)
+      text -> text
+    end
     |> String.slice(0, 2000)
   end
 
-  defp synthetic_message(chat_id, text) when is_integer(chat_id) and is_binary(text) do
-    %{
-      "chat_id" => chat_id,
-      "id" => 0,
-      "sender_id" => 0,
-      "content" => %{
-        "text" => %{
-          "text" => String.trim(text)
-        }
-      }
-    }
+  defp recent_output_preview(task_id, limit) when is_binary(task_id) and is_integer(limit) do
+    recent_output(task_id, limit)
+    |> Enum.map_join("\n", & &1.content)
+    |> String.trim()
   end
+
+  defp recent_status_text(task_id, limit) when is_binary(task_id) and is_integer(limit) do
+    from(e in TaskEvent,
+      where: e.task_id == ^task_id and e.kind in ["status", "signal", "stdin"],
+      order_by: [desc: e.sequence],
+      limit: ^limit
+    )
+    |> Repo.all(log: false)
+    |> Enum.reverse()
+    |> Enum.map_join("\n", & &1.content)
+    |> String.trim()
+  end
+
+  defp notification_preview(%Task{task_id: task_id, metadata: metadata}) do
+    case recent_output_text(task_id, 10) do
+      "" -> metadata["final_reply"] || metadata[:final_reply] || ""
+      text -> text
+    end
+  end
+
+  defp build_notification_message(%Task{task_id: task_id, status: status}, output_preview)
+       when is_binary(task_id) and is_binary(status) and is_binary(output_preview) do
+    prefix =
+      case status do
+        "completed" -> "[Task completed]"
+        "failed" -> "[Task failed]"
+        "stopped" -> "[Task stopped]"
+        other -> "[Task #{other}]"
+      end
+
+    body =
+      case String.trim(output_preview) do
+        "" -> ""
+        preview -> "\n\n" <> preview
+      end
+
+    "#{prefix} #{task_id} #{status}.#{body}"
+  end
+
+  defp maybe_put_task_link_attr(attrs, _key, nil), do: attrs
+  defp maybe_put_task_link_attr(attrs, key, value), do: Map.put(attrs, key, value)
 end

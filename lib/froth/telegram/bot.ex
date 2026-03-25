@@ -17,6 +17,7 @@ defmodule Froth.Telegram.Bot do
   alias Froth.Telegram.BotContext
   alias Froth.Telegram.ControlPrompt
   alias Froth.Telegram.CycleLink
+  alias Froth.Telegram.SyntheticMessage
   alias Froth.Telegram.ToolExecution
   alias Froth.Telemetry.Span
 
@@ -278,6 +279,7 @@ defmodule Froth.Telegram.Bot do
         %{worker_ref: ref, worker_pid: pid} = state
       ) do
     state = normalize_state(state)
+    buffered_messages = state.mid_cycle_messages
 
     if state.cycle_span_id do
       Span.stop_span(
@@ -299,29 +301,30 @@ defmodule Froth.Telegram.Bot do
       |> maybe_append_cycle_footer()
       |> maybe_send_silent_cycle_fallback()
 
-    {:noreply,
-     %{
-       state
-       | cycle: nil,
-         worker_pid: nil,
-         worker_ref: nil,
-         chat_id: nil,
-         reply_to: nil,
-         cycle_started_ms: nil,
-         cycle_span_id: nil,
-         cycle_replied?: false,
-         last_tool_error: nil,
-         last_sent_message_id: nil,
-         last_sent_message_text: nil,
-         cycle_usage_total: %{},
-         cycle_cost_usd: 0.0,
-         stream_usage_current: %{},
-         cycle_tool_calls: 0,
-         cycle_send_message_calls: 0,
-         cycle_limit_hit?: false,
-         cycle_suppressed?: false,
-         mid_cycle_messages: []
-     }}
+    reset_state = %{
+      state
+      | cycle: nil,
+        worker_pid: nil,
+        worker_ref: nil,
+        chat_id: nil,
+        reply_to: nil,
+        cycle_started_ms: nil,
+        cycle_span_id: nil,
+        cycle_replied?: false,
+        last_tool_error: nil,
+        last_sent_message_id: nil,
+        last_sent_message_text: nil,
+        cycle_usage_total: %{},
+        cycle_cost_usd: 0.0,
+        stream_usage_current: %{},
+        cycle_tool_calls: 0,
+        cycle_send_message_calls: 0,
+        cycle_limit_hit?: false,
+        cycle_suppressed?: false,
+        mid_cycle_messages: []
+    }
+
+    {:noreply, maybe_resume_buffered_cycle(reset_state, buffered_messages)}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -516,7 +519,7 @@ defmodule Froth.Telegram.Bot do
 
   defp start_cycle_from_message(state, msg) when is_map(msg) do
     chat_id = msg["chat_id"]
-    reply_to = normalize_reply_to(msg["id"])
+    reply_to = normalize_reply_to(msg["reply_to_override"] || msg["id"])
 
     text =
       get_in(msg, ["content", "text", "text"]) ||
@@ -546,7 +549,7 @@ defmodule Froth.Telegram.Bot do
 
       # Buffer the message for mid-loop injection
       mid = Map.get(state, :mid_cycle_messages, [])
-      buffered = %{text: text, time: DateTime.utc_now()}
+      buffered = %{chat_id: chat_id, reply_to: reply_to, text: text, time: DateTime.utc_now()}
       %{state | mid_cycle_messages: mid ++ [buffered]}
     else
       BotAdapter.send_typing(bc.session_id, chat_id)
@@ -933,6 +936,34 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp maybe_inject_mid_cycle_messages(result, state), do: {result, state}
+
+  defp maybe_resume_buffered_cycle(state, []), do: state
+
+  defp maybe_resume_buffered_cycle(state, [%{chat_id: chat_id} | _] = messages)
+       when is_integer(chat_id) do
+    text =
+      messages
+      |> Enum.map(&String.trim(&1.text || ""))
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("\n\n")
+
+    reply_to =
+      messages
+      |> Enum.reverse()
+      |> Enum.find_value(fn
+        %{reply_to: value} when is_integer(value) -> value
+        _ -> nil
+      end)
+
+    if text == "" do
+      state
+    else
+      message = SyntheticMessage.build(chat_id, text, reply_to: reply_to)
+      start_cycle_from_message(state, message)
+    end
+  end
+
+  defp maybe_resume_buffered_cycle(state, _messages), do: state
 
   defp maybe_track_task_from_result(state, cycle_id, {:ok, result}) when is_binary(cycle_id) do
     case extract_task_id(result) do

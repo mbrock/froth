@@ -125,10 +125,7 @@ defmodule Froth.Telegram.BotContext do
   defp normalize_incoming(msg) when is_map(msg) do
     %{
       date: msg_unix(msg),
-      sender_id:
-        get_in(msg, ["sender_id", "user_id"]) ||
-          get_in(msg, ["sender_id", "chat_id"]) ||
-          integer_sender_id(msg["sender_id"]),
+      sender_id: incoming_sender_id(msg),
       message_id: msg["id"] || "unknown",
       type: get_in(msg, ["content", "@type"]) || "unknown",
       text:
@@ -213,6 +210,17 @@ defmodule Froth.Telegram.BotContext do
 
   defp fallback_sender(nil), do: "unknown"
   defp fallback_sender(id), do: "user:#{id}"
+
+  defp incoming_sender_id(%{"sender_id" => %{"user_id" => sender_id}})
+       when is_integer(sender_id),
+       do: sender_id
+
+  defp incoming_sender_id(%{"sender_id" => %{"chat_id" => sender_id}})
+       when is_integer(sender_id),
+       do: sender_id
+
+  defp incoming_sender_id(%{"sender_id" => sender_id}), do: integer_sender_id(sender_id)
+  defp incoming_sender_id(_msg), do: nil
 
   defp integer_sender_id(sender_id) when is_integer(sender_id), do: sender_id
   defp integer_sender_id(_sender_id), do: nil

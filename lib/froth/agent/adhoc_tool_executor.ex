@@ -174,6 +174,7 @@ defmodule Froth.Agent.AdhocToolExecutor do
     |> maybe_put_kw(:bot_id, bot_id_for_direct_execution(execution))
     |> maybe_put_kw(:bot_username, execution[:bot_username])
     |> maybe_put_kw(:cycle_id, execution[:cycle_id])
+    |> maybe_put_kw(:reply_to, execution[:reply_to])
     |> maybe_put_kw(:topic, execution[:input]["topic"])
     |> maybe_put_kw(:spam, execution[:spam])
   end

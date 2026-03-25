@@ -41,6 +41,23 @@ defmodule Froth.Telegram.BotContextTest do
     refute prompt =~ "<previous_cycle"
   end
 
+  test "accepts synthetic incoming messages with integer sender ids" do
+    parts =
+      BotContext.for_message(
+        %{
+          "chat_id" => unique_chat_id(),
+          "id" => 10,
+          "sender_id" => 0,
+          "date" => 1_700_000_100,
+          "content" => %{"text" => %{"text" => "[Task completed] agent:123 completed."}}
+        },
+        bot_config()
+      )
+
+    assert is_list(parts)
+    assert Enum.join(parts, "") =~ "[Task completed] agent:123 completed."
+  end
+
   test "includes summaries and only prior telegram messages before the incoming message date" do
     bot_config = bot_config()
     chat_id = unique_chat_id()

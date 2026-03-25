@@ -393,6 +393,42 @@ defmodule Froth.Agent.WorkerTest do
       assert roles == [:user, :agent, :user, :agent]
     end
 
+    test "sanitizes invalid utf-8 in tool results before persisting them" do
+      replacement = <<0xEF, 0xBF, 0xBD>>
+
+      executor =
+        start_executor(fn %ToolUse{input: %{"text" => text}}, _context ->
+          <<"echoed: ", text::binary, 0xF0>>
+        end)
+
+      {pid, cycle} =
+        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+
+      assert_receive {:api_call, 1, body}, 5000
+
+      messages = body["messages"]
+      last_message = List.last(messages)
+      assert last_message["role"] == "user"
+
+      [tool_result] = last_message["content"]
+
+      assert tool_result["content"] == <<"echoed: test message", replacement::binary>>
+      assert String.valid?(tool_result["content"])
+
+      wait_for_exit(pid)
+
+      messages = cycle_messages(cycle.id)
+      persisted_tool_result = Enum.at(messages, 2)
+      [persisted_block] = persisted_tool_result.content["_wrapped"]
+
+      assert persisted_block["content"] == <<"echoed: test message", replacement::binary>>
+      assert String.valid?(persisted_block["content"])
+
+      completed = latest_cycle_event(cycle.id, "tool.completed")
+      assert completed.metadata["result"] == <<"echoed: test message", replacement::binary>>
+      assert String.valid?(completed.metadata["result"])
+    end
+
     test "continues thinking when tool result text merely contains Yielding:" do
       test_pid = self()
       counter = start_supervised!({Elixir.Agent, fn -> 0 end})

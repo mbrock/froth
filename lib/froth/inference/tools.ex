@@ -3,7 +3,7 @@ defmodule Froth.Inference.Tools do
   Tool catalog and execution for inference sessions.
   """
 
-  alias Froth.Agent.Adhoc
+  alias Froth.Agent.{Adhoc, TaskBridge}
   alias Froth.{ChatSummary, Event, LLM, Repo}
   alias Froth.Search, as: WebSearch
   alias Froth.Telegram.BotAdapter
@@ -612,7 +612,10 @@ defmodule Froth.Inference.Tools do
             {:ok, "Task #{task_id} already #{task.status}. No need to subscribe."}
 
           true ->
-            Froth.Tasks.subscribe_telegram(task_id, bot_id, chat_id, expect_minutes)
+            Froth.Tasks.subscribe_telegram(task_id, bot_id, chat_id,
+              expect_minutes: expect_minutes,
+              message_id: opts[:reply_to]
+            )
 
             msg =
               "Subscribed to #{task_id}. You will receive a message when it completes" <>
@@ -660,7 +663,7 @@ defmodule Froth.Inference.Tools do
          {:ok, model} <- optional_trimmed_string(input, "model"),
          {:ok, system_prompt} <- optional_trimmed_string(input, "system_prompt"),
          {:ok, tool_names, tool_specs} <- resolve_spawn_agent_tools(input),
-         {:ok, {cycle, _pid}} <-
+         {:ok, {cycle, task_id, _pid}} <-
            start_spawn_agent_cycle(
              prompt,
              tool_specs,
@@ -670,7 +673,7 @@ defmodule Froth.Inference.Tools do
              system_prompt: system_prompt,
              reply_to: reply_to
            ) do
-      {:ok, spawn_agent_result(cycle, tool_names, opts)}
+      {:ok, spawn_agent_result(cycle, tool_names, task_id, opts)}
     end
   end
 
@@ -697,9 +700,27 @@ defmodule Froth.Inference.Tools do
     {cycle, stream} = Adhoc.start(prompt, adhoc_opts)
     maybe_link_spawned_cycle(cycle, chat_id, opts[:bot_id], reply_to)
 
-    case start_spawn_agent_stream(stream) do
-      {:ok, pid} -> {:ok, {cycle, pid}}
-      {:error, reason} -> {:error, "failed to start sub-agent stream: #{inspect(reason)}"}
+    with {:ok, task_id} <-
+           TaskBridge.create_spawned_agent_task(cycle, prompt,
+             bot_id: opts[:bot_id],
+             chat_id: chat_id,
+             reply_to: reply_to,
+             parent_cycle_id: opts[:cycle_id]
+           ) do
+      case start_spawn_agent_stream(stream) do
+        {:ok, pid} ->
+          {:ok, {cycle, task_id, pid}}
+
+        {:error, reason} ->
+          :ok =
+            Froth.Tasks.fail(
+              task_id,
+              "failed to start sub-agent stream: #{inspect(reason)}",
+              %{"cycle_id" => cycle.id, "cycle_status" => "failed"}
+            )
+
+          {:error, "failed to start sub-agent stream: #{inspect(reason)}"}
+      end
     end
   end
 
@@ -731,10 +752,11 @@ defmodule Froth.Inference.Tools do
 
   defp maybe_link_spawned_cycle(_cycle, _chat_id, _bot_id, _reply_to), do: :ok
 
-  defp spawn_agent_result(cycle, tool_names, opts) when is_list(tool_names) do
+  defp spawn_agent_result(cycle, tool_names, task_id, opts) when is_list(tool_names) do
     %{
       "status" => "started",
       "cycle_id" => cycle.id,
+      "task_id" => task_id,
       "model" => cycle.model,
       "tools" => tool_names,
       "check_tool" => "read_tool_transcript",
@@ -1761,7 +1783,9 @@ defmodule Froth.Inference.Tools do
             cycle_id: l.cycle_id,
             reply_to: l.reply_to,
             inserted_at: c.inserted_at,
-            updated_at: c.updated_at
+            updated_at: c.updated_at,
+            status: c.status,
+            error: c.error
           }
         ),
         log: false
@@ -1815,9 +1839,34 @@ defmodule Froth.Inference.Tools do
     header = """
     cycle #{link.cycle_id}
     created: #{format_datetime(link.inserted_at)}
+    status: #{link.status || "n/a"}
     reply_to: #{link.reply_to || "n/a"}
     messages: #{length(api_messages)}
     """
+
+    final_reply_section =
+      case final_assistant_reply(api_messages) do
+        nil ->
+          ""
+
+        reply ->
+          """
+          Final reply:
+          #{indent_block(preview_multiline_text(reply, @read_tool_transcript_max_task_output_chars), "  ")}
+          """
+      end
+
+    error_section =
+      case link.error do
+        error when is_binary(error) and error != "" ->
+          """
+          Cycle error:
+          #{indent_block(preview_multiline_text(error, @read_tool_transcript_max_task_output_chars), "  ")}
+          """
+
+        _ ->
+          ""
+      end
 
     messages_section =
       if include_messages do
@@ -1841,7 +1890,7 @@ defmodule Froth.Inference.Tools do
     #{format_task_transcript(tasks, include_task_output, task_output_lines)}
     """
 
-    [header, messages_section, tasks_section]
+    [header, final_reply_section, error_section, messages_section, tasks_section]
     |> Enum.reject(&(String.trim(&1) == ""))
     |> Enum.join("\n\n")
     |> String.trim()
@@ -1996,7 +2045,8 @@ defmodule Froth.Inference.Tools do
         join: l in Froth.TaskTelegramLink,
         on: l.task_id == t.task_id,
         where:
-          l.bot_id == ^bot_id and l.chat_id == ^chat_id and t.type in ["eval", "shell", "video"] and
+          l.bot_id == ^bot_id and l.chat_id == ^chat_id and
+            t.type in ["agent", "eval", "shell", "video"] and
             t.inserted_at >= ^window_from and t.inserted_at <= ^window_to,
         order_by: [asc: t.inserted_at],
         distinct: t.task_id
@@ -2037,6 +2087,18 @@ defmodule Froth.Inference.Tools do
             ""
           end
 
+        cycle_id_label =
+          case task.metadata do
+            %{"cycle_id" => cycle_id} when is_binary(cycle_id) and cycle_id != "" ->
+              "\n    cycle_id=#{cycle_id}"
+
+            %{:cycle_id => cycle_id} when is_binary(cycle_id) and cycle_id != "" ->
+              "\n    cycle_id=#{cycle_id}"
+
+            _ ->
+              ""
+          end
+
         output_block =
           if include_task_output do
             task_output_block(task.task_id, task_output_lines)
@@ -2044,7 +2106,7 @@ defmodule Froth.Inference.Tools do
             ""
           end
 
-        task_header <> session_id_label <> label_line <> output_block
+        task_header <> session_id_label <> cycle_id_label <> label_line <> output_block
       end)
     end
   end
@@ -2163,6 +2225,36 @@ defmodule Froth.Inference.Tools do
 
   defp normalize_tool_result_block(item),
     do: inspect(item, limit: 20, printable_limit: 300)
+
+  defp final_assistant_reply(messages) when is_list(messages) do
+    messages
+    |> Enum.reverse()
+    |> Enum.find_value(fn
+      %{"role" => "assistant", "content" => content} -> assistant_content_text(content)
+      _ -> nil
+    end)
+  end
+
+  defp final_assistant_reply(_messages), do: nil
+
+  defp assistant_content_text(text) when is_binary(text) do
+    case String.trim(text) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp assistant_content_text(content) when is_list(content) do
+    content
+    |> Enum.flat_map(fn
+      %{"type" => "text", "text" => text} when is_binary(text) -> [text]
+      _ -> []
+    end)
+    |> Enum.join("")
+    |> assistant_content_text()
+  end
+
+  defp assistant_content_text(_content), do: nil
 
   defp preview_json(value, max_chars) when is_integer(max_chars) and max_chars > 0 do
     case Jason.encode(value) do

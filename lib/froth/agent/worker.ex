@@ -10,12 +10,13 @@ defmodule Froth.Agent.Worker do
   require Logger
 
   alias Froth.Agent
-  alias Froth.Agent.{Config, Cycle, ToolResult, ToolUse}
+  alias Froth.Agent.{Config, Cycle, TaskBridge, ToolResult, ToolUse}
   alias Froth.LLM
   alias Froth.Telemetry.Span
 
   @default_tool_timeout_ms 30_000
   @default_tool_timeout_overrides %{"web_search" => 90_000}
+  @utf8_replacement <<0xEF, 0xBF, 0xBD>>
 
   @type invocation :: %{
           ref: reference(),
@@ -189,6 +190,7 @@ defmodule Froth.Agent.Worker do
       ) do
     case find_invocation_in_list(invocations, ref) do
       %{tool_use: %ToolUse{id: ^tool_use_id}} = invocation ->
+        result = sanitize_tool_result(result)
         worker = emit_tool_result_event(worker, invocation, result)
 
         worker
@@ -539,6 +541,36 @@ defmodule Froth.Agent.Worker do
 
   defp format_yield_reason(reason),
     do: "Yielding: #{inspect(reason, limit: :infinity, printable_limit: :infinity)}"
+
+  defp sanitize_tool_result({:ok, content}), do: {:ok, sanitize_utf8(content)}
+  defp sanitize_tool_result({:error, reason}), do: {:error, sanitize_utf8(reason)}
+  defp sanitize_tool_result({:yield, reason}), do: {:yield, sanitize_utf8(reason)}
+  defp sanitize_tool_result(result), do: sanitize_utf8(result)
+
+  defp sanitize_utf8(value) when is_binary(value) do
+    if String.valid?(value) do
+      value
+    else
+      String.replace_invalid(value, @utf8_replacement)
+    end
+  end
+
+  defp sanitize_utf8(value) when is_list(value), do: Enum.map(value, &sanitize_utf8/1)
+
+  defp sanitize_utf8(value) when is_map(value) do
+    Map.new(value, fn {key, inner} ->
+      {sanitize_utf8(key), sanitize_utf8(inner)}
+    end)
+  end
+
+  defp sanitize_utf8(value) when is_tuple(value) do
+    value
+    |> Tuple.to_list()
+    |> Enum.map(&sanitize_utf8/1)
+    |> List.to_tuple()
+  end
+
+  defp sanitize_utf8(value), do: value
 
   defp find_invocation({:working, invocations, _results, _ignored_refs}, ref) do
     find_invocation_in_list(invocations, ref)
@@ -1118,6 +1150,8 @@ defmodule Froth.Agent.Worker do
             stringify_map(extra)
           )
       })
+
+    :ok = TaskBridge.sync_cycle_task(cycle, worker.head_id, status, extra)
 
     %{worker | finalized?: true}
   end

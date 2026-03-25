@@ -79,8 +79,15 @@ defmodule Froth.Inference.ToolsTest do
         parent_id: agent_msg.id
       })
 
+    final_agent_msg =
+      Repo.insert!(%Message{
+        role: :agent,
+        content: Message.wrap([%{"type" => "text", "text" => "Eval says hi"}]),
+        parent_id: result_msg.id
+      })
+
     cycle = Repo.insert!(%Cycle{})
-    Agent.append_event(cycle, %{head_id: result_msg.id, message_id: result_msg.id})
+    Agent.append_event(cycle, %{head_id: final_agent_msg.id, message_id: final_agent_msg.id})
 
     Repo.insert!(%CycleLink{
       cycle_id: cycle.id,
@@ -131,6 +138,8 @@ defmodule Froth.Inference.ToolsTest do
       )
 
     assert transcript =~ "cycle #{cycle.id}"
+    assert transcript =~ "Final reply:"
+    assert transcript =~ "Eval says hi"
     assert transcript =~ "tool_use elixir_eval"
     assert transcript =~ "[#{task_id}] type=eval"
     assert transcript =~ "hello from eval"
@@ -172,7 +181,7 @@ defmodule Froth.Inference.ToolsTest do
     assert get_in(spec, ["input_schema", "required"]) == ["prompt"]
   end
 
-  test "spawn_agent starts an adhoc cycle with default tools and links it to the chat" do
+  test "spawn_agent starts an adhoc cycle with default tools, links it to the chat, and tracks it as a task" do
     test_pid = self()
     previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
 
@@ -211,6 +220,7 @@ defmodule Froth.Inference.ToolsTest do
              )
 
     assert result["status"] == "started"
+    assert result["task_id"] == "agent:#{result["cycle_id"]}"
     assert result["model"] == "gpt-5.4-mini"
     assert result["tools"] == ["run_shell", "elixir_eval"]
     assert result["check_tool"] == "read_tool_transcript"
@@ -236,6 +246,12 @@ defmodule Froth.Inference.ToolsTest do
     assert cycle.model == "gpt-5.4-mini"
     assert Enum.map(cycle.config["tool_specs"], & &1["name"]) == ["run_shell", "elixir_eval"]
 
+    task = Repo.get!(Task, result["task_id"])
+    assert task.type == "agent"
+    assert task.status == "completed"
+    assert task.metadata["cycle_id"] == result["cycle_id"]
+    assert task.metadata["final_reply"] == "delegated answer"
+
     assert Repo.get_by!(CycleLink,
              cycle_id: result["cycle_id"],
              bot_id: "charlie",
@@ -252,7 +268,9 @@ defmodule Froth.Inference.ToolsTest do
              )
 
     assert transcript =~ result["cycle_id"]
+    assert transcript =~ "Final reply:"
     assert transcript =~ "delegated answer"
+    assert transcript =~ "[#{result["task_id"]}] type=agent"
   end
 
   test "spawn_agent rejects unknown tool names" do

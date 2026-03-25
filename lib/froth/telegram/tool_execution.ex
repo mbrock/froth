@@ -51,7 +51,8 @@ defmodule Froth.Telegram.ToolExecution do
         bot_id: bot_id,
         bot_username: bot_username,
         cycle_id: execution[:cycle_id],
-        session_id: session_id
+        session_id: session_id,
+        reply_to: execution[:reply_to]
       ]
       |> maybe_put_tool_opt(:spam, execution[:spam])
       |> maybe_put_tool_opt(:topic, input["topic"])
