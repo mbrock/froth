@@ -107,7 +107,11 @@ defmodule Froth.Tasks.Shell do
         ]
       )
 
-    {:ok, os_pid} = Keyword.fetch(Port.info(port), :os_pid)
+    os_pid =
+      case Port.info(port) do
+        info when is_list(info) -> Keyword.get(info, :os_pid)
+        _ -> nil
+      end
 
     Span.execute([:froth, :tasks, :shell_started], nil, %{
       task_id: task_id,
@@ -163,7 +167,10 @@ defmodule Froth.Tasks.Shell do
       os_pid: state.os_pid
     })
 
-    System.cmd("kill", ["-#{signal_str}", "#{state.os_pid}"])
+    if is_integer(state.os_pid) do
+      System.cmd("kill", ["-#{signal_str}", "#{state.os_pid}"])
+    end
+
     Froth.Tasks.append(state.task_id, "signal", signal_str)
     {:reply, :ok, state}
   end

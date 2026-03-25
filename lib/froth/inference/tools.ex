@@ -5,6 +5,8 @@ defmodule Froth.Inference.Tools do
 
   alias Froth.Repo
   alias Froth.Search, as: WebSearch
+  alias Froth.Telegram.BotAdapter
+  alias Froth.Telemetry.Span
   import Ecto.Query
 
   @default_session_id "charlie"
@@ -357,6 +359,11 @@ defmodule Froth.Inference.Tools do
 
   def specs_for_api, do: @tool_specs
 
+  def specs_for_names(names) when is_list(names) do
+    wanted = MapSet.new(names)
+    Enum.filter(@tool_specs, &MapSet.member?(wanted, &1["name"]))
+  end
+
   def label("read_log"), do: "read chat log"
   def label("search"), do: "search chat log"
   def label("web_search"), do: "research"
@@ -435,7 +442,14 @@ defmodule Froth.Inference.Tools do
 
       "run_shell" ->
         command = input["command"]
-        shell_opts = [working_dir: input["working_dir"] || File.cwd!()]
+
+        working_dir =
+          case input["working_dir"] do
+            dir when is_binary(dir) and dir != "" -> dir
+            _ -> File.cwd!()
+          end
+
+        shell_opts = [working_dir: working_dir]
 
         shell_opts =
           if opts[:bot_id] do
@@ -569,9 +583,98 @@ defmodule Froth.Inference.Tools do
             {:error, "prompt must be a non-empty string"}
         end
 
+      "register_headlines" ->
+        register_headlines(input, chat_id, session_id, opts)
+
       _ ->
         {:error, "unknown tool: #{name}"}
     end
+  end
+
+  defp register_headlines(%{"date" => date, "headlines" => headlines}, chat_id, session_id, opts)
+       when is_binary(date) and is_list(headlines) and is_binary(session_id) and
+              is_integer(chat_id) do
+    with {:ok, normalized_headlines} <- normalize_headlines(headlines) do
+      Span.execute(
+        [:froth, :headlines, :registered],
+        nil,
+        %{date: date, headlines: normalized_headlines},
+        %{count: length(normalized_headlines)}
+      )
+
+      {text, entities} = format_headlines_message(date, normalized_headlines)
+      send_message_fun = Keyword.get(opts, :send_message_fun, &BotAdapter.send_message/4)
+
+      case send_message_fun.(session_id, chat_id, text, entities: entities) do
+        {:ok, _sent} -> {:ok, "Registered #{length(normalized_headlines)} headlines for #{date}"}
+        {:error, reason} -> {:error, inspect(reason)}
+      end
+    end
+  end
+
+  defp register_headlines(_input, _chat_id, _session_id, _opts) do
+    {:error, "register_headlines requires date and headlines"}
+  end
+
+  defp normalize_headlines(headlines) when is_list(headlines) do
+    headlines
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, fn {headline, index}, {:ok, acc} ->
+      case normalize_headline(headline) do
+        {:ok, normalized} -> {:cont, {:ok, acc ++ [normalized]}}
+        {:error, reason} -> {:halt, {:error, "headline #{index + 1}: #{reason}"}}
+      end
+    end)
+  end
+
+  defp normalize_headline(%{"title" => title, "sentence" => sentence})
+       when is_binary(title) and is_binary(sentence) do
+    {:ok, %{"title" => String.trim(title), "sentence" => String.trim(sentence)}}
+  end
+
+  defp normalize_headline(%{title: title, sentence: sentence})
+       when is_binary(title) and is_binary(sentence) do
+    {:ok, %{"title" => String.trim(title), "sentence" => String.trim(sentence)}}
+  end
+
+  defp normalize_headline(_headline), do: {:error, "expected title and sentence strings"}
+
+  defp format_headlines_message(date, headlines) when is_binary(date) and is_list(headlines) do
+    body =
+      headlines
+      |> Enum.map_join("\n", fn %{"title" => title, "sentence" => sentence} ->
+        "#{title} — #{sentence}"
+      end)
+
+    text =
+      case body do
+        "" -> date
+        _ -> date <> "\n\n" <> body
+      end
+
+    header_entities = [bold_entity(0, String.length(date))]
+
+    entities =
+      headlines
+      |> Enum.reduce({header_entities, String.length(date) + 2}, fn headline, {acc, offset} ->
+        title = headline["title"]
+        sentence = headline["sentence"]
+        line = "#{title} — #{sentence}"
+        next_offset = offset + String.length(line) + 1
+        {acc ++ [bold_entity(offset, String.length(title))], next_offset}
+      end)
+      |> elem(0)
+
+    {text, entities}
+  end
+
+  defp bold_entity(offset, length) when is_integer(offset) and is_integer(length) do
+    %{
+      "@type" => "textEntity",
+      "offset" => offset,
+      "length" => length,
+      "type" => %{"@type" => "textEntityTypeBold"}
+    }
   end
 
   defp format_task_elapsed(%{started_at: nil}), do: ""

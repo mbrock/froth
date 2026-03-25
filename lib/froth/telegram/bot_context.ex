@@ -53,6 +53,14 @@ defmodule Froth.Telegram.BotContext do
     |> render()
   end
 
+  @doc """
+  Render summary blocks only, using the same XML-like prompt format as bot context.
+  """
+  def render_summaries(summaries) when is_list(summaries) do
+    %Context{summaries: summaries}
+    |> render()
+  end
+
   # ── building the view model ────────────────────────────────────
 
   defp build(chat_id, opts) when is_integer(chat_id) and is_list(opts) do

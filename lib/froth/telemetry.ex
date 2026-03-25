@@ -176,6 +176,7 @@ defmodule Froth.Telemetry do
   ]
 
   @other_events [
+    [:froth, :headlines, :registered],
     [:froth, :qwen, :connected],
     [:froth, :qwen, :in],
     [:froth, :qwen, :ws_closed],
