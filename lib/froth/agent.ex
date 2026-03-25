@@ -54,12 +54,16 @@ defmodule Froth.Agent do
       |> Repo.insert!()
 
     _event =
-      append_event(cycle, %{
-        kind: "message.appended",
-        head_id: message.id,
-        message_id: message.id,
-        data: message_event_data(message)
-      })
+      append_event(
+        cycle,
+        %{
+          kind: "message.appended",
+          head_id: message.id,
+          message_id: message.id,
+          data: message_event_data(message)
+        },
+        0
+      )
 
     cycle
   end
@@ -76,11 +80,17 @@ defmodule Froth.Agent do
   def cycle_snapshot_attrs(%Config{} = config), do: initial_cycle_attrs(config)
 
   @spec append_event(Cycle.t(), map()) :: Event.t()
-  def append_event(%Cycle{id: cycle_id}, attrs) when is_map(attrs) and not is_nil(cycle_id) do
+  def append_event(%Cycle{} = cycle, attrs) when is_map(attrs) do
+    append_event(cycle, attrs, nil)
+  end
+
+  @spec append_event(Cycle.t(), map(), integer() | nil) :: Event.t()
+  def append_event(%Cycle{id: cycle_id}, attrs, seq)
+      when is_map(attrs) and not is_nil(cycle_id) do
     kind = fetch_string(attrs, :kind) || "message.appended"
     data = Map.get(attrs, :data) || Map.get(attrs, "data") || %{}
     {data, blob_ref} = maybe_offload_payload(cycle_id, kind, data)
-    seq = next_event_seq(cycle_id)
+    seq = normalize_event_seq(seq) || next_event_seq(cycle_id)
 
     metadata =
       data
@@ -247,10 +257,53 @@ defmodule Froth.Agent do
 
   def extract_trace_entries(_), do: []
 
+  @doc false
+  @spec next_event_seq(Cycle.t()) :: non_neg_integer()
+  def next_event_seq(%Cycle{id: cycle_id}) when is_binary(cycle_id), do: next_event_seq(cycle_id)
+
+  @doc false
+  @spec next_event_seq(String.t()) :: non_neg_integer()
+  def next_event_seq(cycle_id) when is_binary(cycle_id) do
+    Repo.one(
+      from(e in Event,
+        where:
+          like(e.event, "froth.agent.%") and
+            fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id),
+        select: fragment("COALESCE(MAX((?->>'seq')::bigint), -1) + 1", e.metadata)
+      )
+    )
+    |> case do
+      value when is_integer(value) -> value
+      value when is_float(value) -> trunc(value)
+      _ -> 0
+    end
+  end
+
   @doc "Append a message to the cycle, record an event, broadcast, return {message, updated_head_id}."
+  @spec append_message(Cycle.t(), String.t() | nil, :user | :agent, term()) ::
+          {Message.t(), String.t()}
+  def append_message(%Cycle{} = cycle, head_id, role, content) do
+    append_message(cycle, head_id, role, content, nil, nil)
+  end
+
   @spec append_message(Cycle.t(), String.t() | nil, :user | :agent, term(), map() | nil) ::
           {Message.t(), String.t()}
-  def append_message(%Cycle{} = cycle, head_id, role, content, metadata \\ nil) do
+  def append_message(%Cycle{} = cycle, head_id, role, content, metadata)
+      when is_map(metadata) or is_nil(metadata) do
+    append_message(cycle, head_id, role, content, metadata, nil)
+  end
+
+  @spec append_message(
+          Cycle.t(),
+          String.t() | nil,
+          :user | :agent,
+          term(),
+          map() | nil,
+          integer() | nil
+        ) ::
+          {Message.t(), String.t()}
+  def append_message(%Cycle{} = cycle, head_id, role, content, metadata, seq)
+      when (is_map(metadata) or is_nil(metadata)) and (is_integer(seq) or is_nil(seq)) do
     saved =
       Repo.insert!(%Message{
         role: role,
@@ -260,12 +313,16 @@ defmodule Froth.Agent do
       })
 
     event =
-      append_event(cycle, %{
-        kind: "message.appended",
-        head_id: saved.id,
-        message_id: saved.id,
-        data: message_event_data(saved)
-      })
+      append_event(
+        cycle,
+        %{
+          kind: "message.appended",
+          head_id: saved.id,
+          message_id: saved.id,
+          data: message_event_data(saved)
+        },
+        seq
+      )
 
     Froth.broadcast("cycle:#{cycle.id}", {:event, event, saved})
 
@@ -338,22 +395,6 @@ defmodule Froth.Agent do
       end)
   end
 
-  defp next_event_seq(cycle_id) do
-    Repo.one(
-      from(e in Event,
-        where:
-          like(e.event, "froth.agent.%") and
-            fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id),
-        select: fragment("COALESCE(MAX((?->>'seq')::bigint), -1) + 1", e.metadata)
-      )
-    )
-    |> case do
-      value when is_integer(value) -> value
-      value when is_float(value) -> trunc(value)
-      _ -> 0
-    end
-  end
-
   defp maybe_offload_payload(_cycle_id, _kind, nil), do: {%{}, nil}
 
   defp maybe_offload_payload(cycle_id, kind, data) do
@@ -375,6 +416,10 @@ defmodule Froth.Agent do
         {normalized, nil}
     end
   end
+
+  defp normalize_event_seq(value) when is_integer(value) and value >= 0, do: value
+  defp normalize_event_seq(value) when is_float(value) and value >= 0, do: trunc(value)
+  defp normalize_event_seq(_value), do: nil
 
   defp maybe_store_system_prompt("", _hash), do: nil
 

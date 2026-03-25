@@ -190,6 +190,9 @@ defmodule Froth.Agent.WorkerTest do
     )
   end
 
+  defp event_seq(%Event{metadata: metadata}) when is_map(metadata), do: metadata["seq"]
+  defp event_seq(_event), do: nil
+
   defp event_kind(%Event{metadata: metadata}) when is_map(metadata), do: metadata["kind"]
   defp event_kind(_event), do: nil
 
@@ -270,6 +273,19 @@ defmodule Froth.Agent.WorkerTest do
       assert "llm.requested" in kinds
       assert "llm.completed" in kinds
       assert "cycle.completed" in kinds
+    end
+
+    test "keeps event seq values contiguous across worker-managed events" do
+      executor = start_executor(fn _, _ -> "ok" end)
+
+      {pid, cycle} =
+        start_worker([Message.user("hello")], "simple_reply", tools: [], executor: executor)
+
+      wait_for_exit(pid)
+
+      events = cycle_events(cycle.id)
+
+      assert Enum.map(events, &event_seq/1) == Enum.to_list(0..(length(events) - 1))
     end
   end
 

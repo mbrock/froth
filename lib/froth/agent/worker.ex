@@ -37,6 +37,7 @@ defmodule Froth.Agent.Worker do
           phase: phase(),
           cycle: Cycle.t(),
           head_id: String.t() | nil,
+          seq: non_neg_integer(),
           cycle_span_id: String.t() | nil,
           cycle_start: integer() | nil,
           think_span_id: String.t() | nil,
@@ -50,6 +51,7 @@ defmodule Froth.Agent.Worker do
     :config,
     :cycle,
     :head_id,
+    :seq,
     :cycle_span_id,
     :cycle_start,
     :think_span_id,
@@ -76,6 +78,7 @@ defmodule Froth.Agent.Worker do
   def init({cycle, config}) do
     now = System.monotonic_time()
     head_id = Agent.latest_head_id(cycle)
+    seq = Agent.next_event_seq(cycle)
     snapshot = Agent.cycle_snapshot_attrs(config)
 
     span_id =
@@ -103,25 +106,26 @@ defmodule Froth.Agent.Worker do
         error: nil
       })
 
-    Agent.append_event(cycle, %{
-      kind: "cycle.started",
-      head_id: head_id,
-      span_id: span_id,
-      parent_span_id: config.parent_span_id,
-      data: %{
-        "status" => "running",
-        "provider" => cycle.provider,
-        "model" => cycle.model
+    worker =
+      %__MODULE__{
+        config: config,
+        cycle: cycle,
+        head_id: head_id,
+        seq: seq,
+        cycle_span_id: span_id,
+        cycle_start: now
       }
-    })
-
-    worker = %__MODULE__{
-      config: config,
-      cycle: cycle,
-      head_id: head_id,
-      cycle_span_id: span_id,
-      cycle_start: now
-    }
+      |> append_event(%{
+        kind: "cycle.started",
+        head_id: head_id,
+        span_id: span_id,
+        parent_span_id: config.parent_span_id,
+        data: %{
+          "status" => "running",
+          "provider" => cycle.provider,
+          "model" => cycle.model
+        }
+      })
 
     {:ok, worker, {:continue, :think}}
   end
@@ -280,15 +284,11 @@ defmodule Froth.Agent.Worker do
   end
 
   defp persist_message(worker, role, content) do
-    {_msg, head_id} = Agent.append_message(worker.cycle, worker.head_id, role, content)
-    %{worker | head_id: head_id}
+    append_message(worker, role, content)
   end
 
   defp persist_agent_message(worker, content, metadata) do
-    {_msg, head_id} =
-      Agent.append_message(worker.cycle, worker.head_id, :agent, content, metadata)
-
-    %{worker | head_id: head_id}
+    append_message(worker, :agent, content, metadata)
   end
 
   defp start_thinking(worker) do
@@ -308,20 +308,22 @@ defmodule Froth.Agent.Worker do
       |> Agent.load_messages()
       |> Enum.map(&Froth.Agent.Message.to_llm_message/1)
 
-    Agent.append_event(cycle, %{
-      kind: "llm.requested",
-      head_id: worker.head_id,
-      span_id: think_span_id,
-      parent_span_id: worker.cycle_span_id,
-      data: %{
-        "provider" => cycle.provider,
-        "model" => cycle.model,
-        "message_count" => length(api_messages),
-        "tool_count" => length(worker.config.tools || []),
-        "messages" => Enum.map(api_messages, &llm_message_preview/1),
-        "tools" => worker.config.tools || []
-      }
-    })
+    worker =
+      %{worker | cycle: cycle}
+      |> append_event(%{
+        kind: "llm.requested",
+        head_id: worker.head_id,
+        span_id: think_span_id,
+        parent_span_id: worker.cycle_span_id,
+        data: %{
+          "provider" => cycle.provider,
+          "model" => cycle.model,
+          "message_count" => length(api_messages),
+          "tool_count" => length(worker.config.tools || []),
+          "messages" => Enum.map(api_messages, &llm_message_preview/1),
+          "tools" => worker.config.tools || []
+        }
+      })
 
     cycle_id = cycle.id
 
@@ -374,7 +376,8 @@ defmodule Froth.Agent.Worker do
     cycle =
       Agent.merge_cycle_usage(worker.cycle, response_metadata["usage"] || %{})
 
-    Agent.append_event(cycle, %{
+    %{worker | cycle: cycle}
+    |> append_event(%{
       kind: "llm.completed",
       head_id: worker.head_id,
       span_id: worker.think_span_id,
@@ -392,8 +395,6 @@ defmodule Froth.Agent.Worker do
         }
       }
     })
-
-    %{worker | cycle: cycle}
   end
 
   defp parse_tool_uses(content) when is_list(content) do
@@ -411,12 +412,13 @@ defmodule Froth.Agent.Worker do
       %{cycle_id: cycle.id, head_id: worker.head_id}
       |> Map.merge(worker.config.context || %{})
 
-    invocations =
-      Enum.map(tool_uses, fn %ToolUse{id: id} = tool_use ->
+    {invocations, worker} =
+      Enum.map_reduce(tool_uses, %{worker | cycle: cycle}, fn %ToolUse{id: id} = tool_use,
+                                                              worker ->
         started_at = System.monotonic_time()
         span_id = generate_span_id()
         timeout_ms = tool_timeout_ms(worker.config, tool_use)
-        emit_tool_started_event(%{worker | cycle: cycle}, tool_use, span_id)
+        worker = emit_tool_started_event(worker, tool_use, span_id)
 
         task =
           Task.Supervisor.async_nolink(Froth.Agent.TaskSupervisor, fn ->
@@ -424,7 +426,7 @@ defmodule Froth.Agent.Worker do
             {:tool_result, id, result}
           end)
 
-        %{
+        invocation = %{
           ref: task.ref,
           task: task,
           tool_use: tool_use,
@@ -433,6 +435,8 @@ defmodule Froth.Agent.Worker do
           started_at: started_at,
           span_id: span_id
         }
+
+        {invocation, worker}
       end)
 
     %{worker | cycle: cycle, phase: {:working, invocations, [], MapSet.new()}}
@@ -561,7 +565,7 @@ defmodule Froth.Agent.Worker do
       Map.put(tool_event_meta(worker, tool_use), :span_id, span_id)
     )
 
-    Agent.append_event(worker.cycle, %{
+    append_event(worker, %{
       kind: "tool.started",
       head_id: worker.head_id,
       span_id: span_id,
@@ -569,8 +573,6 @@ defmodule Froth.Agent.Worker do
       tool_use_id: tool_use.id,
       data: tool_event_data(worker, tool_use)
     })
-
-    worker
   end
 
   defp emit_tool_result_event(worker, invocation, {:error, reason}) do
@@ -591,34 +593,32 @@ defmodule Froth.Agent.Worker do
       %{duration: tool_duration(invocation)}
     )
 
-    Agent.append_event(worker.cycle, %{
-      kind: "tool.completed",
-      head_id: worker.head_id,
-      span_id: invocation.span_id,
-      parent_span_id: worker.cycle_span_id,
-      tool_use_id: invocation.tool_use.id,
-      data:
-        tool_event_data(worker, invocation.tool_use, %{
-          "duration_ms" => duration_ms,
-          "result_type" => tool_result_type(result),
-          "result" => normalize_tool_event_result(result)
-        })
-    })
+    worker =
+      append_event(worker, %{
+        kind: "tool.completed",
+        head_id: worker.head_id,
+        span_id: invocation.span_id,
+        parent_span_id: worker.cycle_span_id,
+        tool_use_id: invocation.tool_use.id,
+        data:
+          tool_event_data(worker, invocation.tool_use, %{
+            "duration_ms" => duration_ms,
+            "result_type" => tool_result_type(result),
+            "result" => normalize_tool_event_result(result)
+          })
+      })
 
     if invocation.tool_use.name == "send_message" and tool_succeeded?(result) do
-      worker =
-        emit_control_outcome(
-          %{worker | reply_sent?: true},
-          "reply_sent",
-          %{
-            "tool_name" => invocation.tool_use.name,
-            "tool_use_id" => invocation.tool_use.id
-          },
-          span_id: invocation.span_id,
-          parent_span_id: worker.cycle_span_id
-        )
-
-      %{worker | reply_sent?: true}
+      emit_control_outcome(
+        %{worker | reply_sent?: true},
+        "reply_sent",
+        %{
+          "tool_name" => invocation.tool_use.name,
+          "tool_use_id" => invocation.tool_use.id
+        },
+        span_id: invocation.span_id,
+        parent_span_id: worker.cycle_span_id
+      )
     else
       worker
     end
@@ -651,7 +651,7 @@ defmodule Froth.Agent.Worker do
         parent_span_id: worker.cycle_span_id
       )
 
-    Agent.append_event(worker.cycle, %{
+    append_event(worker, %{
       kind: "tool.failed",
       head_id: worker.head_id,
       span_id: invocation.span_id,
@@ -663,8 +663,6 @@ defmodule Froth.Agent.Worker do
           "error" => format_tool_error(reason)
         })
     })
-
-    worker
   end
 
   defp emit_tool_timed_out_event(worker, invocation) do
@@ -695,7 +693,7 @@ defmodule Froth.Agent.Worker do
         parent_span_id: worker.cycle_span_id
       )
 
-    Agent.append_event(worker.cycle, %{
+    append_event(worker, %{
       kind: "tool.timed_out",
       head_id: worker.head_id,
       span_id: invocation.span_id,
@@ -708,8 +706,6 @@ defmodule Froth.Agent.Worker do
           "error" => timeout_error(timeout_ms)
         })
     })
-
-    worker
   end
 
   defp emit_control_outcome(worker, outcome, data, opts \\ []) do
@@ -729,7 +725,7 @@ defmodule Froth.Agent.Worker do
       |> Map.merge(stringify_map(data))
     )
 
-    Agent.append_event(worker.cycle, %{
+    append_event(worker, %{
       kind: "control.outcome",
       head_id: worker.head_id,
       span_id: span_id,
@@ -737,8 +733,6 @@ defmodule Froth.Agent.Worker do
       tool_use_id: data["tool_use_id"],
       data: Map.put(stringify_map(data), "outcome", outcome)
     })
-
-    worker
   end
 
   defp tool_event_meta(worker, %ToolUse{} = tool_use, extra_meta \\ %{}) do
@@ -930,23 +924,37 @@ defmodule Froth.Agent.Worker do
         :cancelled -> "cycle.cancelled"
       end
 
-    Agent.append_event(cycle, %{
-      kind: kind,
-      head_id: worker.head_id,
-      span_id: worker.cycle_span_id,
-      parent_span_id: cycle.parent_span_id,
-      data:
-        Map.merge(
-          %{
-            "reason" => normalize_reason(reason),
-            "phase" => phase_label(worker.phase),
-            "reply_sent" => worker.reply_sent?
-          },
-          stringify_map(extra)
-        )
-    })
+    worker =
+      %{worker | cycle: cycle}
+      |> append_event(%{
+        kind: kind,
+        head_id: worker.head_id,
+        span_id: worker.cycle_span_id,
+        parent_span_id: cycle.parent_span_id,
+        data:
+          Map.merge(
+            %{
+              "reason" => normalize_reason(reason),
+              "phase" => phase_label(worker.phase),
+              "reply_sent" => worker.reply_sent?
+            },
+            stringify_map(extra)
+          )
+      })
 
-    %{worker | cycle: cycle, finalized?: true}
+    %{worker | finalized?: true}
+  end
+
+  defp append_message(worker, role, content, metadata \\ nil) do
+    {_msg, head_id} =
+      Agent.append_message(worker.cycle, worker.head_id, role, content, metadata, worker.seq)
+
+    %{worker | head_id: head_id, seq: worker.seq + 1}
+  end
+
+  defp append_event(worker, attrs) do
+    _event = Agent.append_event(worker.cycle, attrs, worker.seq)
+    %{worker | seq: worker.seq + 1}
   end
 
   defp cycle_error_for(:failed, _reason, extra), do: extra["error"] || extra[:error]
