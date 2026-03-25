@@ -15,6 +15,7 @@ defmodule Froth.Telegram.Bot do
   alias Froth.Repo
   alias Froth.Telegram.BotAdapter
   alias Froth.Telegram.BotContext
+  alias Froth.Telegram.ControlPrompt
   alias Froth.Telegram.CycleLink
   alias Froth.Telegram.ToolExecution
   alias Froth.Telemetry.Span
@@ -856,56 +857,28 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp reserve_control_prompt(state, cycle_id) when is_binary(cycle_id) do
-    if MapSet.member?(state.control_prompt_cycles, cycle_id) do
-      {state, false}
-    else
-      {%{state | control_prompt_cycles: MapSet.put(state.control_prompt_cycles, cycle_id)}, true}
-    end
+    {cycles, send_control_prompt?} = ControlPrompt.reserve(state.control_prompt_cycles, cycle_id)
+    {%{state | control_prompt_cycles: cycles}, send_control_prompt?}
   end
 
   defp reserve_control_prompt(state, _cycle_id), do: {state, false}
 
   defp maybe_put_control_prompt(input, true, bc, cycle_id, chat_id, reply_to)
        when is_binary(cycle_id) and is_integer(chat_id) do
-    Map.put(input, "control_prompt", control_prompt_payload(bc, cycle_id, chat_id, reply_to))
+    ControlPrompt.maybe_put(
+      input,
+      true,
+      cycle_id: cycle_id,
+      chat_id: chat_id,
+      reply_to: reply_to,
+      session_id: bc.session_id,
+      bot_id: bc.id,
+      bot_username: bc.bot_username,
+      text: "I am running code and tools before I reply."
+    )
   end
 
   defp maybe_put_control_prompt(input, _send?, _bc, _cycle_id, _chat_id, _reply_to), do: input
-
-  defp control_prompt_payload(bc, cycle_id, chat_id, reply_to) do
-    token = "cycle_#{bc.id}_#{cycle_id}"
-    stop_data = Base.encode64("stopcycle:#{cycle_id}")
-
-    buttons = [
-      %{
-        "@type" => "inlineKeyboardButton",
-        "text" => "Open",
-        "type" => %{
-          "@type" => "inlineKeyboardButtonTypeUrl",
-          "url" => "https://t.me/#{bc.bot_username}/tool?startapp=#{token}"
-        }
-      },
-      %{
-        "@type" => "inlineKeyboardButton",
-        "text" => "Stop",
-        "type" => %{
-          "@type" => "inlineKeyboardButtonTypeCallback",
-          "data" => stop_data
-        }
-      }
-    ]
-
-    %{
-      "session_id" => bc.session_id,
-      "chat_id" => chat_id,
-      "reply_to" => reply_to,
-      "text" => "I am running code and tools before I reply.",
-      "reply_markup" => %{
-        "@type" => "replyMarkupInlineKeyboard",
-        "rows" => [buttons]
-      }
-    }
-  end
 
   defp normalize_tool_outcome(%{result: result, sent_message: sent_message} = outcome) do
     {result, sent_message || outcome[:sent_message]}

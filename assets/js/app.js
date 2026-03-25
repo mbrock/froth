@@ -35,17 +35,24 @@ const ToolScroll = {
     this.atBottom = true
     this.lastAutoScrollAt = 0
     this.raf = null
+    this.mutationObserver = null
+    this.observedNode = null
+    this.scrollBody = null
+    this.scrollTarget = null
+    this.endMarker = null
     this.updateFollowMode()
+    this.resolveScrollElements()
     this.onScroll = () => this.updateAtBottom()
     this.onResize = () => {
       this.updateFollowMode()
+      this.resolveScrollElements()
       this.updateAtBottom()
       if (this.followMode === "always") this.scheduleScroll("auto")
     }
-    window.addEventListener("scroll", this.onScroll, {passive: true})
     window.addEventListener("resize", this.onResize, {passive: true})
     window.visualViewport && window.visualViewport.addEventListener("resize", this.onResize)
     this.updateAtBottom()
+    this.observeMutations()
 
     this.handleEvent("tg-close", () => {
       if (window.Telegram && window.Telegram.WebApp) {
@@ -53,12 +60,14 @@ const ToolScroll = {
       }
     })
 
-    this.scheduleScroll("auto")
+    if (this.followMode !== "manual") this.scheduleScroll("auto")
   },
 
   updated() {
     this.updateFollowMode()
-    const shouldStick = this.followMode === "always" || this.atBottom
+    this.resolveScrollElements()
+    this.observeMutations()
+    const shouldStick = this.followMode === "always" || (this.followMode === "smart" && this.atBottom)
     this.updateAtBottom()
     if (shouldStick) {
       this.scheduleScroll(this.followMode === "always" ? "auto" : "smooth")
@@ -66,9 +75,10 @@ const ToolScroll = {
   },
 
   destroyed() {
-    window.removeEventListener("scroll", this.onScroll)
+    this.bindScrollTarget(null)
     window.removeEventListener("resize", this.onResize)
     window.visualViewport && window.visualViewport.removeEventListener("resize", this.onResize)
+    this.disconnectMutationObserver()
     if (this.raf) window.cancelAnimationFrame(this.raf)
   },
 
@@ -76,11 +86,67 @@ const ToolScroll = {
     this.followMode = this.el.dataset.followMode || "smart"
   },
 
+  resolveScrollElements() {
+    const body = this.el.querySelector("[data-scroll-body]") ||
+      document.scrollingElement ||
+      document.documentElement
+
+    const target =
+      body === document.documentElement || body === document.body
+        ? window
+        : body
+
+    this.bindScrollTarget(target)
+    this.scrollBody = body
+    this.endMarker = this.el.querySelector("[data-scroll-end]") || document.getElementById("tool-feed-end")
+  },
+
+  observeMutations() {
+    const node = this.scrollBody
+    if (!node) return
+    if (this.observedNode === node && this.mutationObserver) return
+
+    this.disconnectMutationObserver()
+
+    this.mutationObserver = new MutationObserver(() => {
+      const shouldStick = this.followMode === "always" || (this.followMode === "smart" && this.atBottom)
+      this.updateAtBottom()
+
+      if (shouldStick) {
+        this.scheduleScroll(this.followMode === "always" ? "auto" : "smooth")
+      }
+    })
+
+    this.mutationObserver.observe(node, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    })
+
+    this.observedNode = node
+  },
+
+  disconnectMutationObserver() {
+    if (this.mutationObserver) this.mutationObserver.disconnect()
+    this.mutationObserver = null
+    this.observedNode = null
+  },
+
+  bindScrollTarget(target) {
+    if (this.scrollTarget === target) return
+    if (this.scrollTarget) this.scrollTarget.removeEventListener("scroll", this.onScroll)
+    this.scrollTarget = target
+    if (this.scrollTarget) this.scrollTarget.addEventListener("scroll", this.onScroll, {passive: true})
+  },
+
   updateAtBottom() {
     const thresholdPx = this.followMode === "always" ? 220 : 120
-    const root = document.scrollingElement || document.documentElement
-    const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight
-    const bottomOffset = root.scrollHeight - (root.scrollTop + viewportHeight)
+    const body = this.scrollBody || document.scrollingElement || document.documentElement
+    const bottomOffset =
+      body === document.documentElement || body === document.body
+        ? body.scrollHeight - (body.scrollTop + (window.visualViewport ? window.visualViewport.height : window.innerHeight))
+        : body.scrollHeight - (body.scrollTop + body.clientHeight)
+
     this.atBottom = bottomOffset <= thresholdPx
   },
 
@@ -96,13 +162,20 @@ const ToolScroll = {
     const effectiveBehavior = now - this.lastAutoScrollAt < 180 ? "auto" : behavior
     this.lastAutoScrollAt = now
 
-    const end = document.getElementById("tool-feed-end")
-    if (end) {
-      end.scrollIntoView({block: "end", behavior: effectiveBehavior})
-    } else {
-      const root = document.scrollingElement || document.documentElement
-      window.scrollTo({top: root.scrollHeight, behavior: effectiveBehavior})
+    const body = this.scrollBody || document.scrollingElement || document.documentElement
+
+    if (body !== document.documentElement && body !== document.body) {
+      body.scrollTo({top: body.scrollHeight, behavior: effectiveBehavior})
+      return
     }
+
+    if (this.endMarker) {
+      this.endMarker.scrollIntoView({block: "end", behavior: effectiveBehavior})
+      return
+    }
+
+    const root = document.scrollingElement || document.documentElement
+    window.scrollTo({top: root.scrollHeight, behavior: effectiveBehavior})
   },
 }
 

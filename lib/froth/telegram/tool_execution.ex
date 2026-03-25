@@ -68,56 +68,62 @@ defmodule Froth.Telegram.ToolExecution do
   def execute(_prepared), do: %{result: {:error, "invalid tool execution context"}}
 
   defp maybe_send_control_prompt(
-         "elixir_eval",
-         %{
-           "send_control_prompt" => true,
-           "control_prompt" => %{
-             "session_id" => session_id,
-             "chat_id" => chat_id,
-             "reply_to" => reply_to,
-             "text" => text,
-             "reply_markup" => reply_markup
-           }
-         }
+         _name,
+         %{"send_control_prompt" => true, "control_prompt" => %{} = control_prompt}
        ) do
-    _ =
-      BotAdapter.send_message(
-        session_id,
-        chat_id,
-        text,
-        reply_to: reply_to,
-        reply_markup: reply_markup
-      )
-
-    :ok
-  end
-
-  defp maybe_send_control_prompt(
-         "run_shell",
-         %{
-           "send_control_prompt" => true,
-           "control_prompt" => %{
-             "session_id" => session_id,
-             "chat_id" => chat_id,
-             "reply_to" => reply_to,
-             "text" => text,
-             "reply_markup" => reply_markup
-           }
-         }
-       ) do
-    _ =
-      BotAdapter.send_message(
-        session_id,
-        chat_id,
-        text,
-        reply_to: reply_to,
-        reply_markup: reply_markup
-      )
-
-    :ok
+    send_control_prompt(control_prompt)
   end
 
   defp maybe_send_control_prompt(_name, _input), do: :ok
+
+  defp send_control_prompt(%{
+         "session_id" => session_id,
+         "chat_id" => chat_id,
+         "reply_to" => reply_to,
+         "markdown" => markdown,
+         "reply_markup" => reply_markup
+       })
+       when is_binary(session_id) and is_integer(chat_id) and is_binary(markdown) do
+    _ =
+      BotAdapter.send_markdown(
+        session_id,
+        chat_id,
+        reply_to,
+        markdown,
+        reply_markup: reply_markup
+      )
+
+    :ok
+  end
+
+  defp send_control_prompt(%{
+         "session_id" => session_id,
+         "chat_id" => chat_id,
+         "reply_to" => reply_to,
+         "text" => text,
+         "reply_markup" => reply_markup
+       })
+       when is_binary(session_id) and is_integer(chat_id) and is_binary(text) do
+    _ =
+      BotAdapter.send_message(
+        session_id,
+        chat_id,
+        text,
+        reply_to: reply_to,
+        reply_markup: reply_markup
+      )
+
+    :ok
+  end
+
+  defp send_control_prompt(_control_prompt), do: :ok
+
+  defp maybe_send_narration(%{"narration_markdown" => narration}, session_id, chat_id, reply_to)
+       when is_binary(narration) and narration != "" and is_binary(session_id) and
+              is_integer(chat_id) do
+    _ = BotAdapter.send_markdown(session_id, chat_id, reply_to, narration)
+    :ok
+  end
 
   defp maybe_send_narration(%{"narration" => narration}, session_id, chat_id, reply_to)
        when is_binary(narration) and narration != "" and is_binary(session_id) and
