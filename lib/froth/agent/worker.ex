@@ -346,11 +346,15 @@ defmodule Froth.Agent.Worker do
 
     cycle_id = cycle.id
 
+    provider =
+      worker.config.provider ||
+        LLM.resolve_provider_name(nil, worker.config.model)
+
     opts =
       [
-        api_key: LLM.api_key_for_provider(worker.config.provider),
+        api_key: LLM.api_key_for_provider(provider),
         system: worker.config.system || "",
-        provider: worker.config.provider,
+        provider: provider,
         model: worker.config.model,
         tools: worker.config.tools,
         thinking: worker.config.thinking,
