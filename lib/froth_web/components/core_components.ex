@@ -235,22 +235,35 @@ defmodule FrothWeb.CoreComponents do
 
   def input(%{type: "select"} = assigns) do
     ~H"""
-    <div class="fieldset mb-2">
-      <label>
-        <span :if={@label} class="label mb-1">{@label}</span>
-        <select
-          id={@id}
-          name={@name}
-          class={[@class || "w-full select", @errors != [] && (@error_class || "select-error")]}
-          multiple={@multiple}
-          {@rest}
-        >
-          <option :if={@prompt} value="">{@prompt}</option>
-          {Phoenix.HTML.Form.options_for_select(@options, @value)}
-        </select>
-      </label>
-      <.error :for={msg <- @errors}>{msg}</.error>
-    </div>
+    <%= if @variant == "bare" do %>
+      <select
+        id={@id}
+        name={@name}
+        class={[@class, @errors != [] && @error_class]}
+        multiple={@multiple}
+        {@rest}
+      >
+        <option :if={@prompt} value="">{@prompt}</option>
+        {Phoenix.HTML.Form.options_for_select(@options, @value)}
+      </select>
+    <% else %>
+      <div class="fieldset mb-2">
+        <label>
+          <span :if={@label} class="label mb-1">{@label}</span>
+          <select
+            id={@id}
+            name={@name}
+            class={[@class || "w-full select", @errors != [] && (@error_class || "select-error")]}
+            multiple={@multiple}
+            {@rest}
+          >
+            <option :if={@prompt} value="">{@prompt}</option>
+            {Phoenix.HTML.Form.options_for_select(@options, @value)}
+          </select>
+        </label>
+        <.error :for={msg <- @errors}>{msg}</.error>
+      </div>
+    <% end %>
     """
   end
 

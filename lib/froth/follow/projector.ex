@@ -1005,9 +1005,6 @@ defmodule Froth.Follow.Projector do
   defp is_nil_or_empty(""), do: true
   defp is_nil_or_empty(_), do: false
 
-  defp truncate(value, max) when is_binary(value) and byte_size(value) > max,
-    do: String.slice(value, 0, max) <> "..."
-
-  defp truncate(value, _max) when is_binary(value), do: value
-  defp truncate(value, max), do: value |> safe_string() |> truncate(max)
+  defp truncate(nil, _max), do: nil
+  defp truncate(value, _max), do: safe_string(value)
 end

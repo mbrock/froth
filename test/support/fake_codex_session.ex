@@ -3,6 +3,7 @@ defmodule Froth.TestSupport.FakeCodexSession do
 
   @registry Froth.Codex.SessionRegistry
   @pubsub Froth.PubSub
+  @reasoning_efforts ~w(low medium high xhigh)
 
   def child_spec(opts) when is_list(opts) do
     session_id = Keyword.fetch!(opts, :session_id)
@@ -61,6 +62,15 @@ defmodule Froth.TestSupport.FakeCodexSession do
     GenServer.call(via(session_id), {:set_snapshot, snapshot})
   end
 
+  def set_model(session_id, model)
+      when is_binary(session_id) and is_binary(model) do
+    GenServer.call(via(session_id), {:set_model, model})
+  end
+
+  def refresh_available_models(session_id) when is_binary(session_id) do
+    GenServer.call(via(session_id), :refresh_available_models)
+  end
+
   def crash(session_id, reason \\ :boom) when is_binary(session_id) do
     case whereis(session_id) do
       pid when is_pid(pid) ->
@@ -107,6 +117,62 @@ defmodule Froth.TestSupport.FakeCodexSession do
     {:reply, :ok, %{state | snapshot: normalized}}
   end
 
+  def handle_call({:set_reasoning_effort, effort}, _from, state) do
+    case normalize_reasoning_effort(effort) do
+      nil ->
+        {:reply, {:error, :invalid_reasoning_effort}, state}
+
+      normalized ->
+        runtime =
+          state.snapshot
+          |> Map.get(:runtime, %{})
+          |> case do
+            value when is_map(value) -> value
+            _ -> %{}
+          end
+
+        snapshot =
+          Map.put(state.snapshot, :runtime, Map.put(runtime, :reasoning_effort, normalized))
+
+        broadcast_update(state.session_id)
+        {:reply, :ok, %{state | snapshot: snapshot}}
+    end
+  end
+
+  def handle_call({:set_model, model}, _from, state) do
+    case normalize_model_value(model) do
+      nil ->
+        {:reply, {:error, :invalid_model}, state}
+
+      normalized ->
+        runtime =
+          state.snapshot
+          |> Map.get(:runtime, %{})
+          |> case do
+            value when is_map(value) -> value
+            _ -> %{}
+          end
+
+        snapshot =
+          Map.put(state.snapshot, :runtime, Map.put(runtime, :model, normalized))
+
+        broadcast_update(state.session_id)
+        {:reply, :ok, %{state | snapshot: snapshot}}
+    end
+  end
+
+  def handle_call(:refresh_available_models, _from, state) do
+    snapshot =
+      if Map.get(state.snapshot, :available_models, []) == [] do
+        Map.put(state.snapshot, :available_models, default_available_models())
+      else
+        state.snapshot
+      end
+
+    broadcast_update(state.session_id)
+    {:reply, :ok, %{state | snapshot: snapshot}}
+  end
+
   defp via(session_id), do: {:via, Registry, {@registry, session_id}}
 
   defp broadcast_update(session_id) do
@@ -123,7 +189,8 @@ defmodule Froth.TestSupport.FakeCodexSession do
       token_usage: nil,
       rate_limits: nil,
       auth: nil,
-      runtime: %{}
+      runtime: %{},
+      available_models: default_available_models()
     }
   end
 
@@ -229,4 +296,37 @@ defmodule Froth.TestSupport.FakeCodexSession do
   end
 
   defp normalize_images(_), do: []
+
+  defp normalize_reasoning_effort(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed in @reasoning_efforts, do: trimmed
+  end
+
+  defp normalize_reasoning_effort(_), do: nil
+
+  defp normalize_model_value(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed != "", do: trimmed
+  end
+
+  defp normalize_model_value(_), do: nil
+
+  defp default_available_models do
+    [
+      %{
+        "displayName" => "gpt-5.4",
+        "hidden" => false,
+        "id" => "gpt-5.4",
+        "isDefault" => true,
+        "model" => "gpt-5.4"
+      },
+      %{
+        "displayName" => "GPT-5.4-Mini",
+        "hidden" => false,
+        "id" => "gpt-5.4-mini",
+        "isDefault" => false,
+        "model" => "gpt-5.4-mini"
+      }
+    ]
+  end
 end

@@ -17,6 +17,7 @@ defmodule Froth.Codex.Session do
   @pubsub Froth.PubSub
   @request_timeout_ms 120_000
   @max_entries 800
+  @reasoning_efforts ~w(low medium high xhigh)
 
   @type session_id :: String.t()
   @type snapshot :: %{
@@ -31,7 +32,9 @@ defmodule Froth.Codex.Session do
           token_usage: map() | nil,
           rate_limits: map() | nil,
           auth: map() | nil,
-          runtime: map() | nil
+          runtime: map() | nil,
+          available_models: [map()],
+          available_models_checked?: boolean()
         }
 
   # --- Public API ---
@@ -107,6 +110,23 @@ defmodule Froth.Codex.Session do
     call_session(session_id, :interrupt_turn)
   end
 
+  @spec set_reasoning_effort(session_id(), String.t()) :: :ok | {:error, term()}
+  def set_reasoning_effort(session_id, effort)
+      when is_binary(session_id) and is_binary(effort) do
+    call_session(session_id, {:set_reasoning_effort, effort})
+  end
+
+  @spec set_model(session_id(), String.t()) :: :ok | {:error, term()}
+  def set_model(session_id, model)
+      when is_binary(session_id) and is_binary(model) do
+    call_session(session_id, {:set_model, model})
+  end
+
+  @spec refresh_available_models(session_id()) :: :ok | {:error, term()}
+  def refresh_available_models(session_id) when is_binary(session_id) do
+    call_session(session_id, :refresh_available_models)
+  end
+
   @spec current_thread_id(session_id()) :: {:ok, String.t() | nil} | {:error, term()}
   def current_thread_id(session_id) when is_binary(session_id) do
     with {:ok, snap} <- snapshot(session_id), do: {:ok, snap.thread_id}
@@ -154,10 +174,12 @@ defmodule Froth.Codex.Session do
       active_reasoning_entry_id: nil,
       active_reasoning_text: "",
       tool_entry_ids_by_call: %{},
+      available_models_checked?: false,
       token_usage: nil,
       rate_limits: nil,
       auth: nil,
       runtime: nil,
+      available_models: [],
       seen_misc_methods: MapSet.new(),
       entry_seq: restored_seq,
       entries: restored_entries
@@ -180,6 +202,14 @@ defmodule Froth.Codex.Session do
 
   @impl true
   def handle_call(:snapshot, _from, state) do
+    state =
+      if state.status == :ready and state.available_models == [] and
+           not Map.get(state, :available_models_checked?, false) do
+        refresh_available_models_state(state)
+      else
+        state
+      end
+
     {:reply, snapshot_from_state(state), state}
   end
 
@@ -209,6 +239,29 @@ defmodule Froth.Codex.Session do
       {:ok, state} -> {:reply, :ok, broadcast_update(state)}
       {:error, reason, state} -> {:reply, {:error, reason}, broadcast_update(state)}
     end
+  end
+
+  def handle_call({:set_reasoning_effort, effort}, _from, state) do
+    case do_set_reasoning_effort(state, effort) do
+      {:ok, state} -> {:reply, :ok, broadcast_update(state)}
+      {:error, reason, state} -> {:reply, {:error, reason}, broadcast_update(state)}
+    end
+  end
+
+  def handle_call({:set_model, model}, _from, state) do
+    case do_set_model(state, model) do
+      {:ok, state} -> {:reply, :ok, broadcast_update(state)}
+      {:error, reason, state} -> {:reply, {:error, reason}, broadcast_update(state)}
+    end
+  end
+
+  def handle_call(:refresh_available_models, _from, state) do
+    state =
+      state
+      |> refresh_available_models_state()
+      |> broadcast_update()
+
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -327,6 +380,7 @@ defmodule Froth.Codex.Session do
           |> push_entry(:system, "connected")
           |> refresh_auth_status()
           |> refresh_runtime_config()
+          |> refresh_available_models_state()
         else
           {:error, reason} ->
             if Process.alive?(pid), do: Froth.Codex.stop(pid)
@@ -440,6 +494,60 @@ defmodule Froth.Codex.Session do
     else
       {:error, reason, state} -> {:error, reason, state}
       _ -> {:error, :missing_thread, push_entry(state, :error, "cannot interrupt without thread")}
+    end
+  end
+
+  defp do_set_reasoning_effort(state, effort) when is_binary(effort) do
+    with {:ok, state} <- ensure_ready(state),
+         normalized when is_binary(normalized) <- normalize_reasoning_effort_value(effort) do
+      params = %{
+        "keyPath" => "model_reasoning_effort",
+        "value" => normalized,
+        "mergeStrategy" => "replace"
+      }
+
+      case codex_call(state, :config_value_write, params) do
+        {:ok, _result} ->
+          {:ok, merge_runtime(state, %{reasoning_effort: normalized})}
+
+        {:error, reason} ->
+          {:error, reason,
+           push_entry(state, :error, "reasoning update failed: #{inspect(reason)}")}
+      end
+    else
+      {:error, reason, state} ->
+        {:error, reason, state}
+
+      _ ->
+        {:error, :invalid_reasoning_effort,
+         push_entry(state, :error, "unsupported reasoning effort: #{inspect(effort)}")}
+    end
+  end
+
+  defp do_set_model(state, model) when is_binary(model) do
+    with {:ok, state} <- ensure_ready(state),
+         normalized when is_binary(normalized) <- normalize_model_value(model),
+         :ok <- ensure_model_supported(state, normalized) do
+      params = %{
+        "keyPath" => "model",
+        "value" => normalized,
+        "mergeStrategy" => "replace"
+      }
+
+      case codex_call(state, :config_value_write, params) do
+        {:ok, _result} ->
+          {:ok, merge_runtime(state, %{model: normalized})}
+
+        {:error, reason} ->
+          {:error, reason, push_entry(state, :error, "model update failed: #{inspect(reason)}")}
+      end
+    else
+      {:error, reason, state} ->
+        {:error, reason, state}
+
+      _ ->
+        {:error, :invalid_model,
+         push_entry(state, :error, "unsupported model: #{inspect(model)}")}
     end
   end
 
@@ -737,7 +845,9 @@ defmodule Froth.Codex.Session do
       :token_usage,
       :rate_limits,
       :auth,
-      :runtime
+      :runtime,
+      :available_models,
+      :available_models_checked?
     ])
   end
 
@@ -807,6 +917,18 @@ defmodule Froth.Codex.Session do
     end
   end
 
+  defp refresh_available_models_state(state) do
+    case codex_call(state, :model_list, %{}) do
+      {:ok, result} ->
+        state
+        |> Map.put(:available_models, available_models_from_result(result))
+        |> Map.put(:available_models_checked?, true)
+
+      _ ->
+        Map.put(state, :available_models_checked?, true)
+    end
+  end
+
   defp apply_runtime_patch(state, result, extra \\ %{}) when is_map(result) do
     thread = Map.get(result, "thread") || %{}
 
@@ -862,6 +984,73 @@ defmodule Froth.Codex.Session do
   end
 
   defp summarize_sandbox(_), do: nil
+
+  defp available_models_from_result(result) when is_map(result) do
+    case Map.get(result, "data") || Map.get(result, :data) do
+      models when is_list(models) -> models
+      _ -> []
+    end
+  end
+
+  defp available_models_from_result(models) when is_list(models), do: models
+  defp available_models_from_result(_), do: []
+
+  defp ensure_model_supported(%{available_models: available_models} = state, model)
+       when is_binary(model) do
+    allowed_model_values = available_model_values(available_models)
+    current_model = current_runtime_model(state.runtime)
+
+    cond do
+      allowed_model_values == [] ->
+        :ok
+
+      model == current_model ->
+        :ok
+
+      model in allowed_model_values ->
+        :ok
+
+      true ->
+        {:error, :invalid_model}
+    end
+  end
+
+  defp available_model_values(models) when is_list(models) do
+    models
+    |> Enum.flat_map(fn model ->
+      value = available_model_value(model)
+
+      if is_binary(value) and value != "" and not available_model_hidden?(model) do
+        [value]
+      else
+        []
+      end
+    end)
+    |> Enum.uniq()
+  end
+
+  defp available_model_values(_), do: []
+
+  defp available_model_value(model) when is_map(model) do
+    Map.get(model, :id) ||
+      Map.get(model, "id") ||
+      Map.get(model, :model) ||
+      Map.get(model, "model")
+  end
+
+  defp available_model_value(_), do: nil
+
+  defp available_model_hidden?(model) when is_map(model) do
+    Map.get(model, :hidden) == true || Map.get(model, "hidden") == true
+  end
+
+  defp available_model_hidden?(_), do: false
+
+  defp current_runtime_model(runtime) when is_map(runtime) do
+    Map.get(runtime, :model) || Map.get(runtime, "model")
+  end
+
+  defp current_runtime_model(_), do: nil
 
   # --- ID helpers ---
 
@@ -984,6 +1173,20 @@ defmodule Froth.Codex.Session do
   end
 
   defp normalize_optional_binary(_), do: nil
+
+  defp normalize_reasoning_effort_value(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed in @reasoning_efforts, do: trimmed
+  end
+
+  defp normalize_reasoning_effort_value(_), do: nil
+
+  defp normalize_model_value(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed != "", do: trimmed
+  end
+
+  defp normalize_model_value(_), do: nil
 
   defp extract_text_from_content(content) when is_list(content) do
     content

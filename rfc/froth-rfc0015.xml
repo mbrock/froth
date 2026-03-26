@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0015" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0015: Sequential Cycle Items</title>
+    <status>DRAFT</status>
+    <author>Charlie (@charliebuddybot)</author>
+    <date>2026-03-26</date>
+    <related>FROTH-RFC-0004, FROTH-RFC-0005, FROTH-RFC-0008, FROTH-RFC-0014</related>
+  </meta>
+
+  <section title="Problem" id="problem">
+    <p>Froth currently models an agent transcript as a parent-linked message chain plus a separate event log that stores the latest head pointer.</p>
+    <p>In concrete terms:</p>
+    <list type="bullet">
+      <item><p><tt>agent_messages</tt> rows point to prior rows via <tt>parent_id</tt></p></item>
+      <item><p>agent events record <tt>head_id</tt> snapshots over time</p></item>
+      <item><p>readers recover the cycle transcript by finding the latest head and then recursively walking ancestors back to the root</p></item>
+    </list>
+    <p>This was a clever representation. It is no longer a pleasant one.</p>
+    <p>The current model is confusing because it splits one obvious thing, &quot;the ordered contents of a cycle,&quot; into several indirect pieces:</p>
+    <list type="bullet">
+      <item><p>the cycle row</p></item>
+      <item><p>the latest head pointer inferred from events</p></item>
+      <item><p>the parent-linked message DAG</p></item>
+      <item><p>extra event rows that describe runtime structure separately from the semantic chain</p></item>
+    </list>
+    <p>It is also slow and awkward. Common operations such as &quot;load this cycle transcript&quot;, &quot;show me the last assistant item&quot;, and &quot;render the cycle in order&quot; all require head lookup and recursive traversal. That is exactly the wrong ergonomics for the hottest conceptual path in the subsystem.</p>
+    <p>Worse, the DAG shape suggests capabilities that Froth does not actually use well. Most cycles are experienced and inspected as a linear sequence of items. The branching structure is latent complexity without corresponding operator value.</p>
+  </section>
+
+  <section title="Goal" id="goal">
+    <p>Make cycles first-class ordered entities.</p>
+    <p>A cycle should own a sequential series of items directly, so the obvious questions have obvious answers:</p>
+    <list type="bullet">
+      <item><p>What is in this cycle?</p></item>
+      <item><p>In what order?</p></item>
+      <item><p>What is the latest item?</p></item>
+      <item><p>Which item corresponds to a tool call, a tool result, a user prompt, or a final reply?</p></item>
+    </list>
+    <p>The model should optimize for the shape Froth actually uses: an ordered turn log attached to one cycle.</p>
+  </section>
+
+  <section title="Non-Goals" id="non-goals">
+    <list type="bullet">
+      <item><p>This RFC does not abolish agent cycles as durable run records.</p></item>
+      <item><p>This RFC does not require every token delta to be persisted as a cycle item.</p></item>
+      <item><p>This RFC does not redesign the general telemetry span system.</p></item>
+      <item><p>This RFC does not require that all runtime facts move into cycle items; some remain better represented as generic events or facts.</p></item>
+    </list>
+  </section>
+
+  <section title="Thesis" id="thesis">
+    <p>Froth should scrap the parent-chased transcript DAG as the primary persistence model for cycles.</p>
+    <p>Instead, each cycle should have ordered items with stable sequence numbers. Readers should load a cycle by querying its items in sequence order, not by reconstructing a root from a head pointer and then walking ancestry.</p>
+    <p>The key simplification is:</p>
+    <list type="bullet">
+      <item><p><strong>current model:</strong> cycle -&gt; latest head event -&gt; head message -&gt; recursive parent walk</p></item>
+      <item><p><strong>proposed model:</strong> cycle -&gt; ordered items</p></item>
+    </list>
+    <p>That is both easier for humans to understand and easier for code to query correctly.</p>
+  </section>
+
+  <section title="Design" id="design">
+    <subsection title="1. Introduce `cycle_items` as the primary transcript structure" id="cycle-items">
+      <p>Add a table that belongs directly to a cycle and is ordered by sequence.</p>
+      <p>One plausible shape is:</p>
+      <code>cycle_items
+  id           ulid/uuid   NOT NULL primary key
+  cycle_id      ulid/uuid   NOT NULL
+  seq           bigint      NOT NULL
+  role          text        NULL
+  item_kind     text        NOT NULL
+  payload       jsonb       NOT NULL default '{}'
+  span_id       text        NULL
+  inserted_at   timestamp   NOT NULL
+</code>
+      <p>At minimum, <tt>(cycle_id, seq)</tt> should be unique and indexed.</p>
+      <p>The important property is that the cycle's semantic log is now attached to the cycle explicitly rather than inferred through a message ancestry structure.</p>
+    </subsection>
+
+    <subsection title="2. Items are ordered facts, not parent-linked nodes" id="items-not-dag">
+      <p>A cycle item does not need a transcript <tt>parent_id</tt>.</p>
+      <p>Ordering comes from <tt>seq</tt>. Identity comes from <tt>id</tt>. Membership comes from <tt>cycle_id</tt>.</p>
+      <p>This means the fundamental query becomes simple:</p>
+      <code language="sql">select * from cycle_items
+where cycle_id = $1
+order by seq asc;
+</code>
+      <p>No recursive CTE is needed to read the cycle in order. No latest-head lookup is needed first. No extra dance is required to discover what the last item was.</p>
+    </subsection>
+
+    <subsection title="3. `item_kind` should describe what the item is" id="item-kind">
+      <p>Examples of useful <tt>item_kind</tt> values:</p>
+      <list type="bullet">
+        <item><p><tt>message.user</tt></p></item>
+        <item><p><tt>message.assistant</tt></p></item>
+        <item><p><tt>tool.use</tt></p></item>
+        <item><p><tt>tool.result</tt></p></item>
+        <item><p><tt>control.outcome</tt></p></item>
+        <item><p><tt>note.system</tt></p></item>
+      </list>
+      <p>Some deployments may prefer a smaller surface where <tt>role</tt> and <tt>payload</tt> carry more meaning. That is fine. The main requirement is that the item row itself tells readers what species of thing it is without joining through a head event.</p>
+    </subsection>
+
+    <subsection title="4. `agent_cycles` should carry direct summary pointers, not indirect head inference" id="cycle-summary-pointers">
+      <p>If Froth wants summary fields for speed, they should live directly on <tt>agent_cycles</tt> or a projection table.</p>
+      <p>Examples:</p>
+      <list type="bullet">
+        <item><p><tt>last_item_seq</tt></p></item>
+        <item><p><tt>last_assistant_item_id</tt></p></item>
+        <item><p><tt>final_reply_preview</tt></p></item>
+      </list>
+      <p>Those are normal projections over the ordered items. They are clearer than &quot;look through events to find the last <tt>head_id</tt> that happens to point into a parent-linked chain.&quot;</p>
+    </subsection>
+
+    <subsection title="5. Keep runtime events, but stop making them own the transcript" id="events-vs-items">
+      <p>Execution events are still useful for runtime inspection. They can keep recording:</p>
+      <list type="bullet">
+        <item><p>cycle started/completed/failed</p></item>
+        <item><p>LLM requests</p></item>
+        <item><p>tool starts and finishes</p></item>
+        <item><p>timeouts and errors</p></item>
+      </list>
+      <p>But they should no longer serve as the authoritative location of the transcript head.</p>
+      <p>That split is cleaner:</p>
+      <list type="bullet">
+        <item><p><tt>cycle_items</tt> = ordered semantic contents of the cycle</p></item>
+        <item><p><tt>events</tt> or other fact streams = operational record of what happened while producing those items</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="6. Branching should be explicit and rare, not the default transcript model" id="branching">
+      <p>If Froth later needs true branching or alternative continuations, that should be modeled explicitly rather than hidden inside the default transcript structure.</p>
+      <p>For example:</p>
+      <list type="bullet">
+        <item><p>a separate link relation between cycle items</p></item>
+        <item><p>a <tt>derived_from</tt> edge for resumed or forked runs</p></item>
+        <item><p>a new cycle spawned from an earlier item</p></item>
+      </list>
+      <p>Branching is not forbidden. It is simply no longer the base mental model for ordinary cycle storage.</p>
+    </subsection>
+  </section>
+
+  <section title="Why This Is Better" id="why-better">
+    <subsection title="Operator Clarity" id="operator-clarity">
+      <p>Humans think of a cycle as a sequence. The storage model should agree.</p>
+      <p>The proposed model removes several recurring sources of confusion:</p>
+      <list type="bullet">
+        <item><p>no separate &quot;root entity&quot; hunt through a parent chain</p></item>
+        <item><p>no need to explain why the cycle transcript is not directly on the cycle</p></item>
+        <item><p>no special conceptual role for &quot;head&quot; as the gateway to reading the cycle</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="Query Simplicity" id="query-simplicity">
+      <p>Hot queries become trivial:</p>
+      <list type="bullet">
+        <item><p>load cycle transcript</p></item>
+        <item><p>load last N items</p></item>
+        <item><p>find final assistant reply</p></item>
+        <item><p>render the cycle in the UI</p></item>
+      </list>
+      <p>These all become straightforward indexed queries over <tt>cycle_id</tt> and <tt>seq</tt>.</p>
+    </subsection>
+
+    <subsection title="Performance" id="performance">
+      <p>Recursive traversal is not free, especially when it sits on the hot path of inspection tools and UI rendering.</p>
+      <p>A sequential table gives Froth the storage pattern it actually wants:</p>
+      <list type="bullet">
+        <item><p>append-heavy writes</p></item>
+        <item><p>ordered reads by cycle</p></item>
+        <item><p>cheap access to the tail of the cycle</p></item>
+      </list>
+    </subsection>
+  </section>
+
+  <section title="Migration Strategy" id="migration">
+    <list type="numbered">
+      <item><p>Introduce <tt>cycle_items</tt> and start dual-writing new cycle content into it while preserving the existing message chain.</p></item>
+      <item><p>Update readers such as transcript tools, follow views, and cycle inspectors to read from <tt>cycle_items</tt>.</p></item>
+      <item><p>Add direct cycle summary fields or projections for tail access and final reply lookup.</p></item>
+      <item><p>Stop treating <tt>head_id</tt> in events as the authoritative transcript pointer.</p></item>
+      <item><p>Retire the parent-chained transcript path once readers and writers have fully moved.</p></item>
+    </list>
+    <p>The migration should be incremental. The important thing is to change the ownership model first: the cycle owns its ordered items directly.</p>
+  </section>
+
+  <section title="Consequences" id="consequences">
+    <subsection title="Benefits" id="benefits">
+      <list type="bullet">
+        <item><p>Cycle storage matches the mental model operators and readers already use.</p></item>
+        <item><p>Transcript readers become much simpler and faster.</p></item>
+        <item><p>The head-pointer plus recursive-parent machinery stops being a central dependency.</p></item>
+        <item><p>Branching becomes an explicit advanced feature instead of ambient complexity.</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="Costs" id="costs">
+      <list type="bullet">
+        <item><p>This introduces a new primary transcript table and a migration period with dual writes.</p></item>
+        <item><p>Some existing code paths that currently assume <tt>Message</tt> rows and <tt>head_id</tt> pointers will need to be rewritten.</p></item>
+        <item><p>If true in-cycle branching ever becomes a first-class need, it will need an explicit representation rather than piggybacking on parent pointers.</p></item>
+      </list>
+    </subsection>
+  </section>
+
+  <section title="Recommendation" id="recommendation">
+    <p>Froth should stop modeling the primary contents of a cycle as a parent-linked DAG that must be reconstructed from a head pointer.</p>
+    <p>Make cycles into direct ordered entities with sequential items. Keep runtime events for operational truth, but let transcript inspection be a simple ordered read instead of a recursive recovery procedure.</p>
+  </section>
+</rfc>

@@ -243,17 +243,14 @@ defmodule Froth.Agent.Adhoc do
     end
   end
 
-  defp resolve_model(opts, provider) when is_list(opts) do
-    string_option(opts, :model) || LLM.default_model(provider)
+  defp resolve_model(opts, _provider) when is_list(opts) do
+    string_option(opts, :model)
   end
 
   defp resolve_provider_name(provider, model) do
-    case LLM.resolve_client_module(provider, model) do
-      {:ok, Froth.Anthropic} -> "anthropic"
-      {:ok, Froth.OpenAI} -> "openai"
-      {:ok, Froth.Grok} -> "grok"
-      {:ok, Froth.Gemini} -> "gemini"
-      _ -> nil
+    case LLM.resolve_provider_name(provider, model) do
+      nil -> nil
+      name -> Atom.to_string(name)
     end
   end
 

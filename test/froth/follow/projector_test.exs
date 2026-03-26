@@ -124,6 +124,25 @@ defmodule Froth.Follow.ProjectorTest do
     assert Entry.visible?(entry, :raw)
   end
 
+  test "keeps long message previews intact for follow rendering" do
+    long_text = String.duplicate("the full preview should stay visible. ", 12)
+
+    entry =
+      Projector.from_row(%{
+        id: "evt_message_long",
+        event: "froth.agent.message.appended",
+        inserted_at: ~U[2026-03-24 15:05:34Z],
+        metadata: %{
+          "role" => "user",
+          "content_kind" => "text",
+          "text_preview" => long_text
+        }
+      })
+
+    assert entry.detail =~ long_text
+    refute entry.detail =~ "..."
+  end
+
   test "hides noisy codex streaming events in smart mode but keeps them in raw mode" do
     entry =
       Projector.from_live(

@@ -61,6 +61,10 @@ const ToolScroll = {
       }
     })
 
+    this.handleEvent("follow-scroll", () => {
+      this.scheduleScroll("smooth")
+    })
+
     if (this.followMode !== "manual") this.scheduleScroll("auto")
   },
 

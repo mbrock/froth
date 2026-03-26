@@ -24,19 +24,14 @@ defmodule FrothWeb.FollowLiveTest do
     assert has_element?(view, "#follow-entry-#{id}", "read_tool_transcript")
     assert has_element?(view, "#follow-entry-#{id}", "completed")
     assert has_element?(view, "#follow-entry-#{id}", "tool")
-    assert has_element?(view, "#follow-cycle-summary-01KMDKN3GHAC7B814PD3GB4THP", "tools 1")
 
     view
-    |> element("#follow-entry-toggle-#{id}")
+    |> element("#follow-entry-#{id}")
     |> render_click()
 
-    assert has_element?(view, "#follow-entry-detail-#{id}")
-
-    assert has_element?(
-             view,
-             "#follow-entry-json-#{id}",
-             "\"tool_name\": \"read_tool_transcript\""
-           )
+    assert has_element?(view, "#follow-pin-cycle-#{id}")
+    assert has_element?(view, "#follow-entry-#{id}", "read_tool_transcript")
+    assert has_element?(view, "#follow-entry-#{id}", "completed")
   end
 
   test "raw mode reveals entries hidden in smart mode", %{conn: conn} do
@@ -119,6 +114,10 @@ defmodule FrothWeb.FollowLiveTest do
     {:ok, view, _html} = live(conn, ~p"/froth/follow")
 
     view
+    |> element("#follow-entry-#{matching_id}")
+    |> render_click()
+
+    view
     |> element("#follow-pin-cycle-#{matching_id}")
     |> render_click()
 
@@ -166,7 +165,8 @@ defmodule FrothWeb.FollowLiveTest do
        %{tool_name: "live_echo", cycle_id: "01LIVECYCLE00000000000000"}}
     )
 
-    assert has_element?(view, "#follow-entries", "live_echo completed")
+    assert has_element?(view, "#follow-entries", "live_echo")
+    assert has_element?(view, "#follow-entries", "completed")
   end
 
   defp insert_event(attrs) do

@@ -86,8 +86,7 @@ config :froth, Oban,
     pdf: 8,
     replicate: 4,
     github: 10,
-    podcast: 6,
-    retro_diffusion: 2
+    podcast: 6
   ],
   plugins: [
     {Oban.Plugins.Pruner, max_age: 3600 * 24, limit: 5000},

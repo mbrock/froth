@@ -5,6 +5,9 @@ defmodule FrothWeb.CodexLive do
   alias Froth.Telemetry.Span
   alias Froth.Codex.Session, as: CodexSession
 
+  @default_model "gpt-5.4"
+  @reasoning_efforts ~w(low medium high xhigh)
+
   @entry_kinds %{
     "assistant" => :assistant,
     "error" => :error,
@@ -45,8 +48,12 @@ defmodule FrothWeb.CodexLive do
         |> assign(:rate_limits, nil)
         |> assign(:auth, nil)
         |> assign(:runtime, nil)
+        |> assign(:available_models, [])
+        |> assign(:available_models_refresh_attempted?, false)
         |> assign(:session_stats, empty_session_stats())
         |> assign(:sessions, [])
+        |> assign(:model_form, model_form(nil, []))
+        |> assign(:reasoning_form, reasoning_form(nil))
         |> assign(:prompt_form, to_form(%{"prompt" => ""}, as: :codex))
         |> stream_configure(:entries, dom_id: &entry_dom_id/1)
         |> stream(:entries, [], reset: true)
@@ -86,7 +93,11 @@ defmodule FrothWeb.CodexLive do
         |> assign(:rate_limits, nil)
         |> assign(:auth, nil)
         |> assign(:runtime, nil)
+        |> assign(:available_models, [])
+        |> assign(:available_models_refresh_attempted?, false)
         |> assign(:session_stats, empty_session_stats())
+        |> assign(:model_form, model_form(nil, []))
+        |> assign(:reasoning_form, reasoning_form(nil))
         |> assign(:prompt_form, to_form(%{"prompt" => ""}, as: :codex))
         |> assign(:sessions, list_sessions())
         |> stream_configure(:entries, dom_id: &entry_dom_id/1)
@@ -153,6 +164,68 @@ defmodule FrothWeb.CodexLive do
     {:noreply, cancel_upload(socket, :images, ref)}
   end
 
+  def handle_event(
+        "set_reasoning_effort",
+        %{"reasoning" => %{"effort" => raw_effort}},
+        %{assigns: %{mode: :session}} = socket
+      ) do
+    socket = assign(socket, :reasoning_form, reasoning_form(raw_effort))
+    effort = normalize_reasoning_effort(raw_effort)
+
+    cond do
+      is_nil(effort) ->
+        {:noreply, put_flash(socket, :error, "unsupported reasoning effort")}
+
+      current_reasoning_effort(socket.assigns.runtime) == effort ->
+        {:noreply, socket}
+
+      true ->
+        case CodexSession.set_reasoning_effort(socket.assigns.session_id, effort) do
+          :ok ->
+            {:noreply, refresh_snapshot(socket)}
+
+          {:error, reason} ->
+            {:noreply,
+             socket
+             |> put_flash(:error, "reasoning update failed: #{inspect(reason)}")
+             |> refresh_snapshot()}
+        end
+    end
+  end
+
+  def handle_event(
+        "set_model",
+        %{"model" => %{"model" => raw_model}},
+        %{assigns: %{mode: :session}} = socket
+      ) do
+    socket = assign(socket, :model_form, model_form(raw_model, socket.assigns.available_models))
+    model = normalize_model_value(raw_model)
+    allowed_models = allowed_model_values(socket.assigns.runtime, socket.assigns.available_models)
+
+    cond do
+      is_nil(model) ->
+        {:noreply, put_flash(socket, :error, "unsupported model")}
+
+      model not in allowed_models ->
+        {:noreply, put_flash(socket, :error, "unsupported model")}
+
+      current_model(socket.assigns.runtime, socket.assigns.available_models) == model ->
+        {:noreply, socket}
+
+      true ->
+        case CodexSession.set_model(socket.assigns.session_id, model) do
+          :ok ->
+            {:noreply, refresh_snapshot(socket)}
+
+          {:error, reason} ->
+            {:noreply,
+             socket
+             |> put_flash(:error, "model update failed: #{inspect(reason)}")
+             |> refresh_snapshot()}
+        end
+    end
+  end
+
   def handle_event("new_thread", _, socket) do
     Span.execute([:froth, :web, :new_thread], nil, %{session_id: socket.assigns.session_id})
 
@@ -195,7 +268,13 @@ defmodule FrothWeb.CodexLive do
 
   def handle_info(:tick, %{assigns: %{mode: :session}} = socket) do
     Process.send_after(self(), :tick, 1_000)
-    {:noreply, assign(socket, :now_ms, System.system_time(:millisecond))}
+
+    socket =
+      socket
+      |> assign(:now_ms, System.system_time(:millisecond))
+      |> maybe_refresh_available_models()
+
+    {:noreply, socket}
   end
 
   def handle_info(_, socket), do: {:noreply, socket}
@@ -270,12 +349,43 @@ defmodule FrothWeb.CodexLive do
                 <span class={session_status_text_class(@codex_status, @active_turn_id)}>
                   {session_status_text(@codex_status, @active_turn_id)}
                 </span>
-                <span
-                  :if={modeline_summary(@runtime)}
-                  class="font-[JetBrains_Mono,ui-monospace,SFMono-Regular,Menlo,Monaco,monospace] text-[11px] text-zinc-200"
+                <.form
+                  :if={modeline_model(@runtime) || @available_models != []}
+                  for={@model_form}
+                  id="codex-model-form"
+                  phx-change="set_model"
+                  class="inline-flex"
                 >
-                  {modeline_summary(@runtime)}
-                </span>
+                  <.input
+                    field={@model_form[:model]}
+                    id="codex-model"
+                    type="select"
+                    variant="bare"
+                    options={
+                      model_options(@available_models, current_model(@runtime, @available_models))
+                    }
+                    class="codex-model-select"
+                    aria-label="Model"
+                    disabled={@codex_status != :ready}
+                  />
+                </.form>
+                <.form
+                  for={@reasoning_form}
+                  id="codex-reasoning-form"
+                  phx-change="set_reasoning_effort"
+                  class="inline-flex"
+                >
+                  <.input
+                    field={@reasoning_form[:effort]}
+                    id="codex-reasoning-effort"
+                    type="select"
+                    variant="bare"
+                    options={reasoning_effort_options()}
+                    class="codex-effort-select"
+                    aria-label="Reasoning effort"
+                    disabled={@codex_status != :ready}
+                  />
+                </.form>
                 <span
                   :if={
                     elapsed_badge(
@@ -636,7 +746,9 @@ defmodule FrothWeb.CodexLive do
     with {:ok, _pid} <- CodexSession.ensure_started(socket.assigns.session_id, opts),
          :ok <- CodexSession.subscribe(socket.assigns.session_id),
          {:ok, snapshot} <- CodexSession.snapshot(socket.assigns.session_id) do
-      apply_snapshot(socket, snapshot)
+      socket
+      |> apply_snapshot(snapshot)
+      |> maybe_refresh_available_models()
     else
       {:error, reason} ->
         Span.execute([:froth, :web, :connect_failed], nil, %{
@@ -673,7 +785,46 @@ defmodule FrothWeb.CodexLive do
     end
   end
 
+  defp maybe_refresh_available_models(
+         %{
+           assigns: %{
+             mode: :session,
+             codex_status: :ready,
+             available_models: [],
+             available_models_refresh_attempted?: false
+           }
+         } = socket
+       ) do
+    socket = assign(socket, :available_models_refresh_attempted?, true)
+
+    case CodexSession.refresh_available_models(socket.assigns.session_id) do
+      :ok ->
+        refresh_snapshot(socket)
+
+      {:error, reason} ->
+        Span.execute([:froth, :web, :model_refresh_failed], nil, %{
+          session_id: socket.assigns.session_id,
+          reason: inspect(reason)
+        })
+
+        socket
+    end
+  end
+
+  defp maybe_refresh_available_models(socket), do: socket
+
   defp apply_snapshot(socket, snapshot) when is_map(snapshot) do
+    runtime = Map.get(snapshot, :runtime) || Map.get(snapshot, "runtime")
+
+    available_models =
+      Map.get(snapshot, :available_models) || Map.get(snapshot, "available_models") || []
+
+    available_models_checked? =
+      Map.get(snapshot, :available_models_checked?) ||
+        Map.get(snapshot, "available_models_checked?") ||
+        available_models != [] ||
+        socket.assigns.available_models_refresh_attempted?
+
     entries = normalize_entries(Map.get(snapshot, :entries) || Map.get(snapshot, "entries"))
 
     socket
@@ -709,7 +860,11 @@ defmodule FrothWeb.CodexLive do
     |> assign(:token_usage, Map.get(snapshot, :token_usage) || Map.get(snapshot, "token_usage"))
     |> assign(:rate_limits, Map.get(snapshot, :rate_limits) || Map.get(snapshot, "rate_limits"))
     |> assign(:auth, Map.get(snapshot, :auth) || Map.get(snapshot, "auth"))
-    |> assign(:runtime, Map.get(snapshot, :runtime) || Map.get(snapshot, "runtime"))
+    |> assign(:runtime, runtime)
+    |> assign(:available_models, available_models)
+    |> assign(:available_models_refresh_attempted?, available_models_checked?)
+    |> assign(:model_form, model_form(runtime, available_models))
+    |> assign(:reasoning_form, reasoning_form(runtime))
     |> assign(:session_stats, build_session_stats(entries))
     |> stream(:entries, entries, reset: true)
   end
@@ -1106,17 +1261,162 @@ defmodule FrothWeb.CodexLive do
   defp modeline_model(runtime) when is_map(runtime), do: runtime_field(runtime, :model, "model")
   defp modeline_model(_), do: nil
 
+  defp model_field(model, atom_key, string_key) when is_map(model) do
+    Map.get(model, atom_key) || Map.get(model, string_key)
+  end
+
+  defp model_field(_model, _atom_key, _string_key), do: nil
+
+  defp model_options(models, current_model) do
+    choices =
+      models
+      |> List.wrap()
+      |> Enum.map(&normalize_model_choice/1)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.reject(fn choice -> choice.hidden? and choice.value != current_model end)
+      |> Enum.uniq_by(& &1.value)
+
+    choices =
+      if is_binary(current_model) and current_model != "" and
+           Enum.any?(choices, &(&1.value == current_model)) do
+        choices
+      else
+        [%{label: current_model_label(current_model), value: current_model} | choices]
+      end
+
+    Enum.map(choices, &{&1.label, &1.value})
+  end
+
+  defp normalize_model_choice(model) when is_map(model) do
+    value = model_choice_value(model)
+
+    if is_binary(value) and value != "" do
+      %{
+        label: model_choice_label(model, value),
+        value: value,
+        hidden?: model_choice_hidden?(model)
+      }
+    end
+  end
+
+  defp normalize_model_choice(_), do: nil
+
+  defp model_choice_value(model) when is_map(model) do
+    model_field(model, :id, "id") ||
+      model_field(model, :model, "model")
+  end
+
+  defp model_choice_value(_), do: nil
+
+  defp model_choice_label(model, value) when is_map(model) and is_binary(value) do
+    base_label =
+      model_field(model, :displayName, "displayName") ||
+        model_field(model, :display_name, "display_name") ||
+        value
+
+    if model_choice_default?(model) do
+      "#{base_label} (default)"
+    else
+      base_label
+    end
+  end
+
+  defp model_choice_label(_model, value), do: value
+
+  defp model_choice_default?(model) when is_map(model) do
+    model_flag?(model, :isDefault, "isDefault") || model_flag?(model, :is_default, "is_default")
+  end
+
+  defp model_choice_default?(_), do: false
+
+  defp model_choice_hidden?(model) when is_map(model) do
+    model_flag?(model, :hidden, "hidden")
+  end
+
+  defp model_choice_hidden?(_), do: false
+
+  defp model_flag?(model, atom_key, string_key) when is_map(model) do
+    Map.get(model, atom_key) == true || Map.get(model, string_key) == true
+  end
+
+  defp model_flag?(_model, _atom_key, _string_key), do: false
+
+  defp current_model(runtime, available_models) when is_map(runtime) do
+    case modeline_model(runtime) do
+      model when is_binary(model) and model != "" ->
+        model
+
+      _ ->
+        default_model(available_models)
+    end
+  end
+
+  defp current_model(model, available_models) when is_binary(model) do
+    normalize_model_value(model) || default_model(available_models)
+  end
+
+  defp current_model(_runtime, available_models), do: default_model(available_models)
+
+  defp default_model(available_models) do
+    case Enum.find(List.wrap(available_models), &model_choice_default?/1) do
+      nil -> @default_model
+      model -> model_choice_value(model) || @default_model
+    end
+  end
+
+  defp allowed_model_values(runtime, available_models) do
+    model_options(available_models, current_model(runtime, available_models))
+    |> Enum.map(&elem(&1, 1))
+  end
+
+  defp model_form(runtime_or_model, available_models) do
+    to_form(%{"model" => current_model(runtime_or_model, available_models)}, as: :model)
+  end
+
+  defp current_model_label(current_model) when is_binary(current_model) do
+    "#{current_model} (current)"
+  end
+
+  defp current_model_label(_), do: @default_model
+
+  defp normalize_model_value(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed != "", do: trimmed
+  end
+
+  defp normalize_model_value(_), do: nil
+
   defp modeline_reasoning(runtime) when is_map(runtime),
     do: runtime_field(runtime, :reasoning_effort, "reasoning_effort")
 
   defp modeline_reasoning(_), do: nil
 
-  defp modeline_summary(runtime) do
-    [modeline_model(runtime), modeline_reasoning(runtime)]
-    |> Enum.filter(&(is_binary(&1) and &1 != ""))
-    |> Enum.join(" ")
-    |> blank_to_nil()
+  defp reasoning_effort_options, do: Enum.map(@reasoning_efforts, &{&1, &1})
+
+  defp reasoning_form(runtime_or_effort) do
+    to_form(%{"effort" => current_reasoning_effort(runtime_or_effort)}, as: :reasoning)
   end
+
+  defp current_reasoning_effort(runtime) when is_map(runtime) do
+    case modeline_reasoning(runtime) do
+      effort when effort in @reasoning_efforts -> effort
+      _ -> "medium"
+    end
+  end
+
+  defp current_reasoning_effort(effort) when is_binary(effort) do
+    normalized = normalize_reasoning_effort(effort)
+    normalized || "medium"
+  end
+
+  defp current_reasoning_effort(_), do: "medium"
+
+  defp normalize_reasoning_effort(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed in @reasoning_efforts, do: trimmed
+  end
+
+  defp normalize_reasoning_effort(_), do: nil
 
   defp session_status_text(status, active_turn_id) do
     cond do

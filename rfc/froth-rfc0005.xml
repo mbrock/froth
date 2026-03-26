@@ -227,17 +227,25 @@
       </list>
     </subsection>
     <subsection title="4. Give entries stable visual slots" id="4-give-entries-stable-visual-slots">
-      <p>Each rendered line should have a predictable shape:</p>
-      <code>TIME  SCOPE  SUMMARY  DETAIL
+      <p>Each rendered entry should have a predictable two-line shape: a glyph-led headline and a supporting detail line.</p>
+      <code>HEADLINE
+DETAIL
 </code>
       <p>For example:</p>
-      <code language="text">14:58:01.123  cycle 01J...   cycle started              model=claude-opus-4-6
-14:58:01.456  think          thinking started
-14:58:02.091  tool echo      froth_echo started         call=toolu_...
-14:58:02.119  tool echo      froth_echo completed 28ms result=text
-14:58:02.403  llm            response completed 311ms   in=842 out=119
-14:58:02.418  tool shell     run_shell timed out 30000ms
-14:58:02.420  cycle 01J...   cycle failed               tool timed out after 30000ms</code>
+      <code language="text">✱ cycle 01J... started
+13:00:01.123 model=claude-opus-4-6 provider=anthropic
+✱ think 01J... thinking started
+13:00:01.456 -
+✱ tool echo started
+│ └ 13:00:02.091 call=toolu_...
+◉ tool echo completed
+│ └ 13:00:02.119 28ms result=text
+◉ llm response completed
+13:00:02.403 311ms in=842 out=119
+✖ tool shell run_shell timed out
+13:00:02.418 30000ms
+✖ cycle 01J... cycle failed
+13:00:02.420 tool timed out after 30000ms</code>
       <p>This is much easier to read than the current &quot;event name plus bag of keys&quot; style.</p>
     </subsection>
     <subsection title="5. Separate primary detail from raw detail" id="5-separate-primary-detail-from-raw-detail">
@@ -247,7 +255,7 @@
         <item><p>a small detail string for top-priority fields</p></item>
         <item><p>the full raw event for drill-down</p></item>
       </list>
-      <p>In CLI smart mode, show summary + small detail. In CLI raw mode, show the whole raw payload. In LiveView, show summary by default and raw JSON in a side panel or expandable drawer.</p>
+      <p>In CLI smart mode, show the headline on the first line and the time/context detail on the second line. In CLI raw mode, show the whole raw payload. In LiveView, show summary by default and raw JSON in a side panel or expandable drawer.</p>
     </subsection>
     <subsection title="6. Correlate by cycle and span by default" id="6-correlate-by-cycle-and-span-by-default">
       <p>Follow readers should understand correlation, not just printing order.</p>
@@ -281,10 +289,14 @@
         <item><p><tt>cycle_error</tt></p></item>
       </list>
       <p>Those outcomes should render as distinct summaries, for example:</p>
-      <code language="text">15:05:30.842  control        reply sent                  chat=-1003690254489
-15:05:34.339  tool transcript read_tool_transcript done 111ms
-15:05:34.460  cycle 01K...   cycle yielded              waiting on subscribed task
-15:05:34.461  cycle 01K...   stopped without reply      assistant requested tool and ended</code>
+      <code language="text">◉ control 01K... reply sent
+13:05:30.842 chat=-1003690254489
+✖ tool transcript read_tool_transcript done
+13:05:34.339 111ms
+◉ cycle 01K... cycle yielded
+13:05:34.460 waiting on subscribed task
+⚠ cycle 01K... stopped without reply
+13:05:34.461 assistant requested tool and ended</code>
       <p>The point is not just better wording. It is to make the reader report what the runtime actually decided, not what a human might guess from nearby text.</p>
     </subsection>
     <subsection title="7. Build the LiveView on the same entries" id="7-build-the-liveview-on-the-same-entries">

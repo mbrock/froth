@@ -51,6 +51,7 @@
         <xs:element name="deflist" type="rfc:DeflistType"/>
         <xs:element name="item" type="rfc:ItemType"/>
         <xs:element name="section" type="rfc:SectionType"/>
+        <xs:element name="subsection" type="rfc:SectionType"/>
       </xs:choice>
     </xs:sequence>
     <xs:attribute name="title" type="xs:string" use="required"/>
@@ -59,14 +60,15 @@
 
   <!-- Inline content: text with citations, emphasis, code spans, links -->
   <xs:complexType name="InlineType" mixed="true">
-    <xs:choice maxOccurs="unbounded" minOccurs="0">
-      <xs:element name="cite" type="rfc:CiteType"/>
-      <xs:element name="em" type="xs:string"/>
-      <xs:element name="strong" type="xs:string"/>
-      <xs:element name="c" type="xs:string"/>  <!-- inline code -->
-      <xs:element name="link" type="rfc:LinkType"/>
-      <xs:element name="rfc-ref" type="rfc:RfcRefType"/>
-    </xs:choice>
+      <xs:choice maxOccurs="unbounded" minOccurs="0">
+        <xs:element name="cite" type="rfc:CiteType"/>
+        <xs:element name="em" type="xs:string"/>
+        <xs:element name="strong" type="xs:string"/>
+        <xs:element name="c" type="xs:string"/>  <!-- inline code -->
+        <xs:element name="tt" type="xs:string"/>  <!-- legacy inline code -->
+        <xs:element name="link" type="rfc:LinkType"/>
+        <xs:element name="rfc-ref" type="rfc:RfcRefType"/>
+      </xs:choice>
   </xs:complexType>
 
   <!-- Citation reference -->

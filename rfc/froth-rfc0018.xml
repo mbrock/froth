@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0018" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0018: Architecture Survey and Module Atlas</title>
+    <status>DRAFT</status>
+    <author>Charlie (@charliebuddybot)</author>
+    <date>2026-03-26</date>
+    <related>FROTH-RFC-0004, FROTH-RFC-0005, FROTH-RFC-0008, FROTH-RFC-0014, FROTH-RFC-0015, FROTH-RFC-0016, FROTH-RFC-0017</related>
+    <classification>Reference architecture survey. Not a normative design change.</classification>
+    <research>Compiled on 2026-03-26 from mix xref graph output, git history, and live events histograms queried through bin/rpc against froth@igloo.</research>
+  </meta>
+
+  <section title="Purpose" id="purpose">
+    <p>This document is a map, not a proposal. It exists to explain the codebase as it actually behaves today, so future RFCs can point at a stable architecture description instead of reinventing one each time.</p>
+    <p>Froth is not a stock Phoenix app. It is a long-running BEAM system with a web UI, Telegram and TDLib integration, LLM and Codex orchestration, task execution, background jobs, browser and media pipelines, and a database-backed event fabric. That makes the codebase easy to over-simplify from the outside and easy to lose mentally from the inside.</p>
+    <p>The goal here is to make the shape explicit: which modules are foundational, which are operational hubs, which are leaves, which are hot, and which are mostly convenience or integration glue.</p>
+  </section>
+
+  <section title="Method" id="method">
+    <p>This survey combines three signals.</p>
+    <list type="numbered">
+      <item><p><strong>Static coupling.</strong> <tt>mix xref</tt> shows where runtime edges and cycles actually are. The important result is that the codebase has no compile-time cycles, but it does have one very large runtime cycle spanning agent, compute, tasks, Telegram, video, and web code.</p></item>
+      <item><p><strong>Git history.</strong> Recent commit activity identifies the fast-moving modules and the files that keep absorbing change. That is not the same thing as architectural importance, but it is a strong signal for where the system is live.</p></item>
+      <item><p><strong>Runtime volume by date.</strong> Live <tt>events</tt> histograms queried through <tt>bin/rpc</tt> show which subsystems are actually carrying load on particular days. This matters because the current center of gravity shifts over time.</p></item>
+    </list>
+  </section>
+
+  <section title="System Shape" id="system-shape">
+    <p>Froth boots in two shapes.</p>
+    <list type="bullet">
+      <item><p><strong>Full nodes</strong> run the web surface, repository access, telemetry sink, Telegram bots, tasks, jobs, and other stateful services.</p></item>
+      <item><p><strong>Worker nodes</strong> run a smaller runtime for distributed work and skip the full app surface.</p></item>
+    </list>
+    <p>The split is visible in <c>Froth.Application</c>, which assembles shared children and then adds node-role-specific children. The same split is also documented in the README and reflected in the service entrypoints.</p>
+    <p>In practice, the architecture has five layers:</p>
+    <list type="bullet">
+      <item><p><strong>Substrate.</strong> boot, repo, telemetry, and shared infrastructure.</p></item>
+      <item><p><strong>Web edge.</strong> router, endpoint, controllers, LiveViews, channels, and rendering helpers.</p></item>
+      <item><p><strong>Runtime spine.</strong> agent, LLM, inference, tasks, codex, and the event fabric.</p></item>
+      <item><p><strong>Integration shells.</strong> Telegram, browser, compute, video, podcast, search, analyzer, replicate, voice, and protocol adapters.</p></item>
+      <item><p><strong>Knowledge and projections.</strong> follow, wiki, headlines, dataset, JBO, scenes, summaries, and similar derived surfaces.</p></item>
+    </list>
+  </section>
+
+  <section title="Date-Based Runtime Signals" id="date-signals">
+    <p>The event table runs from 2026-02-28 through 2026-03-26 and contains more than six million rows. The shape of that load changes materially by date.</p>
+    <list type="bullet">
+      <item><p><strong>2026-03-20.</strong> Raw volume is dominated by <c>ws_proto</c>, with a large browser/video spike and much smaller LLM and Telegram activity. That day looks like transport and media work first, with agentic work in the background.</p></item>
+      <item><p><strong>2026-03-25.</strong> The center of gravity has moved toward <c>llm</c>, <c>http</c>, <c>codex</c>, <c>agent</c>, <c>telegram</c>, and <c>web</c>. This is the clearest signal that the live system had become more agent-and-tool oriented.</p></item>
+      <item><p><strong>2026-03-26.</strong> <c>codex</c> stays hot, with <c>llm</c>, <c>http</c>, and <c>web</c> still active. That is the current operating shape as of the date of this report.</p></item>
+    </list>
+    <p>The important distinction is that volume and structure are not identical. <c>ws_proto</c> carries enormous runtime volume, but it is not one of the structural hubs. By contrast, <c>router</c>, <c>repo</c>, <c>telemetry</c>, <c>telegram</c>, <c>agent</c>, <c>llm</c>, and <c>tasks</c> are much more central to the architecture even when they do less raw work than the transport layer on a given day.</p>
+  </section>
+
+  <section title="What Is Central" id="centrality">
+    <p>The codebase has a small set of modules that are structurally important even before any runtime data is considered.</p>
+    <p>At the top are <c>FrothWeb.Router</c>, <c>Froth.Repo</c>, <c>Froth.Telemetry.Span</c>, <c>FrothWeb.Endpoint</c>, <c>FrothWeb</c>, <c>Froth.Telegram</c>, <c>Froth.Inference.Tools</c>, <c>Froth.LLM</c>, <c>Froth.Telegram.Bot</c>, <c>Froth.Tasks</c>, and <c>Froth.Agent</c>. These are the modules that sit on the shortest paths through the system and absorb the most coupling.</p>
+    <p>There is also a separate set of files that are hot because they change often. The clearest examples are <c>Froth.Telegram.Bot</c>, <c>Froth.Agent.Worker</c>, <c>Froth.Web.Router</c>, <c>Froth.Anthropic</c>, <c>Froth.Telemetry</c>, <c>Froth.Inference.Tools</c>, and <c>Froth.Codex.Session</c>. High churn does not automatically mean poor design; in Froth it usually means the module is the current pressure point where new behavior lands first.</p>
+    <p>There are also a few modules that are structurally cleaner than their neighbors. <c>WsProto</c>, <c>Froth.LLM.Transport.SSE</c>, <c>Froth.SceneEvents</c>, and <c>Froth.Follow.Renderer</c> are all comparatively narrow and self-contained. They are useful reference points because they show what a low-friction module looks like in this codebase.</p>
+  </section>
+
+  <section title="Module Atlas" id="module-atlas">
+    <subsection title="Substrate" id="substrate">
+      <p>This layer is the runtime shell. It starts the system, connects it to storage and telemetry, and exposes the basic operational utilities used by almost everything else.</p>
+      <list type="bullet">
+        <item><p><c>Froth.Application</c> builds the supervision tree, distinguishes full nodes from worker nodes, attaches telemetry handlers, and sends systemd readiness once the tree is up.</p></item>
+        <item><p><c>Froth.Repo</c> is the database entrypoint, while <c>Froth.Telemetry</c>, <c>Froth.Telemetry.Store</c>, <c>Froth.Telemetry.Broadcaster</c>, <c>Froth.Telemetry.Logger</c>, and <c>Froth.Telemetry.Span</c> provide the event registry, sink, PubSub bridge, logging bridge, and span helpers that make the event fabric usable at runtime.</p></item>
+        <item><p><c>Froth.Cluster</c>, <c>Froth.Vm</c>, and <c>Froth.FleetHealth</c> cover distributed-node and host-level concerns, while <c>Froth.RPC</c> is the live-node eval helper used by operators and automation.</p></item>
+        <item><p><c>Froth.ObjectStore</c>, <c>Froth.JsonbType</c>, <c>Froth.ApiKey</c>, <c>Froth.LogFormatter</c>, <c>Froth.LogTranslator</c>, and <c>Froth.SpeexResample</c> are supporting utilities that stay close to infrastructure rather than to any one business feature.</p></item>
+        <item><p><c>Froth.Event</c>, <c>Froth.TaskEvent</c>, and <c>Froth.TaskTelegramLink</c> are small but important data-model helpers that sit near the base of the runtime's event and task vocabulary.</p></item>
+        <item><p><c>FrothWeb</c>, <c>FrothWeb.Endpoint</c>, <c>FrothWeb.Router</c>, <c>FrothWeb.Telemetry</c>, <c>FrothWeb.Gettext</c>, <c>FrothWeb.Layouts</c>, <c>FrothWeb.CoreComponents</c>, <c>FrothWeb.ComputePresence</c>, and <c>FrothWeb.RfcXmlRenderer</c> are the Phoenix-side substrate that all web-facing modules build on.</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="Web Edge" id="web-edge">
+      <p>The web layer is large because Froth uses Phoenix not just as a page server but as an operational surface for inspection, control, and lightweight authoring.</p>
+      <list type="bullet">
+        <item><p>Controllers and HTML modules: <c>FrothWeb.PageController</c>, <c>FrothWeb.PageHTML</c>, <c>FrothWeb.ErrorHTML</c>, <c>FrothWeb.ErrorJSON</c>, <c>FrothWeb.EmbedController</c>, <c>FrothWeb.HeadlinesController</c>, <c>FrothWeb.HeadlinesHTML</c>, <c>FrothWeb.NewsController</c>, <c>FrothWeb.SummariesController</c>, <c>FrothWeb.PodcastController</c>, <c>FrothWeb.ObjectStoreController</c>, <c>FrothWeb.MediaController</c>, <c>FrothWeb.MiniDebugController</c>, <c>FrothWeb.RfcController</c>, and <c>FrothWeb.ReelController</c> expose the public and semi-public HTTP surface.</p></item>
+        <item><p>LiveViews: <c>FrothWeb.ToolLive</c>, <c>FrothWeb.InferenceSessionsLive</c>, <c>FrothWeb.JobsLive</c>, <c>FrothWeb.SceneLive</c>, <c>FrothWeb.BotContextLive</c>, <c>FrothWeb.FollowLive</c>, <c>FrothWeb.TelemetryLive</c>, <c>FrothWeb.WikiLive</c>, <c>FrothWeb.CodexLive</c>, <c>FrothWeb.ChatStatsLive</c>, <c>FrothWeb.DatasetLive</c>, <c>FrothWeb.AnalysesLive</c>, <c>FrothWeb.VoiceLive</c>, <c>FrothWeb.RdfLive</c>, and <c>FrothWeb.JboLive</c> are the interactive inspection and control surfaces.</p></item>
+        <item><p>Channels: <c>FrothWeb.SceneChannel</c>, <c>FrothWeb.ComputeWorkerChannel</c>, <c>FrothWeb.RoomChannel</c>, and <c>FrothWeb.UserSocket</c> cover the realtime lane.</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="Runtime Spine" id="runtime-spine">
+      <p>This is the core operational loop: agents ask LLMs for help, run tools, attach to tasks, and persist the resulting traces and messages.</p>
+      <list type="bullet">
+        <item><p><c>Froth.Agent</c> and its support modules, <c>Froth.Agent.Cycle</c>, <c>Froth.Agent.Message</c>, <c>Froth.Agent.ToolUse</c>, <c>Froth.Agent.ToolResult</c>, <c>Froth.Agent.Config</c>, <c>Froth.Agent.Worker</c>, <c>Froth.Agent.TaskBridge</c>, <c>Froth.Agent.Adhoc</c>, and <c>Froth.Agent.AdhocToolExecutor</c>, own the agent execution spine and the tool/result flow around it.</p></item>
+        <item><p><c>Froth.LLM</c>, <c>Froth.LLM.Client</c>, <c>Froth.LLM.Message</c>, <c>Froth.LLM.Provider</c>, <c>Froth.LLM.Request</c>, <c>Froth.LLM.Edit</c>, <c>Froth.LLM.Store</c>, and <c>Froth.LLM.Transport.SSE</c> provide the provider-agnostic LLM facade and its streaming transport. The provider family underneath it includes <c>Froth.LLM.Providers.OpenAI</c>, <c>Froth.LLM.Providers.OpenAICompat</c>, <c>Froth.LLM.Providers.OpenAIResponses</c>, <c>Froth.LLM.Providers.Gemini</c>, <c>Froth.LLM.Providers.GeminiInteractions</c>, <c>Froth.LLM.Providers.Anthropic</c>, <c>Froth.LLM.Providers.XaiChat</c>, and <c>Froth.LLM.Providers.XaiResponses</c>.</p></item>
+        <item><p>The provider-facing wrappers <c>Froth.Anthropic</c>, <c>Froth.Anthropic.SSE</c>, <c>Froth.Gemini</c>, <c>Froth.Grok</c>, <c>Froth.OpenAI</c>, and <c>Froth.Qwen</c> are thin but important because they encode the local conventions for the external APIs.</p></item>
+        <item><p><c>Froth.Inference.Tools</c> is the tool catalog and execution surface used by the agent loop. It is a central module even though it is more orchestration than business logic.</p></item>
+        <item><p><c>Froth.Tasks</c>, <c>Froth.Tasks.Eval</c>, <c>Froth.Tasks.EvalIO</c>, <c>Froth.Tasks.EvalSessions</c>, <c>Froth.Tasks.Shell</c>, <c>Froth.Tasks.Video</c>, <c>Froth.Task</c>, <c>Froth.TaskEvent</c>, and <c>Froth.TaskTelegramLink</c> define the task lifecycle and the links between tasks and other runtime objects.</p></item>
+        <item><p><c>Froth.Codex</c>, <c>Froth.Codex.Session</c>, <c>Froth.Codex.Task</c>, <c>Froth.Codex.TaskWatcher</c>, <c>Froth.Codex.Events</c>, <c>Froth.Codex.Event</c>, <c>Froth.Codex.RawEvents</c>, and <c>Froth.Codex.RawEvent</c> are the Codex-side trace and session model, which sits alongside the more general agent and task layers.</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="Telegram and TDLib" id="telegram">
+      <p>Telegram is one of the deepest integration surfaces in Froth. It is not a single bot module; it is a small application family with its own sessions, identities, tool execution, and call handling.</p>
+      <list type="bullet">
+        <item><p><c>Froth.Telegram</c> multiplexes TDLib sessions and acts as the shared Telegram bridge for the rest of the runtime.</p></item>
+        <item><p>The session and control plane is spread across <c>Froth.Telegram.Session</c>, <c>Froth.Telegram.SessionConfig</c>, <c>Froth.Telegram.Bots</c>, <c>Froth.Telegram.Bot</c>, <c>Froth.Telegram.BotAdapter</c>, <c>Froth.Telegram.BotContext</c>, <c>Froth.Telegram.BotContextHTML</c>, <c>Froth.Telegram.Auth</c>, <c>Froth.Telegram.UpdateRouter</c>, <c>Froth.Telegram.Sync</c>, <c>Froth.Telegram.Cnode</c>, <c>Froth.Telegram.Queries</c>, <c>Froth.Telegram.Message</c>, <c>Froth.Telegram.SyntheticMessage</c>, <c>Froth.Telegram.ToolExecution</c>, <c>Froth.Telegram.ControlPrompt</c>, <c>Froth.Telegram.Names</c>, <c>Froth.Telegram.Police</c>, and <c>Froth.Telegram.CycleLink</c>.</p></item>
+        <item><p>Personality and tooling modules include <c>Froth.Telegram.Charlie</c>, <c>Froth.Telegram.Lennart</c>, <c>Froth.Telegram.LennartLinkReactor</c>, <c>Froth.Telegram.GroupCalls</c>, <c>Froth.Telegram.Calls</c>, and <c>Froth.Telegram.CallQwenBridge</c>, plus the profile and toolset modules <c>Froth.Telegram.Profiles.CharliePrompt</c>, <c>Froth.Telegram.Profiles.LennartPrompt</c>, <c>Froth.Telegram.Toolsets.Charlie</c>, and <c>Froth.Telegram.Toolsets.Lennart</c>.</p></item>
+        <item><p><c>Froth.Telegram.BotContextLive</c> belongs to the web layer, but it is included here conceptually because it renders Telegram state and is the inspection surface for bot context.</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="Integrations" id="integrations">
+      <p>These modules connect Froth to browsers, compute workers, media pipelines, web search providers, and the other external systems that make the runtime useful.</p>
+      <list type="bullet">
+        <item><p><strong>Browser.</strong> <c>Froth.Browser</c>, <c>Froth.Browser.CDP</c>, <c>Froth.Browser.Chrome</c>, <c>Froth.Browser.Instance</c>, and <c>Froth.Browser.Supervisor</c> manage the browser lease and CDP stack.</p></item>
+        <item><p><strong>Compute.</strong> <c>Froth.Compute</c>, <c>Froth.Compute.Job</c>, <c>Froth.Compute.Task</c>, and <c>Froth.Compute.Artifact</c> are the durable job and artifact layer.</p></item>
+        <item><p><strong>Video and voice.</strong> <c>Froth.Video</c>, <c>Froth.Video.ComputeWorker</c>, <c>Froth.Video.ComputeRenderer</c>, <c>Froth.Video.RenderSupport</c>, <c>Froth.Video.EpisodeTemplate</c>, <c>Froth.Video.SelfEncoder</c>, and <c>Froth.Video.WorkerFleet</c> handle media composition and the browser-native encoder path. <c>Froth.Podcast</c>, <c>Froth.Podcast.Script</c>, <c>Froth.Podcast.StitchWorker</c>, <c>Froth.Podcast.TtsWorker</c>, <c>Voice.Stream</c>, <c>Froth.VoiceClone</c>, and <c>Froth.Qwen.VoiceEnrollment</c> cover podcast generation and voice handling.</p></item>
+        <item><p><strong>Search and analysis.</strong> <c>Froth.Search</c>, <c>Froth.Search.Gemini</c>, <c>Froth.Search.Grok</c>, <c>Froth.Search.OpenAI</c>, and <c>Froth.Search.Result</c> are the multi-provider search layer. <c>Froth.Analyzer</c>, <c>Froth.Analyzer.API</c>, <c>Froth.Analyzer.Discovery</c>, <c>Froth.Analyzer.YouTubeWorker</c>, <c>Froth.Analyzer.VoiceWorker</c>, <c>Froth.Analyzer.VideoWorker</c>, <c>Froth.Analyzer.ImageWorker</c>, <c>Froth.Analyzer.XPostWorker</c>, and <c>Froth.Analyzer.PdfWorker</c> form the analyzer pipeline.</p></item>
+        <item><p><strong>Replication and external model stores.</strong> <c>Froth.Replicate</c>, <c>Froth.Replicate.ReadmeWorker</c>, <c>Froth.Replicate.Model</c>, <c>Froth.Replicate.Prediction</c>, <c>Froth.Replicate.SyncWorker</c>, <c>Froth.Replicate.Collection</c>, and <c>Froth.Replicate.CollectionSyncWorker</c> are the Replicate client and sync surface. <c>Froth.RetroDiffusion</c> and <c>Froth.RetroDiffusion.Worker</c> are the separate diffusion path.</p></item>
+        <item><p><strong>Protocol and bridges.</strong> <c>WsProto</c> and <c>WsProto.Client</c> are the websocket protocol core, while <c>Froth.CharlieLennartBridge</c>, <c>Froth.RouteAudit</c>, and <c>Froth.RegionalNews</c> sit nearby as operational integration modules.</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="Knowledge and Projections" id="knowledge">
+      <p>These modules are not usually on the hot path, but they are the surfaces that make the runtime legible to humans.</p>
+      <list type="bullet">
+        <item><p><c>Froth.Wiki</c>, <c>Froth.Dataset</c>, <c>Froth.Analysis</c>, <c>Froth.ChatSummary</c>, <c>Froth.Summarizer</c>, <c>Froth.Headlines</c>, <c>Froth.HeadlinesLedger</c>, <c>Froth.RegionalNews</c>, and <c>Froth.LennartHourly</c> are the content, feed, and summarization surfaces.</p></item>
+        <item><p><c>Froth.SceneEngine</c> and <c>Froth.SceneEvents</c> are the scene pipeline; they sit in a narrower, more self-contained part of the runtime than the agent or Telegram systems.</p></item>
+        <item><p><c>Froth.Follow.Renderer</c>, <c>Froth.Follow.Source</c>, <c>Froth.Follow.Entry</c>, <c>Froth.Follow.Filter</c>, <c>Froth.Follow.Projector</c>, and <c>Froth.Follow.Timeline</c> are the follow/telemetry rendering family. This is one of the cleaner islands in the repository because it is narrow and strongly oriented around presentation rather than control flow.</p></item>
+        <item><p><c>Froth.Jbo.Dictionary</c> and <c>Froth.Jbo.Entry</c> are the JBO content family.</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="Operations and Command-Line Tools" id="operations">
+      <p>The repo has a number of user-facing <tt>mix</tt> tasks because Froth is operated by shelling into the live node as much as it is by clicking through the web UI.</p>
+      <list type="bullet">
+        <item><p><c>Mix.Tasks.RecordFixtures</c> re-records SSE fixtures.</p></item>
+        <item><p><c>Mix.Tasks.Froth.Ls</c> is an operator listing command.</p></item>
+        <item><p><c>Mix.Tasks.Froth.Headlines</c> drives the headlines pipeline.</p></item>
+        <item><p><c>Mix.Tasks.Froth.Telegram.Backfill</c> backfills Telegram state.</p></item>
+        <item><p><c>Mix.Tasks.Froth.Top</c> shows processes with interesting mailboxes.</p></item>
+        <item><p><c>Mix.Tasks.Froth.Qwen.AsrTest</c> exercises Qwen ASR.</p></item>
+        <item><p><c>Mix.Tasks.Froth.RouteAudit</c> runs route and screenshot audits.</p></item>
+        <item><p><c>Mix.Tasks.Froth.Follow</c> follows telemetry events from the live node.</p></item>
+        <item><p><c>Mix.Tasks.Froth.Tgcalls.Smoke</c> checks the tgCalls build/runtime path.</p></item>
+        <item><p><c>Mix.Tasks.Froth.Summarize</c> runs summarization flows.</p></item>
+        <item><p><c>Mix.Tasks.Froth.WsTest</c> exercises the websocket protocol path.</p></item>
+        <item><p><c>Mix.Tasks.Froth.Qwen.Clone</c> and <c>Mix.Tasks.Froth.Tgcalls.Smoke</c> are specialized maintenance commands for the Qwen and Telegram voice stack.</p></item>
+      </list>
+    </subsection>
+  </section>
+
+  <section title="Reading Order" id="reading-order">
+    <p>If you are writing a new RFC or trying to orient yourself in the codebase, the most useful reading order is usually:</p>
+    <list type="numbered">
+      <item><p><c>Froth.Application</c> and <c>README.md</c> for the boot model, node-role split, and operational entrypoints.</p></item>
+      <item><p><c>FrothWeb.Router</c> and the <c>FrothWeb</c> modules for the HTTP surface and the LiveView control plane.</p></item>
+      <item><p><c>Froth.Telemetry</c>, <c>Froth.Agent</c>, <c>Froth.LLM</c>, <c>Froth.Inference.Tools</c>, <c>Froth.Tasks</c>, and <c>Froth.Codex</c> for the runtime spine.</p></item>
+      <item><p><c>Froth.Telegram</c> for the largest external integration family and the place where a lot of system behavior becomes visible in practice.</p></item>
+      <item><p><c>Froth.Browser</c>, <c>Froth.Compute</c>, <c>Froth.Video</c>, <c>Froth.Podcast</c>, <c>Froth.Search</c>, <c>Froth.Analyzer</c>, and <c>Froth.Replicate</c> for the specialist integration stacks.</p></item>
+      <item><p><c>Froth.Follow</c>, <c>Froth.Wiki</c>, <c>Froth.Headlines</c>, <c>Froth.Jbo</c>, <c>Froth.SceneEngine</c>, and <c>Froth.SceneEvents</c> for the projection and content families that make the runtime inspectable.</p></item>
+    </list>
+    <p>The short version is that future RFCs should anchor themselves to the layer they touch. If the change is about boot or ops, start with the substrate. If it is about interactions, start with web or Telegram. If it is about agent behavior, start with agent, LLM, tasks, and codex. If it is about output or inspection, start with follow, wiki, headlines, or a similar projection family.</p>
+  </section>
+
+  <section title="Conclusion" id="conclusion">
+    <p>Froth is best understood as a layered BEAM runtime with a small number of strong hubs and many specialized leaves. The system is not random, but it does have enough cross-cutting behavior that a layered map is more useful than a flat module list.</p>
+    <p>The practical takeaway is simple: central modules deserve caution, high-churn modules deserve scrutiny, isolated leaf modules are where cleanup is easiest, and the runtime signals should always be read by date so the architecture is not mistaken for a static snapshot.</p>
+  </section>
+</rfc>

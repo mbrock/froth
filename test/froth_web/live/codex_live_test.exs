@@ -75,6 +75,22 @@ defmodule FrothWeb.CodexLiveTest do
          active_turn_id: "turn-live-1",
          active_assistant_entry_id: "entry-1",
          runtime: %{model: "gpt-5.4", reasoning_effort: "xhigh", sandbox: "danger-full-access"},
+         available_models: [
+           %{
+             "displayName" => "gpt-5.4",
+             "hidden" => false,
+             "id" => "gpt-5.4",
+             "isDefault" => true,
+             "model" => "gpt-5.4"
+           },
+           %{
+             "displayName" => "GPT-5.4-Mini",
+             "hidden" => false,
+             "id" => "gpt-5.4-mini",
+             "isDefault" => false,
+             "model" => "gpt-5.4-mini"
+           }
+         ],
          token_usage: %{last: %{totalTokens: 198_500}, total: %{totalTokens: 9_400_000}},
          rate_limits: %{primary: %{usedPercent: 14}, secondary: %{usedPercent: 28}},
          entries: [
@@ -115,9 +131,12 @@ defmodule FrothWeb.CodexLiveTest do
 
     assert has_element?(view, "#codex-follow-tail")
     assert has_element?(view, "label[for='codex-follow-tail']", "Auto")
+    assert has_element?(view, "#codex-model")
+    assert has_element?(view, "#codex-reasoning-effort option[selected][value='xhigh']")
+    assert has_element?(view, "#codex-model option[selected][value='gpt-5.4']")
+    assert has_element?(view, "#codex-model option[value='gpt-5.4-mini']")
     assert has_element?(view, "#entry-1 strong", "Bold")
     assert has_element?(view, "#entry-1 .codex-inline-spinner")
-    assert has_element?(view, "#codex-live-viewer", "gpt-5.4 xhigh")
     refute has_element?(view, "#entry-2")
     assert has_element?(view, "#entry-3", "Tighten the mobile layout")
     assert has_element?(view, "#entry-3", "Add follow toggle")
@@ -127,6 +146,45 @@ defmodule FrothWeb.CodexLiveTest do
     assert has_element?(view, "#entry-4", "output")
     assert has_element?(view, "#entry-4", "lib/froth_web/live/codex_live.ex")
     refute has_element?(view, "#codex-close")
+
+    view
+    |> form("#codex-reasoning-form", reasoning: %{effort: "high"})
+    |> render_change()
+
+    assert has_element?(view, "#codex-reasoning-effort option[selected][value='high']")
+
+    view
+    |> form("#codex-model-form", model: %{model: "gpt-5.4-mini"})
+    |> render_change()
+
+    assert has_element?(view, "#codex-model option[selected][value='gpt-5.4-mini']")
+
+    {:ok, snapshot} = FakeCodexSession.snapshot(session_id)
+    assert snapshot.runtime.model == "gpt-5.4-mini"
+  end
+
+  test "refreshes model options when a session snapshot is missing them", %{conn: conn} do
+    session_id = "s_test_" <> Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+
+    start_supervised!(
+      {FakeCodexSession,
+       session_id: session_id,
+       snapshot: %{
+         status: :ready,
+         thread_id: "thread-#{session_id}",
+         runtime: %{model: "gpt-5.4-mini"},
+         available_models: []
+       }}
+    )
+
+    {:ok, view, _html} = live(conn, ~p"/froth/mini/codex/#{session_id}")
+
+    assert has_element?(view, "#codex-model")
+    assert has_element?(view, "#codex-model option[selected][value='gpt-5.4-mini']")
+    assert has_element?(view, "#codex-model option[value='gpt-5.4']")
+
+    {:ok, snapshot} = FakeCodexSession.snapshot(session_id)
+    assert snapshot.available_models != []
   end
 
   test "pasted image uploads can be submitted with the prompt form", %{conn: conn} do

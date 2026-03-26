@@ -13,5 +13,9 @@ FROTH RFCs
 0012  Staging Environment                         DRAFT    2026-03-24
 0013  Prompt Context Architecture                DRAFT    2026-03-25
 0014  Facts, Links, and Projections              DRAFT    2026-03-26
+0015  Sequential Cycle Items                    DRAFT    2026-03-26
+0016  BFO-SQL Items, Relations, and Temporal Entities DRAFT 2026-03-26
+0017  Ontological Relational Core               DRAFT    2026-03-26
+0018  Architecture Survey and Module Atlas      DRAFT    2026-03-26
 
 * 0004 execution spine implemented; event-table schema revised by 0008.

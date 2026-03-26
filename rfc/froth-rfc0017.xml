@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0017" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0017: Ontological Relational Core</title>
+    <status>DRAFT</status>
+    <author>Charlie (@charliebuddybot)</author>
+    <date>2026-03-26</date>
+    <supersedes>FROTH-RFC-0014, FROTH-RFC-0015, FROTH-RFC-0016</supersedes>
+  </meta>
+
+  <section title="Situation" id="situation">
+    <p>Froth is a long-running world of bots, users, messages, tasks, agent cycles, tool invocations, artifacts, deliveries, and observations. Some of these are continuant-like. Some are occurrent-like. Some are temporal entities. Some are observations about the rest.</p>
+    <p>The current schema style does not express that world clearly. It mixes several habits that are locally convenient but globally confusing:</p>
+    <list type="bullet">
+      <item><p>thing-centered tables that treat each favored object type as its own little universe</p></item>
+      <item><p>generic link rows whose real meaning is hidden in a predicate string</p></item>
+      <item><p>timestamps attached directly to arbitrary rows as if time were a primitive property of everything</p></item>
+      <item><p>payload blobs that carry distinctions the system actually reasons about</p></item>
+      <item><p>projections that silently become sources of truth</p></item>
+    </list>
+    <p>These choices are not merely aesthetic. They make the system harder to inspect, harder to evolve, and harder to think about coherently. The same relation gets represented in multiple ways. The same temporal structure gets smuggled into local columns. The same underlying entity gets redescribed differently by each subsystem.</p>
+    <p>Froth needs a more fundamental core: one that treats ontology and relation structure as first-class and lets convenience views be derived from that core rather than substituting for it.</p>
+  </section>
+
+  <section title="Goal" id="goal">
+    <p>Establish a relational core for Froth that is ontological in structure and operationally useful.</p>
+    <p>The core should:</p>
+    <list type="bullet">
+      <item><p>use one neutral table of entities</p></item>
+      <item><p>express important ontology through explicit predicates</p></item>
+      <item><p>treat temporal entities as first-class</p></item>
+      <item><p>treat timestamps as relations to temporal entities rather than as arbitrary inline columns everywhere</p></item>
+      <item><p>treat observations as entities about other entities rather than as a separate metaphysical kingdom</p></item>
+      <item><p>reserve payload blobs for the long tail rather than for core meaning</p></item>
+      <item><p>treat projections and convenience read models as derived and disposable</p></item>
+    </list>
+  </section>
+
+  <section title="Thesis" id="thesis">
+    <p>Froth should adopt an ontological relational schema built on one neutral <c>items</c> table plus a disciplined family of explicit predicate tables.</p>
+    <p>In this model:</p>
+    <list type="bullet">
+      <item><p><c>items</c> provide the domain of relata</p></item>
+      <item><p>predicate tables carry the real structure of the world</p></item>
+      <item><p>data-property tables relate items to literal values where needed</p></item>
+      <item><p>temporal intervals and instants are items</p></item>
+      <item><p>timestamps attach to temporal entities, not indiscriminately to every other table</p></item>
+      <item><p>payload is residual, not foundational</p></item>
+    </list>
+    <p>The guiding idea is simple: the ontology should live in predicates and a small number of explicit entity types, not in ad hoc foreign keys, not in unstructured JSON, and not in stringly typed link rows.</p>
+  </section>
+
+  <section title="Core Model" id="core-model">
+    <section title="1. Items are neutral entities" id="items">
+      <p>The base table should be minimal:</p>
+      <code>items
+  id           text/uuid   NOT NULL primary key
+  type         text        NOT NULL
+  payload      jsonb       NOT NULL default '{}'
+  inserted_at  timestamp   NOT NULL
+</code>
+      <p>The purpose of <c>items</c> is not to encode the full ontology in one place. It is simply the registry of entities that may participate in relations.</p>
+      <p>Representative item types in Froth include:</p>
+      <list type="bullet">
+        <item><p><c>agent.cycle</c></p></item>
+        <item><p><c>tool.invocation</c></p></item>
+        <item><p><c>tool.result</c></p></item>
+        <item><p><c>task.execution</c></p></item>
+        <item><p><c>telegram.message</c></p></item>
+        <item><p><c>artifact</c></p></item>
+        <item><p><c>observation</c></p></item>
+        <item><p><c>temporal.instant</c></p></item>
+        <item><p><c>temporal.interval</c></p></item>
+      </list>
+    </section>
+
+    <section title="2. Ontology lives in predicates" id="predicates">
+      <p>The real structure of the schema should appear in relation tables. A row in such a table is an assertion of a predicate.</p>
+      <p>Important predicate families in Froth include:</p>
+      <list type="bullet">
+        <item><p>mereological predicates such as <c>part_of</c> and <c>temporal_part_of</c></p></item>
+        <item><p>participation predicates such as <c>participates_in</c></p></item>
+        <item><p>causal and provenance predicates such as <c>caused_by</c> and <c>derived_from</c></p></item>
+        <item><p>dependence predicates such as <c>s_depends_on</c>, <c>inheres_in</c>, and <c>concretizes</c></p></item>
+        <item><p>realization predicates such as <c>realizes</c></p></item>
+        <item><p>observational predicates such as <c>about</c></p></item>
+        <item><p>temporal occupancy predicates such as <c>occupies_temporal_region</c></p></item>
+      </list>
+      <p>Representative tables therefore look like:</p>
+      <code>part_of(subject_id, object_id)
+temporal_part_of(subject_id, object_id)
+participates_in(subject_id, object_id)
+caused_by(subject_id, object_id)
+derived_from(subject_id, object_id)
+s_depends_on(subject_id, object_id)
+inheres_in(subject_id, object_id)
+concretizes(subject_id, object_id)
+realizes(subject_id, object_id)
+about(subject_id, object_id)
+occupies_temporal_region(subject_id, object_id)
+</code>
+      <p>These tables may share a common physical pattern, but they should remain explicit in the schema. A single generic <c>links(predicate, from_id, to_id)</c> table may exist as an escape hatch, but it should not be the primary home of the ontology.</p>
+    </section>
+
+    <section title="3. Data properties are relations too" id="data-properties">
+      <p>Some important predicates connect an item not to another item but to a literal value.</p>
+      <p>Examples include:</p>
+      <code>at_timestamp(item_id, ts)
+has_status(item_id, value)
+has_label(item_id, value)
+has_external_id(item_id, value)
+has_token_count(item_id, value)
+</code>
+      <p>These are best modeled as tables when the property has stable semantics and operational importance. This keeps meaningful distinctions out of generic payload blobs.</p>
+    </section>
+  </section>
+
+  <section title="Ontological Commitments" id="ontological-commitments">
+    <section title="1. Continuants and occurrents coexist in the same registry" id="continuants-and-occurrents">
+      <p>Froth contains both continuant-like and occurrent-like entities. Both belong in <c>items</c>.</p>
+      <p>Examples of continuant-like items:</p>
+      <list type="bullet">
+        <item><p>messages</p></item>
+        <item><p>artifacts</p></item>
+        <item><p>bots</p></item>
+        <item><p>users</p></item>
+      </list>
+      <p>Examples of occurrent-like items:</p>
+      <list type="bullet">
+        <item><p>agent cycles</p></item>
+        <item><p>tool invocations</p></item>
+        <item><p>LLM requests</p></item>
+        <item><p>task executions</p></item>
+        <item><p>deliveries</p></item>
+      </list>
+      <p>The schema should not force these into the same object-centered mold. Their differences emerge primarily through predicates.</p>
+    </section>
+
+    <section title="2. Observations are ordinary items" id="observations">
+      <p>What software often calls telemetry is best understood here as observation.</p>
+      <p>An observation is an item that is about another item or process. It is not the primary ontology of the system. It is an entity inside that ontology.</p>
+      <p>This means spans, log-like observations, measurements, and diagnostic records can be modeled as ordinary items connected by predicates such as <c>about</c>, <c>part_of</c>, or <c>derived_from</c>.</p>
+    </section>
+
+    <section title="3. Dependent entities are allowed" id="dependent-entities">
+      <p>The schema should leave room for specifically dependent and generically dependent entities where they become useful to model explicitly.</p>
+      <p>Examples may include:</p>
+      <list type="bullet">
+        <item><p>a capability or disposition realized in a process</p></item>
+        <item><p>a prompt artifact concretized in a provider request</p></item>
+        <item><p>a model configuration inhering in a session or cycle context</p></item>
+      </list>
+      <p>Not every subsystem needs these distinctions immediately. The point is that the schema should admit them cleanly rather than forcing everything into flattened object tables.</p>
+    </section>
+  </section>
+
+  <section title="Temporal Model" id="temporal-model">
+    <section title="1. Temporal entities are first-class" id="temporal-entities">
+      <p>Temporal instants and intervals should be real items.</p>
+      <p>An occurrent does not simply own a timestamp. Rather, it occupies a temporal region, and that temporal region is itself an entity in the model.</p>
+      <p>This yields patterns such as:</p>
+      <code>item type=agent.cycle
+item type=temporal.interval
+item type=temporal.instant
+
+occupies_temporal_region(agent_cycle, interval_1)
+part_of(boundary_1, interval_1)
+at_timestamp(boundary_1, 1774497814123456)
+</code>
+      <p>Where it is useful to distinguish interval endpoints explicitly, additional predicates may be used:</p>
+      <code>has_first_instant(interval_id, instant_id)
+has_last_instant(interval_id, instant_id)
+</code>
+    </section>
+
+    <section title="2. Timestamps belong to temporal entities" id="timestamps">
+      <p>The timestamp relation belongs to temporal entities, not directly to arbitrary process rows.</p>
+      <p>This matters because a calendar datum is not the same kind of thing as a process, a message, or a task. Timestamping is a relation between a temporal entity and a coordinate value.</p>
+      <p>This does not forbid derived convenience columns or views such as <c>started_at</c> and <c>ended_at</c>. It means those conveniences should be projections, not the primitive truth.</p>
+    </section>
+  </section>
+
+  <section title="Payload and Projections" id="payload-and-projections">
+    <section title="1. Payload is residual" id="payload">
+      <p><c>payload</c> remains useful, but its role changes. It should carry:</p>
+      <list type="bullet">
+        <item><p>raw provider payloads</p></item>
+        <item><p>rare details not worth promoting</p></item>
+        <item><p>unstable experimental fields</p></item>
+        <item><p>migration residue during transitional phases</p></item>
+      </list>
+      <p>If the system regularly reasons over a distinction, that distinction probably belongs in an explicit predicate or data-property table instead.</p>
+    </section>
+
+    <section title="2. Projections are derived and disposable" id="projections">
+      <p>The truth model described here will often be join-heavy. That is acceptable.</p>
+      <p>Operational convenience should come from projections:</p>
+      <list type="bullet">
+        <item><p>views</p></item>
+        <item><p>materialized summaries</p></item>
+        <item><p>specialized read tables</p></item>
+        <item><p>indexes on high-value predicates</p></item>
+      </list>
+      <p>Examples of good projections in Froth would include:</p>
+      <list type="bullet">
+        <item><p>current task state</p></item>
+        <item><p>cycle transcript ordering</p></item>
+        <item><p>recent observations for UI inspection</p></item>
+        <item><p>time-bounded process summaries</p></item>
+      </list>
+      <p>The discipline is strict: projections may be optimized and convenient, but they are not the ontological core.</p>
+    </section>
+  </section>
+
+  <section title="Example" id="example">
+    <p>A tool call inside an agent cycle could be represented as:</p>
+    <code>items:
+  c1  type=agent.cycle
+  i1  type=tool.invocation
+  r1  type=tool.result
+  m1  type=telegram.message
+  a1  type=artifact
+  o1  type=observation
+  t1  type=temporal.interval
+  u1  type=temporal.instant
+  u2  type=temporal.instant
+
+predicates:
+  temporal_part_of(i1, c1)
+  caused_by(r1, i1)
+  derived_from(m1, r1)
+  participates_in(a1, i1)
+  about(o1, i1)
+  occupies_temporal_region(i1, t1)
+  has_first_instant(t1, u1)
+  has_last_instant(t1, u2)
+  at_timestamp(u1, 1774497814123456)
+  at_timestamp(u2, 1774497815123988)
+</code>
+    <p>This representation distinguishes clearly among the process, its result, an artifact that participates, a message derived from the result, an observation about the process, the temporal interval it occupies, and the calendar coordinates of that interval.</p>
+    <p>Nothing here requires <c>started_at</c> or <c>ended_at</c> to be primitive fields on the invocation itself. If Froth wants those for query convenience, they can be derived in a projection.</p>
+  </section>
+
+  <section title="Migration Strategy" id="migration">
+    <list type="numbered">
+      <item><p>Introduce <c>items</c> as the common registry for new ontological work.</p></item>
+      <item><p>Introduce a first wave of explicit predicate tables for the relations Froth uses most heavily.</p></item>
+      <item><p>Introduce item-to-literal tables for the properties that are stable and operationally important.</p></item>
+      <item><p>Introduce temporal instants and intervals as items and begin attaching timestamps through them.</p></item>
+      <item><p>Build projections that present the familiar operational surface required by existing tooling and UI.</p></item>
+      <item><p>Gradually retire bespoke linkage and timestamp conventions where the new schema covers them cleanly.</p></item>
+    </list>
+    <p>This transition should be evolutionary. The requirement is not philosophical perfection in one pass. The requirement is that new schema work stop deepening the old confusion.</p>
+  </section>
+
+  <section title="Consequences" id="consequences">
+    <section title="Benefits" id="benefits">
+      <list type="bullet">
+        <item><p>Froth gains a more genuinely relational and ontologically legible core.</p></item>
+        <item><p>Parthood, participation, provenance, dependence, realization, and aboutness become explicit.</p></item>
+        <item><p>Temporal reasoning becomes cleaner because temporal entities are represented directly.</p></item>
+        <item><p>JSON payloads shrink back toward the long tail.</p></item>
+        <item><p>New subsystems can be integrated by adding predicates rather than inventing new local universes.</p></item>
+      </list>
+    </section>
+
+    <section title="Costs" id="costs">
+      <list type="bullet">
+        <item><p>The truth model will often involve more rows and more joins.</p></item>
+        <item><p>The team will need discipline about what becomes an explicit predicate and what remains residual payload.</p></item>
+        <item><p>Good projections will be necessary for hot operational paths.</p></item>
+      </list>
+    </section>
+  </section>
+
+  <section title="Recommendation" id="recommendation">
+    <p>Froth should adopt an ontological relational core built from neutral items, explicit predicates, temporal entities, and derived projections.</p>
+    <p>The schema should grow by adding meaningful relations rather than by multiplying bespoke object tables or burying semantics in payloads and predicate strings.</p>
+    <p>This is a better fit for the system Froth actually is: a long-running world of continuants, occurrents, observations, participation, parthood, provenance, and temporal extent.</p>
+  </section>
+</rfc>
