@@ -60,8 +60,6 @@ end
 config :froth, FrothWeb.Endpoint, http: endpoint_http
 config :froth, Froth.Telemetry.Store, enabled: config_env() != :test and node_role != :worker
 
-config :froth, Froth.Replicate, api_token: System.get_env("REPLICATE_API_TOKEN")
-
 # The app usually runs on the host while Fuseki runs in Docker, so localhost is
 # the right default here. Override this when Froth itself runs in Docker or the
 # SPARQL service is reachable on a different network path.
@@ -128,7 +126,6 @@ config :froth, Froth.Summarizer,
      end)
 
 config :froth, Froth.Anthropic,
-  api_key: System.get_env("ANTHROPIC_API_KEY"),
   model: System.get_env("ANTHROPIC_MODEL", "claude-opus-4-6"),
   system: System.get_env("ANTHROPIC_SYSTEM", ""),
   max_tokens:
@@ -173,7 +170,6 @@ config :froth, Froth.Anthropic,
      end)
 
 config :froth, Froth.OpenAI,
-  api_key: System.get_env("OPENAI_API_KEY"),
   model: System.get_env("OPENAI_MODEL", "gpt-5-mini"),
   system: System.get_env("OPENAI_SYSTEM", ""),
   max_tokens:
@@ -191,7 +187,6 @@ config :froth, Froth.OpenAI,
      end)
 
 config :froth, Froth.Grok,
-  api_key: System.get_env("GROK_API_KEY") || System.get_env("XAI_API_KEY"),
   model: System.get_env("GROK_MODEL", "grok-4-1-fast-non-reasoning"),
   system: System.get_env("GROK_SYSTEM", ""),
   max_tokens:
@@ -209,7 +204,6 @@ config :froth, Froth.Grok,
      end)
 
 config :froth, Froth.Gemini,
-  api_key: System.get_env("GEMINI_API_KEY") || System.get_env("GOOGLE_API_KEY"),
   model: System.get_env("GEMINI_MODEL", "gemini-3-flash-preview"),
   system: System.get_env("GEMINI_SYSTEM", ""),
   max_tokens:

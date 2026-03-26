@@ -5,11 +5,11 @@ defmodule Froth.LLMTest do
   alias Froth.LLM
   alias Froth.Repo
 
-  test "resolves clients from provider names and model prefixes" do
-    assert {:ok, Froth.OpenAI} = LLM.resolve_client_module(:openai, nil)
-    assert {:ok, Froth.Grok} = LLM.resolve_client_module("xai", nil)
-    assert {:ok, Froth.Gemini} = LLM.resolve_client_module(nil, "gemini-2.5-flash")
-    assert {:ok, Froth.Anthropic} = LLM.resolve_client_module(nil, "claude-opus-4-6")
+  test "resolves provider names from provider refs and model prefixes" do
+    assert :openai = LLM.resolve_provider_name(:openai, nil)
+    assert :grok = LLM.resolve_provider_name("xai", nil)
+    assert :gemini = LLM.resolve_provider_name(nil, "gemini-2.5-flash")
+    assert :anthropic = LLM.resolve_provider_name(nil, "claude-opus-4-6")
   end
 
   test "loads the most recent API key for matching providers" do

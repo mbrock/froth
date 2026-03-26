@@ -6,7 +6,7 @@ defmodule Froth.Analyzer.API do
   @xai_responses_url "https://api.x.ai/v1/responses"
 
   def gemini(model \\ "gemini-3-flash-preview", contents, opts \\ []) do
-    api_key = System.get_env("GOOGLE_API_KEY")
+    api_key = Froth.LLM.active_api_key(["gemini", "google"])
     url = "#{@gemini_url}/#{model}:generateContent?key=#{api_key}"
 
     body = %{"contents" => contents}
@@ -58,7 +58,7 @@ defmodule Froth.Analyzer.API do
   end
 
   def grok(prompt, opts \\ []) do
-    api_key = System.get_env("XAI_API_KEY")
+    api_key = Froth.LLM.active_api_key(["grok", "xai"])
     model = opts[:model] || "grok-4-1-fast-non-reasoning"
 
     body = %{
@@ -84,7 +84,7 @@ defmodule Froth.Analyzer.API do
   end
 
   def grok_search(prompt, opts \\ []) do
-    api_key = System.get_env("XAI_API_KEY")
+    api_key = Froth.LLM.active_api_key(["grok", "xai"])
     model = opts[:model] || "grok-4-1-fast-reasoning"
 
     body = %{
@@ -157,9 +157,7 @@ defmodule Froth.Analyzer.API do
   end
 
   defp anthropic_api_key do
-    Froth.Anthropic.active_api_key() ||
-      Application.get_env(:froth, Froth.Anthropic, []) |> Keyword.get(:api_key) ||
-      System.get_env("ANTHROPIC_API_KEY")
+    Froth.LLM.active_api_key("anthropic")
   end
 
   defp post_json(url, body, extra_headers \\ []) do

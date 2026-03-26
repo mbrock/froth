@@ -138,8 +138,17 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
 
   def decode_payload(%{"event_type" => "interaction.status_update"}, _store), do: {[], false}
 
-  def decode_payload(%{"event_type" => "error", "error" => error}, _store) when is_map(error) do
-    raise "Gemini interactions error: #{error["message"] || inspect(error)}"
+  def decode_payload(%{"event_type" => "error", "error" => error} = payload, _store)
+      when is_map(error) do
+    {[
+       %Edit{
+         op: :set,
+         resource: ["message"],
+         path: ["error"],
+         value: %{"error" => error},
+         raw: payload
+       }
+     ], true}
   end
 
   def decode_payload(_payload, _store), do: {[], false}
@@ -164,42 +173,6 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
       message_id: Map.get(message, "id")
     }
   end
-
-  @impl true
-  def project_event(%Edit{
-        op: :append,
-        resource: ["message", "blocks", _idx],
-        path: ["text"],
-        value: text
-      })
-      when is_binary(text) do
-    {:text_delta, text}
-  end
-
-  def project_event(%Edit{
-        op: :open,
-        resource: ["message", "blocks", _idx],
-        attrs: %{"type" => "tool_use", "id" => id, "name" => name} = attrs
-      })
-      when is_binary(id) and is_binary(name) do
-    {:tool_use_start, %{"id" => id, "name" => name, "input" => Map.get(attrs, "input", %{})}}
-  end
-
-  def project_event(%Edit{
-        op: :close,
-        resource: ["message", "blocks", _idx],
-        attrs: %{"type" => "tool_use", "id" => id, "name" => name, "input" => input}
-      })
-      when is_binary(id) and is_binary(name) do
-    {:tool_use_stop, %{"id" => id, "name" => name, "input" => input}}
-  end
-
-  def project_event(%Edit{op: :merge, resource: ["message"], path: ["usage"], value: usage})
-      when is_map(usage) do
-    {:usage, %{"usage" => usage}}
-  end
-
-  def project_event(_edit), do: nil
 
   def encode_messages(messages) when is_list(messages) do
     {turns, _tool_uses} =

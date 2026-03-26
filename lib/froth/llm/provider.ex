@@ -12,5 +12,4 @@ defmodule Froth.LLM.Provider do
   @callback build_request(Request.t()) :: {:ok, transport_request()} | {:error, term()}
   @callback decode_payload(map(), Store.t()) :: {[Edit.t()], boolean()}
   @callback finalize(Store.t()) :: map()
-  @callback project_event(Edit.t()) :: term() | nil
 end

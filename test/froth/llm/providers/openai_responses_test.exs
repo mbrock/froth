@@ -256,7 +256,7 @@ defmodule Froth.LLM.Providers.OpenAIResponsesTest do
         edit.resource == ["message"] and edit.path == ["reasoning_summary"]
       end)
 
-    assert OpenAIResponses.project_event(summary_edit) ==
+    assert Froth.LLM.Edit.project_event(summary_edit) ==
              {:thinking_summary,
               %{"thinking" => "Checked the summaries and grouped the real same-day events."}}
 

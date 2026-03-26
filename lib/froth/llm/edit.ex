@@ -24,4 +24,155 @@ defmodule Froth.LLM.Edit do
   def resource_id(%__MODULE__{resource: resource}) do
     Enum.map_join(resource, "/", &to_string/1)
   end
+
+  @doc "Project an Edit into a caller-facing event tuple, or nil."
+  def project_event(%__MODULE__{} = edit) do
+    do_project(edit)
+  end
+
+  # -- text_delta: append text on any message-scoped path --
+
+  defp do_project(%__MODULE__{op: :append, resource: ["message"], path: ["text"], value: text})
+       when is_binary(text),
+       do: {:text_delta, text}
+
+  defp do_project(%__MODULE__{
+         op: :append,
+         resource: ["message", "blocks", idx],
+         path: ["text"],
+         value: text
+       })
+       when is_integer(idx) and is_binary(text),
+       do: {:text_delta, text}
+
+  # -- tool_use_start: open on tool_calls or blocks --
+
+  defp do_project(%__MODULE__{
+         op: :open,
+         resource: ["message", "tool_calls", _idx],
+         attrs: %{"id" => id, "name" => name} = attrs
+       })
+       when is_binary(id) and is_binary(name) do
+    {:tool_use_start,
+     %{"id" => id, "name" => name, "input" => Map.get(attrs, "input", %{})}
+     |> maybe_put("server_name", Map.get(attrs, "server_name"))}
+  end
+
+  defp do_project(%__MODULE__{
+         op: :open,
+         resource: ["message", "blocks", _idx],
+         attrs: %{"type" => type, "id" => id, "name" => name} = attrs
+       })
+       when is_binary(id) and is_binary(name) and type in ["tool_use", "mcp_tool_use"] do
+    {:tool_use_start,
+     %{"type" => type, "id" => id, "name" => name, "input" => Map.get(attrs, "input")}
+     |> maybe_put("server_name", Map.get(attrs, "server_name"))}
+  end
+
+  # -- tool_use_delta: partial JSON on tool_calls or blocks --
+
+  defp do_project(%__MODULE__{
+         op: :append,
+         resource: ["message", "tool_calls", _idx],
+         path: ["arguments_json"],
+         value: partial_json,
+         attrs: %{"id" => id}
+       })
+       when is_binary(id) and is_binary(partial_json),
+       do: {:tool_use_delta, %{"id" => id, "partial_json" => partial_json}}
+
+  defp do_project(%__MODULE__{
+         op: :append,
+         resource: ["message", "blocks", _idx],
+         path: ["__input_json_buf"],
+         value: partial_json,
+         attrs: %{"id" => id}
+       })
+       when is_binary(id) and is_binary(partial_json),
+       do: {:tool_use_delta, %{"id" => id, "partial_json" => partial_json}}
+
+  # -- tool_use_stop: close on tool_calls or blocks --
+
+  defp do_project(%__MODULE__{
+         op: :close,
+         resource: ["message", "tool_calls", _idx],
+         attrs: %{"id" => id, "name" => name, "input" => input}
+       })
+       when is_binary(id) and is_binary(name),
+       do: {:tool_use_stop, %{"id" => id, "name" => name, "input" => input}}
+
+  defp do_project(%__MODULE__{
+         op: :close,
+         resource: ["message", "blocks", _idx],
+         attrs: %{"type" => type, "id" => id, "name" => name, "input" => input} = attrs
+       })
+       when is_binary(id) and is_binary(name) and type in ["tool_use", "mcp_tool_use"] do
+    {:tool_use_stop,
+     %{"type" => type, "id" => id, "name" => name, "input" => input}
+     |> maybe_put("server_name", Map.get(attrs, "server_name"))}
+  end
+
+  # -- usage --
+
+  defp do_project(%__MODULE__{op: :merge, resource: ["message"], path: ["usage"], value: usage})
+       when is_map(usage),
+       do: {:usage, %{"usage" => usage}}
+
+  # -- message_start (Anthropic) --
+
+  defp do_project(%__MODULE__{op: :open, resource: ["message"], attrs: attrs})
+       when is_map(attrs) do
+    with id when is_binary(id) <- attrs["id"],
+         model when is_binary(model) <- attrs["model"] do
+      {:message_start, %{"id" => id, "model" => model}}
+    else
+      _ -> nil
+    end
+  end
+
+  # -- thinking (Anthropic) --
+
+  defp do_project(%__MODULE__{
+         op: :open,
+         resource: ["message", "blocks", idx],
+         attrs: %{"type" => "thinking"}
+       })
+       when is_integer(idx),
+       do: {:thinking_start, %{"index" => idx}}
+
+  defp do_project(%__MODULE__{
+         op: :append,
+         resource: ["message", "blocks", idx],
+         path: ["__thinking_buf"],
+         value: delta
+       })
+       when is_integer(idx) and is_binary(delta),
+       do: {:thinking_delta, %{"index" => idx, "delta" => delta}}
+
+  defp do_project(%__MODULE__{
+         op: :close,
+         resource: ["message", "blocks", idx],
+         attrs: %{"type" => "thinking", "thinking" => thinking, "signature" => signature}
+       })
+       when is_integer(idx),
+       do: {:thinking_stop, %{"index" => idx, "thinking" => thinking, "signature" => signature}}
+
+  # -- reasoning_summary (OpenAI) --
+
+  defp do_project(%__MODULE__{
+         op: :set,
+         resource: ["message"],
+         path: ["reasoning_summary"],
+         value: summary
+       })
+       when is_binary(summary) and summary != "",
+       do: {:thinking_summary, %{"thinking" => summary}}
+
+  # -- fallback --
+
+  defp do_project(_edit), do: nil
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, _key, ""), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

@@ -90,7 +90,7 @@ defmodule Froth.Agent.WorkerTest do
 
     Application.put_env(
       :froth,
-      :sse_stream_fun,
+      :llm_stream_fun,
       Froth.SSEReplay.recording_stream_fun(fixture, notify_pid)
     )
 
@@ -98,6 +98,7 @@ defmodule Froth.Agent.WorkerTest do
     executor = Keyword.fetch!(opts, :executor)
 
     config = %Config{
+      provider: :anthropic,
       model: "claude-opus-4-6",
       tools: tools,
       tool_executor: executor,
@@ -203,6 +204,17 @@ defmodule Froth.Agent.WorkerTest do
     do: metadata["message_id"]
 
   defp event_message_id(_event), do: nil
+
+  test "begin_cycle stores the full message text preview" do
+    long_text = String.duplicate("there is no truncation here. ", 20)
+    message = Repo.insert!(Message.user(long_text))
+
+    cycle = Agent.begin_cycle(message, %Config{model: "claude-opus-4-6"})
+    event = latest_cycle_event(cycle.id, "message.appended")
+
+    assert event.metadata["text_preview"] == long_text
+    refute event.metadata["text_preview"] =~ "..."
+  end
 
   describe "simple reply (no tools)" do
     test "calls the LLM once and stops" do
@@ -1001,11 +1013,11 @@ defmodule Froth.Agent.WorkerTest do
 
       Application.put_env(
         :froth,
-        :sse_stream_fun,
+        :llm_stream_fun,
         Froth.SSEReplay.recording_stream_fun("simple_reply", self())
       )
 
-      config = %Config{model: "claude-opus-4-6", tools: [], tool_executor: executor}
+      config = %Config{provider: :anthropic, model: "claude-opus-4-6", tools: [], tool_executor: executor}
       message = Repo.insert!(%Message{role: :user, content: Message.wrap("hello")})
 
       {cycle, stream} = Froth.Agent.run(message, config)
@@ -1026,11 +1038,12 @@ defmodule Froth.Agent.WorkerTest do
 
       Application.put_env(
         :froth,
-        :sse_stream_fun,
+        :llm_stream_fun,
         Froth.SSEReplay.recording_stream_fun("tool_use_echo", self())
       )
 
       config = %Config{
+        provider: :anthropic,
         model: "claude-opus-4-6",
         tools: [echo_tool_spec()],
         tool_executor: executor

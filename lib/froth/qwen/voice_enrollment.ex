@@ -256,8 +256,7 @@ defmodule Froth.Qwen.VoiceEnrollment do
 
   defp api_key(opts) do
     Keyword.get(opts, :api_key) ||
-      System.get_env("ALIBABA_API_KEY") ||
-      System.get_env("DASHSCOPE_API_KEY")
+      Froth.LLM.active_api_key(["alibaba", "dashscope"])
   end
 
   defp maybe_put(map, _key, nil), do: map

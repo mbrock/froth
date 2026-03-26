@@ -207,6 +207,23 @@ defmodule Froth.Agent do
     |> Enum.reverse()
   end
 
+  @doc "Get the text of the last agent message in a cycle."
+  @spec latest_agent_text(Cycle.t()) :: String.t() | nil
+  def latest_agent_text(%Cycle{} = cycle) do
+    case latest_head_id(cycle) do
+      nil -> nil
+      head_id ->
+        head_id
+        |> load_messages()
+        |> Enum.filter(&(&1.role == :agent))
+        |> List.last()
+        |> case do
+          nil -> nil
+          message -> Message.extract_text(message)
+        end
+    end
+  end
+
   @doc """
   Extract a trace of tool calls and results from a cycle's API messages.
 
@@ -488,13 +505,13 @@ defmodule Froth.Agent do
           |> stringify_atom()
       end
 
-    provider_module =
-      case LLM.resolve_client_module(config.provider, config.model) do
-        {:ok, module} -> Atom.to_string(module)
-        {:error, _reason} -> nil
+    resolved =
+      case LLM.resolve_provider_name(config.provider, config.model) do
+        nil -> nil
+        name -> Atom.to_string(name)
       end
 
-    {provider || provider_module, provider_module}
+    {provider || resolved, resolved}
   end
 
   defp normalize_provider_name(provider) when is_binary(provider) do
@@ -617,11 +634,6 @@ defmodule Froth.Agent do
   end
 
   defp truncate(nil, _limit), do: nil
-
-  defp truncate(value, limit) when is_binary(value) and byte_size(value) > limit do
-    binary_part(value, 0, limit) <> "..."
-  end
-
   defp truncate(value, _limit), do: value
 
   defp stringify_or_nil(nil), do: nil

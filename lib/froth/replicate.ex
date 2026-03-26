@@ -32,10 +32,8 @@ defmodule Froth.Replicate do
   @poll_interval_ms 2_000
 
   defp api_token do
-    Application.get_env(:froth, __MODULE__, [])
-    |> Keyword.get(:api_token)
-    |> case do
-      nil -> raise "REPLICATE_API_TOKEN not configured"
+    case Froth.LLM.active_api_key("replicate") do
+      nil -> raise "No replicate API key found in api_keys table"
       key -> key
     end
   end

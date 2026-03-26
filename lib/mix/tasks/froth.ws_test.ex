@@ -4,11 +4,9 @@ defmodule Mix.Tasks.Froth.WsTest do
 
   @impl Mix.Task
   def run(_args) do
-    Mix.Task.run("app.config")
-    Application.ensure_all_started(:ssl)
-    Application.ensure_all_started(:jason)
+    Mix.Task.run("app.start")
 
-    api_key = System.get_env("ALIBABA_API_KEY")
+    api_key = Froth.LLM.active_api_key("alibaba")
     model = "qwen3-asr-flash-realtime-2026-02-10"
     url = "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime?model=#{model}"
 

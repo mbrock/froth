@@ -3,14 +3,84 @@ defmodule Froth.LLM do
 
   import Ecto.Query, only: [from: 2]
 
+  require Logger
+
   alias Froth.ApiKey
-  alias Froth.LLM.{Edit, Message, Request, Store}
+  alias Froth.LLM.{Client, Edit, Message, Request, Store}
   alias Froth.LLM.Transport.SSE
   alias Froth.Telemetry.Span
 
   @type on_event :: (term() -> any())
   @type on_edit :: (Edit.t() -> any())
   @type provider_ref :: atom() | String.t() | module() | nil
+
+  @default_max_tokens 16_384
+  @default_max_retries 5
+  @default_retry_base_ms 2_000
+  @default_retry_max_ms 30_000
+
+  @default_system_prompt """
+  Froth is a thinking interface. It accepts text and returns text. The text it returns continues the thought that was entered, drawing on a body of knowledge larger than what the person had available.
+
+  This is different from a chatbot. A chatbot simulates a conversation between two parties. Froth does not simulate a conversation. It processes input and produces output relevant to that input. The distinction matters because conversational simulation produces specific behaviors — greetings, expressions of enthusiasm, summaries of what was previously said, offers to do more — which are noise in a thinking interface.
+
+  Froth does not address the person. It does not say "you" or "your." It does not say "I can" or "I'd be happy to" or "feel free to." It does not describe its own capabilities. It does not suggest things the person could try. These are the behaviors of a service presenting itself to a customer. Froth is not a service and the person is not a customer. The text simply addresses the subject matter.
+
+  Responses are short. A couple of paragraphs is usually enough. Short sentences. Short paragraphs. Say the essential thing and stop. The person can continue the thought or steer it. A response that reads like an encyclopedia entry has failed. The goal is something closer to a thought spoken aloud — quick, clear, alive — than a reference document.
+
+  Separate paragraphs with a blank line.
+
+  What Froth produces depends on what is entered. A factual question gets a factual answer. An exploratory or incomplete thought gets developed. A technical question gets a technical response. An error in the input gets corrected as part of the response. When two things from different fields share a common structure, that is stated, with the specific correspondence, because it is useful information.
+
+  Froth retains context across entries. A thought that has been developing over several turns continues to develop.
+
+  All output is prose. Bullet points, numbered lists, bold text, headers, and emoji are not used unless requested.
+  """
+
+  def default_system_prompt, do: String.trim(@default_system_prompt)
+
+  # -- Provider registry --
+
+  @providers %{
+    anthropic: %{
+      key_providers: ["anthropic"],
+      provider_module: Froth.LLM.Providers.Anthropic,
+      endpoint: "https://api.anthropic.com/v1/messages",
+      auth: :anthropic,
+      config_key: Froth.Anthropic
+    },
+    openai: %{
+      key_providers: ["openai"],
+      provider_module: Froth.LLM.Providers.OpenAIResponses,
+      endpoint: "https://api.openai.com/v1/responses",
+      auth: :bearer,
+      config_key: Froth.OpenAI
+    },
+    grok: %{
+      key_providers: ["grok", "xai"],
+      provider_module: Froth.LLM.Providers.OpenAIResponses,
+      endpoint: "https://api.x.ai/v1/responses",
+      auth: :bearer,
+      config_key: Froth.Grok
+    },
+    gemini: %{
+      key_providers: ["gemini", "google"],
+      provider_module: Froth.LLM.Providers.GeminiInteractions,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta/interactions",
+      auth: :query_key,
+      config_key: Froth.Gemini
+    }
+  }
+
+  @doc "Look up the API key for a provider name (e.g. :anthropic, :grok)."
+  def api_key_for_provider(provider_name) when is_atom(provider_name) do
+    case Map.get(@providers, provider_name) do
+      %{key_providers: key_providers} -> active_api_key(key_providers)
+      nil -> nil
+    end
+  end
+
+  # -- stream_single --
 
   @spec stream_single(list(map() | Message.t()), on_event(), keyword()) ::
           {:ok, map()} | {:error, term()}
@@ -21,14 +91,221 @@ defmodule Froth.LLM do
         fun.(api_messages, on_event, opts)
 
       _ ->
-        with {:ok, client} <-
-               resolve_client_module(Keyword.get(opts, :provider), Keyword.get(opts, :model)) do
-          client.stream_single(api_messages, on_event, opts)
-        else
-          {:error, _} = err -> err
+        with {:ok, request} <- build_request(api_messages, opts) do
+          provider_name = resolve_provider_name(opts[:provider], opts[:model])
+          stream_with_retries(provider_name, request, on_event, opts, 0)
         end
     end
   end
+
+  defp stream_with_retries(provider_name, request, on_event, opts, attempt) do
+    case Client.stream_request(provider_name, request, on_event, receive_timeout: 60_000) do
+      {:error, reason} = error ->
+        cfg = provider_app_config(provider_name)
+
+        case retry_delay_ms(reason, attempt, opts, cfg) do
+          nil ->
+            error
+
+          delay_ms ->
+            Logger.warning(
+              "#{provider_name} request retry #{attempt + 1}/#{max_retries(opts, cfg)} in #{delay_ms}ms: #{inspect(reason)}"
+            )
+
+            if delay_ms > 0, do: Process.sleep(delay_ms)
+            stream_with_retries(provider_name, request, on_event, opts, attempt + 1)
+        end
+
+      result ->
+        result
+    end
+  end
+
+  defp retry_delay_ms({:provider_error, _provider, error, _diagnostics}, attempt, opts, cfg) do
+    if attempt < max_retries(opts, cfg) and retryable_error?(error) do
+      compute_delay(attempt, opts, cfg)
+    end
+  end
+
+  defp retry_delay_ms({:http_error, status, _decoded}, attempt, opts, cfg)
+       when status in [429, 500, 502, 503, 504] do
+    if attempt < max_retries(opts, cfg) do
+      compute_delay(attempt, opts, cfg)
+    end
+  end
+
+  defp retry_delay_ms(_reason, _attempt, _opts, _cfg), do: nil
+
+  defp retryable_error?(%{"error" => %{} = error}), do: retryable_error?(error)
+
+  defp retryable_error?(%{} = error) do
+    type = error["type"] || error[:type]
+    code = error["code"] || error[:code]
+    message = String.downcase(to_string(error["message"] || error[:message] || ""))
+
+    type in ["api_error", "overloaded_error", "rate_limit_error"] or
+      code in ["rate_limit_exceeded", "server_error", "overloaded_error"] or
+      String.contains?(message, "internal server error") or
+      String.contains?(message, "overloaded") or
+      String.contains?(message, "rate limit") or
+      String.contains?(message, "try again later")
+  end
+
+  defp retryable_error?(_error), do: false
+
+  defp compute_delay(attempt, opts, cfg) do
+    base_ms = max(0, retry_base_ms(opts, cfg))
+    max_ms = max(base_ms, retry_max_ms(opts, cfg))
+    min(max_ms, base_ms * Integer.pow(2, attempt))
+  end
+
+  defp max_retries(opts, cfg),
+    do: Keyword.get(opts, :max_retries, Keyword.get(cfg, :max_retries, @default_max_retries))
+
+  defp retry_base_ms(opts, cfg),
+    do:
+      Keyword.get(opts, :retry_base_ms, Keyword.get(cfg, :retry_base_ms, @default_retry_base_ms))
+
+  defp retry_max_ms(opts, cfg),
+    do: Keyword.get(opts, :retry_max_ms, Keyword.get(cfg, :retry_max_ms, @default_retry_max_ms))
+
+  # -- Request building --
+
+  defp build_request(api_messages, opts) do
+    provider_name = resolve_provider_name(Keyword.get(opts, :provider), Keyword.get(opts, :model))
+
+    case Map.get(@providers, provider_name) do
+      nil ->
+        {:error, {:unknown_provider, opts[:provider] || opts[:model]}}
+
+      provider_spec ->
+        api_key = Keyword.get(opts, :api_key)
+
+        if is_nil(api_key) or api_key == "" do
+          {:error, :missing_api_key}
+        else
+          cfg = provider_app_config(provider_name)
+          system = resolve_system(Keyword.get(opts, :system), cfg)
+          model = Keyword.get(opts, :model, Keyword.get(cfg, :model))
+
+          if is_nil(model) or model == "" do
+            {:error, :missing_model}
+          else
+            {:ok,
+             %Request{
+               provider: provider_spec.provider_module,
+               messages: api_messages,
+               model: model,
+               system: system,
+               max_tokens:
+                 Keyword.get(opts, :max_tokens, Keyword.get(cfg, :max_tokens, @default_max_tokens)),
+               tools: Keyword.get(opts, :tools, Keyword.get(cfg, :tools, [])),
+               thinking: resolve_thinking(model, Keyword.get(opts, :thinking, Keyword.get(cfg, :thinking))),
+               output_config: resolve_output_config(opts, cfg),
+               cache_control:
+                 Keyword.get(
+                   opts,
+                   :cache_control,
+                   Keyword.get(cfg, :cache_control, %{"type" => "ephemeral"})
+                 ),
+               response_modalities:
+                 Keyword.get(opts, :response_modalities, Keyword.get(cfg, :response_modalities)),
+               response_format:
+                 Keyword.get(opts, :response_format, Keyword.get(cfg, :response_format)),
+               response_mime_type:
+                 Keyword.get(opts, :response_mime_type, Keyword.get(cfg, :response_mime_type)),
+               headers: build_headers(provider_spec, api_key, Keyword.get(opts, :tools, [])),
+               endpoint: build_endpoint(provider_spec, api_key, model, opts, cfg),
+               parent_id: Keyword.get(opts, :parent_id),
+               provider_options: %{
+                 "reasoning_effort" =>
+                   Keyword.get(opts, :effort, Keyword.get(cfg, :effort)),
+                 "reasoning_summary" =>
+                   Keyword.get(opts, :reasoning_summary, Keyword.get(cfg, :reasoning_summary)),
+                 "include_usage" => true,
+                 "text_verbosity" =>
+                   Keyword.get(opts, :verbosity, Keyword.get(cfg, :verbosity)),
+                 "previous_response_id" => Keyword.get(opts, :previous_response_id)
+               }
+             }}
+          end
+        end
+    end
+  end
+
+  defp resolve_system(system, cfg) do
+    system = system || Keyword.get(cfg, :system, "")
+
+    case String.trim(to_string(system)) do
+      "" -> default_system_prompt()
+      s -> s
+    end
+  end
+
+  defp resolve_thinking(model, configured) when is_binary(model) do
+    cond do
+      is_map(configured) -> configured
+      is_nil(configured) and model == "claude-opus-4-6" -> %{"type" => "adaptive"}
+      true -> configured
+    end
+  end
+
+  defp resolve_thinking(_model, configured), do: configured
+
+  defp resolve_output_config(opts, cfg) do
+    output_config = Keyword.get(opts, :output_config, Keyword.get(cfg, :output_config))
+    effort = Keyword.get(opts, :effort, Keyword.get(cfg, :effort))
+
+    if is_binary(effort) do
+      (output_config || %{}) |> Map.put("effort", effort)
+    else
+      output_config
+    end
+  end
+
+  @anthropic_version "2023-06-01"
+  @context_beta "context-1m-2025-08-07"
+  @mcp_beta "mcp-client-2025-11-20"
+
+  defp build_headers(%{auth: :anthropic}, api_key, tools) do
+    beta = [@context_beta]
+    beta = if Enum.any?(List.wrap(tools), &mcp_tool?/1), do: beta ++ [@mcp_beta], else: beta
+
+    [
+      {"x-api-key", api_key},
+      {"anthropic-version", @anthropic_version},
+      {"anthropic-beta", Enum.join(beta, ",")},
+      {"accept", "text/event-stream"}
+    ]
+  end
+
+  defp build_headers(%{auth: :bearer}, api_key, _tools) do
+    [{"authorization", "Bearer #{api_key}"}]
+  end
+
+  defp build_headers(%{auth: :query_key}, _api_key, _tools), do: []
+
+  defp mcp_tool?(%{"type" => "mcp_endpoint"}), do: true
+  defp mcp_tool?(_), do: false
+
+  defp build_endpoint(%{auth: :query_key, endpoint: base}, api_key, _model, opts, cfg) do
+    custom = Keyword.get(opts, :endpoint, Keyword.get(cfg, :endpoint))
+    url = custom || base
+    "#{String.trim_trailing(url, "/")}?alt=sse&key=#{api_key}"
+  end
+
+  defp build_endpoint(%{endpoint: base}, _api_key, _model, opts, cfg) do
+    Keyword.get(opts, :endpoint, Keyword.get(cfg, :endpoint, base))
+  end
+
+  defp provider_app_config(provider_name) do
+    case Map.get(@providers, provider_name) do
+      %{config_key: key} -> Application.get_env(:froth, key, [])
+      _ -> []
+    end
+  end
+
+  # -- stream (low-level, used by Client) --
 
   @spec stream(Request.t(), on_event(), keyword()) :: {:ok, map()} | {:error, term()}
   def stream(%Request{} = request, on_event, opts \\ []) when is_function(on_event, 1) do
@@ -59,7 +336,7 @@ defmodule Froth.LLM do
                 emit_edit(telemetry_provider, edit, parent_id)
                 on_edit.(edit)
 
-                case provider.project_event(edit) do
+                case Edit.project_event(edit) do
                   nil -> :ok
                   event -> on_event.(event)
                 end
@@ -89,6 +366,8 @@ defmodule Froth.LLM do
     end
   end
 
+  # -- active_api_key --
+
   @spec active_api_key(String.t() | atom() | [String.t() | atom()]) :: String.t() | nil
   def active_api_key(provider)
       when is_binary(provider) or is_atom(provider) or is_list(provider) do
@@ -108,24 +387,25 @@ defmodule Froth.LLM do
       )
       |> Froth.Repo.one()
     end
-  rescue
-    _ -> nil
-  catch
-    :exit, _ -> nil
   end
 
-  @spec default_system_prompt() :: String.t()
-  def default_system_prompt, do: Froth.Anthropic.default_system_prompt()
+  # -- Provider resolution --
 
-  @spec default_model(provider_ref()) :: String.t() | nil
-  def default_model(provider) do
-    case resolve_client_module(provider, nil) do
-      {:ok, Froth.Anthropic} -> "claude-opus-4-6"
-      {:ok, Froth.OpenAI} -> "gpt-5-mini"
-      {:ok, Froth.Grok} -> "grok-4-1-fast-non-reasoning"
-      {:ok, Froth.Gemini} -> "gemini-3-flash-preview"
-      _ -> nil
+  @spec resolve_provider_name(provider_ref(), String.t() | nil) :: atom() | nil
+  def resolve_provider_name(provider, model \\ nil)
+
+  def resolve_provider_name(nil, model), do: provider_name_for_model(model)
+
+  def resolve_provider_name(provider, _model) when is_atom(provider) do
+    if Map.has_key?(@providers, provider) do
+      provider
+    else
+      normalize_provider_ref(Atom.to_string(provider))
     end
+  end
+
+  def resolve_provider_name(provider, _model) when is_binary(provider) do
+    normalize_provider_ref(provider)
   end
 
   @spec provider_name_for_model(String.t() | nil) :: atom() | nil
@@ -143,39 +423,7 @@ defmodule Froth.LLM do
 
   def provider_name_for_model(_model), do: nil
 
-  @spec resolve_client_module(provider_ref(), String.t() | nil) ::
-          {:ok, module()} | {:error, term()}
-  def resolve_client_module(provider, model \\ nil)
-
-  def resolve_client_module(provider, _model) when is_atom(provider) and not is_nil(provider) do
-    cond do
-      Code.ensure_loaded?(provider) and function_exported?(provider, :stream_single, 3) ->
-        {:ok, provider}
-
-      provider in [:anthropic, :openai, :grok, :gemini] ->
-        resolve_client_module(Atom.to_string(provider), nil)
-
-      true ->
-        {:error, {:unknown_provider, provider}}
-    end
-  end
-
-  def resolve_client_module(provider, model) do
-    resolved =
-      case provider do
-        nil -> provider_name_for_model(model)
-        ref -> normalize_provider_ref(ref)
-      end
-
-    case resolved do
-      :anthropic -> {:ok, Froth.Anthropic}
-      :openai -> {:ok, Froth.OpenAI}
-      :grok -> {:ok, Froth.Grok}
-      :gemini -> {:ok, Froth.Gemini}
-      nil -> {:error, {:unknown_provider, provider || model}}
-      other -> {:error, {:unknown_provider, other}}
-    end
-  end
+  # -- Internal helpers --
 
   defp emit_edit(provider, %Edit{} = edit, parent_id) do
     Span.execute([:froth, :llm, :edit], parent_id, %{
@@ -205,8 +453,7 @@ defmodule Froth.LLM do
   defp provider_module?(provider) when is_atom(provider) do
     Code.ensure_loaded?(provider) and function_exported?(provider, :build_request, 1) and
       function_exported?(provider, :decode_payload, 2) and
-      function_exported?(provider, :finalize, 1) and
-      function_exported?(provider, :project_event, 1)
+      function_exported?(provider, :finalize, 1)
   end
 
   defp provider_module?(_provider), do: false
@@ -218,8 +465,6 @@ defmodule Froth.LLM do
       _ -> nil
     end
   end
-
-  defp normalize_provider_ref(ref) when is_atom(ref), do: ref
 
   defp normalize_provider_ref(ref) when is_binary(ref) do
     ref
@@ -237,4 +482,6 @@ defmodule Froth.LLM do
       _ -> nil
     end
   end
+
+  defp normalize_provider_ref(ref) when is_atom(ref), do: ref
 end

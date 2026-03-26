@@ -6,8 +6,9 @@ defmodule Froth.Search do
   then collates results with a fourth LLM call.
   """
 
-  alias Froth.LLM
-  alias Froth.LLM.Message
+  alias Froth.Agent
+  alias Froth.Agent.{Config, Message}
+  alias Froth.Repo
   alias Froth.Search.Result
 
   @default_timeout 30_000
@@ -15,9 +16,12 @@ defmodule Froth.Search do
   @source_text_limit 8_000
 
   @providers [
-    {:grok, Froth.Search.Grok, "grok-4.20-0309-non-reasoning"},
-    {:openai, Froth.Search.OpenAI, "gpt-5.4-mini"},
-    {:gemini, Froth.Search.Gemini, "gemini-3.1-flash-lite-preview"}
+    {:grok, :grok, "grok-4-1-fast-reasoning",
+     [%{"type" => "x_search"}, %{"type" => "web_search"}]},
+    {:openai, :openai, "gpt-5.4-mini",
+     [%{"type" => "web_search_preview"}]},
+    {:gemini, :gemini, "gemini-3.1-flash-lite-preview",
+     [%{"google_search" => %{}}]}
   ]
 
   @type provider_name :: :grok | :openai | :gemini
@@ -78,14 +82,24 @@ defmodule Froth.Search do
 
     providers
     |> Task.async_stream(
-      fn {_name, module, model} ->
-        module.search(query, model: model)
+      fn {_name, provider, model, tools} ->
+        config = %Config{
+          provider: provider,
+          model: model,
+          system: provider_system_prompt(),
+          tools: tools
+        }
+
+        message = Repo.insert!(Message.user(provider_prompt(query)))
+        {cycle, stream} = Agent.run(message, config)
+        Stream.run(stream)
+        {:ok, %{text: Agent.latest_agent_text(cycle)}}
       end,
       timeout: timeout,
       on_timeout: :kill_task
     )
     |> Enum.zip(providers)
-    |> Map.new(fn {task_result, {name, _module, _model}} ->
+    |> Map.new(fn {task_result, {name, _, _, _}} ->
       {name, normalize_provider_result(task_result)}
     end)
   end
@@ -167,17 +181,19 @@ defmodule Froth.Search do
   defp collate(%Result{} = result, opts) do
     model = Keyword.get(opts, :collation_model, @default_collation_model)
 
-    with {:ok, response} <-
-           LLM.stream_single(
-             [Message.user(collation_prompt(result))],
-             fn _event -> :ok end,
-             provider: :anthropic,
-             model: model,
-             system: collation_system_prompt(),
-             max_tokens: 4_096
-           ),
-         {:ok, parsed} <- parse_collation_response(response.text) do
-      {:ok, parsed}
+    config = %Config{
+      provider: :anthropic,
+      model: model,
+      system: collation_system_prompt()
+    }
+
+    message = Repo.insert!(Message.user(collation_prompt(result)))
+    {cycle, stream} = Agent.run(message, config)
+    Stream.run(stream)
+
+    case Agent.latest_agent_text(cycle) do
+      nil -> {:error, "empty collation response"}
+      text -> parse_collation_response(text)
     end
   end
 
@@ -267,8 +283,8 @@ defmodule Froth.Search do
 
   defp formatted_sources(sources) when is_map(sources) do
     @providers
-    |> Enum.filter(fn {provider, _module, _model} -> Map.has_key?(sources, provider) end)
-    |> Enum.map(fn {provider, _module, _model} ->
+    |> Enum.filter(fn {provider, _, _, _} -> Map.has_key?(sources, provider) end)
+    |> Enum.map(fn {provider, _, _, _} ->
       formatted_source(provider, Map.get(sources, provider))
     end)
     |> Enum.join("\n\n")
@@ -360,7 +376,7 @@ defmodule Froth.Search do
 
     if unknown == [] do
       {:ok,
-       Enum.filter(@providers, fn {provider, _module, _model} ->
+       Enum.filter(@providers, fn {provider, _, _, _} ->
          provider in requested
        end)}
     else

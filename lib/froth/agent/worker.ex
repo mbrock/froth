@@ -348,6 +348,7 @@ defmodule Froth.Agent.Worker do
 
     opts =
       [
+        api_key: LLM.api_key_for_provider(worker.config.provider),
         system: worker.config.system || "",
         provider: worker.config.provider,
         model: worker.config.model,

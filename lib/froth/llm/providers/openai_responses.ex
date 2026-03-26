@@ -1,16 +1,18 @@
 defmodule Froth.LLM.Providers.OpenAIResponses do
   @moduledoc """
-  Provider for OpenAI Responses API (`/v1/responses`).
+  Provider for the OpenAI/xAI Responses API (`/v1/responses`).
 
-  Supports native built-in tools like `web_search_preview`.
+  Both OpenAI and xAI implement the same Responses API wire format,
+  so this single provider handles both vendors.
   """
 
   @behaviour Froth.LLM.Provider
 
   alias Froth.LLM.{Edit, Message, Request, Store}
-  alias Froth.LLM.Providers.XAIResponses
 
   @retryable_response_statuses ["failed", "incomplete"]
+
+  # -- build_request --
 
   @impl true
   def build_request(%Request{} = request) do
@@ -37,7 +39,11 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
     {:ok, %{url: request.endpoint, headers: request.headers, body: body}}
   end
 
+  # -- decode_payload --
+
   @impl true
+
+  # Error events
   def decode_payload(%{"type" => "error", "error" => %{} = error} = payload, _store) do
     {provider_error_edits(%{"error" => error}, payload), true}
   end
@@ -72,55 +78,130 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
     end
   end
 
-  def decode_payload(%{"type" => "response.completed", "response" => resp} = payload, store)
-      when is_map(resp) do
-    {edits, done?} = XAIResponses.decode_payload(payload, store)
-
-    response_id_edits =
-      case Map.get(resp, "id") do
-        response_id when is_binary(response_id) and response_id != "" ->
-          [
-            %Edit{op: :set, resource: ["message"], path: ["response_id"], value: response_id},
-            %Edit{op: :set, resource: ["message"], path: ["id"], value: response_id}
-          ]
-
-        _ ->
-          []
-      end
-
-    reasoning_summary_edits = reasoning_summary_edits(resp["output"])
-
-    {edits ++ response_id_edits ++ reasoning_summary_edits, done?}
+  # Text delta
+  def decode_payload(%{"type" => "response.output_text.delta", "delta" => delta}, _store) do
+    {[%Edit{op: :append, resource: ["message"], path: ["text"], value: delta}], false}
   end
 
-  def decode_payload(payload, store), do: XAIResponses.decode_payload(payload, store)
+  # Tool call argument streaming
+  def decode_payload(%{"type" => "response.function_call_arguments.delta"} = p, store) do
+    key = tool_call_key(p)
+    delta = Map.get(p, "delta", "")
+    id = tool_call_public_id(store, key, p)
+
+    {[
+       %Edit{
+         op: :append,
+         resource: ["message", "tool_calls", key],
+         path: ["arguments_json"],
+         value: delta,
+         attrs: %{"id" => id}
+       }
+     ], false}
+  end
+
+  # Tool call added
+  def decode_payload(%{"type" => "response.output_item.added", "item" => item}, _store) do
+    case item do
+      %{"type" => "function_call", "call_id" => id, "name" => name} ->
+        key = tool_call_key(item)
+
+        {[
+           %Edit{
+             op: :open,
+             resource: ["message", "tool_calls", key],
+             path: [],
+             value: nil,
+             attrs: %{"id" => id, "item_id" => Map.get(item, "id"), "name" => name}
+           }
+         ], false}
+
+      _ ->
+        {[], false}
+    end
+  end
+
+  # Tool call done
+  def decode_payload(
+        %{"type" => "response.output_item.done", "item" => %{"type" => "function_call"} = item},
+        _store
+      ) do
+    key = tool_call_key(item)
+
+    {[
+       %Edit{
+         op: :close,
+         resource: ["message", "tool_calls", key],
+         path: [],
+         value: nil
+       }
+     ], false}
+  end
+
+  # Response completed — usage, stop reason, response_id, reasoning summary
+  def decode_payload(%{"type" => "response.completed", "response" => resp} = _payload, _store)
+      when is_map(resp) do
+    usage = Map.get(resp, "usage", %{})
+
+    edits =
+      [
+        %Edit{
+          op: :merge,
+          resource: ["message"],
+          path: ["usage"],
+          value: %{
+            "prompt_tokens" => usage["input_tokens"] || 0,
+            "completion_tokens" => usage["output_tokens"] || 0,
+            "total_tokens" => (usage["input_tokens"] || 0) + (usage["output_tokens"] || 0)
+          }
+        },
+        %Edit{
+          op: :set,
+          resource: ["message"],
+          path: ["stop_reason"],
+          value: if(resp["status"] == "completed", do: "end_turn", else: resp["status"])
+        }
+      ] ++ response_id_edits(resp) ++ reasoning_summary_edits(resp["output"])
+
+    {edits, false}
+  end
+
+  # Ignored event types
+  def decode_payload(%{"type" => "response.output_text.done"}, _store), do: {[], false}
+  def decode_payload(%{"type" => "response.content_part" <> _}, _store), do: {[], false}
+
+  # Catch-all
+  def decode_payload(_payload, _store), do: {[], false}
+
+  # -- finalize --
 
   @impl true
   def finalize(%Store{} = store) do
-    result = XAIResponses.finalize(store)
+    text = Store.get(store, ["message", "text"], "")
+    tool_calls = Store.get(store, ["message", "tool_calls"], %{})
+    message = Store.get(store, ["message"], %{})
     response_id = Store.get(store, ["message", "response_id"])
     reasoning_summary = Store.get(store, ["message", "reasoning_summary"])
-    content = maybe_prepend_reasoning_block(result[:content] || [], reasoning_summary)
 
-    result
-    |> Map.put(:content, content)
+    content =
+      []
+      |> maybe_add_text_block(text)
+      |> Kernel.++(tool_calls_to_content(tool_calls))
+      |> maybe_prepend_reasoning_block(reasoning_summary)
+
+    %{
+      text: text,
+      content: content,
+      stop_reason: Map.get(message, "stop_reason", "end_turn"),
+      usage: Map.get(message, "usage", %{}),
+      model: Map.get(message, "model"),
+      message_id: response_id || Map.get(message, "id")
+    }
     |> maybe_put(:reasoning_summary, reasoning_summary)
     |> maybe_put(:response_id, response_id)
-    |> maybe_put(:message_id, response_id)
   end
 
-  @impl true
-  def project_event(%Edit{
-        op: :set,
-        resource: ["message"],
-        path: ["reasoning_summary"],
-        value: reasoning_summary
-      })
-      when is_binary(reasoning_summary) and reasoning_summary != "" do
-    {:thinking_summary, %{"thinking" => reasoning_summary}}
-  end
-
-  def project_event(edit), do: XAIResponses.project_event(edit)
+  # -- Private helpers --
 
   defp provider_error_edits(error_value, payload) when is_map(error_value) do
     [
@@ -133,6 +214,117 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
       }
     ]
   end
+
+  defp response_id_edits(resp) when is_map(resp) do
+    case Map.get(resp, "id") do
+      response_id when is_binary(response_id) and response_id != "" ->
+        [
+          %Edit{op: :set, resource: ["message"], path: ["response_id"], value: response_id},
+          %Edit{op: :set, resource: ["message"], path: ["id"], value: response_id}
+        ]
+
+      _ ->
+        []
+    end
+  end
+
+  defp reasoning_summary_edits(output) when is_list(output) do
+    case extract_reasoning_summary(output) do
+      "" ->
+        []
+
+      reasoning_summary ->
+        [
+          %Edit{
+            op: :set,
+            resource: ["message"],
+            path: ["reasoning_summary"],
+            value: reasoning_summary
+          }
+        ]
+    end
+  end
+
+  defp reasoning_summary_edits(_output), do: []
+
+  defp extract_reasoning_summary(output) when is_list(output) do
+    output
+    |> Enum.flat_map(fn
+      %{"type" => "reasoning", "summary" => summary} when is_list(summary) ->
+        Enum.flat_map(summary, &extract_reasoning_summary_part/1)
+
+      _ ->
+        []
+    end)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n\n")
+  end
+
+  defp extract_reasoning_summary_part(%{"type" => "summary_text", "text" => text})
+       when is_binary(text),
+       do: [text]
+
+  defp extract_reasoning_summary_part(%{"text" => text}) when is_binary(text), do: [text]
+  defp extract_reasoning_summary_part(_part), do: []
+
+  defp maybe_prepend_reasoning_block(content, reasoning_summary)
+       when is_list(content) and is_binary(reasoning_summary) and reasoning_summary != "" do
+    [%{"type" => "thinking", "thinking" => reasoning_summary} | content]
+  end
+
+  defp maybe_prepend_reasoning_block(content, _reasoning_summary) when is_list(content),
+    do: content
+
+  defp tool_call_key(%{"item_id" => item_id}) when is_binary(item_id) and item_id != "",
+    do: item_id
+
+  defp tool_call_key(%{"id" => id}) when is_binary(id) and id != "", do: id
+  defp tool_call_key(%{"index" => idx}) when is_integer(idx), do: idx
+  defp tool_call_key(%{"output_index" => idx}) when is_integer(idx), do: idx
+  defp tool_call_key(_payload), do: 0
+
+  defp tool_call_public_id(%Store{} = store, key, payload) do
+    case Store.get(store, ["message", "tool_calls", key], %{}) do
+      %{"id" => id} when is_binary(id) and id != "" ->
+        id
+
+      _ ->
+        Map.get(payload, "call_id") || Map.get(payload, "item_id") || ""
+    end
+  end
+
+  defp tool_calls_to_content(tool_calls) when is_map(tool_calls) do
+    tool_calls
+    |> Enum.sort_by(fn {k, _} -> k end)
+    |> Enum.flat_map(fn {_idx, tc} ->
+      input =
+        case tc["arguments_json"] do
+          json when is_binary(json) ->
+            case Jason.decode(json) do
+              {:ok, parsed} -> parsed
+              _ -> %{}
+            end
+
+          _ ->
+            %{}
+        end
+
+      case {tc["id"], tc["name"]} do
+        {id, name} when is_binary(id) and id != "" and is_binary(name) and name != "" ->
+          [%{"type" => "tool_use", "id" => id, "name" => name, "input" => input}]
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  defp tool_calls_to_content(_), do: []
+
+  defp maybe_add_text_block(blocks, ""), do: blocks
+  defp maybe_add_text_block(blocks, text), do: blocks ++ [%{"type" => "text", "text" => text}]
+
+  # -- Message encoding --
 
   defp encode_messages(messages) when is_list(messages) do
     Enum.flat_map(messages, &encode_message/1)
@@ -262,6 +454,8 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
     end)
   end
 
+  # -- Tool encoding --
+
   defp encode_tools(tools) when is_list(tools) do
     tools
     |> Enum.reject(&is_nil/1)
@@ -326,6 +520,8 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
     end)
   end
 
+  # -- Normalization helpers --
+
   defp normalize_text_content(content) when is_binary(content), do: content
 
   defp normalize_text_content(content) when is_list(content) do
@@ -359,54 +555,6 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
     do: max_tokens
 
   defp normalize_max_output_tokens(_), do: nil
-
-  defp reasoning_summary_edits(output) when is_list(output) do
-    case extract_reasoning_summary(output) do
-      "" ->
-        []
-
-      reasoning_summary ->
-        [
-          %Edit{
-            op: :set,
-            resource: ["message"],
-            path: ["reasoning_summary"],
-            value: reasoning_summary
-          }
-        ]
-    end
-  end
-
-  defp reasoning_summary_edits(_output), do: []
-
-  defp extract_reasoning_summary(output) when is_list(output) do
-    output
-    |> Enum.flat_map(fn
-      %{"type" => "reasoning", "summary" => summary} when is_list(summary) ->
-        Enum.flat_map(summary, &extract_reasoning_summary_part/1)
-
-      _ ->
-        []
-    end)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join("\n\n")
-  end
-
-  defp extract_reasoning_summary_part(%{"type" => "summary_text", "text" => text})
-       when is_binary(text) do
-    [text]
-  end
-
-  defp extract_reasoning_summary_part(%{"text" => text}) when is_binary(text), do: [text]
-  defp extract_reasoning_summary_part(_part), do: []
-
-  defp maybe_prepend_reasoning_block(content, reasoning_summary)
-       when is_list(content) and is_binary(reasoning_summary) and reasoning_summary != "" do
-    [%{"type" => "thinking", "thinking" => reasoning_summary} | content]
-  end
-
-  defp maybe_prepend_reasoning_block(content, _reasoning_summary) when is_list(content),
-    do: content
 
   defp reasoning_config(nil, nil), do: nil
   defp reasoning_config("", nil), do: nil

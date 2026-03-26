@@ -1,5 +1,5 @@
 // SceneEngine — Canvas2D game renderer for pre-rendered RPG scenes
-// Background: Flux 2 Pro. Walk map: Gemini Flash. Sprites: RetroDiffusion.
+// Background: Flux 2 Pro. Walk map: Gemini Flash.
 
 import {
   blockedRegionsFromState,

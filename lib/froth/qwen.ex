@@ -78,7 +78,7 @@ defmodule Froth.Qwen do
 
   @impl true
   def init(opts) do
-    api_key = Keyword.get(opts, :api_key) || System.get_env("ALIBABA_API_KEY")
+    api_key = Keyword.get(opts, :api_key) || Froth.LLM.active_api_key("alibaba")
     topic = Keyword.fetch!(opts, :topic)
     model = Keyword.fetch!(opts, :model)
     session = Keyword.fetch!(opts, :session)

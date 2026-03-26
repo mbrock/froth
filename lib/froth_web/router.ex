@@ -26,10 +26,10 @@ defmodule FrothWeb.Router do
   scope "/froth", FrothWeb do
     pipe_through :browser
 
+    get "/", PageController, :home
     get "/objects/*key", ObjectStoreController, :show
     get "/summaries", SummariesController, :index
     get "/headlines", HeadlinesController, :index
-    live "/", AnalysesLive, :index
     live "/analyses", AnalysesLive, :index
     live "/analyses/:day", AnalysesLive, :index
     live "/inference", InferenceSessionsLive, :index
@@ -96,9 +96,6 @@ defmodule FrothWeb.Router do
     get "/:id", ReelController, :show
   end
 
-  scope "/", FrothWeb do
-    get "/news", NewsController, :show
-  end
 
   # Voice — HTML hypermedia for podcast generation
   scope "/froth/voice", FrothWeb do

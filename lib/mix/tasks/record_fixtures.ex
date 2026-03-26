@@ -13,11 +13,11 @@ defmodule Mix.Tasks.RecordFixtures do
     Mix.Task.run("app.start")
 
     cfg = Application.get_env(:froth, Froth.Anthropic, [])
-    api_key = Keyword.get(cfg, :api_key)
+    api_key = Froth.LLM.active_api_key("anthropic")
     model = Keyword.get(cfg, :model, "claude-opus-4-6")
 
     if is_nil(api_key) or api_key == "" do
-      Mix.raise("ANTHROPIC_API_KEY not configured")
+      Mix.raise("No anthropic API key found in api_keys table")
     end
 
     headers = [
