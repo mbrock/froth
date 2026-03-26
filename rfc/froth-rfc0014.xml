@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0014" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0014: Facts, Links, and Projections</title>
+    <status>DRAFT</status>
+    <author>Charlie (@charliebuddybot)</author>
+    <date>2026-03-26</date>
+    <related>FROTH-RFC-0004, FROTH-RFC-0005, FROTH-RFC-0008</related>
+  </meta>
+
+  <section title="Problem" id="problem">
+    <p>Froth has moved in the right direction. RFC-0008 correctly unified <tt>telemetry_events</tt> and <tt>agent_events</tt> into one <tt>events</tt> table. But the current ontology still carries the scars of the older split world.</p>
+    <p>The database still treats too many things as separate species of truth:</p>
+    <list type="bullet">
+      <item><p><tt>events</tt> for telemetry and agent runtime facts</p></item>
+      <item><p><tt>tasks</tt> plus <tt>task_events</tt> for background work</p></item>
+      <item><p><tt>agent_cycles</tt> and <tt>agent_messages</tt> for cycles and transcript state</p></item>
+      <item><p><tt>telegram_cycle_links</tt> and <tt>task_telegram_links</tt> for app-specific relations</p></item>
+      <item><p><tt>codex_session_events</tt> as another event universe beside <tt>events</tt></p></item>
+    </list>
+    <p>This does not merely create extra tables. It creates extra ontologies. The system has to keep re-explaining to itself whether something is an event, a task, a cycle, a message, a session, a transcript row, a link row, or a projection. That is exactly the sort of conceptual tax that later appears as confused prompts, heuristic joins, duplicate readers, and ugly adapter code.</p>
+    <p>The naming also reveals the problem. The <tt>events</tt> table is already carrying more than happenings. Some rows are durable records or ledgers. The <tt>metadata</tt> column is often not metadata at all. It is the actual payload.</p>
+  </section>
+
+  <section title="Goal" id="goal">
+    <p>Reduce Froth's core runtime ontology to two truths and one discipline:</p>
+    <list type="bullet">
+      <item><p><tt>facts</tt> — append-only records of things that are true</p></item>
+      <item><p><tt>links</tt> — append-only named relations between facts</p></item>
+      <item><p><strong>projections are disposable</strong> — any optimized read model is derived, rebuildable, and not the source of truth</p></item>
+    </list>
+    <p>The result should be simpler than the current world, not more abstract in a way that only moves the confusion elsewhere.</p>
+  </section>
+
+  <section title="Thesis" id="thesis">
+    <p>The next simplification after RFC-0008 is not another unification pass around the word &quot;event&quot;. It is a more general ontology.</p>
+    <p>Froth should stop distinguishing so sharply between &quot;event&quot; rows and &quot;object&quot; rows. A message, a tool invocation, a tool result, a task snapshot, a notification, a user profile, an analysis artifact, and a cycle completion are all facts. Some facts describe happenings. Some facts describe entities. Some facts describe derived state. That distinction belongs in <tt>kind</tt> and <tt>payload</tt>, not in the table model itself.</p>
+    <p>Relations should be explicit and first-class rather than smuggled into special columns and app-specific link tables. Span trees, parent chains, task-to-cycle attachment, reply edges, derivation edges, and provenance edges are all the same species of thing: links.</p>
+  </section>
+
+  <section title="Design" id="design">
+    <subsection title="1. Facts replace the narrow event/object split" id="facts">
+      <p>Introduce a core table called <tt>facts</tt>. This may begin as a rename or successor to the current <tt>events</tt> table.</p>
+      <p>The minimum shape is:</p>
+      <code>facts
+  id          uuid/text   NOT NULL primary key
+  kind        text        NOT NULL
+  payload     jsonb       NOT NULL default '{}'
+  inserted_at timestamp   NOT NULL
+</code>
+      <p>There may later be convenience columns that are truly universal. But the burden of proof should be high. The point is to stop baking domain-specific assumptions into the base schema.</p>
+      <p>In particular:</p>
+      <list type="bullet">
+        <item><p>rename <tt>event</tt> to <tt>kind</tt></p></item>
+        <item><p>rename <tt>metadata</tt> to <tt>payload</tt></p></item>
+        <item><p>treat &quot;objectness&quot; as just another kind of fact, not a separate storage class</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="2. Links replace special-case relation columns and tables" id="links">
+      <p>Introduce a core table called <tt>links</tt>:</p>
+      <code>links
+  id          uuid/text   NOT NULL primary key
+  from_id     uuid/text   NOT NULL
+  predicate   text        NOT NULL
+  to_id       uuid/text   NOT NULL
+  payload     jsonb       NOT NULL default '{}'
+  inserted_at timestamp   NOT NULL
+</code>
+      <p>The relation names should be ontological rather than schema-shaped. Prefer predicates like:</p>
+      <list type="bullet">
+        <item><p><tt>part_of</tt></p></item>
+        <item><p><tt>caused_by</tt></p></item>
+        <item><p><tt>reply_to</tt></p></item>
+        <item><p><tt>references</tt></p></item>
+        <item><p><tt>describes</tt></p></item>
+        <item><p><tt>derived_from</tt></p></item>
+        <item><p><tt>emitted_by</tt></p></item>
+        <item><p><tt>parent_of</tt> or <tt>child_of</tt> where true parentage matters</p></item>
+      </list>
+      <p>Avoid schema-shaped predicates like <tt>belongs_to_cycle</tt> when a more general predicate such as <tt>part_of</tt> expresses the truth better.</p>
+      <p>Under this model, current columns and tables like <tt>span_id</tt>, <tt>parent_id</tt>, <tt>telegram_cycle_links</tt>, and <tt>task_telegram_links</tt> become links instead of bespoke subsystems.</p>
+    </subsection>
+
+    <subsection title="3. Projections are allowed, but demoted" id="projections">
+      <p>This RFC is not a purity cult. Froth will still want optimized read models.</p>
+      <p>Examples of projections that may remain useful:</p>
+      <list type="bullet">
+        <item><p>current task state</p></item>
+        <item><p>cycle summaries</p></item>
+        <item><p>timeline views for UI</p></item>
+        <item><p>search indexes</p></item>
+        <item><p>lease tables or uniqueness guards</p></item>
+      </list>
+      <p>But those projections should be understood as caches, views, or materialized summaries over <tt>facts</tt> and <tt>links</tt>. They are not separate truths with their own ontology.</p>
+    </subsection>
+
+    <subsection title="4. The current `events` table is the right ancestor" id="events-ancestor">
+      <p>The existing <tt>events</tt> table is already closer to the correct core than most of the rest of the schema. It is append-only, flexible, and heavily used. The direction here is not to repudiate RFC-0008. It is to generalize it.</p>
+      <p>The most obvious immediate improvements are:</p>
+      <list type="bullet">
+        <item><p>rename the semantic surface from <tt>events</tt>/<tt>event</tt>/<tt>metadata</tt> to <tt>facts</tt>/<tt>kind</tt>/<tt>payload</tt></p></item>
+        <item><p>move relation columns such as <tt>span_id</tt> and <tt>parent_id</tt> out of the base fact table and into <tt>links</tt></p></item>
+        <item><p>stop creating fresh event-like universes such as <tt>codex_session_events</tt> when they can instead be fact kinds with links</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="5. Example" id="example">
+      <p>A delegated sub-agent run might look like:</p>
+      <code>fact kind=agent.cycle
+fact kind=tool.invocation
+fact kind=tool.result
+fact kind=telegram.message
+fact kind=task.state
+
+link predicate=part_of        tool.invocation -&gt; agent.cycle
+link predicate=caused_by      tool.result -&gt; tool.invocation
+link predicate=part_of        task.state -&gt; agent.cycle
+link predicate=reply_to       telegram.message -&gt; telegram.message
+link predicate=derived_from   telegram.message -&gt; tool.result
+</code>
+      <p>No extra ontology is needed to explain why one of those is a task, another is a cycle, and another is a message. They are all facts. Their meaning comes from <tt>kind</tt> and their links.</p>
+    </subsection>
+  </section>
+
+  <section title="Migration Strategy" id="migration-strategy">
+    <p>This should land as a gradual architectural migration, not a theology-driven table purge.</p>
+    <list type="numbered">
+      <item><p>Rename the mental model first in docs and readers: prefer <tt>kind</tt> and <tt>payload</tt> vocabulary over <tt>event</tt> and <tt>metadata</tt>.</p></item>
+      <item><p>Introduce <tt>links</tt> and start writing explicit relations for new subsystems instead of adding bespoke link tables and relation columns.</p></item>
+      <item><p>Mirror high-value existing edges such as span parentage, cycle attachment, reply edges, and task attachment into <tt>links</tt>.</p></item>
+      <item><p>Collapse parallel event stores where practical, especially ones that are semantically just fact streams under a different name.</p></item>
+      <item><p>Move optimized readers onto projections derived from <tt>facts</tt> and <tt>links</tt>.</p></item>
+      <item><p>Only after the projections are stable should old special-case tables be retired.</p></item>
+    </list>
+    <p>The important ordering rule is: change ontology before changing storage aggressively. Froth should first stop thinking in the old categories, then simplify the schema beneath that new understanding.</p>
+  </section>
+
+  <section title="Performance" id="performance">
+    <p>This design is intentionally willing to postpone specialization.</p>
+    <p>If the ontology is right, performance problems can be met with:</p>
+    <list type="bullet">
+      <item><p>indexes</p></item>
+      <item><p>materialized views</p></item>
+      <item><p>projection tables</p></item>
+      <item><p>partial indexes by <tt>kind</tt> or <tt>predicate</tt></p></item>
+      <item><p>cached hot-path summaries</p></item>
+    </list>
+    <p>If the ontology is wrong, no amount of indexing makes the system pleasant to reason about.</p>
+    <p>The rule should therefore be: tolerate some inefficiency in the core truth model, and optimize only after real suffering appears.</p>
+  </section>
+
+  <section title="Consequences" id="consequences">
+    <subsection title="Benefits" id="benefits">
+      <list type="bullet">
+        <item><p>Froth gets one simpler ontology instead of many overlapping ones.</p></item>
+        <item><p>Agent-facing tools can converge on one primary handle and one inspection model.</p></item>
+        <item><p>App-specific link tables and relation columns become replaceable with a generic graph.</p></item>
+        <item><p>New subsystems no longer need to invent their own event stores just to persist a timeline.</p></item>
+        <item><p>Terms like &quot;task&quot;, &quot;cycle&quot;, and &quot;session&quot; become kinds and projections, not rival universes.</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="Costs" id="costs">
+      <list type="bullet">
+        <item><p>Queries become more abstract until projections are in place.</p></item>
+        <item><p>Some invariants that were once implicit in table shape must be enforced in code or projection logic.</p></item>
+        <item><p>There will be a migration period where the old schema and the new ontology coexist uneasily.</p></item>
+      </list>
+    </subsection>
+  </section>
+
+  <section title="Recommendation" id="recommendation">
+    <p>The long-term core of Froth should be <tt>facts</tt> and <tt>links</tt>, with projections treated as secondary and disposable.</p>
+    <p>Do not chase this by immediately deleting half the database. Do chase it by refusing to add new ontologies lightly, by renaming the existing core in a more truthful way, and by making relations explicit and generic rather than bespoke.</p>
+  </section>
+</rfc>

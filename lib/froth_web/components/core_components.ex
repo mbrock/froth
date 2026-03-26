@@ -256,21 +256,30 @@ defmodule FrothWeb.CoreComponents do
 
   def input(%{type: "textarea"} = assigns) do
     ~H"""
-    <div class="fieldset mb-2">
-      <label>
-        <span :if={@label} class="label mb-1">{@label}</span>
-        <textarea
-          id={@id}
-          name={@name}
-          class={[
-            @class || "w-full textarea",
-            @errors != [] && (@error_class || "textarea-error")
-          ]}
-          {@rest}
-        >{Phoenix.HTML.Form.normalize_value("textarea", @value)}</textarea>
-      </label>
-      <.error :for={msg <- @errors}>{msg}</.error>
-    </div>
+    <%= if @variant == "bare" do %>
+      <textarea
+        id={@id}
+        name={@name}
+        class={[@class, @errors != [] && @error_class]}
+        {@rest}
+      >{Phoenix.HTML.Form.normalize_value("textarea", @value)}</textarea>
+    <% else %>
+      <div class="fieldset mb-2">
+        <label>
+          <span :if={@label} class="label mb-1">{@label}</span>
+          <textarea
+            id={@id}
+            name={@name}
+            class={[
+              @class || "w-full textarea",
+              @errors != [] && (@error_class || "textarea-error")
+            ]}
+            {@rest}
+          >{Phoenix.HTML.Form.normalize_value("textarea", @value)}</textarea>
+        </label>
+        <.error :for={msg <- @errors}>{msg}</.error>
+      </div>
+    <% end %>
     """
   end
 

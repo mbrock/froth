@@ -52,8 +52,9 @@ defmodule Froth.TestSupport.FakeCodexSession do
     end
   end
 
-  def send_prompt(session_id, prompt) when is_binary(session_id) and is_binary(prompt) do
-    GenServer.call(via(session_id), {:send_prompt, prompt})
+  def send_prompt(session_id, prompt, opts \\ [])
+      when is_binary(session_id) and is_binary(prompt) and is_list(opts) do
+    GenServer.call(via(session_id), {:send_prompt, prompt, opts})
   end
 
   def set_snapshot(session_id, snapshot) when is_binary(session_id) and is_map(snapshot) do
@@ -81,13 +82,15 @@ defmodule Froth.TestSupport.FakeCodexSession do
     {:reply, state.snapshot, state}
   end
 
-  def handle_call({:send_prompt, _prompt}, _from, state) do
+  def handle_call({:send_prompt, prompt, opts}, _from, state) do
     turn_id = "turn-#{System.unique_integer([:positive])}"
+    prompt = String.trim(prompt)
+    images = normalize_images(Keyword.get(opts, :images, []))
 
     snapshot =
       state.snapshot
+      |> maybe_append_user_entry(prompt, images)
       |> Map.put(:active_turn_id, turn_id)
-      |> append_entry(:status, "working (#{turn_id})")
 
     broadcast_update(state.session_id)
     {:reply, :ok, %{state | snapshot: snapshot}}
@@ -136,9 +139,6 @@ defmodule Froth.TestSupport.FakeCodexSession do
     next_turn_id = next_snapshot[:active_turn_id]
 
     cond do
-      is_nil(previous_turn_id) and is_binary(next_turn_id) ->
-        append_entry(next_snapshot, :status, "working (#{next_turn_id})")
-
       is_binary(previous_turn_id) and is_nil(next_turn_id) and next_snapshot[:status] != :error ->
         append_entry(next_snapshot, :status, "turn completed")
 
@@ -163,6 +163,10 @@ defmodule Froth.TestSupport.FakeCodexSession do
 
   defp append_entry(snapshot, kind, body)
        when is_map(snapshot) and is_atom(kind) and is_binary(body) do
+    append_entry_map(snapshot, %{kind: kind, body: body})
+  end
+
+  defp append_entry_map(snapshot, entry) when is_map(snapshot) and is_map(entry) do
     sequence =
       snapshot
       |> Map.get(:entries, [])
@@ -170,7 +174,59 @@ defmodule Froth.TestSupport.FakeCodexSession do
       |> Enum.max(fn -> 0 end)
       |> Kernel.+(1)
 
-    entry = %{id: "e-#{sequence}", kind: kind, body: body, sequence: sequence}
+    entry = Map.merge(entry, %{id: "e-#{sequence}", sequence: sequence})
     Map.update(snapshot, :entries, [entry], &(&1 ++ [entry]))
   end
+
+  defp maybe_append_user_entry(snapshot, prompt, images)
+       when is_binary(prompt) and is_list(images) do
+    if prompt == "" and images == [] do
+      snapshot
+    else
+      entry =
+        %{
+          kind: :user,
+          body: prompt
+        }
+        |> maybe_put_images(images)
+
+      append_entry_map(snapshot, entry)
+    end
+  end
+
+  defp maybe_put_images(entry, []), do: entry
+  defp maybe_put_images(entry, images), do: Map.put(entry, :images, images)
+
+  defp normalize_images(images) when is_list(images) do
+    Enum.flat_map(images, fn
+      %{path: path} = image when is_binary(path) and path != "" ->
+        [
+          %{
+            path: path,
+            url: Map.get(image, :url) || Map.get(image, "url"),
+            alt: Map.get(image, :alt) || Map.get(image, "alt") || "Pasted image"
+          }
+        ]
+
+      image when is_map(image) ->
+        path = Map.get(image, :path) || Map.get(image, "path")
+
+        if is_binary(path) and path != "" do
+          [
+            %{
+              path: path,
+              url: Map.get(image, :url) || Map.get(image, "url"),
+              alt: Map.get(image, :alt) || Map.get(image, "alt") || "Pasted image"
+            }
+          ]
+        else
+          []
+        end
+
+      _ ->
+        []
+    end)
+  end
+
+  defp normalize_images(_), do: []
 end

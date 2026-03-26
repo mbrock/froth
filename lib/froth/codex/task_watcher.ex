@@ -61,7 +61,7 @@ defmodule Froth.Codex.TaskWatcher do
         saw_working? = state.saw_working? or now_working? or saw_working_entry?(new_entries)
 
         completed_turn? =
-          saw_working? and not now_working? and saw_completed_turn_entry?(new_entries)
+          not now_working? and saw_completed_turn_entry?(new_entries)
 
         idle_after_turn? = state.saw_working? and not now_working?
         last_entry_sequence = last_entry_sequence(snapshot)

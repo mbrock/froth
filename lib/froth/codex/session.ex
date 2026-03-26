@@ -26,6 +26,7 @@ defmodule Froth.Codex.Session do
           active_turn_id: String.t() | nil,
           active_turn_started_at_ms: integer() | nil,
           last_turn_elapsed_ms: integer() | nil,
+          active_assistant_entry_id: String.t() | nil,
           entries: [map()],
           token_usage: map() | nil,
           rate_limits: map() | nil,
@@ -92,9 +93,10 @@ defmodule Froth.Codex.Session do
     :exit, reason -> {:error, reason}
   end
 
-  @spec send_prompt(session_id(), String.t()) :: :ok | {:error, term()}
-  def send_prompt(session_id, prompt) when is_binary(session_id) and is_binary(prompt) do
-    call_session(session_id, {:send_prompt, prompt})
+  @spec send_prompt(session_id(), String.t(), keyword()) :: :ok | {:error, term()}
+  def send_prompt(session_id, prompt, opts \\ [])
+      when is_binary(session_id) and is_binary(prompt) and is_list(opts) do
+    call_session(session_id, {:send_prompt, prompt, opts})
   end
 
   @spec new_thread(session_id()) :: :ok | {:error, term()}
@@ -165,7 +167,7 @@ defmodule Froth.Codex.Session do
       if restored_entries == [] do
         state
         |> push_entry(:system, "starting codex...")
-        |> push_entry(:status, "session #{session_id}")
+        |> push_entry(:status, "session started")
       else
         state
       end
@@ -181,13 +183,14 @@ defmodule Froth.Codex.Session do
     {:reply, snapshot_from_state(state), state}
   end
 
-  def handle_call({:send_prompt, prompt}, _from, state) do
+  def handle_call({:send_prompt, prompt, opts}, _from, state) do
     prompt = String.trim(prompt)
+    images = normalize_uploaded_images(Keyword.get(opts, :images, []))
 
-    if prompt == "" do
+    if prompt == "" and images == [] do
       {:reply, {:error, :empty_prompt}, state}
     else
-      case do_send_prompt(state, prompt) do
+      case do_send_prompt(state, prompt, images) do
         {:ok, state} -> {:reply, :ok, broadcast_update(state)}
         {:error, reason, state} -> {:reply, {:error, reason}, broadcast_update(state)}
       end
@@ -340,14 +343,15 @@ defmodule Froth.Codex.Session do
     end
   end
 
-  defp do_send_prompt(state, prompt) do
+  defp do_send_prompt(state, prompt, images) when is_binary(prompt) and is_list(images) do
     with {:ok, state} <- ensure_ready(state),
          {:ok, state} <- ensure_thread(state) do
-      state = push_entry(state, :user, prompt)
+      turn_input = build_turn_input(prompt, images)
+      state = push_user_entry(state, prompt, images)
 
       params = %{
         "threadId" => state.thread_id,
-        "input" => [%{"type" => "text", "text" => prompt}]
+        "input" => turn_input
       }
 
       case codex_call(state, :turn_start, params) do
@@ -402,7 +406,7 @@ defmodule Froth.Codex.Session do
                 |> Map.put(:active_turn_started_at_ms, nil)
                 |> Map.put(:last_turn_elapsed_ms, nil)
                 |> reset_turn_state()
-                |> push_entry(:system, "thread started #{short_id(thread_id)}")
+                |> push_entry(:system, "thread started")
 
               {:ok, state}
 
@@ -461,7 +465,7 @@ defmodule Froth.Codex.Session do
             |> Map.put(:active_turn_started_at_ms, nil)
             |> Map.put(:last_turn_elapsed_ms, nil)
             |> reset_turn_state()
-            |> push_entry(:system, "resumed thread #{short_id(resolved)}")
+            |> push_entry(:system, "thread resumed")
 
           {:ok, state}
 
@@ -487,7 +491,7 @@ defmodule Froth.Codex.Session do
     state = if is_binary(thread_id), do: Map.put(state, :thread_id, thread_id), else: state
 
     if is_binary(thread_id),
-      do: push_entry(state, :system, "thread ready #{short_id(thread_id)}"),
+      do: push_entry(state, :system, "thread ready"),
       else: push_entry(state, :status, "thread started")
   end
 
@@ -521,7 +525,6 @@ defmodule Froth.Codex.Session do
     |> Map.put(:active_turn_id, turn_id)
     |> Map.put(:active_turn_started_at_ms, System.system_time(:millisecond))
     |> reset_turn_state()
-    |> push_entry(:status, "working#{if(turn_id, do: " (#{short_id(turn_id)})", else: "")}")
   end
 
   defp apply_notification(state, "turn/completed", params) do
@@ -670,8 +673,12 @@ defmodule Froth.Codex.Session do
   # --- Entry management ---
 
   defp push_entry(state, kind, body) when is_atom(kind) and is_binary(body) do
+    append_entry_map(state, %{kind: kind, body: body})
+  end
+
+  defp append_entry_map(state, entry) when is_map(entry) do
     sequence = state.entry_seq + 1
-    entry = %{id: "e-#{sequence}", kind: kind, body: body, sequence: sequence}
+    entry = Map.merge(entry, %{id: "e-#{sequence}", sequence: sequence})
     state = %{state | entry_seq: sequence, entries: trim_entries(state.entries ++ [entry])}
     CodexEvents.upsert_entry(state.session_id, entry)
     state
@@ -725,6 +732,7 @@ defmodule Froth.Codex.Session do
       :active_turn_id,
       :active_turn_started_at_ms,
       :last_turn_elapsed_ms,
+      :active_assistant_entry_id,
       :entries,
       :token_usage,
       :rate_limits,
@@ -902,6 +910,81 @@ defmodule Froth.Codex.Session do
 
   defp upsert_assistant_message(state, _, _, _), do: state
 
+  defp push_user_entry(state, prompt, images) when is_binary(prompt) and is_list(images) do
+    entry =
+      %{
+        kind: :user,
+        body: prompt
+      }
+      |> maybe_put_images(images)
+
+    append_entry_map(state, entry)
+  end
+
+  defp maybe_put_images(entry, []), do: entry
+  defp maybe_put_images(entry, images) when is_list(images), do: Map.put(entry, :images, images)
+
+  defp build_turn_input(prompt, images) when is_binary(prompt) and is_list(images) do
+    text_items =
+      case String.trim(prompt) do
+        "" -> []
+        text -> [%{"type" => "text", "text" => text}]
+      end
+
+    image_items =
+      Enum.flat_map(images, fn
+        %{path: path} when is_binary(path) and path != "" ->
+          [%{"type" => "localImage", "path" => path}]
+
+        _ ->
+          []
+      end)
+
+    text_items ++ image_items
+  end
+
+  defp normalize_uploaded_images(images) when is_list(images) do
+    images
+    |> Enum.map(fn
+      %{path: path} = image when is_binary(path) and path != "" ->
+        %{
+          path: path,
+          url: normalize_optional_binary(Map.get(image, :url) || Map.get(image, "url")),
+          alt:
+            normalize_optional_binary(Map.get(image, :alt) || Map.get(image, "alt")) ||
+              "Pasted image"
+        }
+
+      image when is_map(image) ->
+        path = Map.get(image, :path) || Map.get(image, "path")
+
+        if is_binary(path) and path != "" do
+          %{
+            path: path,
+            url: normalize_optional_binary(Map.get(image, :url) || Map.get(image, "url")),
+            alt:
+              normalize_optional_binary(Map.get(image, :alt) || Map.get(image, "alt")) ||
+                "Pasted image"
+          }
+        end
+
+      _ ->
+        nil
+    end)
+    |> Enum.filter(&is_map/1)
+  end
+
+  defp normalize_uploaded_images(_), do: []
+
+  defp normalize_optional_binary(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_optional_binary(_), do: nil
+
   defp extract_text_from_content(content) when is_list(content) do
     content
     |> Enum.map(fn
@@ -919,12 +1002,31 @@ defmodule Froth.Codex.Session do
 
   # --- Utilities ---
 
-  defp summarize_command(%{"command" => command}) when is_list(command) do
-    command |> Enum.map(&to_string/1) |> Enum.join(" ") |> String.trim() |> truncate(220)
+  defp summarize_command(%{"command" => command} = msg) when is_list(command) do
+    command
+    |> Enum.map(&command_part_to_string/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join(" ")
+    |> maybe_prefix_workdir(msg)
+    |> truncate(4_000)
+    |> normalize_optional_binary()
   end
 
-  defp summarize_command(%{"parsed_cmd" => [first | _]}) when is_map(first) do
-    Map.get(first, "cmd") || Map.get(first, "type")
+  defp summarize_command(%{"command" => command} = msg) when is_binary(command) do
+    command
+    |> maybe_prefix_workdir(msg)
+    |> truncate(4_000)
+    |> normalize_optional_binary()
+  end
+
+  defp summarize_command(%{"parsed_cmd" => parsed} = msg) when is_list(parsed) do
+    parsed
+    |> Enum.map(&format_parsed_command/1)
+    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+    |> Enum.join("\n")
+    |> maybe_prefix_workdir(msg)
+    |> truncate(4_000)
+    |> normalize_optional_binary()
   end
 
   defp summarize_command(_), do: nil
@@ -936,13 +1038,51 @@ defmodule Froth.Codex.Session do
       nil
     else
       lines = String.split(trimmed, "\n")
-      truncated = Enum.take(lines, 8) |> Enum.join("\n")
-      suffix = if length(lines) > 8, do: "\n...", else: ""
-      truncate(truncated <> suffix, 900)
+      truncated = Enum.take(lines, 160) |> Enum.join("\n")
+      suffix = if length(lines) > 160, do: "\n...", else: ""
+      truncate(truncated <> suffix, 24_000)
     end
   end
 
   defp summarize_output(_), do: nil
+
+  defp command_part_to_string(value) when is_binary(value), do: value
+  defp command_part_to_string(value) when is_atom(value), do: Atom.to_string(value)
+  defp command_part_to_string(value) when is_integer(value), do: Integer.to_string(value)
+  defp command_part_to_string(value) when is_float(value), do: Float.to_string(value)
+  defp command_part_to_string(value), do: inspect(value)
+
+  defp format_parsed_command(%{"cmd" => cmd} = parsed) when is_binary(cmd) do
+    argv =
+      case Map.get(parsed, "args") || Map.get(parsed, "argv") do
+        args when is_list(args) ->
+          [cmd | Enum.map(args, &command_part_to_string/1)]
+          |> Enum.reject(&(&1 == ""))
+          |> Enum.join(" ")
+
+        _ ->
+          cmd
+      end
+
+    case normalize_optional_binary(Map.get(parsed, "type")) do
+      nil -> argv
+      type -> "[#{type}] #{argv}"
+    end
+  end
+
+  defp format_parsed_command(%{"type" => type}) when is_binary(type), do: "[#{type}]"
+  defp format_parsed_command(_), do: nil
+
+  defp maybe_prefix_workdir(command, msg) when is_binary(command) and is_map(msg) do
+    case normalize_optional_binary(
+           Map.get(msg, "cwd") || Map.get(msg, "working_dir") || Map.get(msg, "workdir")
+         ) do
+      nil -> command
+      cwd -> "cd #{cwd}\n#{command}"
+    end
+  end
+
+  defp maybe_prefix_workdir(command, _msg), do: command
 
   defp thread_id_from_opts(opts) do
     case Keyword.get(opts, :thread_id) do
@@ -965,8 +1105,6 @@ defmodule Froth.Codex.Session do
 
     %{name: "froth_codex_session_#{session_id}", title: "Froth Codex Session", version: version}
   end
-
-  defp short_id(id) when is_binary(id), do: String.slice(id, 0, 12)
 
   defp truncate(value, max) when is_binary(value) and is_integer(max) do
     if String.length(value) > max, do: String.slice(value, 0, max) <> "...", else: value

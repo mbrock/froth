@@ -520,6 +520,7 @@ defmodule Froth.Telegram.Bot do
   defp start_cycle_from_message(state, msg) when is_map(msg) do
     chat_id = msg["chat_id"]
     reply_to = normalize_reply_to(msg["reply_to_override"] || msg["id"])
+    system_prompt = resolve_system_prompt(chat_id, msg, state.bot_config)
 
     text =
       get_in(msg, ["content", "text", "text"]) ||
@@ -531,12 +532,12 @@ defmodule Froth.Telegram.Bot do
         parts -> parts_to_text_blocks(parts, state.bot_config)
       end
 
-    start_cycle(state, chat_id, reply_to, text, user_content)
+    start_cycle(state, chat_id, reply_to, text, user_content, system_prompt)
   end
 
-  defp start_cycle(state, chat_id, reply_to, text, user_content)
+  defp start_cycle(state, chat_id, reply_to, text, user_content, system_prompt)
        when is_integer(chat_id) and (is_integer(reply_to) or is_nil(reply_to)) and
-              is_binary(text) do
+              is_binary(text) and is_binary(system_prompt) do
     state = normalize_state(state)
     bc = state.bot_config
 
@@ -568,7 +569,7 @@ defmodule Froth.Telegram.Bot do
         })
 
       base_config = %Config{
-        system: resolve_system_prompt(chat_id, bc),
+        system: system_prompt,
         model: bc.model,
         tools: resolve_tool_specs(bc),
         tool_executor: self(),
@@ -641,7 +642,7 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp start_cycle(state, _chat_id, _reply_to, _text, _user_content), do: state
+  defp start_cycle(state, _chat_id, _reply_to, _text, _user_content, _system_prompt), do: state
 
   defp normalize_reply_to(0), do: nil
   defp normalize_reply_to(reply_to) when is_integer(reply_to), do: reply_to
@@ -1024,9 +1025,12 @@ defmodule Froth.Telegram.Bot do
 
   defp stop_background_task(_), do: :ok
 
-  defp resolve_system_prompt(chat_id, bot_config)
-       when is_integer(chat_id) and is_map(bot_config) do
+  defp resolve_system_prompt(chat_id, msg, bot_config)
+       when is_integer(chat_id) and (is_map(msg) or is_nil(msg)) and is_map(bot_config) do
     case bot_config.system_prompt_fun do
+      prompt_fun when is_function(prompt_fun, 3) ->
+        prompt_fun.(chat_id, bot_config, msg)
+
       prompt_fun when is_function(prompt_fun, 2) ->
         prompt_fun.(chat_id, bot_config)
 

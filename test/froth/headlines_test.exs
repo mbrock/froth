@@ -70,7 +70,7 @@ defmodule Froth.HeadlinesTest do
     {_cycle, output} = Headlines.extract(chat_id: chat_id)
 
     assert output == "done"
-    assert_receive {:llm_call, api_messages, opts}, 5_000
+    {api_messages, opts} = receive_headlines_llm_call()
 
     assert [
              %LLMMessage{
@@ -192,7 +192,7 @@ defmodule Froth.HeadlinesTest do
     {_cycle, output} = Headlines.extract_all(chat_id: chat_id)
 
     assert output == "done"
-    assert_receive {:llm_call, api_messages, _opts}, 5_000
+    {api_messages, _opts} = receive_headlines_llm_call()
 
     assert [
              %LLMMessage{
@@ -266,7 +266,7 @@ defmodule Froth.HeadlinesTest do
     items = Enum.to_list(stream)
 
     assert is_binary(cycle.id)
-    assert_receive {:llm_call, _api_messages, opts}, 5_000
+    {_api_messages, opts} = receive_headlines_llm_call()
     assert opts[:model] == "gpt-5.4-mini"
     assert opts[:reasoning_summary] == "auto"
 
@@ -517,6 +517,32 @@ defmodule Froth.HeadlinesTest do
 
   defp unique_chat_id do
     9_100_000_000 + System.unique_integer([:positive])
+  end
+
+  defp receive_headlines_llm_call(timeout \\ 5_000) when is_integer(timeout) and timeout > 0 do
+    deadline_ms = System.monotonic_time(:millisecond) + timeout
+    do_receive_headlines_llm_call(deadline_ms)
+  end
+
+  defp do_receive_headlines_llm_call(deadline_ms) when is_integer(deadline_ms) do
+    remaining_ms = max(deadline_ms - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {:llm_call, api_messages, opts} ->
+        if headlines_llm_call?(opts) do
+          {api_messages, opts}
+        else
+          do_receive_headlines_llm_call(deadline_ms)
+        end
+    after
+      remaining_ms ->
+        flunk("expected tabloid editor LLM call")
+    end
+  end
+
+  defp headlines_llm_call?(opts) when is_list(opts) do
+    opts[:system] == "You are a tabloid editor." and
+      Enum.map(opts[:tools] || [], & &1["name"]) == ["read_log", "search", "register_headlines"]
   end
 
   defp utf16_length(text) when is_binary(text) do

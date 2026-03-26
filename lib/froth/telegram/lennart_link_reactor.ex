@@ -3,14 +3,9 @@ defmodule Froth.Telegram.LennartLinkReactor do
   Lennart responds to any external link posted by a human.
 
   Subscribes to Charlie's TDLib update stream (which sees everything),
-  detects URLs in human messages, and forwards the message to Lennart's
-  Bot process as a synthetic mention — triggering a full agent cycle
-  where Lennart can use x_search and web_search to actually look up
-  the content and respond.
-
-  The forwarded update has "lennart" prepended to the text so it passes
-  the Bot's name_trigger check. The actual agent context comes from
-  chat history, not from the update text, so this injection is safe.
+  detects URLs in human messages, and forwards the message directly to
+  Lennart's Bot process with trigger metadata so he can react without
+  pretending the user explicitly mentioned him.
 
   Excludes *.foo domains to avoid noise from internal links.
   """
@@ -81,24 +76,16 @@ defmodule Froth.Telegram.LennartLinkReactor do
   end
 
   defp forward_to_lennart(msg) do
-    # Inject "lennart" into the text so Bot's name_trigger check passes.
-    # The agent reads real chat history for context, not this modified text.
-    injected_msg =
-      put_in(
-        msg,
-        ["content", "text", "text"],
-        "lennart " <> (get_text(msg) || "")
-      )
-
-    update = %{
-      "@type" => "updateNewMessage",
-      "message" => injected_msg
-    }
+    tagged_msg =
+      Map.update(msg, "froth_meta", %{"trigger" => "link_reactor"}, fn
+        meta when is_map(meta) -> Map.put(meta, "trigger", "link_reactor")
+        _other -> %{"trigger" => "link_reactor"}
+      end)
 
     case Registry.lookup(Froth.Telegram.BotRegistry, "lennart") do
       [{pid, _}] ->
-        send(pid, {:telegram_update, update})
-        Logger.info("LennartLinkReactor: forwarded link to Lennart as synthetic mention")
+        GenServer.cast(pid, {:start_inference_session, tagged_msg})
+        Logger.info("LennartLinkReactor: forwarded link to Lennart with link-trigger metadata")
 
       [] ->
         Logger.warning("LennartLinkReactor: Lennart bot not found in registry")

@@ -66,6 +66,7 @@ defmodule Froth.Codex.Events do
         last_sequence: e.sequence,
         last_kind: e.kind,
         last_body: e.body,
+        last_metadata: e.metadata,
         last_seen_at: latest.last_seen_at
       }
     )
@@ -154,11 +155,19 @@ defmodule Froth.Codex.Events do
     |> maybe_put(metadata, "status")
     |> maybe_put(metadata, "output")
     |> maybe_put(metadata, "label")
+    |> maybe_put_list(metadata, "images")
   end
 
   defp maybe_put(entry, metadata, key) do
     case Map.get(metadata, key) do
       value when is_binary(value) and value != "" -> Map.put(entry, String.to_atom(key), value)
+      _ -> entry
+    end
+  end
+
+  defp maybe_put_list(entry, metadata, key) do
+    case Map.get(metadata, key) do
+      value when is_list(value) -> Map.put(entry, String.to_atom(key), value)
       _ -> entry
     end
   end

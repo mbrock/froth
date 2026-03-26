@@ -18,6 +18,13 @@ defmodule FrothWeb.CodexLive do
 
   @impl true
   def mount(params, _session, socket) do
+    socket =
+      allow_upload(socket, :images,
+        accept: ~w(.png .jpg .jpeg .webp .gif .avif),
+        auto_upload: true,
+        max_entries: 6
+      )
+
     if session_route?(params) do
       {session_id, requested_thread_id, session_pinned?} = resolve_session_context(params)
 
@@ -32,6 +39,7 @@ defmodule FrothWeb.CodexLive do
         |> assign(:active_turn_id, nil)
         |> assign(:active_turn_started_at_ms, nil)
         |> assign(:last_turn_elapsed_ms, nil)
+        |> assign(:active_assistant_entry_id, nil)
         |> assign(:now_ms, System.system_time(:millisecond))
         |> assign(:token_usage, nil)
         |> assign(:rate_limits, nil)
@@ -39,7 +47,6 @@ defmodule FrothWeb.CodexLive do
         |> assign(:runtime, nil)
         |> assign(:session_stats, empty_session_stats())
         |> assign(:sessions, [])
-        |> assign(:follow_tail?, true)
         |> assign(:prompt_form, to_form(%{"prompt" => ""}, as: :codex))
         |> stream_configure(:entries, dom_id: &entry_dom_id/1)
         |> stream(:entries, [], reset: true)
@@ -73,13 +80,13 @@ defmodule FrothWeb.CodexLive do
         |> assign(:active_turn_id, nil)
         |> assign(:active_turn_started_at_ms, nil)
         |> assign(:last_turn_elapsed_ms, nil)
+        |> assign(:active_assistant_entry_id, nil)
         |> assign(:now_ms, System.system_time(:millisecond))
         |> assign(:token_usage, nil)
         |> assign(:rate_limits, nil)
         |> assign(:auth, nil)
         |> assign(:runtime, nil)
         |> assign(:session_stats, empty_session_stats())
-        |> assign(:follow_tail?, true)
         |> assign(:prompt_form, to_form(%{"prompt" => ""}, as: :codex))
         |> assign(:sessions, list_sessions())
         |> stream_configure(:entries, dom_id: &entry_dom_id/1)
@@ -98,24 +105,37 @@ defmodule FrothWeb.CodexLive do
     {:noreply, push_navigate(socket, to: ~p"/froth/mini/codex/#{random_session_id()}")}
   end
 
-  def handle_event("toggle_follow_tail", _, %{assigns: %{mode: :session}} = socket) do
-    {:noreply, assign(socket, :follow_tail?, !socket.assigns.follow_tail?)}
+  def handle_event("prompt_changed", %{"codex" => params}, socket) when is_map(params) do
+    {:noreply, assign(socket, :prompt_form, to_form(params, as: :codex))}
   end
 
   def handle_event("send_prompt", %{"codex" => %{"prompt" => raw_prompt}}, socket) do
     prompt = String.trim(raw_prompt || "")
+    pending_image_count = pending_image_count(socket)
+
+    uploaded_images =
+      if pending_image_count == 0 do
+        persist_prompt_images(socket)
+      else
+        []
+      end
 
     socket =
       cond do
-        prompt == "" ->
+        prompt == "" and uploaded_images == [] and pending_image_count == 0 ->
           socket
+
+        pending_image_count > 0 ->
+          put_flash(socket, :error, "wait for pasted images to finish uploading")
 
         true ->
           Span.execute([:froth, :web, :send_prompt], nil, %{
             session_id: socket.assigns.session_id
           })
 
-          case CodexSession.send_prompt(socket.assigns.session_id, prompt) do
+          case CodexSession.send_prompt(socket.assigns.session_id, prompt,
+                 images: uploaded_images
+               ) do
             :ok ->
               refresh_snapshot(socket)
 
@@ -127,6 +147,10 @@ defmodule FrothWeb.CodexLive do
       end
 
     {:noreply, assign(socket, :prompt_form, to_form(%{"prompt" => ""}, as: :codex))}
+  end
+
+  def handle_event("cancel_image_upload", %{"ref" => ref}, socket) do
+    {:noreply, cancel_upload(socket, :images, ref)}
   end
 
   def handle_event("new_thread", _, socket) do
@@ -155,10 +179,6 @@ defmodule FrothWeb.CodexLive do
         {:noreply,
          socket |> put_flash(:error, "interrupt failed: #{inspect(reason)}") |> refresh_snapshot()}
     end
-  end
-
-  def handle_event("close", _, socket) do
-    {:noreply, push_event(socket, "tg-close", %{})}
   end
 
   @impl true
@@ -238,81 +258,69 @@ defmodule FrothWeb.CodexLive do
       <% else %>
         <div
           id="codex-live-viewer"
-          phx-hook="ToolScroll"
-          data-follow-mode={follow_mode(@follow_tail?)}
-          class="mini-shell safe-top flex min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(20,20,40,0.55),rgba(5,5,8,1)_48%)] text-zinc-100"
+          phx-hook="CodexTimeline"
+          class="mini-shell codex-shell safe-top flex min-h-0 flex-col text-zinc-100"
         >
-          <header class="sticky top-0 z-30 border-b border-zinc-800/70 bg-zinc-950/92 backdrop-blur">
-            <div class="mx-auto w-full max-w-3xl px-2 py-1.5">
-              <div class="flex items-start justify-between gap-2">
-                <div class="min-w-0 flex-1">
-                  <div class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-[10px]">
-                    <span
-                      :if={session_busy?(@codex_status, @active_turn_id)}
-                      class="inline-flex items-center gap-1 text-amber-200/90"
-                    >
-                      <span>live</span>
-                      <.working_dots />
-                    </span>
-                    <span class={modeline_status_class(@codex_status)}>
-                      {modeline_status(@codex_status)}
-                    </span>
-                    <span class={modeline_state_class(@codex_status)}>
-                      {modeline_state_text(@codex_status)}
-                    </span>
-                    <span class="text-zinc-500">Codex</span>
-                    <span :if={modeline_model(@runtime)} class="text-sky-300">
-                      {modeline_model(@runtime)}
-                    </span>
-                    <span :if={modeline_reasoning(@runtime)} class="text-amber-300/80">
-                      {modeline_reasoning(@runtime)}
-                    </span>
-                    <span :if={modeline_sandbox(@runtime)} class={modeline_sandbox_class(@runtime)}>
-                      {modeline_sandbox(@runtime)}
-                    </span>
-                    <span :if={modeline_tokens(@token_usage)} class="text-zinc-400">
-                      {modeline_tokens(@token_usage)}
-                    </span>
-                    <span :if={rate_limit_badge(@rate_limits)} class="text-zinc-500">
-                      {rate_limit_badge(@rate_limits)}
-                    </span>
-                    <span
-                      :if={
-                        elapsed_badge(
-                          @active_turn_id,
-                          @active_turn_started_at_ms,
-                          @last_turn_elapsed_ms,
-                          @now_ms
-                        )
-                      }
-                      class="text-zinc-400"
-                    >
-                      {elapsed_badge(
-                        @active_turn_id,
-                        @active_turn_started_at_ms,
-                        @last_turn_elapsed_ms,
-                        @now_ms
-                      )}
-                    </span>
-                    <span :if={tool_progress_badge(@session_stats)} class="text-zinc-500">
-                      {tool_progress_badge(@session_stats)}
-                    </span>
-                  </div>
-                </div>
-                <div class="flex shrink-0 items-center gap-1.5">
-                  <label class="mini-toggle" data-active={to_string(@follow_tail?)}>
-                    <input
-                      id="codex-follow-tail"
-                      type="checkbox"
-                      checked={@follow_tail?}
-                      phx-click="toggle_follow_tail"
-                    />
-                    <span>Latest</span>
-                  </label>
-                  <button id="codex-close" phx-click="close" class="mini-btn mini-btn--icon">
-                    <.icon name="hero-x-mark" class="size-4" />
-                  </button>
-                </div>
+          <header class="sticky top-0 z-30 border-b border-white/10 bg-black/70 backdrop-blur-xl">
+            <div class="mx-auto flex w-full max-w-[72rem] items-center gap-3 px-3 py-2">
+              <div class="min-w-0 flex flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                <h1 class="text-[13px] font-semibold uppercase tracking-[0.18em] text-zinc-100">
+                  Codex
+                </h1>
+                <span class={session_status_text_class(@codex_status, @active_turn_id)}>
+                  {session_status_text(@codex_status, @active_turn_id)}
+                </span>
+                <span
+                  :if={modeline_summary(@runtime)}
+                  class="font-[JetBrains_Mono,ui-monospace,SFMono-Regular,Menlo,Monaco,monospace] text-[11px] text-zinc-200"
+                >
+                  {modeline_summary(@runtime)}
+                </span>
+                <span
+                  :if={
+                    elapsed_badge(
+                      @active_turn_id,
+                      @active_turn_started_at_ms,
+                      @last_turn_elapsed_ms,
+                      @now_ms
+                    )
+                  }
+                  class="text-[11px] text-zinc-500"
+                >
+                  {elapsed_badge(
+                    @active_turn_id,
+                    @active_turn_started_at_ms,
+                    @last_turn_elapsed_ms,
+                    @now_ms
+                  )}
+                </span>
+                <span :if={tool_progress_badge(@session_stats)} class="text-[11px] text-zinc-500">
+                  {tool_progress_badge(@session_stats)}
+                </span>
+              </div>
+              <div class="flex shrink-0 items-center gap-2">
+                <button id="codex-new-thread" phx-click="new_thread" class="codex-btn">
+                  New Thread
+                </button>
+                <button
+                  :if={is_binary(@active_turn_id)}
+                  id="codex-interrupt"
+                  phx-click="interrupt_turn"
+                  class="codex-btn codex-btn--warn"
+                >
+                  Interrupt
+                </button>
+                <label for="codex-follow-tail" class="codex-auto-control">
+                  <input
+                    id="codex-follow-tail"
+                    class="codex-auto-toggle"
+                    type="checkbox"
+                    checked
+                    aria-label="Auto-scroll"
+                    title="Auto-scroll"
+                  />
+                  <span>Auto</span>
+                </label>
               </div>
             </div>
           </header>
@@ -320,30 +328,45 @@ defmodule FrothWeb.CodexLive do
           <main
             id="tool-feed"
             data-scroll-body
-            class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1.5 py-1.5"
+            class="min-h-0 flex-1 overflow-y-auto overscroll-contain"
           >
             <div
               id="codex-feed-list"
+              data-codex-feed
               phx-update="stream"
-              class="mx-auto w-full max-w-3xl space-y-1.5"
+              class="mx-auto flex w-full max-w-[72rem] flex-col gap-2 px-3 py-3"
             >
-              <div :for={{dom_id, entry} <- @streams.entries} id={dom_id}>
+              <div :for={{dom_id, entry} <- @streams.entries} id={dom_id} data-codex-entry>
                 <%= cond do %>
                   <% entry.kind == :user -> %>
-                    <.codex_message body={entry.body} tone={:user} />
+                    <.codex_message
+                      body={entry.body}
+                      images={entry.images}
+                      tone={:user}
+                      streaming?={false}
+                    />
                   <% entry.kind == :assistant -> %>
-                    <.codex_message body={entry.body} tone={:assistant} />
+                    <.codex_message
+                      body={entry.body}
+                      images={entry.images}
+                      tone={:assistant}
+                      streaming?={
+                        assistant_entry_streaming?(
+                          entry,
+                          @active_assistant_entry_id,
+                          @active_turn_id
+                        )
+                      }
+                    />
                   <% entry.kind == :tool -> %>
                     <.codex_tool_entry entry={entry} />
                   <% entry.kind == :reasoning -> %>
-                    <details class="max-w-[98%] rounded-xl border border-zinc-800/80 bg-zinc-950/45 px-2 py-1.5">
-                      <summary class="cursor-pointer list-none select-none text-[10px] uppercase tracking-[0.14em] text-zinc-500 hover:text-zinc-300 [&::-webkit-details-marker]:hidden">
-                        reasoning
-                      </summary>
-                      <pre class="mt-1 whitespace-pre-wrap font-mono text-[11px] leading-5 text-zinc-500">{entry.body}</pre>
-                    </details>
+                    <div class="codex-note text-zinc-500">
+                      <span class="codex-kicker">reasoning</span>
+                      <pre class="mt-1 whitespace-pre-wrap font-[JetBrains_Mono,ui-monospace,SFMono-Regular,Menlo,Monaco,monospace] text-[11px] leading-5 text-zinc-500">{entry.body}</pre>
+                    </div>
                   <% entry.kind == :error -> %>
-                    <div class="max-w-[98%] whitespace-pre-wrap rounded-xl border border-rose-500/45 bg-rose-950/35 px-2.5 py-2 text-[12px] leading-5 text-rose-100">
+                    <div class="codex-note border-l-2 border-rose-400/60 bg-rose-950/20 whitespace-pre-wrap px-2.5 py-2 text-[12px] leading-5 text-rose-100">
                       {entry.body}
                     </div>
                   <% true -> %>
@@ -355,51 +378,67 @@ defmodule FrothWeb.CodexLive do
             </div>
           </main>
 
-          <div
-            id="codex-now-dock"
-            class="safe-bottom border-t border-zinc-800/80 bg-zinc-950/95 backdrop-blur"
-          >
-            <div class="mx-auto w-full max-w-3xl px-2 py-2">
-              <div class="mb-1.5 flex items-center justify-between gap-2">
-                <div class="min-w-0 truncate font-sans text-[11px] text-zinc-400">
-                  {session_footer_text(@codex_status, @active_turn_id, @thread_id)}
-                </div>
-                <div class="flex shrink-0 items-center gap-1.5">
-                  <button id="codex-new-thread" phx-click="new_thread" class="mini-btn">
-                    New Thread
-                  </button>
-                  <button
-                    :if={is_binary(@active_turn_id)}
-                    id="codex-interrupt"
-                    phx-click="interrupt_turn"
-                    class="mini-btn mini-btn--warn"
-                  >
-                    Interrupt
-                  </button>
-                </div>
-              </div>
-
+          <div id="codex-now-dock" class="safe-bottom">
+            <div class="mx-auto w-full max-w-[72rem] px-3 py-2.5">
               <.form
                 for={@prompt_form}
                 id="codex-prompt-form"
+                phx-change="prompt_changed"
                 phx-submit="send_prompt"
-                class="flex items-end gap-2 pb-[calc(0.2rem+var(--kb,0px))]"
+                class="pb-[calc(0.2rem+var(--kb,0px))]"
               >
-                <.input
-                  field={@prompt_form[:prompt]}
-                  type="textarea"
-                  rows="1"
-                  placeholder="Ask Codex..."
-                  enterkeyhint="send"
-                  class="mini-input min-h-[2.75rem] resize-none"
-                />
-                <button
-                  id="codex-send"
-                  type="submit"
-                  class="mini-btn mini-btn--accent min-h-[2.75rem]"
+                <div
+                  :if={@uploads.images.entries != []}
+                  id="codex-image-staging"
+                  class="mb-1.5 flex flex-wrap gap-1.5"
                 >
-                  Send
-                </button>
+                  <div
+                    :for={entry <- @uploads.images.entries}
+                    class="group relative h-14 w-14 shrink-0 overflow-hidden bg-black/55 ring-1 ring-white/8"
+                  >
+                    <.live_img_preview entry={entry} class="h-full w-full object-cover" />
+                    <button
+                      type="button"
+                      phx-click="cancel_image_upload"
+                      phx-value-ref={entry.ref}
+                      class="absolute right-0 top-0 px-1.5 py-1 text-[10px] leading-none text-zinc-300 transition hover:text-white"
+                      aria-label="Remove image"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+
+                <div class="codex-composer">
+                  <div class="min-w-0 flex-1">
+                    <.input
+                      field={@prompt_form[:prompt]}
+                      id="codex-prompt"
+                      type="textarea"
+                      variant="bare"
+                      rows="1"
+                      placeholder="Message Codex. Paste image, Enter sends."
+                      enterkeyhint="send"
+                      phx-hook="CodexComposer"
+                      data-upload-input-id="codex-image-upload"
+                      class="codex-input"
+                    />
+                  </div>
+
+                  <button
+                    id="codex-send"
+                    type="submit"
+                    class="codex-send-button"
+                    aria-label="Send"
+                    title="Send"
+                  >
+                    <.icon name="hero-arrow-up" class="size-4" />
+                  </button>
+                </div>
+
+                <div class="sr-only">
+                  <.live_file_input upload={@uploads.images} id="codex-image-upload" />
+                </div>
               </.form>
             </div>
           </div>
@@ -417,7 +456,9 @@ defmodule FrothWeb.CodexLive do
   end
 
   attr :body, :string, required: true
+  attr :images, :list, default: []
   attr :tone, :atom, required: true
+  attr :streaming?, :boolean, default: false
 
   defp codex_message(assigns) do
     {text, footer} = split_cost_footer(assigns.body)
@@ -426,23 +467,23 @@ defmodule FrothWeb.CodexLive do
       assigns
       |> assign(:text, text)
       |> assign(:footer, footer)
-      |> assign(:html, render_markdown_html(text))
+      |> assign(:image_urls, entry_image_urls(assigns.images))
+      |> assign(:html, message_body_html(text, assigns.streaming?))
 
     ~H"""
-    <%= if @text do %>
-      <div class={codex_message_class(@tone)}>
-        <div class={codex_message_text_class(@tone)}>
-          {raw(@html)}
-        </div>
-        <div :if={@footer} class="mt-1.5">
-          <.metadata_footer footer={@footer} />
+    <div :if={@text || @footer || @image_urls != [] || @streaming?} class={codex_message_class(@tone)}>
+      <div :if={@image_urls != []} class="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        <div :for={image <- @image_urls} class="overflow-hidden border border-white/10 bg-black/40">
+          <img src={image.url} alt={image.alt} class="h-auto w-full object-cover" loading="lazy" />
         </div>
       </div>
-    <% else %>
-      <div :if={@footer} class="max-w-[96%]">
+      <div :if={@text || @streaming?} class={codex_message_text_class(@tone)}>
+        {raw(@html)}
+      </div>
+      <div :if={@footer} class="mt-2">
         <.metadata_footer footer={@footer} />
       </div>
-    <% end %>
+    </div>
     """
   end
 
@@ -450,9 +491,49 @@ defmodule FrothWeb.CodexLive do
 
   defp metadata_footer(assigns) do
     ~H"""
-    <div class="inline-flex rounded-full border border-zinc-700/80 bg-zinc-950/90 px-2 py-0.5 font-mono text-[10px] text-zinc-400">
+    <div class="mt-1 text-[10px] text-zinc-500">
       {@footer}
     </div>
+    """
+  end
+
+  defp message_body_html(text, streaming?) do
+    html = render_markdown_html(text || "")
+
+    if streaming? do
+      append_streaming_tail(html)
+    else
+      html
+    end
+  end
+
+  defp append_streaming_tail(html) when is_binary(html) do
+    tail = streaming_tail_html()
+    trimmed = String.trim_trailing(html)
+
+    cond do
+      trimmed == "" ->
+        tail
+
+      true ->
+        updated =
+          Regex.replace(
+            ~r{</(p|li|blockquote|h[1-6])>\s*\z}i,
+            trimmed,
+            " " <> tail <> "</\\1>"
+          )
+
+        if updated == trimmed, do: trimmed <> tail, else: updated
+    end
+  end
+
+  defp append_streaming_tail(_), do: streaming_tail_html()
+
+  defp streaming_tail_html do
+    """
+    <span class="codex-inline-spinner" aria-hidden="true">
+      <span></span><span></span><span></span>
+    </span>
     """
   end
 
@@ -473,37 +554,33 @@ defmodule FrothWeb.CodexLive do
   defp codex_tool_entry(assigns) do
     ~H"""
     <div class={codex_tool_card_class(@entry.status)}>
-      <div class="flex items-start justify-between gap-2">
+      <div class="flex items-center justify-between gap-3">
         <div class="min-w-0 flex-1">
-          <div class="flex flex-wrap items-center gap-1.5">
-            <.icon name="hero-command-line" class="size-3.5 shrink-0 text-sky-300/90" />
-            <p class="text-[10px] uppercase tracking-[0.12em] text-sky-200/80">Tool</p>
-          </div>
-          <pre class="mt-1 overflow-x-auto whitespace-pre-wrap rounded-lg border border-zinc-800/80 bg-black/20 px-2 py-1.5 font-mono text-[11px] leading-5 text-zinc-100">{@entry.body}</pre>
-          <div
-            :if={@entry.status == "running"}
-            class="mt-1 inline-flex items-center gap-1 font-mono text-[10px] text-amber-200/85"
-          >
-            <span>running</span>
-            <.working_dots />
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="codex-kicker text-sky-300/80">tool call</span>
+            <div
+              :if={@entry.status == "running"}
+              class="inline-flex items-center gap-1 font-[JetBrains_Mono,ui-monospace,SFMono-Regular,Menlo,Monaco,monospace] text-[10px] text-amber-200/85"
+            >
+              <span>live</span>
+              <.working_dots />
+            </div>
           </div>
         </div>
-        <span class={tool_status_chip_class(@entry.status)}>
+        <span class={tool_status_text_class(@entry.status)}>
           {tool_status_text(@entry.status)}
         </span>
       </div>
 
-      <details
-        :if={is_binary(@entry.output) and @entry.output != ""}
-        class="mt-1.5 rounded-lg border border-zinc-800/80 bg-black/15"
-      >
-        <summary class="cursor-pointer list-none px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-400 [&::-webkit-details-marker]:hidden">
-          Output
-        </summary>
-        <div class="border-t border-zinc-800/80 px-2 py-2">
-          <pre class="max-h-56 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5 text-zinc-200">{@entry.output}</pre>
-        </div>
-      </details>
+      <div class="mt-1.5">
+        <div class="codex-kicker text-zinc-500">command</div>
+        <pre class="codex-pre codex-pre--command">{@entry.body}</pre>
+      </div>
+
+      <div :if={is_binary(@entry.output) and @entry.output != ""} class="mt-1.5">
+        <div class="codex-kicker text-zinc-500">output</div>
+        <pre class="codex-pre codex-pre--output">{@entry.output}</pre>
+      </div>
     </div>
     """
   end
@@ -519,39 +596,32 @@ defmodule FrothWeb.CodexLive do
 
     ~H"""
     <div class={status_entry_class(@descriptor.tone)}>
-      <div class="flex flex-wrap items-center gap-1.5">
-        <span class={status_entry_badge_class(@descriptor.tone)}>{@descriptor.badge}</span>
-        <p class="font-sans text-[12px] leading-5 text-zinc-100">{@descriptor.title}</p>
+      <div class="flex flex-wrap items-center gap-2">
+        <span class={status_entry_kicker_class(@descriptor.tone)}>{@descriptor.badge}</span>
+        <p class="font-[IBM_Plex_Sans,ui-sans-serif,system-ui,sans-serif] text-[12px] leading-5 text-zinc-100">
+          {@descriptor.title}
+        </p>
         <.working_dots :if={@descriptor.spinner?} class="text-amber-200/85" />
       </div>
 
-      <p :if={@descriptor.subtitle} class="mt-0.5 font-sans text-[12px] leading-5 text-zinc-400">
+      <p
+        :if={@descriptor.subtitle}
+        class="mt-1 font-[IBM_Plex_Sans,ui-sans-serif,system-ui,sans-serif] text-[12px] leading-5 text-zinc-400"
+      >
         {@descriptor.subtitle}
       </p>
 
-      <div :if={@descriptor.plan_steps != []} class="mt-2 space-y-1">
+      <div :if={@descriptor.plan_steps != []} class="mt-1.5 space-y-1">
         <div
           :for={step <- @descriptor.plan_steps}
-          class="flex items-start gap-2 rounded-lg border border-zinc-800/80 bg-black/15 px-2 py-1.5"
+          class="flex items-start gap-2 text-[12px] leading-5"
         >
-          <span class={plan_step_badge_class(step.status)}>
+          <span class={plan_step_status_class(step.status)}>
             {plan_step_status_text(step.status)}
           </span>
           <p class="min-w-0 flex-1 text-[12px] leading-5 text-zinc-200">{step.step}</p>
         </div>
       </div>
-
-      <details
-        :if={@descriptor.details}
-        class="mt-1 rounded-lg border border-zinc-800/80 bg-black/15"
-      >
-        <summary class="cursor-pointer list-none px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-400 [&::-webkit-details-marker]:hidden">
-          Details
-        </summary>
-        <div class="border-t border-zinc-800/80 px-2 py-2">
-          <pre class="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5 text-zinc-400">{@descriptor.details}</pre>
-        </div>
-      </details>
     </div>
     """
   end
@@ -629,6 +699,13 @@ defmodule FrothWeb.CodexLive do
         Map.get(snapshot, :last_turn_elapsed_ms) || Map.get(snapshot, "last_turn_elapsed_ms")
       )
     )
+    |> assign(
+      :active_assistant_entry_id,
+      normalize_optional_text(
+        Map.get(snapshot, :active_assistant_entry_id) ||
+          Map.get(snapshot, "active_assistant_entry_id")
+      )
+    )
     |> assign(:token_usage, Map.get(snapshot, :token_usage) || Map.get(snapshot, "token_usage"))
     |> assign(:rate_limits, Map.get(snapshot, :rate_limits) || Map.get(snapshot, "rate_limits"))
     |> assign(:auth, Map.get(snapshot, :auth) || Map.get(snapshot, "auth"))
@@ -638,7 +715,9 @@ defmodule FrothWeb.CodexLive do
   end
 
   defp normalize_entries(entries) when is_list(entries) do
-    Enum.map(entries, &normalize_entry/1)
+    entries
+    |> Enum.map(&normalize_entry/1)
+    |> Enum.reject(&hidden_entry?/1)
   end
 
   defp normalize_entries(_), do: []
@@ -658,6 +737,7 @@ defmodule FrothWeb.CodexLive do
       body: to_string(body),
       status: normalize_optional_text(status),
       output: normalize_optional_text(output),
+      images: normalize_entry_images(Map.get(entry, :images) || Map.get(entry, "images")),
       label: normalize_optional_text(label),
       sequence: normalize_optional_sequence(sequence)
     }
@@ -665,6 +745,11 @@ defmodule FrothWeb.CodexLive do
 
   defp normalize_entry(other),
     do: %{id: "entry-#{:erlang.phash2(other)}", kind: :event, body: inspect(other)}
+
+  defp hidden_entry?(%{kind: :status, body: body}) when is_binary(body),
+    do: String.starts_with?(String.trim_leading(body), "working")
+
+  defp hidden_entry?(_), do: false
 
   defp normalize_entry_kind(kind)
        when kind in [:assistant, :error, :event, :reasoning, :status, :system, :tool, :user],
@@ -675,9 +760,28 @@ defmodule FrothWeb.CodexLive do
 
   defp normalize_entry_kind(_), do: :event
 
+  defp normalize_optional_text(nil), do: nil
   defp normalize_optional_text(value) when is_binary(value) and value != "", do: value
   defp normalize_optional_text(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_optional_text(_), do: nil
+
+  defp normalize_entry_images(images) when is_list(images) do
+    Enum.flat_map(images, fn
+      %{url: url} = image when is_binary(url) and url != "" ->
+        [%{url: url, alt: Map.get(image, :alt) || "Attached image"}]
+
+      %{"url" => url} = image when is_binary(url) and url != "" ->
+        [%{url: url, alt: image["alt"] || "Attached image"}]
+
+      url when is_binary(url) and url != "" ->
+        [%{url: url, alt: "Attached image"}]
+
+      _ ->
+        []
+    end)
+  end
+
+  defp normalize_entry_images(_), do: []
 
   defp normalize_optional_sequence(value) when is_integer(value), do: value
 
@@ -689,6 +793,13 @@ defmodule FrothWeb.CodexLive do
   end
 
   defp normalize_optional_sequence(_), do: nil
+
+  defp assistant_entry_streaming?(entry, active_assistant_entry_id, active_turn_id)
+       when is_map(entry) and is_binary(active_assistant_entry_id) and is_binary(active_turn_id) do
+    entry.id == active_assistant_entry_id
+  end
+
+  defp assistant_entry_streaming?(_entry, _active_assistant_entry_id, _active_turn_id), do: false
 
   defp normalize_optional_integer(value) when is_integer(value), do: value
 
@@ -729,42 +840,34 @@ defmodule FrothWeb.CodexLive do
   defp maybe_increment_running(stats, _status), do: stats
 
   defp codex_message_class(:assistant),
-    do:
-      "max-w-[96%] rounded-[0.9rem] border border-zinc-800/80 bg-zinc-950/70 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
+    do: "codex-note border-l border-zinc-700/65 bg-zinc-950/68 px-2.5 py-2"
 
   defp codex_message_class(:user),
-    do:
-      "ml-auto max-w-[96%] rounded-[0.9rem] border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
+    do: "codex-note border-l border-emerald-400/45 bg-emerald-500/[0.06] px-2.5 py-2"
 
   defp codex_message_class(_),
-    do:
-      "max-w-[96%] rounded-[0.9rem] border border-zinc-800/80 bg-zinc-950/70 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
+    do: "codex-note border-l border-zinc-700/65 bg-zinc-950/68 px-2.5 py-2"
 
   defp codex_message_text_class(:assistant),
-    do: "mini-markdown md-prose font-sans text-[13px] leading-[1.48] text-zinc-100"
+    do:
+      "mini-markdown md-prose font-[IBM_Plex_Sans,ui-sans-serif,system-ui,sans-serif] text-[14px] leading-[1.56] text-zinc-100"
 
   defp codex_message_text_class(:user),
     do:
-      "mini-markdown md-prose font-sans text-[13px] leading-[1.48] text-right text-emerald-50 [&_*]:text-right"
+      "mini-markdown md-prose font-[IBM_Plex_Sans,ui-sans-serif,system-ui,sans-serif] text-[14px] leading-[1.56] text-emerald-50"
 
   defp codex_message_text_class(_),
-    do: "mini-markdown md-prose font-sans text-[13px] leading-[1.48] text-zinc-100"
-
-  defp follow_mode(true), do: "always"
-  defp follow_mode(false), do: "manual"
-  defp follow_mode(_), do: "always"
+    do:
+      "mini-markdown md-prose font-[IBM_Plex_Sans,ui-sans-serif,system-ui,sans-serif] text-[14px] leading-[1.56] text-zinc-100"
 
   defp codex_tool_card_class("error"),
-    do:
-      "max-w-[98%] rounded-[0.9rem] border border-rose-500/35 bg-rose-950/30 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+    do: "codex-note border-l border-rose-400/55 bg-rose-950/18 px-2.5 py-2"
 
   defp codex_tool_card_class("running"),
-    do:
-      "max-w-[98%] rounded-[0.9rem] border border-amber-500/30 bg-amber-950/20 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+    do: "codex-note border-l border-amber-400/55 bg-amber-950/14 px-2.5 py-2"
 
   defp codex_tool_card_class(_),
-    do:
-      "max-w-[98%] rounded-[0.9rem] border border-sky-900/60 bg-sky-950/20 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+    do: "codex-note border-l border-sky-400/45 bg-sky-950/14 px-2.5 py-2"
 
   defp status_entry_descriptor(entry) when is_map(entry) do
     body = blank_to_nil(entry.body) || "update"
@@ -776,17 +879,11 @@ defmodule FrothWeb.CodexLive do
         received
 
       String.starts_with?(body, "working") ->
-        turn_id =
-          case Regex.run(~r/\(([^)]+)\)/, body, capture: :all_but_first) do
-            [id] -> id
-            _ -> nil
-          end
-
         %{
           badge: "turn",
           tone: :warning,
-          title: "Turn running",
-          subtitle: turn_id,
+          title: "Working",
+          subtitle: nil,
           details: nil,
           plan_steps: [],
           spinner?: true
@@ -805,34 +902,34 @@ defmodule FrothWeb.CodexLive do
           spinner?: false
         }
 
-      String.starts_with?(body, "thread started ") ->
+      body == "thread started" or String.starts_with?(body, "thread started ") ->
         %{
           badge: "thread",
           tone: :success,
           title: "Thread started",
-          subtitle: String.replace_prefix(body, "thread started ", ""),
+          subtitle: nil,
           details: details,
           plan_steps: [],
           spinner?: false
         }
 
-      String.starts_with?(body, "thread ready ") ->
+      body == "thread ready" or String.starts_with?(body, "thread ready ") ->
         %{
           badge: "thread",
           tone: :success,
           title: "Thread ready",
-          subtitle: String.replace_prefix(body, "thread ready ", ""),
+          subtitle: nil,
           details: details,
           plan_steps: [],
           spinner?: false
         }
 
-      String.starts_with?(body, "resumed thread ") ->
+      String.starts_with?(body, "resumed thread ") or String.starts_with?(body, "thread resumed") ->
         %{
           badge: "thread",
           tone: :success,
           title: "Thread resumed",
-          subtitle: String.replace_prefix(body, "resumed thread ", ""),
+          subtitle: nil,
           details: details,
           plan_steps: [],
           spinner?: false
@@ -862,7 +959,7 @@ defmodule FrothWeb.CodexLive do
       spinner?: false
     }
 
-  defp parse_received_status(body, details, subtitle) when is_binary(body) do
+  defp parse_received_status(body, _details, subtitle) when is_binary(body) do
     case Regex.run(~r/^received\s+([^\s]+)\s*(.*)$/s, body, capture: :all_but_first) do
       [method, raw] ->
         plan_steps = protocol_plan_steps(raw)
@@ -872,7 +969,7 @@ defmodule FrothWeb.CodexLive do
           tone: protocol_tone(method, plan_steps),
           title: protocol_title(method),
           subtitle: protocol_summary(method, raw) || subtitle,
-          details: blank_to_nil(raw) || details,
+          details: nil,
           plan_steps: plan_steps,
           spinner?: false
         }
@@ -955,52 +1052,36 @@ defmodule FrothWeb.CodexLive do
   defp entry_tone(_), do: :neutral
 
   defp status_entry_class(:warning),
-    do:
-      "max-w-[96%] rounded-[0.9rem] border border-amber-500/25 bg-amber-950/20 px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
+    do: "codex-note border-l border-amber-400/40 bg-amber-950/10 px-2.5 py-1.5"
 
   defp status_entry_class(:success),
-    do:
-      "max-w-[96%] rounded-[0.9rem] border border-emerald-500/25 bg-emerald-950/20 px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
+    do: "codex-note border-l border-emerald-400/40 bg-emerald-950/10 px-2.5 py-1.5"
 
   defp status_entry_class(:error),
-    do:
-      "max-w-[96%] rounded-[0.9rem] border border-rose-500/25 bg-rose-950/20 px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
+    do: "codex-note border-l border-rose-400/40 bg-rose-950/10 px-2.5 py-1.5"
 
   defp status_entry_class(_),
-    do:
-      "max-w-[96%] rounded-[0.9rem] border border-zinc-800/80 bg-zinc-950/70 px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
+    do: "codex-note border-l border-zinc-700/55 bg-zinc-950/60 px-2.5 py-1.5"
 
-  defp status_entry_badge_class(:warning),
-    do:
-      "inline-flex items-center rounded-full border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-amber-200"
+  defp status_entry_kicker_class(:warning), do: "codex-kicker text-amber-300/80"
 
-  defp status_entry_badge_class(:success),
-    do:
-      "inline-flex items-center rounded-full border border-emerald-500/35 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-emerald-200"
+  defp status_entry_kicker_class(:success), do: "codex-kicker text-emerald-300/80"
 
-  defp status_entry_badge_class(:error),
-    do:
-      "inline-flex items-center rounded-full border border-rose-500/35 bg-rose-500/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-rose-200"
+  defp status_entry_kicker_class(:error), do: "codex-kicker text-rose-300/80"
 
-  defp status_entry_badge_class(_),
-    do:
-      "inline-flex items-center rounded-full border border-zinc-700/80 bg-zinc-900/80 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-400"
+  defp status_entry_kicker_class(_), do: "codex-kicker text-zinc-500"
 
-  defp plan_step_badge_class("completed"),
-    do:
-      "inline-flex shrink-0 items-center rounded-full border border-emerald-500/35 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em] text-emerald-200"
+  defp plan_step_status_class("completed"),
+    do: "shrink-0 text-[10px] uppercase tracking-[0.14em] text-emerald-300/80"
 
-  defp plan_step_badge_class("in_progress"),
-    do:
-      "inline-flex shrink-0 items-center rounded-full border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em] text-amber-200"
+  defp plan_step_status_class("in_progress"),
+    do: "shrink-0 text-[10px] uppercase tracking-[0.14em] text-amber-300/80"
 
-  defp plan_step_badge_class("pending"),
-    do:
-      "inline-flex shrink-0 items-center rounded-full border border-zinc-700/80 bg-zinc-900/80 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-400"
+  defp plan_step_status_class("pending"),
+    do: "shrink-0 text-[10px] uppercase tracking-[0.14em] text-zinc-500"
 
-  defp plan_step_badge_class(_),
-    do:
-      "inline-flex shrink-0 items-center rounded-full border border-sky-500/35 bg-sky-500/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em] text-sky-200"
+  defp plan_step_status_class(_),
+    do: "shrink-0 text-[10px] uppercase tracking-[0.14em] text-sky-300/80"
 
   defp plan_step_status_text("completed"), do: "done"
   defp plan_step_status_text("in_progress"), do: "active"
@@ -1008,73 +1089,19 @@ defmodule FrothWeb.CodexLive do
   defp plan_step_status_text(status) when is_binary(status), do: status
   defp plan_step_status_text(_), do: "step"
 
-  defp tool_status_chip_class("running"),
-    do:
-      "inline-flex items-center rounded-full border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-amber-200"
+  defp tool_status_text_class("running"), do: "codex-kicker text-amber-300/80"
 
-  defp tool_status_chip_class("ok"),
-    do:
-      "inline-flex items-center rounded-full border border-emerald-500/35 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-emerald-200"
+  defp tool_status_text_class("ok"), do: "codex-kicker text-emerald-300/80"
 
-  defp tool_status_chip_class("error"),
-    do:
-      "inline-flex items-center rounded-full border border-rose-500/35 bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-rose-200"
+  defp tool_status_text_class("error"), do: "codex-kicker text-rose-300/80"
 
-  defp tool_status_chip_class(_),
-    do:
-      "inline-flex items-center rounded-full border border-zinc-700/80 bg-zinc-900/80 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-zinc-400"
+  defp tool_status_text_class(_), do: "codex-kicker text-zinc-500"
 
   defp tool_status_text("running"), do: "running"
   defp tool_status_text("ok"), do: "done"
   defp tool_status_text("error"), do: "error"
   defp tool_status_text("done"), do: "done"
   defp tool_status_text(_), do: "update"
-
-  defp rate_limit_badge(rate_limits) when is_map(rate_limits) do
-    primary_used =
-      get_in(rate_limits, ["primary", "usedPercent"]) ||
-        get_in(rate_limits, [:primary, :usedPercent])
-
-    secondary_used =
-      get_in(rate_limits, ["secondary", "usedPercent"]) ||
-        get_in(rate_limits, [:secondary, :usedPercent])
-
-    cond do
-      is_integer(primary_used) and is_integer(secondary_used) ->
-        "limits #{primary_used}% / #{secondary_used}%"
-
-      is_integer(primary_used) ->
-        "limits #{primary_used}%"
-
-      true ->
-        nil
-    end
-  end
-
-  defp rate_limit_badge(_), do: nil
-
-  # --- Modeline helpers (compact header) ---
-
-  defp modeline_status(:ready), do: "\u25cf"
-  defp modeline_status(:working), do: "\u25c9"
-  defp modeline_status(:error), do: "\u2715"
-  defp modeline_status(_), do: "\u25cb"
-
-  defp modeline_status_class(:ready), do: "text-emerald-400"
-  defp modeline_status_class(:working), do: "text-amber-400 animate-pulse"
-  defp modeline_status_class(:error), do: "text-rose-400"
-  defp modeline_status_class(_), do: "text-zinc-500"
-
-  defp modeline_state_text(:working), do: "working"
-  defp modeline_state_text(:ready), do: "ready"
-  defp modeline_state_text(:error), do: "error"
-  defp modeline_state_text(:booting), do: "booting"
-  defp modeline_state_text(_), do: "idle"
-
-  defp modeline_state_class(:working), do: "text-amber-200"
-  defp modeline_state_class(:ready), do: "text-emerald-200"
-  defp modeline_state_class(:error), do: "text-rose-200"
-  defp modeline_state_class(_), do: "text-zinc-400"
 
   defp modeline_model(runtime) when is_map(runtime), do: runtime_field(runtime, :model, "model")
   defp modeline_model(_), do: nil
@@ -1084,48 +1111,41 @@ defmodule FrothWeb.CodexLive do
 
   defp modeline_reasoning(_), do: nil
 
-  defp modeline_sandbox(runtime) when is_map(runtime) do
-    raw = runtime_field(runtime, :sandbox, "sandbox")
+  defp modeline_summary(runtime) do
+    [modeline_model(runtime), modeline_reasoning(runtime)]
+    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+    |> Enum.join(" ")
+    |> blank_to_nil()
+  end
+
+  defp session_status_text(status, active_turn_id) do
+    cond do
+      is_binary(active_turn_id) -> "working"
+      status == :working -> "working"
+      status == :ready -> "ready"
+      status == :error -> "error"
+      status == :booting -> "connecting"
+      true -> "idle"
+    end
+  end
+
+  defp session_status_text_class(status, active_turn_id) do
+    base = "text-[10px] font-medium uppercase tracking-[0.16em]"
 
     cond do
-      is_binary(raw) and String.contains?(raw, "dangerFullAccess") -> "yolo"
-      is_binary(raw) and String.contains?(raw, "danger") -> "yolo"
-      is_binary(raw) and String.contains?(raw, "workspace") -> "sandbox"
-      is_binary(raw) -> String.slice(raw, 0, 12)
-      true -> nil
+      is_binary(active_turn_id) or status == :working ->
+        base <> " text-amber-300"
+
+      status == :ready ->
+        base <> " text-emerald-300"
+
+      status == :error ->
+        base <> " text-rose-300"
+
+      true ->
+        base <> " text-zinc-500"
     end
   end
-
-  defp modeline_sandbox(_), do: nil
-
-  defp modeline_sandbox_class(runtime) when is_map(runtime) do
-    raw = runtime_field(runtime, :sandbox, "sandbox")
-
-    if is_binary(raw) and (String.contains?(raw, "danger") or String.contains?(raw, "Full")) do
-      "text-rose-400/80"
-    else
-      "text-zinc-500"
-    end
-  end
-
-  defp modeline_sandbox_class(_), do: "text-zinc-500"
-
-  defp modeline_tokens(token_usage) when is_map(token_usage) do
-    last =
-      get_in(token_usage, ["last", "totalTokens"]) || get_in(token_usage, [:last, :totalTokens])
-
-    total =
-      get_in(token_usage, ["total", "totalTokens"]) || get_in(token_usage, [:total, :totalTokens])
-
-    cond do
-      is_integer(last) and is_integer(total) -> "#{format_k(last)}/#{format_k(total)}"
-      is_integer(total) -> format_k(total)
-      is_integer(last) -> format_k(last)
-      true -> nil
-    end
-  end
-
-  defp modeline_tokens(_), do: nil
 
   defp elapsed_badge(active_turn_id, started_at_ms, _last_turn_elapsed_ms, now_ms)
        when is_binary(active_turn_id) and is_integer(started_at_ms) and is_integer(now_ms) do
@@ -1162,24 +1182,6 @@ defmodule FrothWeb.CodexLive do
   end
 
   defp format_elapsed_ms(_), do: nil
-
-  defp format_k(n) when n >= 1_000_000, do: "#{Float.round(n / 1_000_000, 1)}M"
-  defp format_k(n) when n >= 1_000, do: "#{Float.round(n / 1_000, 1)}k"
-  defp format_k(n), do: "#{n}"
-
-  defp session_busy?(status, active_turn_id),
-    do: status in [:booting, :working] or is_binary(active_turn_id)
-
-  defp session_footer_text(_status, active_turn_id, _thread_id) when is_binary(active_turn_id),
-    do: "Turn #{String.slice(active_turn_id, 0, 12)} is live"
-
-  defp session_footer_text(:error, _active_turn_id, _thread_id), do: "Session needs attention"
-  defp session_footer_text(:booting, _active_turn_id, _thread_id), do: "Connecting to Codex"
-
-  defp session_footer_text(_status, _active_turn_id, thread_id) when is_binary(thread_id),
-    do: "Thread #{String.slice(thread_id, 0, 12)} ready"
-
-  defp session_footer_text(_status, _active_turn_id, _thread_id), do: "Ready"
 
   defp split_cost_footer(text) when is_binary(text) do
     trimmed = String.trim(text)
@@ -1219,6 +1221,91 @@ defmodule FrothWeb.CodexLive do
 
   defp runtime_field(_runtime, _atom_key, _string_key), do: nil
 
+  defp entry_image_urls(images) when is_list(images) do
+    Enum.flat_map(images, fn
+      %{url: url} = image when is_binary(url) and url != "" ->
+        [%{url: url, alt: Map.get(image, :alt) || "Attached image"}]
+
+      %{"url" => url} = image when is_binary(url) and url != "" ->
+        [%{url: url, alt: image["alt"] || "Attached image"}]
+
+      _ ->
+        []
+    end)
+  end
+
+  defp entry_image_urls(_), do: []
+
+  defp attachment_count_label(1), do: "1 image"
+
+  defp attachment_count_label(count) when is_integer(count) and count > 1,
+    do: "#{count} images"
+
+  defp attachment_count_label(_), do: nil
+
+  defp pending_image_count(socket) do
+    case uploaded_entries(socket, :images) do
+      {_done, in_progress} -> length(in_progress)
+      _ -> 0
+    end
+  end
+
+  defp persist_prompt_images(socket) do
+    consume_uploaded_entries(socket, :images, fn %{path: path}, entry ->
+      dest =
+        codex_upload_destination(socket.assigns.session_id, entry.client_name, entry.client_type)
+
+      File.mkdir_p!(Path.dirname(dest.path))
+      File.cp!(path, dest.path)
+
+      {:ok,
+       %{
+         path: dest.path,
+         url: dest.url,
+         alt: image_alt_text(entry.client_name)
+       }}
+    end)
+  end
+
+  defp codex_upload_destination(session_id, client_name, client_type) do
+    filename = unique_upload_filename(client_name, client_type)
+    relative_path = Path.join([session_id, filename])
+    absolute_path = Path.join([File.cwd!(), "priv", "static", "codex_uploads", relative_path])
+
+    %{
+      path: absolute_path,
+      url: Path.join("/froth/codex_uploads", relative_path)
+    }
+  end
+
+  defp unique_upload_filename(client_name, client_type) do
+    ext =
+      client_name
+      |> Path.extname()
+      |> case do
+        "" -> extension_for_type(client_type)
+        value -> value
+      end
+
+    token = Base.url_encode64(:crypto.strong_rand_bytes(6), padding: false)
+    "#{System.system_time(:millisecond)}-#{token}#{ext}"
+  end
+
+  defp extension_for_type("image/png"), do: ".png"
+  defp extension_for_type("image/webp"), do: ".webp"
+  defp extension_for_type("image/gif"), do: ".gif"
+  defp extension_for_type("image/avif"), do: ".avif"
+  defp extension_for_type(_), do: ".jpg"
+
+  defp image_alt_text(nil), do: "Pasted image"
+
+  defp image_alt_text(name) when is_binary(name) do
+    case Path.rootname(name) do
+      "" -> "Pasted image"
+      root -> root
+    end
+  end
+
   defp blank_to_nil(value) when is_binary(value) do
     case String.trim(value) do
       "" -> nil
@@ -1247,16 +1334,31 @@ defmodule FrothWeb.CodexLive do
         session_id: session.session_id,
         last_seen_at: format_last_seen(session.last_seen_at),
         last_kind: session.last_kind,
-        last_body: session.last_body
+        last_body: session.last_body,
+        last_metadata: session.last_metadata || %{}
       }
     end)
   end
 
   defp session_preview_text(session) when is_map(session) do
     kind = session[:last_kind] || session["last_kind"] || "event"
-    body = session[:last_body] || session["last_body"] || "no details yet"
+    metadata = session[:last_metadata] || session["last_metadata"] || %{}
+
+    body =
+      blank_to_nil(session[:last_body] || session["last_body"]) ||
+        image_preview_fallback(metadata) ||
+        "no details yet"
+
     truncate("#{kind}: #{body}", 240)
   end
+
+  defp image_preview_fallback(%{"images" => images}) when is_list(images),
+    do: attachment_count_label(length(images))
+
+  defp image_preview_fallback(%{images: images}) when is_list(images),
+    do: attachment_count_label(length(images))
+
+  defp image_preview_fallback(_), do: nil
 
   defp format_last_seen(%DateTime{} = datetime) do
     Calendar.strftime(datetime, "%Y-%m-%d %H:%M")

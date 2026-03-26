@@ -249,12 +249,228 @@ const ToolScroll = {
   },
 }
 
+const CodexTimeline = {
+  mounted() {
+    this.cacheElements()
+    this.followEnabled = this.followInput ? this.followInput.checked : true
+    this.atBottom = true
+    this.knownIds = this.collectEntryIds()
+
+    this.onScroll = () => {
+      this.atBottom = this.isNearBottom()
+    }
+
+    this.onFollowChange = () => {
+      this.followEnabled = this.followInput ? this.followInput.checked : true
+
+      if (this.followEnabled) {
+        this.scrollToBottom("smooth")
+      }
+    }
+
+    if (this.scrollBody) {
+      this.scrollBody.addEventListener("scroll", this.onScroll, {passive: true})
+    }
+
+    if (this.followInput) {
+      this.followInput.addEventListener("change", this.onFollowChange)
+    }
+
+    window.requestAnimationFrame(() => this.scrollToBottom("auto"))
+  },
+
+  updated() {
+    const hadAutoFollow = this.followEnabled && this.atBottom
+    const previousIds = this.knownIds instanceof Set ? this.knownIds : new Set(this.knownIds || [])
+
+    this.cacheElements()
+    const nextIds = this.collectEntryIds()
+    let hasNewEntries = false
+
+    for (const id of nextIds) {
+      if (!previousIds.has(id)) {
+        hasNewEntries = true
+        break
+      }
+    }
+
+    this.knownIds = nextIds
+
+    if (hadAutoFollow && hasNewEntries) {
+      this.scrollToBottom("smooth")
+    } else {
+      this.atBottom = this.isNearBottom()
+    }
+  },
+
+  destroyed() {
+    if (this.scrollBody) {
+      this.scrollBody.removeEventListener("scroll", this.onScroll)
+    }
+
+    if (this.followInput) {
+      this.followInput.removeEventListener("change", this.onFollowChange)
+    }
+  },
+
+  cacheElements() {
+    this.scrollBody = this.el.querySelector("[data-scroll-body]")
+    this.feed = this.el.querySelector("[data-codex-feed]")
+    this.endMarker = this.el.querySelector("[data-scroll-end]")
+    this.followInput = this.el.querySelector("#codex-follow-tail")
+  },
+
+  collectEntryIds() {
+    if (!this.feed) return new Set()
+
+    return new Set(
+      Array.from(this.feed.querySelectorAll("[data-codex-entry]"))
+        .map(node => node.id)
+        .filter(Boolean)
+    )
+  },
+
+  isNearBottom() {
+    if (!this.scrollBody) return true
+
+    const remaining =
+      this.scrollBody.scrollHeight - (this.scrollBody.scrollTop + this.scrollBody.clientHeight)
+
+    return remaining <= 24
+  },
+
+  scrollToBottom(behavior) {
+    if (!this.scrollBody) return
+
+    if (this.endMarker && typeof this.endMarker.scrollIntoView === "function") {
+      this.endMarker.scrollIntoView({block: "end", behavior})
+    } else {
+      this.scrollBody.scrollTo({top: this.scrollBody.scrollHeight, behavior})
+    }
+
+    this.atBottom = true
+  },
+}
+
+const CodexComposer = {
+  mounted() {
+    this.form = this.el.form
+
+    this.onInput = () => this.autosize()
+    this.onKeyDown = event => this.handleKeyDown(event)
+    this.onPaste = event => this.handlePaste(event)
+
+    this.el.addEventListener("input", this.onInput)
+    this.el.addEventListener("keydown", this.onKeyDown)
+    this.el.addEventListener("paste", this.onPaste)
+
+    window.requestAnimationFrame(() => this.autosize())
+  },
+
+  updated() {
+    this.autosize()
+  },
+
+  destroyed() {
+    this.el.removeEventListener("input", this.onInput)
+    this.el.removeEventListener("keydown", this.onKeyDown)
+    this.el.removeEventListener("paste", this.onPaste)
+  },
+
+  autosize() {
+    this.el.style.height = "0px"
+    this.el.style.height = `${Math.min(this.el.scrollHeight, 320)}px`
+    this.el.style.overflowY = this.el.scrollHeight > 320 ? "auto" : "hidden"
+  },
+
+  handleKeyDown(event) {
+    if (
+      event.key !== "Enter" ||
+      event.shiftKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.isComposing
+    ) {
+      return
+    }
+
+    event.preventDefault()
+    this.submit()
+  },
+
+  handlePaste(event) {
+    const clipboard = event.clipboardData
+    if (!clipboard) return
+
+    const files = Array.from(clipboard.items || [])
+      .filter(item => item.kind === "file" && item.type.startsWith("image/"))
+      .map(item => item.getAsFile())
+      .filter(Boolean)
+
+    if (files.length === 0) return
+
+    event.preventDefault()
+
+    const text = clipboard.getData("text/plain")
+    if (text) {
+      this.insertText(text)
+    }
+
+    this.attachFiles(files)
+  },
+
+  insertText(text) {
+    const start = this.el.selectionStart || 0
+    const end = this.el.selectionEnd || 0
+    this.el.setRangeText(text, start, end, "end")
+    this.el.dispatchEvent(new Event("input", {bubbles: true}))
+  },
+
+  attachFiles(files) {
+    if (files.length === 0) return
+
+    const transfer = new DataTransfer()
+    files.forEach(file => transfer.items.add(file))
+
+    this.upload("images", transfer.files)
+  },
+
+  submit() {
+    if (!this.form) return
+
+    const submitter = this.form.querySelector("#codex-send")
+
+    if (typeof this.form.requestSubmit === "function") {
+      this.form.requestSubmit(submitter || undefined)
+      return
+    }
+
+    if (submitter) {
+      submitter.click()
+      return
+    }
+
+    this.form.submit()
+  },
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 let useViewTransition = false
 const liveSocket = new LiveSocket("/froth/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, ToolScroll, VoiceAudio, SceneEngine, SceneEngine3D, SceneView, SceneEditor},
+  hooks: {
+    ...colocatedHooks,
+    ToolScroll,
+    CodexTimeline,
+    CodexComposer,
+    VoiceAudio,
+    SceneEngine,
+    SceneEngine3D,
+    SceneView,
+    SceneEditor,
+  },
   dom: {
     // Use the View Transitions API when available.
     onDocumentPatch(start) {

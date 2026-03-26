@@ -34,7 +34,7 @@ defmodule Froth.Telegram.Lennart do
       owner_user_id: Keyword.get(cfg, :owner_user_id, 0),
       session_id: @default_session_id,
       model: @default_model,
-      system_prompt_fun: &LennartPrompt.system_prompt/2,
+      system_prompt_fun: &LennartPrompt.system_prompt/3,
       name_triggers: ["lennart"],
       tools_module: LennartTools,
       include_summaries: false,
@@ -48,6 +48,10 @@ defmodule Froth.Telegram.Lennart do
 
   def system_prompt(chat_id, config) when is_map(config) do
     LennartPrompt.system_prompt(chat_id, config)
+  end
+
+  def system_prompt(chat_id, config, msg) when is_map(config) do
+    LennartPrompt.system_prompt(chat_id, config, msg)
   end
 
   def child_spec(opts) do

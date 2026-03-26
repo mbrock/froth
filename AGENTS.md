@@ -1,3 +1,25 @@
+This is a Phoenix application, but Froth is more than a stock web app.
+
+## Froth overview
+
+- Froth is a long-running BEAM system that combines a Phoenix/LiveView web UI, Telegram/TDLib integrations, agent runtimes, background jobs, and task execution in one OTP application.
+- The web app, Telegram bots, background workers, agent cycles, and task processes are meant to cooperate at runtime. When changing behavior, think in terms of supervision trees, registries, PubSub, persisted state, and distributed Erlang, not just request/response code paths.
+- There are two runtime shapes:
+  - full nodes run the main app surface, including the database-backed web app, Telegram integrations, bots, tasks, and jobs
+  - worker nodes run a smaller runtime for distributed work and do not boot the full app surface
+- Prefer stable, architectural descriptions in docs and comments. Avoid baking in fragile “current deployment” trivia unless it is operationally necessary.
+- Before changing startup behavior or operational flows, check `README.md`, `lib/froth/application.ex`, and the scripts in `bin/`.
+
+## Common bin scripts
+
+- `bin/rpc` evaluates Elixir on a running Froth node. Use this for live inspection, one-off fixes, checking Telegram sessions, querying registries, or reading real runtime state. It targets `froth@$(hostname -s)` by default; set `RPC_NODE=...` to point at another node.
+- `bin/logs` tails the `froth` systemd user-service logs via `journalctl`. Pass extra flags like `-n 100` when you want recent history instead of a live tail.
+- `bin/deploy` is the normal code-only deploy path on a running node. It builds assets locally, compiles, then hot-reloads modified modules and loads new ones on the live node.
+- `bin/restart` restarts the `froth` systemd user service. Use this when changes are not safe for hot reload alone, such as boot/runtime configuration changes, supervision tree changes, dependency changes, or native-component changes.
+- `bin/serve` is the full-node entrypoint used by service wrappers. It boots distributed Erlang and runs the Phoenix server.
+- `bin/serve_worker` is the worker-node entrypoint. It boots a minimal BEAM runtime for worker roles instead of the full web/Telegram stack.
+- `bin/build_tdlib_cnode`, `bin/build_tgcalls_smoke`, and `bin/build_tgcalls_register_plugin` are specialist scripts for the native Telegram/voice stack. Only reach for them when you are working on TDLib/TgCalls integration or debugging native build issues.
+
 This is a web application written using the Phoenix web framework.
 
 ## Project guidelines

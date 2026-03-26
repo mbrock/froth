@@ -44,6 +44,7 @@ defmodule Froth.Telegram.BotsTest do
     assert Lennart.default_config().runtime_module == Lennart
     assert Lennart.default_config().tools_module == Froth.Telegram.Toolsets.Lennart
     assert Lennart.default_config().recent_message_limit == 250
+    assert is_function(Lennart.default_config().system_prompt_fun, 3)
 
     assert Lennart.default_config().tools_module.specs_for_api() == [
              %{"type" => "x_search"},

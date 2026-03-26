@@ -72,6 +72,11 @@ defmodule FrothWeb.CodexLiveTest do
        snapshot: %{
          status: :ready,
          thread_id: "thread-#{session_id}",
+         active_turn_id: "turn-live-1",
+         active_assistant_entry_id: "entry-1",
+         runtime: %{model: "gpt-5.4", reasoning_effort: "xhigh", sandbox: "danger-full-access"},
+         token_usage: %{last: %{totalTokens: 198_500}, total: %{totalTokens: 9_400_000}},
+         rate_limits: %{primary: %{usedPercent: 14}, secondary: %{usedPercent: 28}},
          entries: [
            %{
              id: "entry-1",
@@ -82,11 +87,25 @@ defmodule FrothWeb.CodexLiveTest do
            %{
              id: "entry-2",
              kind: :status,
+             body: "working (turn_019d2785-6b2)",
+             sequence: 2
+           },
+           %{
+             id: "entry-3",
+             kind: :status,
              body:
                "received turn/plan/updated %{\"EXPLANATION\" => \"Tighten the mobile layout\", " <>
                  "\"plan\" => [%{\"step\" => \"Add follow toggle\", \"status\" => \"completed\"}, " <>
                  "%{\"step\" => \"Render markdown\", \"status\" => \"in_progress\"}]}",
-             sequence: 2
+             sequence: 3
+           },
+           %{
+             id: "entry-4",
+             kind: :tool,
+             body: "rg --files lib",
+             status: "ok",
+             output: "lib/froth_web/live/codex_live.ex\nlib/froth/codex/session.ex",
+             sequence: 4
            }
          ]
        }}
@@ -95,9 +114,56 @@ defmodule FrothWeb.CodexLiveTest do
     {:ok, view, _html} = live(conn, ~p"/froth/mini/codex/#{session_id}")
 
     assert has_element?(view, "#codex-follow-tail")
+    assert has_element?(view, "label[for='codex-follow-tail']", "Auto")
     assert has_element?(view, "#entry-1 strong", "Bold")
-    assert has_element?(view, "#entry-2", "Tighten the mobile layout")
-    assert has_element?(view, "#entry-2", "Add follow toggle")
-    assert has_element?(view, "#entry-2", "Render markdown")
+    assert has_element?(view, "#entry-1 .codex-inline-spinner")
+    assert has_element?(view, "#codex-live-viewer", "gpt-5.4 xhigh")
+    refute has_element?(view, "#entry-2")
+    assert has_element?(view, "#entry-3", "Tighten the mobile layout")
+    assert has_element?(view, "#entry-3", "Add follow toggle")
+    assert has_element?(view, "#entry-3", "Render markdown")
+    assert has_element?(view, "#entry-4", "command")
+    assert has_element?(view, "#entry-4", "rg --files lib")
+    assert has_element?(view, "#entry-4", "output")
+    assert has_element?(view, "#entry-4", "lib/froth_web/live/codex_live.ex")
+    refute has_element?(view, "#codex-close")
+  end
+
+  test "pasted image uploads can be submitted with the prompt form", %{conn: conn} do
+    session_id = "s_test_" <> Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+    upload_dir = Path.join([File.cwd!(), "priv", "static", "codex_uploads", session_id])
+
+    on_exit(fn -> File.rm_rf(upload_dir) end)
+
+    start_supervised!(
+      {FakeCodexSession,
+       session_id: session_id,
+       snapshot: %{
+         status: :ready,
+         thread_id: "thread-#{session_id}",
+         entries: []
+       }}
+    )
+
+    {:ok, view, _html} = live(conn, ~p"/froth/mini/codex/#{session_id}")
+
+    upload =
+      file_input(view, "#codex-prompt-form", :images, [
+        %{
+          last_modified: 0,
+          name: "paste.png",
+          content: <<137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0>>,
+          type: "image/png"
+        }
+      ])
+
+    _ = render_upload(upload, "paste.png")
+    assert has_element?(view, "#codex-image-staging")
+
+    view
+    |> form("#codex-prompt-form", codex: %{prompt: ""})
+    |> render_submit()
+
+    assert has_element?(view, "#codex-feed-list img[src^=\"/froth/codex_uploads/\"]")
   end
 end
