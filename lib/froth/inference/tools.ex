@@ -4,7 +4,7 @@ defmodule Froth.Inference.Tools do
   """
 
   alias Froth.Agent.{Adhoc, TaskBridge}
-  alias Froth.{ChatSummary, Event, LLM, Repo}
+  alias Froth.{ChatSummary, Event, Repo}
   alias Froth.Search, as: WebSearch
   alias Froth.Telegram.BotAdapter
   alias Froth.Telemetry.Span
@@ -17,8 +17,6 @@ defmodule Froth.Inference.Tools do
   @read_tool_transcript_max_task_output_chars 3_000
   @spawn_agent_default_model "gpt-5.4-mini"
   @spawn_agent_default_tool_names ["run_shell", "elixir_eval"]
-  @wolfram_mcp_url "https://services.wolfram.com/api/mcp"
-
   @tool_specs [
     %{
       "name" => "send_message",
@@ -397,29 +395,12 @@ defmodule Froth.Inference.Tools do
   ]
 
   def specs_for_api do
-    @tool_specs ++ remote_mcp_specs()
+    @tool_specs
   end
 
   def specs_for_names(names) when is_list(names) do
     wanted = MapSet.new(names)
     Enum.filter(specs_for_api(), &MapSet.member?(wanted, &1["name"]))
-  end
-
-  defp remote_mcp_specs do
-    case LLM.active_api_key("wolfram") do
-      token when is_binary(token) and token != "" -> [wolfram_mcp_spec()]
-      _ -> []
-    end
-  end
-
-  defp wolfram_mcp_spec do
-    %{
-      "type" => "mcp_endpoint",
-      "name" => "wolfram",
-      "url" => @wolfram_mcp_url,
-      "bearer_token_provider" => "wolfram",
-      "defer_loading" => true
-    }
   end
 
   def label("read_log"), do: "read chat log"

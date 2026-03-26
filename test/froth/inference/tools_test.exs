@@ -18,22 +18,10 @@ defmodule Froth.Inference.ToolsTest do
     :ok
   end
 
-  test "specs_for_api includes the Wolfram MCP endpoint when a Wolfram key is available" do
+  test "specs_for_api does not expose MCP endpoints even when a Wolfram key is available" do
     Repo.insert!(%ApiKey{name: "wolfram", provider: "wolfram", key: "wolfram-token"})
 
-    spec =
-      Enum.find(Tools.specs_for_api(), fn
-        %{"type" => "mcp_endpoint", "name" => "wolfram"} -> true
-        _ -> false
-      end)
-
-    assert spec == %{
-             "type" => "mcp_endpoint",
-             "name" => "wolfram",
-             "url" => "https://services.wolfram.com/api/mcp",
-             "bearer_token_provider" => "wolfram",
-             "defer_loading" => true
-           }
+    refute Enum.any?(Tools.specs_for_api(), &(&1["type"] == "mcp_endpoint"))
   end
 
   test "read_tool_transcript includes prior cycle transcript and linked task output" do
