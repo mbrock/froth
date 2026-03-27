@@ -82,3 +82,7 @@ npm-debug.log
 # Compiled NIFs (rebuild with `make nif`)
 /priv/*.so
 mbrockman_messages.parquet
+
+# Charlie prompt content (private)
+/priv/chronicle/
+/priv/charlie-prompt.md

@@ -8,13 +8,13 @@ defmodule Froth.Telegram.BotContextHTMLTest do
     BotContextHTML.render_to_string(component)
   end
 
-  describe "summary/1" do
-    test "renders a summary with date" do
-      html = render(BotContextHTML.summary(%{date: "2026-03-05", text: "A quiet day."}))
+  describe "chapter/1" do
+    test "renders a chapter with name" do
+      html = render(BotContextHTML.chapter(%{name: "2026-03-05", text: "A quiet day."}))
 
-      assert html =~ ~s(<summary date="2026-03-05">)
+      assert html =~ ~s(<chapter name="2026-03-05">)
       assert html =~ "A quiet day."
-      assert html =~ "</summary>"
+      assert html =~ "</chapter>"
     end
   end
 
@@ -68,14 +68,8 @@ defmodule Froth.Telegram.BotContextHTMLTest do
   end
 
   describe "context/1 (top-level)" do
-    test "renders the sample context with all sections" do
+    test "renders the sample context with recent messages and cycles" do
       html = render(BotContextHTML.context(%{ctx: BotContextHTML.sample_context()}))
-
-      # summaries
-      assert html =~ ~s(<summary date="2026-03-04">)
-      assert html =~ "memory leak"
-      assert html =~ ~s(<summary date="2026-03-05">)
-      assert html =~ "voice transcription"
 
       # recent
       assert html =~ "@mikkel"
@@ -105,7 +99,8 @@ defmodule Froth.Telegram.BotContextHTMLTest do
 
       assert html =~ ~s(<msg message_id="1" sender="user:99")
       assert html =~ "hi"
-      refute html =~ "<summary"
+      refute html =~ "<chapter"
+      refute html =~ "<info>"
       refute html =~ "<previous_cycle"
     end
   end
@@ -147,14 +142,17 @@ defmodule Froth.Telegram.BotContextHTMLTest do
   describe "context/1 and render_to_parts/1" do
     test "splits rendered context on template page breaks" do
       ctx = %Context{
-        summaries: [
-          %{date: "2026-03-04", text: "Summary one"},
-          %{date: "2026-03-05", text: "Summary two"}
+        chapters: [
+          %{name: "ch01", text: "Summary one"},
+          %{name: "ch02", text: "Summary two"}
         ],
         chat_context: %{
           chat_id: -100_123,
           chat_name: "Froth chat",
-          participants: [%{id: 42, label: "@mikkel"}, %{id: 43, label: "@luna"}],
+          participants: [
+            %{id: 42, label: "@mikkel", latest_date: 1_741_252_390},
+            %{id: 43, label: "@luna", latest_date: 1_741_252_380}
+          ],
           omitted_count: 1
         },
         recent_messages: [
@@ -169,18 +167,19 @@ defmodule Froth.Telegram.BotContextHTMLTest do
 
       assert length(parts) == 5
 
-      assert Enum.at(parts, 0) =~ ~s(<summary date="2026-03-04">)
+      assert Enum.at(parts, 0) =~ ~s(<chapter name="ch01">)
       assert Enum.at(parts, 0) =~ "Summary one"
-      assert Enum.at(parts, 1) =~ ~s(<summary date="2026-03-05">)
+      assert Enum.at(parts, 1) =~ ~s(<chapter name="ch02">)
       assert Enum.at(parts, 1) =~ "Summary two"
-      assert Enum.at(parts, 2) =~ "chat_id=-100123"
-      assert Enum.at(parts, 2) =~ "chat_name=Froth chat"
-      assert Enum.at(parts, 2) =~ "- @mikkel [id=42]"
-      assert Enum.at(parts, 2) =~ "- ... 1 more participants omitted"
-      assert Enum.at(parts, 3) =~ ~s(<msg message_id="4401")
-      assert Enum.at(parts, 3) =~ "hi"
-      assert Enum.at(parts, 4) =~ ~s(<msg message_id="4402")
-      assert Enum.at(parts, 4) =~ "hey"
+      assert Enum.at(parts, 2) =~ ~s(<msg message_id="4401")
+      assert Enum.at(parts, 2) =~ "hi"
+      assert Enum.at(parts, 3) =~ ~s(<msg message_id="4402")
+      assert Enum.at(parts, 3) =~ "hey"
+      assert Enum.at(parts, 4) =~ "<info>"
+      assert Enum.at(parts, 4) =~ "chat: Froth chat (id -100123)"
+      assert Enum.at(parts, 4) =~ "@mikkel (id 42) latest message"
+      assert Enum.at(parts, 4) =~ "@luna (id 43) latest message"
+      assert Enum.at(parts, 4) =~ "now:"
     end
 
     test "drops html comment nodes from rendered parts" do
@@ -203,9 +202,9 @@ defmodule Froth.Telegram.BotContextHTMLTest do
         BotContextHTML.render_to_string(
           BotContextHTML.context(%{
             ctx: %Context{
-              summaries: [
-                %{date: "2026-03-04", text: "Summary one"},
-                %{date: "2026-03-05", text: "Summary two"}
+              chapters: [
+                %{name: "ch01", text: "Summary one"},
+                %{name: "ch02", text: "Summary two"}
               ]
             }
           })

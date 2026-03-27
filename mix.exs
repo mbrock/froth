@@ -65,6 +65,7 @@ defmodule Froth.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
+      {:tz, "~> 0.28"},
       {:libcluster, "~> 3.5"},
       {:bandit, "~> 1.5"},
       {:floki, "~> 0.38.0"},

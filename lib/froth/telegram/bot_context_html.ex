@@ -10,6 +10,7 @@ defmodule Froth.Telegram.BotContextHTML do
   """
 
   use Phoenix.Component
+  alias Froth.Agent.ToolDescription
   @part_break <<31>>
   @entity_like_ampersand_regex ~r/&([0-9A-Za-z]+);/
 
@@ -17,11 +18,11 @@ defmodule Froth.Telegram.BotContextHTML do
     @moduledoc """
     View model for a complete bot context prompt.
     """
-    defstruct summaries: [],
+    defstruct chapters: [],
               chat_context: nil,
               recent_messages: []
 
-    @type summary :: %{date: String.t(), text: String.t()}
+    @type chapter :: %{name: String.t(), text: String.t()}
     @type participant :: %{id: integer() | String.t(), label: String.t()}
     @type analysis :: %{id: integer() | String.t(), type: String.t(), text: String.t()}
     @type chat_context :: %{
@@ -45,7 +46,7 @@ defmodule Froth.Telegram.BotContextHTML do
     @type cycle_trace :: %{cycle_id: String.t(), inserted_at: any(), entries: [cycle_entry()]}
 
     @type t :: %__MODULE__{
-            summaries: [summary()],
+            chapters: [chapter()],
             chat_context: chat_context() | nil,
             recent_messages: [recent_message()]
           }
@@ -57,22 +58,15 @@ defmodule Froth.Telegram.BotContextHTML do
 
   def context(assigns) do
     ~H"""
-    <%= for {summary, idx} <- Enum.with_index(@ctx.summaries) do %>
+    <%= for {chapter, idx} <- Enum.with_index(@ctx.chapters) do %>
       <%= if idx > 0 do %>
         <.page_break />
       <% end %>
-      <.summary date={summary.date} text={summary.text} />
+      <.chapter name={chapter.name} text={chapter.text} />
     <% end %>
     <%= if @ctx.recent_messages != [] do %>
-      <.page_break />
-      <%= if @ctx.chat_context do %>
-        <.chat_context chat_context={@ctx.chat_context} />
-        <.page_break />
-      <% end %>
       <%= for {m, idx} <- Enum.with_index(@ctx.recent_messages) do %>
-        <%= if idx > 0 do %>
-          <.page_break />
-        <% end %>
+        <.page_break />
         <.recent_message
           date={m.date}
           sender={m.sender}
@@ -84,19 +78,23 @@ defmodule Froth.Telegram.BotContextHTML do
         />
       <% end %>
     <% end %>
+    <%= if @ctx.chat_context do %>
+      <.page_break />
+      <.chat_context chat_context={@ctx.chat_context} />
+    <% end %>
     """
   end
 
-  # ── summaries ──────────────────────────────────────────────────────
+  # ── chapters ──────────────────────────────────────────────────────
 
-  attr :date, :string, required: true
+  attr :name, :string, required: true
   attr :text, :string, required: true
 
-  def summary(assigns) do
+  def chapter(assigns) do
     ~H"""
-    <summary date={@date}>
+    <chapter name={@name}>
       {@text}
-    </summary>
+    </chapter>
     """
   end
 
@@ -111,25 +109,28 @@ defmodule Froth.Telegram.BotContextHTML do
   attr :chat_context, :map, required: true
 
   def chat_context(assigns) do
+    participants =
+      assigns.chat_context
+      |> Map.get(:participants, [])
+      |> Enum.sort_by(& &1.latest_date, :desc)
+
+    now = DateTime.utc_now()
+    latvia = DateTime.shift_zone!(now, "Europe/Riga")
+    thailand = DateTime.shift_zone!(now, "Asia/Bangkok")
+
     assigns =
       assigns
-      |> Map.put(:participants, Map.get(assigns.chat_context, :participants, []))
-      |> Map.put(:omitted_count, Map.get(assigns.chat_context, :omitted_count, 0))
+      |> Map.put(:participants, participants)
+      |> Map.put(:now_utc, Calendar.strftime(now, "%Y-%m-%d %H:%M UTC"))
+      |> Map.put(:now_latvia, Calendar.strftime(latvia, "%Y-%m-%d %H:%M %Z"))
+      |> Map.put(:now_thailand, Calendar.strftime(thailand, "%Y-%m-%d %H:%M %Z"))
 
     ~H"""
-    <chat_context>
-      chat_id={to_string(@chat_context.chat_id)} chat_name={@chat_context.chat_name} participants_in_recent_window:
-      <%= if @participants == [] and @omitted_count == 0 do %>
-        - none
-      <% else %>
-        <%= for participant <- @participants do %>
-          - {participant.label} [id={participant.id}]
-        <% end %>
-        <%= if @omitted_count > 0 do %>
-          - ... {@omitted_count} more participants omitted
-        <% end %>
-      <% end %>
-    </chat_context>
+    <info>
+    chat: {@chat_context.chat_name} (id {@chat_context.chat_id})
+    now: {@now_utc} / {@now_latvia} / {@now_thailand}
+    <%= for p <- @participants do %>{p.label} (id {p.id}) latest message {format_time(p.latest_date)}
+    <% end %></info>
     """
   end
 
@@ -202,7 +203,9 @@ defmodule Froth.Telegram.BotContextHTML do
   attr :entry, :map, required: true
 
   def trace_entry(%{entry: %{kind: :call, tool: tool, input_json: input_json} = entry} = assigns) do
-    narration = Map.get(entry, :narration)
+    narration =
+      Map.get(entry, :narration) || ToolDescription.text_from_input(Map.get(entry, :input))
+
     assigns = assign(assigns, tool: tool, input_json: input_json, narration: narration)
 
     ~H"""
@@ -463,22 +466,6 @@ defmodule Froth.Telegram.BotContextHTML do
 
   def sample_context do
     %Context{
-      summaries: [
-        %{
-          date: "2026-03-04",
-          text:
-            "The group spent the morning debugging a memory leak in the OTP supervisor tree. " <>
-              "Mikkel traced it to an unbounded ETS table in the telegram session cache. " <>
-              "By afternoon the conversation shifted to whether LLM-generated summaries " <>
-              "should preserve exact quotes or paraphrase."
-        },
-        %{
-          date: "2026-03-05",
-          text:
-            "A quieter day. Brief discussion about adding voice transcription support. " <>
-              "Charlie deployed a fix for the ETS leak and confirmed memory usage stabilized."
-        }
-      ],
       recent_messages: [
         %{
           date: 1_741_252_320,

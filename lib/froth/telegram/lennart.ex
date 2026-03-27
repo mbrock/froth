@@ -37,7 +37,6 @@ defmodule Froth.Telegram.Lennart do
       system_prompt_fun: &LennartPrompt.system_prompt/3,
       name_triggers: ["lennart"],
       tools_module: LennartTools,
-      include_summaries: false,
       recent_message_limit: 250,
       max_tool_calls: 20,
       effort: "high"

@@ -15,7 +15,7 @@ defmodule Froth.Telegram.BotContext do
   # ── public API ─────────────────────────────────────────────────────
 
   @doc """
-  Build context parts for a chat, using summaries + recent messages from the DB.
+  Build context parts for a chat, using chapters + recent messages from the DB.
   """
   def render_parts(chat_id, opts \\ []) do
     chat_id
@@ -53,65 +53,49 @@ defmodule Froth.Telegram.BotContext do
     |> render()
   end
 
-  @doc """
-  Render summary blocks only, using the same XML-like prompt format as bot context.
-  """
-  def render_summaries(summaries) when is_list(summaries) do
-    %Context{summaries: summaries}
-    |> render()
-  end
-
   # ── building the view model ────────────────────────────────────
 
   defp build(chat_id, opts) when is_integer(chat_id) and is_list(opts) do
     before_unix = opt_before_unix(opts)
+    chapters = load_chapters(opts[:chronicle_dir])
 
-    {summaries, last_covered} =
-      case {opt_include_summaries(opts), opts[:lore_file]} do
-        {false, _} ->
-          {[], 0}
-
-        {true, path} when is_binary(path) ->
-          # Compressed lore mode: read a single file instead of 40 DB summaries
-          text = File.read!(path)
-
-          last_covered =
-            case Queries.latest_daily_summary_end(chat_id, before_unix) do
-              unix when is_integer(unix) -> unix
-              _ -> 0
-            end
-
-          {[%{date: "lore", text: text}], last_covered}
-
-        {true, _} ->
-          dailies = Queries.daily_summaries(chat_id, before_unix)
-
-          last_covered =
-            case List.last(dailies) do
-              nil -> 0
-              s -> s.to_date
-            end
-
-          summaries =
-            Enum.map(dailies, fn s ->
-              %{
-                date: DateTime.from_unix!(s.from_date) |> Calendar.strftime("%Y-%m-%d"),
-                text: s.summary_text
-              }
-            end)
-
-          {summaries, last_covered}
-      end
-
-    db_rows = fetch_recent(chat_id, last_covered, before_unix)
+    db_rows = fetch_recent(chat_id, before_unix)
     db_rows = limit_recent_rows(db_rows, opts)
     recent = build_recent(chat_id, db_rows, opts)
 
+    recent_messages =
+      if opts[:only_nontrivial] do
+        Enum.filter(recent.recent_messages, fn m ->
+          m.analyses != [] or m.cycles != []
+        end)
+      else
+        recent.recent_messages
+      end
+
     %Context{
-      summaries: summaries,
+      chapters: chapters,
       chat_context: recent.chat_context,
-      recent_messages: recent.recent_messages
+      recent_messages: recent_messages
     }
+  end
+
+  defp load_chapters(nil), do: []
+
+  defp load_chapters(dir) when is_binary(dir) do
+    case File.ls(dir) do
+      {:ok, files} ->
+        files
+        |> Enum.filter(&String.ends_with?(&1, ".md"))
+        |> Enum.sort()
+        |> Enum.map(fn filename ->
+          name = filename |> String.trim_trailing(".md")
+          text = Path.join(dir, filename) |> File.read!()
+          %{name: name, text: text}
+        end)
+
+      {:error, _} ->
+        []
+    end
   end
 
   defp render(%Context{} = ctx) do
@@ -160,11 +144,11 @@ defmodule Froth.Telegram.BotContext do
     Enum.map(normalized, &to_recent_message(&1, sender_labels))
   end
 
-  defp fetch_recent(chat_id, last_covered, nil),
-    do: Queries.fetch_messages(chat_id, last_covered, :infinity)
+  defp fetch_recent(chat_id, nil),
+    do: Queries.fetch_messages(chat_id, 0, :infinity)
 
-  defp fetch_recent(chat_id, last_covered, before_unix) when is_integer(before_unix),
-    do: Queries.fetch_messages(chat_id, last_covered, before_unix)
+  defp fetch_recent(chat_id, before_unix) when is_integer(before_unix),
+    do: Queries.fetch_messages(chat_id, 0, before_unix)
 
   defp build_recent(_chat_id, [], _opts),
     do: %{chat_context: nil, recent_messages: []}
@@ -176,6 +160,12 @@ defmodule Froth.Telegram.BotContext do
     msg_ids = Enum.map(normalized, & &1.message_id)
     analyses_map = Queries.analyses_for_messages(chat_id, msg_ids)
     cycle_traces_map = build_cycle_traces_map(chat_id, msg_ids, opts)
+
+    all_participants =
+      Queries.all_participants(chat_id)
+      |> Enum.map(fn %{sender_id: id, latest_date: latest} ->
+        %{id: id, label: Names.sender_label(id, session_id), latest_date: latest}
+      end)
 
     recent_messages =
       Enum.map(normalized, fn msg ->
@@ -189,7 +179,7 @@ defmodule Froth.Telegram.BotContext do
       chat_context: %{
         chat_id: chat_id,
         chat_name: Names.chat_name(chat_id, session_id),
-        participants: Enum.map(sender_labels, fn {id, label} -> %{id: id, label: label} end),
+        participants: all_participants,
         omitted_count: 0
       },
       recent_messages: recent_messages
@@ -257,8 +247,7 @@ defmodule Froth.Telegram.BotContext do
 
   defp message_opts(msg, bot_config) do
     base = [telegram_session_id: bot_config.session_id, bot_id: bot_config.id]
-    base = if lf = Map.get(bot_config, :lore_file), do: [{:lore_file, lf} | base], else: base
-    base = [{:include_summaries, Map.get(bot_config, :include_summaries, true)} | base]
+    base = maybe_put_opt(base, :chronicle_dir, Map.get(bot_config, :chronicle_dir))
     base = maybe_put_opt(base, :recent_message_limit, Map.get(bot_config, :recent_message_limit))
 
     case msg_unix(msg) do
@@ -286,13 +275,6 @@ defmodule Froth.Telegram.BotContext do
     case opts[:bot_id] do
       id when is_binary(id) and id != "" -> id
       _ -> nil
-    end
-  end
-
-  defp opt_include_summaries(opts) do
-    case opts[:include_summaries] do
-      false -> false
-      _ -> true
     end
   end
 

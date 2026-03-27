@@ -13,7 +13,6 @@ defmodule Froth.Headlines do
   alias Froth.Event
   alias Froth.Inference.Tools
   alias Froth.Repo
-  alias Froth.Telegram.BotContext
 
   @default_chat_id -1_003_690_254_489
   @model "gpt-5.4"
@@ -82,12 +81,8 @@ defmodule Froth.Headlines do
   defp render_summary_context(summaries) when is_list(summaries) do
     summaries
     |> Enum.map(fn summary ->
-      %{
-        date: summary_date(summary.from_date),
-        text: summary.summary_text
-      }
+      "<summary date=\"#{summary_date(summary.from_date)}\">\n#{summary.summary_text}\n</summary>"
     end)
-    |> BotContext.render_summaries()
     |> Enum.join("\n\n")
   end
 

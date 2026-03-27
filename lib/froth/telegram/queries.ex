@@ -47,6 +47,18 @@ defmodule Froth.Telegram.Queries do
     |> dedupe_messages()
   end
 
+  def all_participants(chat_id) when is_integer(chat_id) do
+    from(m in "telegram_messages",
+      where:
+        m.chat_id == ^chat_id and
+          not is_nil(m.sender_id) and
+          m.sender_id > 0,
+      group_by: m.sender_id,
+      select: %{sender_id: m.sender_id, latest_date: max(m.date)}
+    )
+    |> Repo.all(log: false)
+  end
+
   defp dedupe_messages(messages) when is_list(messages) do
     messages
     |> Enum.with_index()
