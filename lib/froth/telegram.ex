@@ -175,6 +175,40 @@ defmodule Froth.Telegram do
     end
   end
 
+  @doc """
+  Send a document to a chat. Accepts a local path or HTTP URL.
+  Optional caption and caption entities.
+
+      Froth.Telegram.send_document("charlie", chat_id, "/tmp/summary.html",
+        caption: "2026-03-22\\n\\nLaunch day",
+        caption_entities: [...]
+      )
+  """
+  def send_document(session_id, chat_id, url, opts \\ []) do
+    caption = Keyword.get(opts, :caption)
+    caption_entities = Keyword.get(opts, :caption_entities)
+
+    with {:ok, file_ref} <- resolve_file(url, ".html") do
+      content = %{
+        "@type" => "inputMessageDocument",
+        "document" => file_ref
+      }
+
+      content =
+        if is_binary(caption) and caption != "" do
+          Map.put(content, "caption", formatted_text(caption, caption_entities))
+        else
+          content
+        end
+
+      call(session_id, %{
+        "@type" => "sendMessage",
+        "chat_id" => chat_id,
+        "input_message_content" => content
+      })
+    end
+  end
+
   defp resolve_file(url, default_ext) when is_binary(url) do
     if String.starts_with?(url, "http") do
       download_to_temp(url, default_ext)
@@ -213,6 +247,23 @@ defmodule Froth.Telegram do
 
       {:error, err} ->
         {:error, {:download_failed, err}}
+    end
+  end
+
+  defp formatted_text(text, entities) when is_binary(text) do
+    case entities do
+      entities when is_list(entities) ->
+        %{
+          "@type" => "formattedText",
+          "text" => text,
+          "entities" => entities
+        }
+
+      _ ->
+        %{
+          "@type" => "formattedText",
+          "text" => text
+        }
     end
   end
 

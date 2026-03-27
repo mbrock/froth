@@ -404,34 +404,31 @@ defmodule Froth.Podcast do
       Span.execute([:froth, :podcast, :already_downloaded], nil, %{path: local_path})
       {:ok, %{local_path: local_path, public_url: public_url}}
     else
-      tmp_template = "/tmp/yt_#{slug}.%(ext)s"
-      tmp_mp3 = "/tmp/yt_#{slug}.mp3"
+      # Download via mikaels-mac-mini-2 which has working yt-dlp
+      remote_tmp = "/tmp/yt_#{slug}.mp3"
+      remote_template = "/tmp/yt_#{slug}.%(ext)s"
 
-      {output, exit} =
-        System.cmd(
-          @yt_dlp,
-          [
-            "--cookies",
-            @yt_cookies,
-            "--remote-components",
-            "ejs:github",
-            "--extract-audio",
-            "--audio-format",
-            "mp3",
-            "--audio-quality",
-            "0",
-            "-o",
-            tmp_template,
-            youtube_url
-          ],
-          stderr_to_stdout: true,
-          env: @yt_env
-        )
+      ssh_cmd =
+        "yt-dlp --extract-audio --audio-format mp3 --audio-quality 0 " <>
+          "-o '#{remote_template}' '#{youtube_url}'"
 
-      if exit == 0 and File.exists?(tmp_mp3) do
-        File.cp!(tmp_mp3, local_path)
-        File.rm(tmp_mp3)
-        {:ok, %{local_path: local_path, public_url: public_url}}
+      {output, exit} = System.cmd("ssh", ["mikaels-mac-mini-2", ssh_cmd], stderr_to_stdout: true)
+
+      if exit == 0 do
+        # scp the file back
+        {_scp_out, scp_exit} =
+          System.cmd("scp", ["mikaels-mac-mini-2:#{remote_tmp}", local_path],
+            stderr_to_stdout: true
+          )
+
+        # clean up remote
+        System.cmd("ssh", ["mikaels-mac-mini-2", "rm -f #{remote_tmp}"], stderr_to_stdout: true)
+
+        if scp_exit == 0 and File.exists?(local_path) do
+          {:ok, %{local_path: local_path, public_url: public_url}}
+        else
+          {:error, {:scp_failed, "scp exit #{scp_exit}"}}
+        end
       else
         {:error, {:yt_dlp, String.slice(output, 0, 500)}}
       end

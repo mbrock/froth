@@ -6,6 +6,7 @@ defmodule Froth.Podcast.StitchWorker do
   use Oban.Worker, queue: :podcast, max_attempts: 3
 
   alias Froth.Telemetry.Span
+  import Ecto.Query
 
   @default_pause_ms 300
 
@@ -143,6 +144,11 @@ defmodule Froth.Podcast.StitchWorker do
     static_dir = "/home/mbrock/froth/priv/static/audio/hourly"
     File.mkdir_p!(static_dir)
     File.cp!(output_path, Path.join(static_dir, "#{batch_id}.mp3"))
+
+    Froth.Repo.update_all(
+      from(s in Froth.Podcast.Script, where: s.batch_id == ^batch_id),
+      set: [status: "done", audio_url: "/audio/hourly/#{batch_id}.mp3"]
+    )
 
     send_progress(bot_token, chat_id, "#{label} — done. #{total} segments, #{duration_str}.")
 

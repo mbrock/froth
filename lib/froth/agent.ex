@@ -211,7 +211,9 @@ defmodule Froth.Agent do
   @spec latest_agent_text(Cycle.t()) :: String.t() | nil
   def latest_agent_text(%Cycle{} = cycle) do
     case latest_head_id(cycle) do
-      nil -> nil
+      nil ->
+        nil
+
       head_id ->
         head_id
         |> load_messages()
@@ -574,6 +576,7 @@ defmodule Froth.Agent do
 
   defp stringify_value(value) when is_map(value), do: stringify_map(value)
   defp stringify_value(value) when is_list(value), do: Enum.map(value, &stringify_value/1)
+  defp stringify_value(value) when is_boolean(value), do: value
   defp stringify_value(value) when is_atom(value), do: to_string(value)
   defp stringify_value(value), do: value
 

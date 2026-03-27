@@ -489,6 +489,21 @@ defmodule Froth.Agent.Worker do
        ) do
     tool_result =
       case result do
+        {:await, %{} = data} ->
+          ToolResult.new(tool_use_id, nil,
+            control_outcome: "await_user_input",
+            control_data:
+              data
+              |> stringify_map()
+              |> Map.put_new("reason", await_reason(data))
+          )
+
+        {:await, reason} ->
+          ToolResult.new(tool_use_id, nil,
+            control_outcome: "await_user_input",
+            control_data: %{"reason" => format_reason(reason)}
+          )
+
         {:yield, reason} ->
           ToolResult.new(tool_use_id, format_yield_reason(reason),
             yield?: true,
@@ -515,8 +530,20 @@ defmodule Froth.Agent.Worker do
 
   defp maybe_tools_done(%{phase: {:working, [], results, _ignored_refs}} = worker) do
     has_yield = Enum.any?(results, &(&1.control_outcome == "yield"))
-    api_results = results |> Enum.reverse() |> Enum.map(&ToolResult.to_api/1)
-    worker = persist_message(worker, :user, api_results)
+    has_await_user_input = Enum.any?(results, &await_user_input_result?/1)
+
+    api_results =
+      results
+      |> Enum.reject(&await_user_input_result?/1)
+      |> Enum.reverse()
+      |> Enum.map(&ToolResult.to_api/1)
+
+    worker =
+      if api_results == [] do
+        worker
+      else
+        persist_message(worker, :user, api_results)
+      end
 
     if has_yield do
       worker =
@@ -535,8 +562,33 @@ defmodule Froth.Agent.Worker do
 
       {:stop, :normal, %{worker | phase: :done}}
     else
-      cycle = Agent.update_cycle(worker.cycle, %{status: :running})
-      {:noreply, %{worker | cycle: cycle, phase: :continuing}, {:continue, :think}}
+      if has_await_user_input do
+        worker =
+          Enum.reduce(results, %{worker | phase: :done}, fn
+            %ToolResult{
+              control_outcome: "await_user_input",
+              control_data: data,
+              tool_use_id: tool_use_id
+            },
+            acc ->
+              emit_control_outcome(
+                acc,
+                "await_user_input",
+                Map.put(data || %{}, "tool_use_id", tool_use_id),
+                span_id: acc.cycle_span_id,
+                parent_span_id: acc.cycle_span_id
+              )
+
+            _result, acc ->
+              acc
+          end)
+          |> finalize_cycle(:completed, :normal, %{"control_outcome" => "await_user_input"})
+
+        {:stop, :normal, %{worker | phase: :done}}
+      else
+        cycle = Agent.update_cycle(worker.cycle, %{status: :running})
+        {:noreply, %{worker | cycle: cycle, phase: :continuing}, {:continue, :think}}
+      end
     end
   end
 
@@ -547,8 +599,13 @@ defmodule Froth.Agent.Worker do
   defp format_yield_reason(reason),
     do: "Yielding: #{inspect(reason, limit: :infinity, printable_limit: :infinity)}"
 
+  defp await_reason(%{"reason" => reason}) when is_binary(reason) and reason != "", do: reason
+  defp await_reason(%{reason: reason}) when is_binary(reason) and reason != "", do: reason
+  defp await_reason(_data), do: "Waiting for user input."
+
   defp sanitize_tool_result({:ok, content}), do: {:ok, sanitize_utf8(content)}
   defp sanitize_tool_result({:error, reason}), do: {:error, sanitize_utf8(reason)}
+  defp sanitize_tool_result({:await, data}), do: {:await, sanitize_utf8(data)}
   defp sanitize_tool_result({:yield, reason}), do: {:yield, sanitize_utf8(reason)}
   defp sanitize_tool_result(result), do: sanitize_utf8(result)
 
@@ -864,6 +921,7 @@ defmodule Froth.Agent.Worker do
   defp current_duration_ms(_started_at), do: 0
 
   defp tool_result_type({:ok, content}), do: tool_result_type(content)
+  defp tool_result_type({:await, _data}), do: "await"
   defp tool_result_type({:yield, _reason}), do: "yield"
   defp tool_result_type(content) when is_binary(content), do: "text"
   defp tool_result_type(content) when is_list(content), do: "blocks"
@@ -872,6 +930,7 @@ defmodule Froth.Agent.Worker do
   defp tool_result_type(_content), do: "value"
 
   defp normalize_tool_event_result({:ok, content}), do: content
+  defp normalize_tool_event_result({:await, data}), do: %{"await" => summarize_value(data)}
   defp normalize_tool_event_result({:yield, reason}), do: %{"yield" => format_reason(reason)}
   defp normalize_tool_event_result({:error, reason}), do: %{"error" => format_reason(reason)}
   defp normalize_tool_event_result(content), do: content
@@ -1172,6 +1231,9 @@ defmodule Froth.Agent.Worker do
     _event = Agent.append_event(worker.cycle, attrs, worker.seq)
     %{worker | seq: worker.seq + 1}
   end
+
+  defp await_user_input_result?(%ToolResult{control_outcome: "await_user_input"}), do: true
+  defp await_user_input_result?(_result), do: false
 
   defp cycle_error_for(:failed, _reason, extra), do: extra["error"] || extra[:error]
   defp cycle_error_for(_status, _reason, _extra), do: nil

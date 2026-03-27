@@ -105,6 +105,22 @@ defmodule Froth.LLM.Providers.GeminiInteractionsTest do
            ]
   end
 
+  test "build_request expands web_search tools into Gemini grounding config" do
+    request = %Request{
+      provider: GeminiInteractions,
+      endpoint: "https://example.test/v1beta/interactions?alt=sse&key=test",
+      model: "gemini-3.1-flash-lite-preview",
+      messages: [Message.user("search the web")],
+      tools: [%{"type" => "web_search"}]
+    }
+
+    {:ok, %{body: body}} = GeminiInteractions.build_request(request)
+
+    assert body["tools"] == [
+             %{"type" => "google_search", "search_types" => ["web_search"]}
+           ]
+  end
+
   test "decodes streamed image and text outputs into neutral content blocks" do
     store = Store.new()
 

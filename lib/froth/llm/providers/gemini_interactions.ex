@@ -526,9 +526,14 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
   defp google_signature(%{"signature" => signature}) when is_binary(signature), do: signature
   defp google_signature(_block), do: nil
 
+  defp normalize_response_modalities(nil), do: []
+
   defp normalize_response_modalities(modalities) when is_list(modalities) do
     modalities
     |> Enum.flat_map(fn
+      nil ->
+        []
+
       modality when is_atom(modality) ->
         [modality |> Atom.to_string() |> String.downcase()]
 

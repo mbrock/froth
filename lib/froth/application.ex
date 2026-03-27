@@ -80,6 +80,7 @@ defmodule Froth.Application do
           Froth.Telegram,
           Froth.Telegram.Bots,
           Froth.Telegram.LennartLinkReactor,
+          Froth.DailyDigest,
           {Registry, keys: :unique, name: Froth.Agent.Registry},
           {Task.Supervisor, name: Froth.Agent.TaskSupervisor}
         ] ++

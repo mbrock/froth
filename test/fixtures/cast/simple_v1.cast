@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "width": 80,
+  "height": 24,
+  "duration": 1.75,
+  "command": "/bin/bash",
+  "title": "Simple v1",
+  "env": {
+    "TERM": "xterm-256color",
+    "SHELL": "/bin/bash"
+  },
+  "stdout": [
+    [0.1, "$ echo hi\r\n"],
+    [0.65, "hi\r\n"]
+  ]
+}

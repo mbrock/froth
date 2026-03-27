@@ -8,6 +8,64 @@ defmodule Froth.Telegram.BotTest do
     assert %Bot{mid_cycle_messages: []} = %Bot{}
   end
 
+  test "commit_tool tracks narration message state" do
+    bot = start_bot()
+    tool_use = %ToolUse{id: "call_1", name: "run_shell", input: %{"command" => "pwd"}}
+    context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
+
+    assert {:ok, "ok"} =
+             GenServer.call(
+               bot,
+               {:commit_tool, tool_use, context, %{execution: %{cycle_id: "cycle_1"}},
+                %{
+                  result: {:ok, "ok"},
+                  narration_message: %{message_id: 77, text: "Checking X", mode: :italic}
+                }}
+             )
+
+    state = :sys.get_state(bot)
+    assert state.current_narration_message_id == 77
+    assert state.current_narration_text == "Checking X"
+    assert state.current_narration_mode == :italic
+    refute state.cycle_replied?
+  end
+
+  test "commit_tool clears active narration when a normal message is sent" do
+    bot = start_bot()
+    tool_use = %ToolUse{id: "call_1", name: "send_message", input: %{"text" => "hello"}}
+    context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
+
+    :sys.replace_state(bot, fn state ->
+      %{
+        state
+        | current_narration_message_id: 77,
+          current_narration_text: "Checking X\nAlso checking Y",
+          current_narration_mode: :italic
+      }
+    end)
+
+    outcome = %{
+      result: {:ok, "sent"},
+      sent_message: %{
+        sent: %{"id" => 42},
+        text: "hello"
+      }
+    }
+
+    assert {:ok, "sent"} =
+             GenServer.call(
+               bot,
+               {:commit_tool, tool_use, context, %{execution: %{cycle_id: "cycle_1"}}, outcome}
+             )
+
+    state = :sys.get_state(bot)
+    assert state.cycle_replied? == true
+    assert state.last_sent_message_id == 42
+    assert state.current_narration_message_id == nil
+    assert state.current_narration_text == nil
+    assert state.current_narration_mode == nil
+  end
+
   test "prepare_tool reserves the control prompt once per cycle" do
     bot = start_bot()
     tool_use = %ToolUse{id: "call_1", name: "elixir_eval", input: %{"code" => "1 + 1"}}
@@ -84,6 +142,47 @@ defmodule Froth.Telegram.BotTest do
 
     assert %Bot{} = :sys.get_state(bot)
     refute_receive {:DOWN, ^ref, :process, ^bot, _reason}, 100
+  end
+
+  test "send-succeeded updates replace tracked temporary ids" do
+    bot = start_bot()
+
+    :sys.replace_state(bot, fn state ->
+      %{
+        state
+        | last_sent_message_id: 101,
+          current_narration_message_id: 202,
+          current_narration_text: "Checking X",
+          current_narration_mode: :italic
+      }
+    end)
+
+    send(
+      bot,
+      {:telegram_update,
+       %{
+         "@type" => "updateMessageSendSucceeded",
+         "old_message_id" => 202,
+         "message" => %{"id" => 303}
+       }}
+    )
+
+    assert :sys.get_state(bot).current_narration_message_id == 303
+    assert :sys.get_state(bot).last_sent_message_id == 101
+
+    send(
+      bot,
+      {:telegram_update,
+       %{
+         "@type" => "updateMessageSendSucceeded",
+         "old_message_id" => 101,
+         "message" => %{"id" => 404}
+       }}
+    )
+
+    state = :sys.get_state(bot)
+    assert state.last_sent_message_id == 404
+    assert state.current_narration_message_id == 303
   end
 
   defp start_bot do

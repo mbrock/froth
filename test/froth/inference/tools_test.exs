@@ -11,6 +11,7 @@ defmodule Froth.Inference.ToolsTest do
   alias Froth.TaskEvent
   alias Froth.TaskTelegramLink
   alias Froth.Telegram.CycleLink
+  alias Froth.Telegram.PendingAsk
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
@@ -155,6 +156,13 @@ defmodule Froth.Inference.ToolsTest do
     assert get_in(spec, ["input_schema", "required"]) == ["message_id"]
   end
 
+  test "ask is exposed in tool specs" do
+    spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "ask"))
+
+    refute is_nil(spec)
+    assert get_in(spec, ["input_schema", "required"]) == ["question"]
+  end
+
   test "web_search is exposed in tool specs" do
     spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "web_search"))
 
@@ -261,6 +269,55 @@ defmodule Froth.Inference.ToolsTest do
     assert transcript =~ "[#{result["task_id"]}] type=agent"
   end
 
+  test "ask sends an inline-keyboard question and persists a pending ask" do
+    test_pid = self()
+    chat_id = unique_chat_id()
+    cycle_id = Repo.insert!(%Cycle{}).id
+
+    send_message_fun = fn session_id, sent_chat_id, text, opts ->
+      send(test_pid, {:ask_sent, session_id, sent_chat_id, text, opts})
+      {:ok, %{"id" => 4321}}
+    end
+
+    assert {:await, payload} =
+             Tools.execute(
+               "ask",
+               %{"question" => "Pick one", "alternatives" => ["Option A", "Option B"]},
+               chat_id,
+               session_id: "charlie",
+               bot_id: "charlie",
+               cycle_id: cycle_id,
+               tool_use_id: "toolu_ask_1",
+               system_prompt: "Test system prompt",
+               model: "claude-opus-4-6",
+               tools: Tools.specs_for_api(),
+               thinking: %{"budget_tokens" => 128},
+               effort: "high",
+               reply_to: 555,
+               send_message_fun: send_message_fun
+             )
+
+    assert payload["kind"] == "ask"
+    assert payload["reason"] == "Waiting for the user's answer."
+    assert payload["question_message_id"] == 4321
+
+    assert_receive {:ask_sent, "charlie", ^chat_id, "Pick one", opts}, 1_000
+    assert opts[:reply_to] == 555
+    assert get_in(opts[:reply_markup], ["@type"]) == "replyMarkupInlineKeyboard"
+    assert get_in(opts[:reply_markup], ["rows", Access.at(0), Access.at(0), "text"]) == "Option A"
+    assert get_in(opts[:reply_markup], ["rows", Access.at(1), Access.at(0), "text"]) == "Option B"
+
+    pending_ask = Repo.get!(PendingAsk, payload["pending_ask_id"])
+    assert pending_ask.chat_id == chat_id
+    assert pending_ask.message_id == 4321
+    assert pending_ask.tool_use_id == "toolu_ask_1"
+    assert pending_ask.question == "Pick one"
+    assert pending_ask.alternatives == ["Option A", "Option B"]
+    assert pending_ask.config["system"] == "Test system prompt"
+    assert pending_ask.config["model"] == "claude-opus-4-6"
+    assert pending_ask.config["effort"] == "high"
+  end
+
   test "spawn_agent rejects unknown tool names" do
     assert {:error, message} =
              Tools.execute(
@@ -347,6 +404,15 @@ defmodule Froth.Inference.ToolsTest do
     assert payload["agreement"] == 1.0
     assert payload["single_source_claims"] == []
     assert Map.keys(payload["providers"]) == ["gemini", "grok", "openai"]
+
+    gemini_cycle =
+      Repo.all(Cycle)
+      |> Enum.find(fn cycle ->
+        cycle.provider == "gemini" and cycle.model == "gemini-3.1-flash-lite-preview"
+      end)
+
+    assert gemini_cycle != nil
+    assert gemini_cycle.config["tool_specs"] == [%{"type" => "web_search"}]
   end
 
   test "look validates message references before trying telegram download" do

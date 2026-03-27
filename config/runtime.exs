@@ -125,6 +125,19 @@ config :froth, Froth.Summarizer,
          end
      end)
 
+config :froth, Froth.DailyDigest,
+  enabled:
+    (case System.get_env("FROTH_DAILY_DIGEST_ENABLED") do
+       nil -> config_env() != :test and node_role != :worker
+       value -> value
+     end),
+  chat_id: System.get_env("FROTH_DAILY_DIGEST_CHAT_ID", "-1003690254489"),
+  session_id: System.get_env("FROTH_DAILY_DIGEST_SESSION_ID", "charlie"),
+  run_at_utc: System.get_env("FROTH_DAILY_DIGEST_RUN_AT_UTC", "00:05:00"),
+  startup_delay_ms: System.get_env("FROTH_DAILY_DIGEST_STARTUP_DELAY_MS", "15000"),
+  digest_dir: System.get_env("FROTH_DAILY_DIGEST_DIR", Path.expand("tmp/daily-digests")),
+  headline_model: System.get_env("FROTH_DAILY_DIGEST_HEADLINE_MODEL")
+
 config :froth, Froth.Anthropic,
   model: System.get_env("ANTHROPIC_MODEL", "claude-opus-4-6"),
   system: System.get_env("ANTHROPIC_SYSTEM", ""),

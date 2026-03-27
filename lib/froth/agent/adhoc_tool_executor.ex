@@ -123,12 +123,14 @@ defmodule Froth.Agent.AdhocToolExecutor do
     %{
       name: name,
       input: input,
+      tool_use_id: context_value(context, :tool_use_id),
       bot_id: state.bot_id,
       bot_username: state.bot_username,
       session_id: state.session_id,
       chat_id: chat_id,
       reply_to: reply_to,
       cycle_id: cycle_id,
+      model: state.model,
       spam: state.spam
     }
   end
@@ -137,12 +139,14 @@ defmodule Froth.Agent.AdhocToolExecutor do
     %{
       name: name,
       input: nil,
+      tool_use_id: context_value(context, :tool_use_id),
       bot_id: state.bot_id,
       bot_username: state.bot_username,
       session_id: state.session_id,
       chat_id: resolved_chat_id(context, state),
       reply_to: resolved_reply_to(context, state),
       cycle_id: context_value(context, :cycle_id),
+      model: state.model,
       spam: state.spam
     }
   end

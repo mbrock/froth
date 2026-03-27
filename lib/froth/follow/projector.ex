@@ -273,6 +273,9 @@ defmodule Froth.Follow.Projector do
         "yield" ->
           {"yielded", join_detail([metadata["reason"]]), :info}
 
+        "await_user_input" ->
+          {"waiting for answer", join_detail([metadata["reason"]]), :info}
+
         "waiting_on_subscription" ->
           {"waiting on subscription", join_detail([metadata["reason"]]), :info}
 

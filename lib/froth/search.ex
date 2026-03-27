@@ -18,10 +18,8 @@ defmodule Froth.Search do
   @providers [
     {:grok, :grok, "grok-4-1-fast-reasoning",
      [%{"type" => "x_search"}, %{"type" => "web_search"}]},
-    {:openai, :openai, "gpt-5.4-mini",
-     [%{"type" => "web_search_preview"}]},
-    {:gemini, :gemini, "gemini-3.1-flash-lite-preview",
-     [%{"google_search" => %{}}]}
+    {:openai, :openai, "gpt-5.4-mini", [%{"type" => "web_search_preview"}]},
+    {:gemini, :gemini, "gemini-3.1-flash-lite-preview", [%{"type" => "web_search"}]}
   ]
 
   @type provider_name :: :grok | :openai | :gemini

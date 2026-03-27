@@ -27,9 +27,11 @@ defmodule FrothWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+    get "/asciicasts/:sha256", AsciicastController, :show
     get "/objects/*key", ObjectStoreController, :show
     get "/summaries", SummariesController, :index
     get "/headlines", HeadlinesController, :index
+    get "/podcasts", PodcastsController, :index
     live "/analyses", AnalysesLive, :index
     live "/analyses/:day", AnalysesLive, :index
     live "/inference", InferenceSessionsLive, :index
@@ -68,6 +70,7 @@ defmodule FrothWeb.Router do
   end
 
   scope "/froth", FrothWeb do
+    post "/objects", ObjectStoreController, :create
     put "/objects/*key", ObjectStoreController, :put
   end
 
@@ -95,7 +98,6 @@ defmodule FrothWeb.Router do
     get "/", ReelController, :index
     get "/:id", ReelController, :show
   end
-
 
   # Voice — HTML hypermedia for podcast generation
   scope "/froth/voice", FrothWeb do

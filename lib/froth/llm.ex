@@ -187,6 +187,7 @@ defmodule Froth.LLM do
           cfg = provider_app_config(provider_name)
           system = resolve_system(Keyword.get(opts, :system), cfg)
           model = Keyword.get(opts, :model, Keyword.get(cfg, :model))
+          tools = Keyword.get(opts, :tools, Keyword.get(cfg, :tools, []))
 
           if is_nil(model) or model == "" do
             {:error, :missing_model}
@@ -198,9 +199,17 @@ defmodule Froth.LLM do
                model: model,
                system: system,
                max_tokens:
-                 Keyword.get(opts, :max_tokens, Keyword.get(cfg, :max_tokens, @default_max_tokens)),
-               tools: Keyword.get(opts, :tools, Keyword.get(cfg, :tools, [])),
-               thinking: resolve_thinking(model, Keyword.get(opts, :thinking, Keyword.get(cfg, :thinking))),
+                 Keyword.get(
+                   opts,
+                   :max_tokens,
+                   Keyword.get(cfg, :max_tokens, @default_max_tokens)
+                 ),
+               tools: tools,
+               thinking:
+                 resolve_thinking(
+                   model,
+                   Keyword.get(opts, :thinking, Keyword.get(cfg, :thinking))
+                 ),
                output_config: resolve_output_config(opts, cfg),
                cache_control:
                  Keyword.get(
@@ -214,17 +223,15 @@ defmodule Froth.LLM do
                  Keyword.get(opts, :response_format, Keyword.get(cfg, :response_format)),
                response_mime_type:
                  Keyword.get(opts, :response_mime_type, Keyword.get(cfg, :response_mime_type)),
-               headers: build_headers(provider_spec, api_key, Keyword.get(opts, :tools, [])),
+               headers: build_headers(provider_spec, api_key, tools),
                endpoint: build_endpoint(provider_spec, api_key, model, opts, cfg),
                parent_id: Keyword.get(opts, :parent_id),
                provider_options: %{
-                 "reasoning_effort" =>
-                   Keyword.get(opts, :effort, Keyword.get(cfg, :effort)),
+                 "reasoning_effort" => Keyword.get(opts, :effort, Keyword.get(cfg, :effort)),
                  "reasoning_summary" =>
                    Keyword.get(opts, :reasoning_summary, Keyword.get(cfg, :reasoning_summary)),
                  "include_usage" => true,
-                 "text_verbosity" =>
-                   Keyword.get(opts, :verbosity, Keyword.get(cfg, :verbosity)),
+                 "text_verbosity" => Keyword.get(opts, :verbosity, Keyword.get(cfg, :verbosity)),
                  "previous_response_id" => Keyword.get(opts, :previous_response_id)
                }
              }}

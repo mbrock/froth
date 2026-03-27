@@ -7,6 +7,8 @@ defmodule Froth.Inference.Tools do
   alias Froth.{ChatSummary, Event, Repo}
   alias Froth.Search, as: WebSearch
   alias Froth.Telegram.BotAdapter
+  alias Froth.Telegram.MessageIdSync
+  alias Froth.Telegram.PendingAsks
   alias Froth.Telemetry.Span
   import Ecto.Query
 
@@ -28,6 +30,27 @@ defmodule Froth.Inference.Tools do
           "text" => %{"type" => "string", "description" => "The message text to send."}
         },
         "required" => ["text"],
+        "additionalProperties" => false
+      }
+    },
+    %{
+      "name" => "ask",
+      "description" =>
+        "Ask the user a question. Returns the user's answer as a string. Optionally provide alternatives to render as choice buttons; the user may still answer with free-form text instead.",
+      "input_schema" => %{
+        "type" => "object",
+        "properties" => %{
+          "question" => %{
+            "type" => "string",
+            "description" => "The question to ask the user."
+          },
+          "alternatives" => %{
+            "type" => "array",
+            "items" => %{"type" => "string"},
+            "description" => "Optional alternative answers to render as inline keyboard buttons."
+          }
+        },
+        "required" => ["question"],
         "additionalProperties" => false
       }
     },
@@ -208,8 +231,7 @@ defmodule Froth.Inference.Tools do
       "description" =>
         "Run a shell command (via bash). If the command finishes within ~3 seconds, " <>
           "returns the output directly. Otherwise, returns a task_id for tracking — " <>
-          "use list_tasks and task_output to monitor progress. " <>
-          "Use for compiling, running scripts, system commands, git, etc.",
+          "use list_tasks and task_output to monitor progress. ",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
@@ -225,7 +247,7 @@ defmodule Froth.Inference.Tools do
           "narration" => %{
             "type" => "string",
             "description" =>
-              "Optional prose narration of what this command does and why, in Aristotelian practical syllogism format. Automatically sent as italics to the chat."
+              "Optional prose narration of what this command does and why. Automatically sent as italics to the chat."
           }
         },
         "required" => ["command", "narration"],
@@ -313,12 +335,9 @@ defmodule Froth.Inference.Tools do
       }
     },
     %{
-      "name" => "yield",
+      "name" => "await",
       "description" =>
-        "Pause this cycle and wait for I/O. Call this after subscribing to one or more tasks " <>
-          "with subscribe_task. The cycle will end cleanly and you will be woken up " <>
-          "when a subscribed task completes. This saves inference cost by not polling. " <>
-          "Do NOT call task_output or list_tasks after subscribing — just yield.",
+        "When subscribed to some set of tasks, await returns the first task completion.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
@@ -416,7 +435,8 @@ defmodule Froth.Inference.Tools do
   def label("task_output"), do: "task output"
   def label("stop_task"), do: "stop task"
   def label("subscribe_task"), do: "subscribe"
-  def label("yield"), do: "yield"
+  def label("ask"), do: "ask user"
+  def label("await"), do: "await"
   def label("spawn_engineer"), do: "spawn engineer"
   def label("spawn_agent"), do: "spawn agent"
   def label(name) when is_binary(name), do: name
@@ -428,6 +448,9 @@ defmodule Froth.Inference.Tools do
     case name do
       "read_log" ->
         {:ok, read_log(chat_id, input, session_id)}
+
+      "ask" ->
+        ask(chat_id, input, opts)
 
       "search" ->
         {:ok, search(chat_id, input, session_id)}
@@ -606,7 +629,7 @@ defmodule Froth.Inference.Tools do
             {:ok, msg}
         end
 
-      "yield" ->
+      "await" ->
         reason = input["reason"] || "Waiting for subscribed tasks."
         {:yield, reason}
 
@@ -1148,6 +1171,164 @@ defmodule Froth.Inference.Tools do
 
   defp maybe_put_send_message_opt(keyword, _key, nil), do: keyword
   defp maybe_put_send_message_opt(keyword, key, value), do: Keyword.put(keyword, key, value)
+
+  defp ask(chat_id, input, opts) when is_integer(chat_id) and is_map(input) and is_list(opts) do
+    with {:ok, question} <- required_trimmed_string(input, "question"),
+         {:ok, alternatives} <- normalize_ask_alternatives(Map.get(input, "alternatives")),
+         {:ok, session_id} <- required_opt_string(opts, :session_id),
+         {:ok, bot_id} <- required_opt_string(opts, :bot_id),
+         {:ok, cycle_id} <- required_opt_string(opts, :cycle_id),
+         {:ok, tool_use_id} <- required_opt_string(opts, :tool_use_id),
+         {:ok, system_prompt} <- required_opt_string(opts, :system_prompt) do
+      send_message_fun = Keyword.get(opts, :send_message_fun, &BotAdapter.send_message/4)
+      reply_markup = ask_reply_markup(alternatives)
+
+      send_opts =
+        [reply_to: opts[:reply_to]]
+        |> maybe_put_send_message_opt(:reply_markup, reply_markup)
+
+      case send_message_fun.(session_id, chat_id, question, send_opts) do
+        {:ok, sent} ->
+          config = ask_config(opts, system_prompt)
+
+          with {:ok, message_id} <- ask_message_id(sent),
+               resolved_message_id = MessageIdSync.resolve(bot_id, chat_id, message_id),
+               {:ok, pending_ask} <-
+                 PendingAsks.create(%{
+                   cycle_id: cycle_id,
+                   bot_id: bot_id,
+                   chat_id: chat_id,
+                   message_id: resolved_message_id,
+                   tool_use_id: tool_use_id,
+                   question: question,
+                   alternatives: alternatives,
+                   config: config
+                 }) do
+            {:await,
+             %{
+               "kind" => "ask",
+               "reason" => "Waiting for the user's answer.",
+               "pending_ask_id" => pending_ask.id,
+               "question_message_id" => resolved_message_id,
+               "sent_message" => sent
+             }}
+          else
+            {:error, %Ecto.Changeset{} = changeset} ->
+              {:error, format_changeset_errors(changeset)}
+
+            {:error, reason} ->
+              {:error, format_reason(reason)}
+          end
+
+        {:error, reason} ->
+          {:error, format_reason(reason)}
+      end
+    end
+  end
+
+  defp ask(_chat_id, _input, _opts), do: {:error, "ask requires a valid chat_id"}
+
+  defp ask_config(opts, system_prompt) when is_list(opts) and is_binary(system_prompt) do
+    %{
+      "system" => system_prompt,
+      "model" => opts[:model],
+      "tools" => opts[:tools] || [],
+      "thinking" => opts[:thinking] || %{},
+      "effort" => opts[:effort],
+      "tool_timeout_ms" => opts[:tool_timeout_ms]
+    }
+  end
+
+  defp ask_reply_markup([]), do: nil
+
+  defp ask_reply_markup(alternatives) when is_list(alternatives) do
+    rows =
+      alternatives
+      |> Enum.with_index()
+      |> Enum.map(fn {alternative, index} ->
+        [
+          %{
+            "@type" => "inlineKeyboardButton",
+            "text" => alternative,
+            "type" => %{
+              "@type" => "inlineKeyboardButtonTypeCallback",
+              "data" => Base.encode64("ask:#{index}")
+            }
+          }
+        ]
+      end)
+
+    %{
+      "@type" => "replyMarkupInlineKeyboard",
+      "rows" => rows
+    }
+  end
+
+  defp normalize_ask_alternatives(nil), do: {:ok, []}
+  defp normalize_ask_alternatives([]), do: {:ok, []}
+
+  defp normalize_ask_alternatives(alternatives) when is_list(alternatives) do
+    alternatives
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, fn
+      {alternative, index}, {:ok, acc} when is_binary(alternative) ->
+        trimmed = String.trim(alternative)
+
+        if trimmed == "" do
+          {:halt, {:error, "alternatives[#{index}] must be a non-empty string"}}
+        else
+          {:cont, {:ok, acc ++ [trimmed]}}
+        end
+
+      {_alternative, index}, _acc ->
+        {:halt, {:error, "alternatives[#{index}] must be a string"}}
+    end)
+  end
+
+  defp normalize_ask_alternatives(_alternatives),
+    do: {:error, "alternatives must be an array of strings"}
+
+  defp ask_message_id(%{"id" => id}) when is_integer(id), do: {:ok, id}
+
+  defp ask_message_id(%{"id" => id}) when is_binary(id) do
+    case Integer.parse(id) do
+      {message_id, ""} -> {:ok, message_id}
+      _ -> {:error, "telegram send_message did not return a numeric message id"}
+    end
+  end
+
+  defp ask_message_id(_sent), do: {:error, "telegram send_message did not return a message id"}
+
+  defp required_opt_string(opts, key) when is_list(opts) and is_atom(key) do
+    case Keyword.get(opts, key) do
+      value when is_binary(value) ->
+        trimmed = String.trim(value)
+
+        if trimmed == "" do
+          {:error, "#{key} is required"}
+        else
+          {:ok, trimmed}
+        end
+
+      _ ->
+        {:error, "#{key} is required"}
+    end
+  end
+
+  defp format_changeset_errors(%Ecto.Changeset{} = changeset) do
+    changeset
+    |> Ecto.Changeset.traverse_errors(fn {message, opts} ->
+      Enum.reduce(opts, message, fn {key, value}, acc ->
+        String.replace(acc, "%{#{key}}", to_string(value))
+      end)
+    end)
+    |> Enum.map_join(", ", fn {field, messages} ->
+      "#{field} #{Enum.join(messages, ", ")}"
+    end)
+  end
+
+  defp format_reason(reason) when is_binary(reason), do: reason
+  defp format_reason(reason), do: inspect(reason)
 
   defp headlines_reply_markup(opts) when is_list(opts) do
     cycle_id = opts[:cycle_id]

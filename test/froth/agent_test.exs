@@ -216,6 +216,43 @@ defmodule Froth.Agent.WorkerTest do
     refute event.metadata["text_preview"] =~ "..."
   end
 
+  test "update_cycle preserves boolean values in nested config maps" do
+    message = Repo.insert!(Message.user("hello"))
+
+    config = %Config{
+      model: "claude-opus-4-6",
+      tools: [
+        %{
+          "name" => "send_message",
+          "description" => "Send a message.",
+          "input_schema" => %{
+            "type" => "object",
+            "properties" => %{"text" => %{"type" => "string"}},
+            "required" => ["text"],
+            "additionalProperties" => false
+          }
+        }
+      ]
+    }
+
+    cycle = Agent.begin_cycle(message, config)
+
+    cycle =
+      Agent.update_cycle(cycle, %{
+        config: Map.put(cycle.config || %{}, "parent_span_id", "span123")
+      })
+
+    fresh = Repo.get!(Cycle, cycle.id)
+
+    assert get_in(fresh.config, [
+             "tool_specs",
+             Access.at(0),
+             "input_schema",
+             "additionalProperties"
+           ]) ==
+             false
+  end
+
   describe "simple reply (no tools)" do
     test "calls the LLM once and stops" do
       executor = start_executor(fn _, _ -> "ok" end)
@@ -675,6 +712,71 @@ defmodule Froth.Agent.WorkerTest do
       assert outcome.metadata["reason"] == "Waiting for subscribed tasks."
     end
 
+    test "awaits hidden tool results without persisting a fake tool_result message" do
+      test_pid = self()
+      counter = start_supervised!({Elixir.Agent, fn -> 0 end})
+      previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
+
+      on_exit(fn ->
+        if previous_fun do
+          Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
+        else
+          Application.delete_env(:froth, :llm_stream_single_fun)
+        end
+      end)
+
+      Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
+        call =
+          Elixir.Agent.get_and_update(counter, fn current ->
+            {current, current + 1}
+          end)
+
+        send(test_pid, {:llm_call, call, api_messages})
+
+        case call do
+          0 ->
+            {:ok,
+             %{
+               text: "",
+               content: [
+                 %{
+                   "type" => "tool_use",
+                   "id" => "call_ask_1",
+                   "name" => "froth_echo",
+                   "input" => %{"text" => "question"}
+                 }
+               ],
+               stop_reason: "tool_use",
+               usage: %{},
+               model: opts[:model],
+               message_id: "msg_ask_1"
+             }}
+
+          1 ->
+            flunk("worker should stop after an await result instead of calling the LLM again")
+        end
+      end)
+
+      executor =
+        start_executor(fn %ToolUse{}, _context ->
+          {:await, %{"reason" => "Waiting for the user's answer.", "kind" => "ask"}}
+        end)
+
+      {pid, cycle} = start_worker([Message.user("question")], "simple_reply", executor: executor)
+      ref = Process.monitor(pid)
+
+      assert_receive {:llm_call, 0, [%LLMMessage{role: :user}]}, 5_000
+      refute_receive {:llm_call, 1, _}, 200
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
+
+      messages = cycle_messages(cycle.id)
+      assert Enum.map(messages, & &1.role) == [:user, :agent]
+
+      outcome = latest_cycle_event(cycle.id, "control.outcome")
+      assert outcome.metadata["outcome"] == "await_user_input"
+      assert outcome.metadata["reason"] == "Waiting for the user's answer."
+    end
+
     test "times out stalled tools using the worker-owned deadline" do
       attach_tool_telemetry()
 
@@ -1017,7 +1119,13 @@ defmodule Froth.Agent.WorkerTest do
         Froth.SSEReplay.recording_stream_fun("simple_reply", self())
       )
 
-      config = %Config{provider: :anthropic, model: "claude-opus-4-6", tools: [], tool_executor: executor}
+      config = %Config{
+        provider: :anthropic,
+        model: "claude-opus-4-6",
+        tools: [],
+        tool_executor: executor
+      }
+
       message = Repo.insert!(%Message{role: :user, content: Message.wrap("hello")})
 
       {cycle, stream} = Froth.Agent.run(message, config)

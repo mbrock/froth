@@ -45,6 +45,17 @@ defmodule FrothWeb.PageController do
         badge_class: "border-amber-400/20 bg-amber-400/10 text-amber-100"
       },
       %{
+        id: "froth-link-podcasts",
+        href: ~p"/froth/podcasts",
+        title: "Podcasts",
+        description: "Every generated episode with audio players and full manuscripts.",
+        badge: "archive",
+        path_label: "/froth/podcasts",
+        icon: "hero-microphone",
+        icon_class: "border-orange-400/20 bg-orange-400/10 text-orange-100",
+        badge_class: "border-orange-400/20 bg-orange-400/10 text-orange-100"
+      },
+      %{
         id: "froth-link-chronicle",
         href: ~p"/froth/summaries",
         title: "Chronicle",

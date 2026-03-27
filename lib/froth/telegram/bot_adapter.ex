@@ -126,25 +126,19 @@ defmodule Froth.Telegram.BotAdapter do
              is_binary(text) and is_list(opts) do
     formatted_text = plain_formatted_text(text, opts[:entities])
 
-    payload = %{
-      "@type" => "editMessageText",
-      "chat_id" => chat_id,
-      "message_id" => message_id,
-      "input_message_content" => %{
-        "@type" => "inputMessageText",
-        "text" => formatted_text
-      }
-    }
+    edit_formatted_message(session_id, chat_id, message_id, formatted_text, opts)
+  end
 
-    payload =
-      case opts[:reply_markup] do
-        markup when is_map(markup) -> Map.put(payload, "reply_markup", markup)
-        _ -> payload
-      end
+  def edit_message_markdown(session_id, chat_id, message_id, text, opts \\ [])
+      when is_binary(session_id) and is_integer(chat_id) and is_integer(message_id) and
+             is_binary(text) and is_list(opts) do
+    case parse_markdown(session_id, text) do
+      {:ok, %{} = formatted_text} ->
+        edit_formatted_message(session_id, chat_id, message_id, formatted_text, opts)
 
-    session_id
-    |> Froth.Telegram.call(payload)
-    |> normalize_tdlib_result()
+      {:error, _reason} = error ->
+        error
+    end
   end
 
   def edit_message_italic(session_id, chat_id, message_id, text)
@@ -203,20 +197,59 @@ defmodule Froth.Telegram.BotAdapter do
   end
 
   def answer_callback(session_id, callback_query_id)
-      when is_binary(session_id) and is_integer(callback_query_id) do
-    Froth.Telegram.send(session_id, %{
-      "@type" => "answerCallbackQuery",
-      "callback_query_id" => callback_query_id
-    })
+      when is_binary(session_id) and
+             (is_binary(callback_query_id) or is_integer(callback_query_id)) do
+    case normalize_int64(callback_query_id) do
+      nil ->
+        {:error, :invalid_callback_query_id}
+
+      normalized_id ->
+        Froth.Telegram.send(session_id, %{
+          "@type" => "answerCallbackQuery",
+          "callback_query_id" => normalized_id
+        })
+    end
   end
 
   def answer_callback_with_url(session_id, callback_query_id, url)
-      when is_binary(session_id) and is_integer(callback_query_id) and is_binary(url) do
-    Froth.Telegram.send(session_id, %{
-      "@type" => "answerCallbackQuery",
-      "callback_query_id" => callback_query_id,
-      "url" => url
-    })
+      when is_binary(session_id) and
+             (is_binary(callback_query_id) or is_integer(callback_query_id)) and
+             is_binary(url) do
+    case normalize_int64(callback_query_id) do
+      nil ->
+        {:error, :invalid_callback_query_id}
+
+      normalized_id ->
+        Froth.Telegram.send(session_id, %{
+          "@type" => "answerCallbackQuery",
+          "callback_query_id" => normalized_id,
+          "url" => url
+        })
+    end
+  end
+
+  defp edit_formatted_message(session_id, chat_id, message_id, formatted_text, opts)
+       when is_binary(session_id) and is_integer(chat_id) and is_integer(message_id) and
+              is_map(formatted_text) and is_list(opts) do
+    payload = %{
+      "@type" => "editMessageText",
+      "chat_id" => chat_id,
+      "message_id" => message_id,
+      "input_message_content" => %{
+        "@type" => "inputMessageText",
+        "text" => formatted_text
+      }
+    }
+
+    payload =
+      case opts[:reply_markup] do
+        markup when is_map(markup) -> Map.put(payload, "reply_markup", markup)
+        _ -> payload
+      end
+
+    session_id
+    |> Froth.Telegram.call(payload)
+    |> normalize_tdlib_result()
   end
 
   defp send_formatted_message(session_id, chat_id, formatted_text, opts)
@@ -284,6 +317,11 @@ defmodule Froth.Telegram.BotAdapter do
   defp reply_to_msg(message_id) when is_integer(message_id) and message_id > 0 do
     %{"@type" => "inputMessageReplyToMessage", "message_id" => message_id}
   end
+
+  defp normalize_int64(value) when is_integer(value), do: Integer.to_string(value)
+  defp normalize_int64(""), do: nil
+  defp normalize_int64(value) when is_binary(value), do: value
+  defp normalize_int64(_value), do: nil
 
   defp normalize_tdlib_result({:ok, %{"@type" => "error", "message" => message}})
        when is_binary(message) do

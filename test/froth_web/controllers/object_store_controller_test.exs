@@ -39,6 +39,87 @@ defmodule FrothWeb.ObjectStoreControllerTest do
     assert response(get_conn, 200) == "hello world"
   end
 
+  test "POST uploads a content-addressed object and serves it back with stored content type", %{
+    conn: conn
+  } do
+    body = File.read!(cast_fixture_path("simple_v2.cast"))
+    sha256 = sha256_hex(body)
+
+    post_conn =
+      conn
+      |> put_req_header("x-froth-object-store-token", "secret")
+      |> put_req_header("content-type", "application/x-asciicast")
+      |> put_req_header("accept", "application/json")
+      |> post("/froth/objects", body)
+
+    assert %{
+             "key" => "sha256/" <> ^sha256,
+             "url" => "http://example.test/froth/objects/sha256/" <> ^sha256,
+             "sha256" => ^sha256,
+             "content_type" => "application/x-asciicast",
+             "content_length" => content_length,
+             "asciicast_html_url" => asciicast_html_url
+           } = json_response(post_conn, 201)
+
+    assert content_length == byte_size(body)
+    assert String.ends_with?(asciicast_html_url, "/froth/asciicasts/#{sha256}")
+
+    assert get_resp_header(post_conn, "location") == [
+             "http://example.test/froth/objects/sha256/#{sha256}"
+           ]
+
+    get_conn = get(build_conn(), "/froth/objects/sha256/#{sha256}")
+    assert response(get_conn, 200) == body
+    assert get_resp_header(get_conn, "content-type") == ["application/x-asciicast"]
+    assert get_resp_header(get_conn, "etag") == [~s|"sha256-#{sha256}"|]
+  end
+
+  test "POST prefers forwarded host headers for public URLs", %{conn: conn} do
+    body = File.read!(cast_fixture_path("simple_v2.cast"))
+    sha256 = sha256_hex(body)
+
+    post_conn =
+      conn
+      |> put_req_header("x-froth-object-store-token", "secret")
+      |> put_req_header("content-type", "application/x-asciicast")
+      |> put_req_header("accept", "application/json")
+      |> put_req_header("x-forwarded-host", "less.rest")
+      |> put_req_header("x-forwarded-proto", "https")
+      |> post("/froth/objects", body)
+
+    assert %{
+             "url" => "https://less.rest/froth/objects/sha256/" <> ^sha256,
+             "asciicast_html_url" => "https://less.rest/froth/asciicasts/" <> ^sha256
+           } = json_response(post_conn, 201)
+
+    assert get_resp_header(post_conn, "location") == [
+             "https://less.rest/froth/objects/sha256/#{sha256}"
+           ]
+  end
+
+  test "GET /froth/asciicasts/:sha256 renders the standalone HTML player", %{conn: conn} do
+    body = File.read!(cast_fixture_path("simple_v1.cast"))
+    sha256 = sha256_hex(body)
+
+    upload_conn =
+      conn
+      |> put_req_header("x-froth-object-store-token", "secret")
+      |> put_req_header("content-type", "application/x-asciicast")
+      |> put_req_header("accept", "application/json")
+      |> post("/froth/objects", body)
+
+    assert response(upload_conn, 201)
+
+    html_conn = get(build_conn(), "/froth/asciicasts/#{sha256}")
+    html = response(html_conn, 200)
+
+    assert html =~ "<!doctype html>"
+    assert html =~ "window.FrothVideo"
+    assert html =~ "title-bar-controls"
+    assert get_resp_header(html_conn, "content-type") == ["text/html; charset=utf-8"]
+    assert get_resp_header(html_conn, "etag") == [~s|"sha256-#{sha256}"|]
+  end
+
   test "PUT rejects unauthorized writes", %{conn: conn} do
     conn =
       conn
@@ -46,5 +127,14 @@ defmodule FrothWeb.ObjectStoreControllerTest do
       |> put("/froth/objects/video/test/nope.txt", "nope")
 
     assert response(conn, 401) == "unauthorized"
+  end
+
+  defp cast_fixture_path(name) do
+    Path.expand("../fixtures/cast/#{name}", Path.dirname(__DIR__))
+  end
+
+  defp sha256_hex(body) do
+    :crypto.hash(:sha256, body)
+    |> Base.encode16(case: :lower)
   end
 end
