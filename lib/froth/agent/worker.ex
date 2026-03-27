@@ -27,12 +27,19 @@ defmodule Froth.Agent.Worker do
           started_at: integer(),
           span_id: String.t()
         }
+  @type batch :: %{
+          invocations: [invocation()],
+          order: [String.t()],
+          results: %{optional(String.t()) => ToolResult.t()},
+          ignored_refs: MapSet.t(reference())
+        }
   @type phase ::
           :initial
           | :continuing
           | :done
           | {:thinking, Task.t()}
-          | {:working, [invocation()], [ToolResult.t()], MapSet.t(reference())}
+          | {:working, batch()}
+          | {:awaiting_user_input, batch()}
 
   @type t :: %__MODULE__{
           config: Config.t(),
@@ -46,8 +53,13 @@ defmodule Froth.Agent.Worker do
           think_start: integer() | nil,
           reply_sent?: boolean(),
           saw_tool_use?: boolean(),
-          finalized?: boolean()
+          finalized?: boolean(),
+          pending_ask_resolutions: %{optional(String.t()) => pending_ask_resolution()}
         }
+
+  @type pending_ask_resolution ::
+          {:tool_result, ToolResult.t()}
+          | {:stop, term()}
 
   defstruct [
     :config,
@@ -61,7 +73,8 @@ defmodule Froth.Agent.Worker do
     phase: :initial,
     reply_sent?: false,
     saw_tool_use?: false,
-    finalized?: false
+    finalized?: false,
+    pending_ask_resolutions: %{}
   ]
 
   def child_spec(args) do
@@ -74,6 +87,11 @@ defmodule Froth.Agent.Worker do
 
   def start_link({%Cycle{} = cycle, %Config{} = config}) do
     GenServer.start_link(__MODULE__, {cycle, config})
+  end
+
+  def resolve_pending_ask(pid, pending_ask_id, resolution)
+      when is_pid(pid) and is_binary(pending_ask_id) do
+    GenServer.call(pid, {:resolve_pending_ask, pending_ask_id, resolution}, :infinity)
   end
 
   @impl true
@@ -138,6 +156,22 @@ defmodule Froth.Agent.Worker do
   end
 
   @impl true
+  def handle_call({:resolve_pending_ask, pending_ask_id, resolution}, _from, worker) do
+    with {:ok, resolution} <- normalize_pending_ask_resolution(resolution) do
+      case resolve_pending_ask_in_worker(worker, pending_ask_id, resolution) do
+        {:stop, reason, worker} ->
+          {:stop, reason, :ok, worker}
+
+        {:ok, worker} ->
+          reply_for_batch_transition(worker)
+      end
+    else
+      {:error, reason} ->
+        {:reply, {:error, reason}, worker}
+    end
+  end
+
+  @impl true
   def handle_info({ref, {:ok, response}}, %{phase: {:thinking, %{ref: ref}}} = worker) do
     Process.demonitor(ref, [:flush])
     response_diagnostics = response_diagnostics(response)
@@ -186,7 +220,7 @@ defmodule Froth.Agent.Worker do
 
   def handle_info(
         {ref, {:tool_result, tool_use_id, result}},
-        %{phase: {:working, invocations, _, ignored_refs}} = worker
+        %{phase: {:working, %{invocations: invocations, ignored_refs: ignored_refs}}} = worker
       ) do
     case find_invocation_in_list(invocations, ref) do
       %{tool_use: %ToolUse{id: ^tool_use_id}} = invocation ->
@@ -221,7 +255,7 @@ defmodule Froth.Agent.Worker do
 
   def handle_info(
         {:DOWN, ref, :process, _pid, :normal},
-        %{phase: {:working, _invocations, _results, ignored_refs}} = worker
+        %{phase: {:working, %{ignored_refs: ignored_refs}}} = worker
       ) do
     if MapSet.member?(ignored_refs, ref) do
       {:noreply, worker}
@@ -232,7 +266,7 @@ defmodule Froth.Agent.Worker do
 
   def handle_info(
         {:DOWN, ref, :process, _pid, reason},
-        %{phase: {:working, _invocations, _results, ignored_refs}} = worker
+        %{phase: {:working, %{ignored_refs: ignored_refs}}} = worker
       ) do
     cond do
       MapSet.member?(ignored_refs, ref) ->
@@ -256,7 +290,7 @@ defmodule Froth.Agent.Worker do
 
   def handle_info(
         {:tool_timeout, ref},
-        %{phase: {:working, _invocations, _results, ignored_refs}} = worker
+        %{phase: {:working, %{ignored_refs: ignored_refs}}} = worker
       ) do
     cond do
       MapSet.member?(ignored_refs, ref) ->
@@ -479,120 +513,262 @@ defmodule Froth.Agent.Worker do
         {invocation, worker}
       end)
 
-    %{worker | cycle: cycle, phase: {:working, invocations, [], MapSet.new()}}
+    batch = %{
+      invocations: invocations,
+      order: Enum.map(tool_uses, & &1.id),
+      results: %{},
+      ignored_refs: MapSet.new()
+    }
+
+    %{worker | cycle: cycle, phase: {:working, batch}}
   end
 
   defp collect_tool_result(
-         %{phase: {:working, invocations, results, ignored_refs}} = worker,
+         %{phase: {phase_name, batch}} = worker,
          tool_use_id,
          result
-       ) do
-    tool_result =
-      case result do
-        {:await, %{} = data} ->
-          ToolResult.new(tool_use_id, nil,
-            control_outcome: "await_user_input",
-            control_data:
-              data
-              |> stringify_map()
-              |> Map.put_new("reason", await_reason(data))
-          )
-
-        {:await, reason} ->
-          ToolResult.new(tool_use_id, nil,
-            control_outcome: "await_user_input",
-            control_data: %{"reason" => format_reason(reason)}
-          )
-
-        {:yield, reason} ->
-          ToolResult.new(tool_use_id, format_yield_reason(reason),
-            yield?: true,
-            control_outcome: "yield",
-            control_data: %{"reason" => format_reason(reason)}
-          )
-
-        {:ok, content} ->
-          ToolResult.new(tool_use_id, content)
-
-        {:error, content} ->
-          ToolResult.new(tool_use_id, content,
-            is_error: true,
-            control_outcome: "tool_error",
-            control_data: %{"error" => format_reason(content)}
-          )
-
-        content ->
-          ToolResult.new(tool_use_id, content)
-      end
-
-    %{worker | phase: {:working, invocations, [tool_result | results], ignored_refs}}
+       )
+       when phase_name in [:working, :awaiting_user_input] do
+    tool_result = tool_result_from_execution(tool_use_id, result)
+    {worker, tool_result} = maybe_apply_pending_resolution(worker, tool_result)
+    batch = put_in(batch.results[tool_use_id], tool_result)
+    %{worker | phase: {phase_name, batch}}
   end
 
-  defp maybe_tools_done(%{phase: {:working, [], results, _ignored_refs}} = worker) do
-    has_yield = Enum.any?(results, &(&1.control_outcome == "yield"))
-    has_await_user_input = Enum.any?(results, &await_user_input_result?/1)
+  defp maybe_tools_done(worker) do
+    case batch_transition(worker) do
+      {:noreply, worker} ->
+        {:noreply, worker}
 
-    api_results =
-      results
-      |> Enum.reject(&await_user_input_result?/1)
-      |> Enum.reverse()
-      |> Enum.map(&ToolResult.to_api/1)
+      {:continue, worker} ->
+        {:noreply, worker, {:continue, :think}}
 
-    worker =
-      if api_results == [] do
-        worker
-      else
-        persist_message(worker, :user, api_results)
-      end
-
-    if has_yield do
-      worker =
-        Enum.reduce(results, %{worker | phase: :done}, fn
-          %ToolResult{control_outcome: "yield", control_data: data, tool_use_id: tool_use_id},
-          acc ->
-            emit_control_outcome(acc, "yield", Map.put(data || %{}, "tool_use_id", tool_use_id),
-              span_id: acc.cycle_span_id,
-              parent_span_id: acc.cycle_span_id
-            )
-
-          _result, acc ->
-            acc
-        end)
-        |> finalize_cycle(:completed, :normal, %{"control_outcome" => "yield"})
-
-      {:stop, :normal, %{worker | phase: :done}}
-    else
-      if has_await_user_input do
-        worker =
-          Enum.reduce(results, %{worker | phase: :done}, fn
-            %ToolResult{
-              control_outcome: "await_user_input",
-              control_data: data,
-              tool_use_id: tool_use_id
-            },
-            acc ->
-              emit_control_outcome(
-                acc,
-                "await_user_input",
-                Map.put(data || %{}, "tool_use_id", tool_use_id),
-                span_id: acc.cycle_span_id,
-                parent_span_id: acc.cycle_span_id
-              )
-
-            _result, acc ->
-              acc
-          end)
-          |> finalize_cycle(:completed, :normal, %{"control_outcome" => "await_user_input"})
-
-        {:stop, :normal, %{worker | phase: :done}}
-      else
-        cycle = Agent.update_cycle(worker.cycle, %{status: :running})
-        {:noreply, %{worker | cycle: cycle, phase: :continuing}, {:continue, :think}}
-      end
+      {:stop, reason, worker} ->
+        {:stop, reason, worker}
     end
   end
 
-  defp maybe_tools_done(worker), do: {:noreply, worker}
+  defp reply_for_batch_transition(worker) do
+    case batch_transition(worker) do
+      {:noreply, worker} ->
+        {:reply, :ok, worker}
+
+      {:continue, worker} ->
+        {:reply, :ok, worker, {:continue, :think}}
+
+      {:stop, reason, worker} ->
+        {:stop, reason, :ok, worker}
+    end
+  end
+
+  defp resolve_pending_ask_in_worker(worker, _pending_ask_id, {:stop, reason}) do
+    {:stop, reason, worker}
+  end
+
+  defp resolve_pending_ask_in_worker(%{phase: phase} = worker, pending_ask_id, resolution)
+       when is_binary(pending_ask_id) do
+    case resolve_pending_ask_in_phase(phase, pending_ask_id, resolution) do
+      {:ok, phase} ->
+        {:ok, %{worker | phase: phase}}
+
+      :not_found ->
+        {:ok, store_pending_ask_resolution(worker, pending_ask_id, resolution)}
+    end
+  end
+
+  defp resolve_pending_ask_in_phase(
+         {phase_name, batch},
+         pending_ask_id,
+         {:tool_result, tool_result}
+       )
+       when phase_name in [:working, :awaiting_user_input] do
+    case find_pending_tool_use_id(batch, pending_ask_id) do
+      tool_use_id when is_binary(tool_use_id) ->
+        updated_tool_result = %{tool_result | tool_use_id: tool_use_id}
+        {:ok, {phase_name, put_in(batch.results[tool_use_id], updated_tool_result)}}
+
+      _ ->
+        :not_found
+    end
+  end
+
+  defp resolve_pending_ask_in_phase(_phase, _pending_ask_id, _resolution), do: :not_found
+
+  defp normalize_pending_ask_resolution({:tool_result, %ToolResult{} = tool_result}) do
+    {:ok, {:tool_result, tool_result}}
+  end
+
+  defp normalize_pending_ask_resolution({:stop, reason}), do: {:ok, {:stop, reason}}
+
+  defp normalize_pending_ask_resolution(_resolution),
+    do: {:error, :invalid_pending_ask_resolution}
+
+  defp store_pending_ask_resolution(worker, pending_ask_id, resolution)
+       when is_binary(pending_ask_id) do
+    put_in(worker.pending_ask_resolutions[pending_ask_id], resolution)
+  end
+
+  defp maybe_apply_pending_resolution(worker, %ToolResult{} = tool_result) do
+    case pending_ask_id_for_result(tool_result) do
+      pending_ask_id when is_binary(pending_ask_id) ->
+        case Map.pop(worker.pending_ask_resolutions, pending_ask_id) do
+          {{:tool_result, %ToolResult{} = resolved_tool_result}, pending_ask_resolutions} ->
+            {%{worker | pending_ask_resolutions: pending_ask_resolutions},
+             %{resolved_tool_result | tool_use_id: tool_result.tool_use_id}}
+
+          {nil, _pending_ask_resolutions} ->
+            {worker, tool_result}
+
+          {_other, pending_ask_resolutions} ->
+            {%{worker | pending_ask_resolutions: pending_ask_resolutions}, tool_result}
+        end
+
+      _ ->
+        {worker, tool_result}
+    end
+  end
+
+  defp pending_ask_id_for_result(%ToolResult{control_data: control_data})
+       when is_map(control_data) do
+    control_data["pending_ask_id"]
+  end
+
+  defp pending_ask_id_for_result(_tool_result), do: nil
+
+  defp batch_transition(%{phase: {phase_name, %{invocations: []} = batch}} = worker)
+       when phase_name in [:working, :awaiting_user_input] do
+    results = ordered_results(batch)
+    has_yield = Enum.any?(results, &(&1.control_outcome == "yield"))
+    unresolved = Enum.filter(results, &await_user_input_result?/1)
+
+    cond do
+      has_yield ->
+        worker =
+          worker
+          |> persist_batch_results(results)
+          |> then(fn worker ->
+            Enum.reduce(results, %{worker | phase: :done}, fn
+              %ToolResult{control_outcome: "yield", control_data: data, tool_use_id: tool_use_id},
+              acc ->
+                emit_control_outcome(
+                  acc,
+                  "yield",
+                  Map.put(data || %{}, "tool_use_id", tool_use_id),
+                  span_id: acc.cycle_span_id,
+                  parent_span_id: acc.cycle_span_id
+                )
+
+              _result, acc ->
+                acc
+            end)
+          end)
+          |> finalize_cycle(:completed, :normal, %{"control_outcome" => "yield"})
+
+        {:stop, :normal, %{worker | phase: :done}}
+
+      unresolved != [] ->
+        worker =
+          if phase_name == :working do
+            Enum.reduce(unresolved, worker, fn
+              %ToolResult{control_data: data, tool_use_id: tool_use_id}, acc ->
+                emit_control_outcome(
+                  acc,
+                  "await_user_input",
+                  Map.put(data || %{}, "tool_use_id", tool_use_id),
+                  span_id: acc.cycle_span_id,
+                  parent_span_id: acc.cycle_span_id
+                )
+            end)
+          else
+            worker
+          end
+
+        cycle =
+          Agent.update_cycle(worker.cycle, %{status: :awaiting_user_input, finished_at: nil})
+
+        {:noreply, %{worker | cycle: cycle, phase: {:awaiting_user_input, batch}}}
+
+      true ->
+        worker = persist_batch_results(worker, results)
+        cycle = Agent.update_cycle(worker.cycle, %{status: :running})
+        {:continue, %{worker | cycle: cycle, phase: :continuing}}
+    end
+  end
+
+  defp batch_transition(worker), do: {:noreply, worker}
+
+  defp ordered_results(%{order: order, results: results})
+       when is_list(order) and is_map(results) do
+    Enum.flat_map(order, fn tool_use_id ->
+      case Map.fetch(results, tool_use_id) do
+        {:ok, %ToolResult{} = result} -> [result]
+        _ -> []
+      end
+    end)
+  end
+
+  defp ordered_results(_batch), do: []
+
+  defp persist_batch_results(worker, results) when is_list(results) do
+    api_results =
+      results
+      |> Enum.reject(&await_user_input_result?/1)
+      |> Enum.map(&ToolResult.to_api/1)
+
+    if api_results == [] do
+      worker
+    else
+      persist_message(worker, :user, api_results)
+    end
+  end
+
+  defp find_pending_tool_use_id(%{results: results}, pending_ask_id)
+       when is_map(results) and is_binary(pending_ask_id) do
+    Enum.find_value(results, fn {tool_use_id, result} ->
+      if pending_ask_id_for_result(result) == pending_ask_id, do: tool_use_id, else: nil
+    end)
+  end
+
+  defp find_pending_tool_use_id(_batch, _pending_ask_id), do: nil
+
+  defp tool_result_from_execution(tool_use_id, result) do
+    case result do
+      {:await, %{} = data} ->
+        ToolResult.new(tool_use_id, nil,
+          control_outcome: "await_user_input",
+          control_data:
+            data
+            |> stringify_map()
+            |> Map.put_new("reason", await_reason(data))
+        )
+
+      {:await, reason} ->
+        ToolResult.new(tool_use_id, nil,
+          control_outcome: "await_user_input",
+          control_data: %{"reason" => format_reason(reason)}
+        )
+
+      {:yield, reason} ->
+        ToolResult.new(tool_use_id, format_yield_reason(reason),
+          yield?: true,
+          control_outcome: "yield",
+          control_data: %{"reason" => format_reason(reason)}
+        )
+
+      {:ok, content} ->
+        ToolResult.new(tool_use_id, content)
+
+      {:error, content} ->
+        ToolResult.new(tool_use_id, content,
+          is_error: true,
+          control_outcome: "tool_error",
+          control_data: %{"error" => format_reason(content)}
+        )
+
+      content ->
+        ToolResult.new(tool_use_id, content)
+    end
+  end
 
   defp format_yield_reason(reason) when is_binary(reason), do: "Yielding: #{reason}"
 
@@ -634,7 +810,7 @@ defmodule Froth.Agent.Worker do
 
   defp sanitize_utf8(value), do: value
 
-  defp find_invocation({:working, invocations, _results, _ignored_refs}, ref) do
+  defp find_invocation({:working, %{invocations: invocations}}, ref) do
     find_invocation_in_list(invocations, ref)
   end
 
@@ -652,12 +828,19 @@ defmodule Froth.Agent.Worker do
   defp cancel_invocation_timer(worker, _invocation), do: worker
 
   defp forget_invocation(
-         %{phase: {:working, invocations, results, _ignored_refs}} = worker,
+         %{phase: {:working, batch}} = worker,
          invocation,
          ignored_refs
        ) do
-    remaining = Enum.reject(invocations, &(&1.ref == invocation.ref))
-    %{worker | phase: {:working, remaining, results, ignored_refs}}
+    batch =
+      batch
+      |> Map.update!(
+        :invocations,
+        &Enum.reject(&1, fn current -> current.ref == invocation.ref end)
+      )
+      |> Map.put(:ignored_refs, ignored_refs)
+
+    %{worker | phase: {:working, batch}}
   end
 
   defp timeout_error(tool_timeout_ms) when is_integer(tool_timeout_ms) and tool_timeout_ms > 0 do
@@ -1245,7 +1428,8 @@ defmodule Froth.Agent.Worker do
   defp phase_label(:continuing), do: "continuing"
   defp phase_label(:done), do: "done"
   defp phase_label({:thinking, _task}), do: "thinking"
-  defp phase_label({:working, _invocations, _results, _ignored_refs}), do: "working"
+  defp phase_label({:working, _batch}), do: "working"
+  defp phase_label({:awaiting_user_input, _batch}), do: "awaiting_user_input"
   defp phase_label(other), do: inspect(other)
 
   defp cancelled_reason?(:shutdown), do: true
@@ -1257,12 +1441,14 @@ defmodule Froth.Agent.Worker do
     if is_pid(task.pid), do: Process.exit(task.pid, :kill)
   end
 
-  defp cleanup_phase({:working, invocations, _results, _ignored_refs}) do
+  defp cleanup_phase({:working, %{invocations: invocations}}) do
     Enum.each(invocations, fn invocation ->
       if is_reference(invocation.timer_ref), do: Process.cancel_timer(invocation.timer_ref)
       if is_pid(invocation.task.pid), do: Process.exit(invocation.task.pid, :kill)
     end)
   end
+
+  defp cleanup_phase({:awaiting_user_input, _batch}), do: :ok
 
   defp cleanup_phase(_phase), do: :ok
 

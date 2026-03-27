@@ -251,13 +251,26 @@ defmodule Froth.LLM do
 
   defp resolve_thinking(model, configured) when is_binary(model) do
     cond do
-      is_map(configured) -> configured
+      is_map(configured) -> normalize_thinking(model, configured)
       is_nil(configured) and model == "claude-opus-4-6" -> %{"type" => "adaptive"}
       true -> configured
     end
   end
 
   defp resolve_thinking(_model, configured), do: configured
+
+  defp normalize_thinking(model, configured) when is_binary(model) and is_map(configured) do
+    configured =
+      Map.new(configured, fn {key, value} ->
+        {to_string(key), value}
+      end)
+
+    if String.starts_with?(model, "claude-") do
+      Map.put_new(configured, "type", "adaptive")
+    else
+      configured
+    end
+  end
 
   defp resolve_output_config(opts, cfg) do
     output_config = Keyword.get(opts, :output_config, Keyword.get(cfg, :output_config))

@@ -11,13 +11,25 @@ defmodule Froth.Telegram.Bot do
   import Ecto.Query
 
   alias Froth.Agent
-  alias Froth.Agent.{Config, Cycle, Message, ToolUse, Worker}
+
+  alias Froth.Agent.{
+    AwaitControl,
+    Config,
+    Cycle,
+    FailureIntervention,
+    Message,
+    ToolResult,
+    ToolUse,
+    Worker
+  }
+
   alias Froth.Repo
   alias Froth.Telegram.BotAdapter
   alias Froth.Telegram.BotContext
   alias Froth.Telegram.ControlPrompt
   alias Froth.Telegram.CycleLink
   alias Froth.Telegram.MessageIdSync
+  alias Froth.Telegram.Names
   alias Froth.Telegram.PendingAsks
   alias Froth.Telegram.SyntheticMessage
   alias Froth.Telegram.ToolExecution
@@ -109,8 +121,7 @@ defmodule Froth.Telegram.Bot do
       tools_module: tools_module,
       thinking: Keyword.get(opts, :thinking),
       effort: Keyword.get(opts, :effort),
-      lore_file: Keyword.get(opts, :lore_file),
-      include_summaries: Keyword.get(opts, :include_summaries, true),
+      chronicle_dir: Keyword.get(opts, :chronicle_dir),
       recent_message_limit: Keyword.get(opts, :recent_message_limit),
       max_tool_calls: Keyword.get(opts, :max_tool_calls),
       max_send_message_calls: Keyword.get(opts, :max_send_message_calls),
@@ -339,6 +350,7 @@ defmodule Froth.Telegram.Bot do
       ) do
     state = normalize_state(state)
     buffered_messages = state.mid_cycle_messages
+    finished_cycle_id = state.cycle && state.cycle.id
 
     if state.cycle_span_id do
       Span.stop_span(
@@ -387,6 +399,18 @@ defmodule Froth.Telegram.Bot do
         cycle_suppressed?: false,
         mid_cycle_messages: []
     }
+
+    reset_state =
+      if is_binary(finished_cycle_id) do
+        %{
+          reset_state
+          | active_tasks: Map.delete(reset_state.active_tasks, finished_cycle_id),
+            control_prompt_cycles:
+              MapSet.delete(reset_state.control_prompt_cycles, finished_cycle_id)
+        }
+      else
+        reset_state
+      end
 
     {:noreply,
      reset_state
@@ -479,10 +503,11 @@ defmodule Froth.Telegram.Bot do
         answer = normalize_pending_ask_answer(msg, bot_config)
         reply_to = normalize_reply_to(msg["id"])
 
-        if is_binary(answer) and answer != "" do
+        if is_binary(answer) and answer != "" and pending_ask_accepts_message_answer?(pending_ask) do
           case PendingAsks.resolve(pending_ask, answer,
                  answer_message_id: msg["id"],
-                 answered_via: "message"
+                 answered_via: "message",
+                 config_merge: resolution_config_for_message(msg, bot_config, pending_ask, answer)
                ) do
             {:ok, resolved_pending_ask} ->
               {:pending_ask_answer, resolved_pending_ask, answer, reply_to}
@@ -548,8 +573,64 @@ defmodule Froth.Telegram.Bot do
                  alternative when is_binary(alternative) <-
                    Enum.at(pending_ask.alternatives || [], index),
                  {:ok, resolved_pending_ask} <-
-                   PendingAsks.resolve(pending_ask, alternative, answered_via: "callback") do
+                   PendingAsks.resolve(pending_ask, alternative,
+                     answered_via: "callback",
+                     config_merge:
+                       resolution_config_for_callback(
+                         query,
+                         bot_config,
+                         pending_ask,
+                         alternative,
+                         index: index
+                       )
+                   ) do
               {:callback_pending_ask, query_id, resolved_pending_ask, alternative, message_id}
+            else
+              _ -> {:callback_pending_ask_ignored, query_id}
+            end
+
+          {:ok, "askcarry", _} when is_binary(query_id) ->
+            with chat_id when is_integer(chat_id) <- callback_query_chat_id(query),
+                 message_id when is_integer(message_id) <- callback_query_message_id(query),
+                 %{} = pending_ask <-
+                   PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, message_id),
+                 true <- FailureIntervention.failure_intervention?(pending_ask),
+                 {:ok, resolved_pending_ask} <-
+                   PendingAsks.resolve(pending_ask, FailureIntervention.carry_on_answer(),
+                     answered_via: "callback",
+                     config_merge:
+                       resolution_config_for_callback(
+                         query,
+                         bot_config,
+                         pending_ask,
+                         FailureIntervention.carry_on_answer()
+                       )
+                   ) do
+              {:callback_pending_ask, query_id, resolved_pending_ask,
+               FailureIntervention.carry_on_answer(), message_id}
+            else
+              _ -> {:callback_pending_ask_ignored, query_id}
+            end
+
+          {:ok, "askstop", _} when is_binary(query_id) ->
+            with chat_id when is_integer(chat_id) <- callback_query_chat_id(query),
+                 message_id when is_integer(message_id) <- callback_query_message_id(query),
+                 %{} = pending_ask <-
+                   PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, message_id),
+                 true <- FailureIntervention.failure_intervention?(pending_ask),
+                 {:ok, resolved_pending_ask} <-
+                   PendingAsks.resolve(pending_ask, FailureIntervention.stop_answer(),
+                     answered_via: "callback",
+                     config_merge:
+                       resolution_config_for_callback(
+                         query,
+                         bot_config,
+                         pending_ask,
+                         FailureIntervention.stop_answer()
+                       )
+                   ) do
+              {:callback_pending_ask, query_id, resolved_pending_ask,
+               FailureIntervention.stop_answer(), message_id}
             else
               _ -> {:callback_pending_ask_ignored, query_id}
             end
@@ -580,7 +661,7 @@ defmodule Froth.Telegram.Bot do
             _ -> :error
           end
 
-        [action, arg] when action in ["stopcycle", "stoploop"] ->
+        [action, arg] when action in ["stopcycle", "stoploop", "askcarry", "askstop"] ->
           {:ok, action, arg}
 
         _ ->
@@ -636,7 +717,13 @@ defmodule Froth.Telegram.Bot do
         PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, reply_message_id)
 
       (is_integer(chat_id) and chat_id > 0) or mentioned? or is_reply_to_bot ->
-        PendingAsks.latest_unresolved(bot_config.id, chat_id)
+        case PendingAsks.latest_unresolved(bot_config.id, chat_id) do
+          %{} = pending_ask ->
+            if FailureIntervention.reply_required?(pending_ask), do: nil, else: pending_ask
+
+          other ->
+            other
+        end
 
       true ->
         nil
@@ -644,6 +731,10 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp pending_ask_for_message(_msg, _bot_config, _mentioned?, _is_reply_to_bot), do: nil
+
+  defp pending_ask_accepts_message_answer?(pending_ask) do
+    AwaitControl.accepts_message_answer?(pending_ask)
+  end
 
   defp normalize_pending_ask_answer(msg, bot_config) when is_map(msg) and is_map(bot_config) do
     text =
@@ -985,12 +1076,15 @@ defmodule Froth.Telegram.Bot do
         chat_id: chat_id,
         reply_to: reply_to,
         cycle_id: cycle_id,
+        provider: state.cycle && state.cycle.provider,
         current_narration_message_id: state.current_narration_message_id,
         current_narration_text: state.current_narration_text,
         current_narration_mode: state.current_narration_mode,
+        last_agent_message_id: state.last_sent_message_id,
         system_prompt: state.current_system_prompt || resolve_system_prompt(chat_id, nil, bc),
         model: current_cycle_model(state),
         tools: current_cycle_tools(state),
+        active_task_ids: current_cycle_task_ids(state, cycle_id),
         thinking: current_cycle_thinking(state),
         effort: current_cycle_effort(state),
         tool_timeout_ms: current_cycle_tool_timeout_ms(state)
@@ -1195,14 +1289,33 @@ defmodule Froth.Telegram.Bot do
 
   defp maybe_resume_buffered_cycle(state, _messages), do: state
 
+  defp maybe_finalize_pending_ask_message(pending_ask, session_id) do
+    cond do
+      FailureIntervention.failure_intervention?(pending_ask) ->
+        FailureIntervention.maybe_finalize_message(pending_ask, session_id)
+
+      AwaitControl.await?(pending_ask) ->
+        AwaitControl.maybe_finalize_message(pending_ask, session_id)
+
+      true ->
+        :ok
+    end
+  end
+
   defp enqueue_or_resume_pending_ask(state, pending_ask, answer, reply_to)
        when is_map(pending_ask) and is_binary(answer) do
+    _ = maybe_finalize_pending_ask_message(pending_ask, state.bot_config.session_id)
     resume = %{pending_ask: pending_ask, answer: answer, reply_to: normalize_reply_to(reply_to)}
 
-    if is_pid(state.worker_pid) do
-      %{state | pending_ask_resumes: state.pending_ask_resumes ++ [resume]}
-    else
-      resume_pending_ask(state, resume)
+    cond do
+      live_pending_ask_cycle?(state, pending_ask) ->
+        resolve_pending_ask_live(state, resume)
+
+      is_pid(state.worker_pid) ->
+        %{state | pending_ask_resumes: state.pending_ask_resumes ++ [resume]}
+
+      true ->
+        resume_pending_ask(state, resume)
     end
   end
 
@@ -1211,36 +1324,274 @@ defmodule Froth.Telegram.Bot do
          %{pending_ask: pending_ask, answer: answer, reply_to: reply_to}
        )
        when is_map(pending_ask) and is_binary(answer) do
-    with %Cycle{} = cycle <- Repo.get(Cycle, pending_ask.cycle_id),
-         {system_prompt, config} <- pending_ask_worker_config(state, pending_ask, reply_to),
-         {_message, _head_id} <-
-           Agent.append_message(
-             cycle,
-             Agent.latest_head_id(cycle),
-             :user,
-             [
-               %{
-                 "type" => "tool_result",
-                 "tool_use_id" => pending_ask.tool_use_id,
-                 "content" => answer
-               }
-             ]
-           ) do
-      BotAdapter.send_typing(state.bot_config.session_id, pending_ask.chat_id)
+    case pending_ask_resolution(pending_ask) do
+      {:stop_cycle, mode} ->
+        stop_pending_ask_cycle(state, pending_ask, mode)
 
-      launch_cycle_worker(
-        state,
-        cycle,
-        config,
-        pending_ask.chat_id,
-        normalize_reply_to(reply_to || pending_ask.message_id)
-      )
-      |> Map.put(:current_system_prompt, system_prompt)
-    else
+      {:tool_result, %ToolResult{} = tool_result} ->
+        with %Cycle{} = cycle <- Repo.get(Cycle, pending_ask.cycle_id),
+             {system_prompt, config} <- pending_ask_worker_config(state, pending_ask, reply_to),
+             {_message, _head_id} <-
+               Agent.append_message(
+                 cycle,
+                 Agent.latest_head_id(cycle),
+                 :user,
+                 [ToolResult.to_api(tool_result)]
+               ) do
+          BotAdapter.send_typing(state.bot_config.session_id, pending_ask.chat_id)
+
+          launch_cycle_worker(
+            clear_pending_ask_wait(state),
+            cycle,
+            config,
+            pending_ask.chat_id,
+            normalize_reply_to(reply_to || pending_ask.message_id)
+          )
+          |> Map.put(:current_system_prompt, system_prompt)
+        else
+          _ ->
+            state
+        end
+    end
+  end
+
+  defp resolve_pending_ask_live(state, %{pending_ask: pending_ask} = _resume)
+       when is_map(pending_ask) do
+    case pending_ask_resolution(pending_ask) do
+      {:stop_cycle, mode} ->
+        state = stop_pending_ask_tasks(state, pending_ask, mode)
+        state = clear_pending_ask_wait(state)
+
+        try do
+          _ =
+            Worker.resolve_pending_ask(
+              state.worker_pid,
+              pending_ask.id,
+              {:stop, {:shutdown, mode}}
+            )
+
+          state
+        catch
+          :exit, _reason ->
+            stop_pending_ask_cycle(state, pending_ask, mode)
+        end
+
+      {:tool_result, %ToolResult{} = tool_result} ->
+        BotAdapter.send_typing(state.bot_config.session_id, pending_ask.chat_id)
+        state = clear_pending_ask_wait(state)
+
+        try do
+          case Worker.resolve_pending_ask(
+                 state.worker_pid,
+                 pending_ask.id,
+                 {:tool_result, tool_result}
+               ) do
+            :ok -> state
+            {:error, _reason} -> %{state | pending_ask_resumes: state.pending_ask_resumes}
+          end
+        catch
+          :exit, _reason ->
+            resume_pending_ask(state, %{
+              pending_ask: pending_ask,
+              answer: pending_ask.answer || "",
+              reply_to: normalize_reply_to(pending_ask.answer_message_id)
+            })
+        end
+    end
+  end
+
+  defp live_pending_ask_cycle?(
+         %{cycle: %Cycle{id: cycle_id}, worker_pid: worker_pid},
+         pending_ask
+       )
+       when is_binary(cycle_id) and is_pid(worker_pid) do
+    pending_ask.cycle_id == cycle_id
+  end
+
+  defp live_pending_ask_cycle?(_state, _pending_ask), do: false
+
+  defp pending_ask_resolution(pending_ask) do
+    cond do
+      FailureIntervention.failure_intervention?(pending_ask) ->
+        case FailureIntervention.resume_tool_result(pending_ask) do
+          :stop -> {:stop_cycle, :stop}
+          tool_result -> {:tool_result, api_tool_result(tool_result, pending_ask.tool_use_id)}
+        end
+
+      AwaitControl.await?(pending_ask) ->
+        case AwaitControl.tool_resolution(pending_ask) do
+          {:stop_cycle, mode} ->
+            {:stop_cycle, mode}
+
+          {:tool_result, content} ->
+            {:tool_result, ToolResult.new(pending_ask.tool_use_id, content)}
+        end
+
+      true ->
+        {:tool_result, ToolResult.new(pending_ask.tool_use_id, pending_ask.answer || "")}
+    end
+  end
+
+  defp api_tool_result(
+         %{
+           "type" => "tool_result",
+           "tool_use_id" => tool_use_id,
+           "content" => content
+         } = result,
+         _fallback_tool_use_id
+       ) do
+    ToolResult.new(tool_use_id, content, is_error: result["is_error"] == true)
+  end
+
+  defp api_tool_result(_other, tool_use_id), do: ToolResult.new(tool_use_id, "")
+
+  defp stop_pending_ask_cycle(state, %{cycle_id: cycle_id} = pending_ask, mode)
+       when is_binary(cycle_id) do
+    state =
+      state
+      |> stop_pending_ask_tasks(pending_ask, mode)
+      |> clear_pending_ask_wait()
+
+    _ =
+      case Repo.get(Cycle, cycle_id) do
+        %Cycle{} = cycle ->
+          Agent.update_cycle(cycle, %{
+            status: :cancelled,
+            finished_at: DateTime.utc_now(),
+            error: nil
+          })
+
+        _ ->
+          nil
+      end
+
+    %{
+      state
+      | active_tasks: Map.delete(state.active_tasks, cycle_id),
+        control_prompt_cycles: MapSet.delete(state.control_prompt_cycles, cycle_id)
+    }
+  end
+
+  defp stop_pending_ask_cycle(state, _pending_ask, _mode), do: state
+
+  defp stop_pending_ask_tasks(state, pending_ask, mode) do
+    task_ids = Map.get(state.active_tasks, pending_ask.cycle_id, MapSet.new()) |> Enum.to_list()
+
+    case mode do
+      :cancel ->
+        Enum.each(task_ids, &stop_background_task/1)
+        state
+
+      :detach ->
+        Enum.each(task_ids, fn task_id ->
+          Froth.Tasks.subscribe_telegram(task_id, state.bot_config.id, pending_ask.chat_id,
+            message_id: AwaitControl.reply_to(pending_ask)
+          )
+        end)
+
+        state
+
       _ ->
         state
     end
   end
+
+  defp clear_pending_ask_wait(state) do
+    %{state | awaiting_user_input?: false}
+  end
+
+  defp resolution_config_for_message(msg, bot_config, pending_ask, answer)
+       when is_map(msg) and is_map(bot_config) do
+    actor_id = get_in(msg, ["sender_id", "user_id"])
+
+    answer
+    |> resolution_config_base(bot_config, pending_ask, actor_id)
+    |> Map.merge(
+      pending_ask_resolution_config(pending_ask, answer,
+        source: :message,
+        custom?: FailureIntervention.failure_intervention?(pending_ask),
+        actor_id: actor_id,
+        actor_label: resolution_actor_label(actor_id, bot_config),
+        index: resolution_index_for_answer(pending_ask, answer)
+      )
+    )
+  end
+
+  defp resolution_config_for_message(_msg, _bot_config, _pending_ask, _answer), do: %{}
+
+  defp resolution_config_for_callback(query, bot_config, pending_ask, answer, opts \\ [])
+       when is_map(query) and is_map(bot_config) and is_list(opts) do
+    actor_id = callback_query_sender_id(query)
+
+    answer
+    |> resolution_config_base(bot_config, pending_ask, actor_id)
+    |> Map.merge(
+      pending_ask_resolution_config(pending_ask, answer,
+        source: :callback,
+        actor_id: actor_id,
+        actor_label: resolution_actor_label(actor_id, bot_config),
+        index: Keyword.get(opts, :index)
+      )
+    )
+  end
+
+  defp resolution_config_base(_answer, _bot_config, pending_ask, _actor_id) do
+    if AwaitControl.await?(pending_ask) do
+      %{"resolution" => %{}}
+    else
+      %{}
+    end
+  end
+
+  defp pending_ask_resolution_config(pending_ask, answer, opts) do
+    if AwaitControl.await?(pending_ask) do
+      actor_label = Keyword.get(opts, :actor_label)
+
+      %{
+        "resolution" =>
+          %{}
+          |> maybe_put_resolution_value("source", pending_ask_resolution_source(opts[:source]))
+          |> maybe_put_resolution_value("actor_id", opts[:actor_id])
+          |> maybe_put_resolution_value("actor_label", actor_label)
+      }
+    else
+      FailureIntervention.resolution_config(answer, opts)
+    end
+  end
+
+  defp maybe_put_resolution_value(map, _key, nil), do: map
+  defp maybe_put_resolution_value(map, key, value), do: Map.put(map, key, value)
+
+  defp pending_ask_resolution_source(source) when source in [:message, :callback],
+    do: Atom.to_string(source)
+
+  defp pending_ask_resolution_source(_source), do: nil
+
+  defp resolution_actor_label(actor_id, %{session_id: session_id})
+       when is_integer(actor_id) and is_binary(session_id) do
+    Names.sender_label(actor_id, session_id)
+  rescue
+    _ -> nil
+  catch
+    _, _ -> nil
+  end
+
+  defp resolution_actor_label(_actor_id, _bot_config), do: nil
+
+  defp resolution_index_for_answer(pending_ask, answer)
+       when is_map(pending_ask) and is_binary(answer) do
+    Enum.find_index(pending_ask.alternatives || [], &(&1 == answer))
+  end
+
+  defp callback_query_sender_id(%{"sender_user_id" => sender_user_id})
+       when is_integer(sender_user_id),
+       do: sender_user_id
+
+  defp callback_query_sender_id(%{"sender_id" => %{"user_id" => sender_user_id}})
+       when is_integer(sender_user_id),
+       do: sender_user_id
+
+  defp callback_query_sender_id(_query), do: nil
 
   defp maybe_track_task_from_result(state, cycle_id, {:ok, result}) when is_binary(cycle_id) do
     case extract_task_id(result) do
@@ -1584,6 +1935,7 @@ defmodule Froth.Telegram.Bot do
     base =
       state
       |> clear_current_narration()
+      |> Map.put(:awaiting_user_input?, false)
       |> Map.put(:cycle_replied?, true)
       |> Map.put(:last_sent_message_text, text)
 
@@ -1666,6 +2018,15 @@ defmodule Froth.Telegram.Bot do
        do: tool_specs
 
   defp current_cycle_tools(%{bot_config: bot_config}), do: resolve_tool_specs(bot_config)
+
+  defp current_cycle_task_ids(%{active_tasks: active_tasks}, cycle_id)
+       when is_map(active_tasks) and is_binary(cycle_id) do
+    active_tasks
+    |> Map.get(cycle_id, MapSet.new())
+    |> Enum.sort()
+  end
+
+  defp current_cycle_task_ids(_state, _cycle_id), do: []
 
   defp current_cycle_thinking(%{cycle: %Cycle{config: %{"thinking" => thinking}}})
        when is_map(thinking),

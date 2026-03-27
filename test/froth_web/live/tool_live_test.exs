@@ -42,7 +42,15 @@ defmodule FrothWeb.ToolLiveTest do
             "name" => "run_shell",
             "input" => %{
               "command" => "printf 'froth\\n'",
-              "narration" => "Checking the shell output before replying."
+              "description" => %{
+                "action" => "Checking the shell output before replying.",
+                "goals" => [
+                  "inspect the command output",
+                  "see whether the command crashed",
+                  "avoid summarizing a result I have not read"
+                ],
+                "assumptions" => ["printf is available in the shell"]
+              }
             }
           }
         ])
@@ -65,6 +73,7 @@ defmodule FrothWeb.ToolLiveTest do
     {:ok, view, _html} = live(conn, ~p"/froth/mini/tool/cycle_missingbot_#{cycle.id}")
 
     assert has_element?(view, "#tool-feed", "Checking the shell output before replying.")
+    assert has_element?(view, "#tool-feed", "Goal stack:")
     assert has_element?(view, "#tool-input-call_1[open]")
     assert has_element?(view, "#tool-output-call_1[open]")
     assert has_element?(view, "#tool-feed span", "exit 139")

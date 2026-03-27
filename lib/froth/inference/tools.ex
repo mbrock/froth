@@ -3,7 +3,7 @@ defmodule Froth.Inference.Tools do
   Tool catalog and execution for inference sessions.
   """
 
-  alias Froth.Agent.{Adhoc, TaskBridge}
+  alias Froth.Agent.{Adhoc, AwaitControl, TaskBridge}
   alias Froth.{ChatSummary, Event, Repo}
   alias Froth.Search, as: WebSearch
   alias Froth.Telegram.BotAdapter
@@ -23,11 +23,14 @@ defmodule Froth.Inference.Tools do
     %{
       "name" => "send_message",
       "description" =>
-        "Send a text message to the chat. Call this once per paragraph — don't wait until you've composed the entire reply. Stream your response by sending each paragraph or thought as a separate send_message call as you go.",
+        "Send a visible text message to the current Telegram chat. Use this for actual user-facing reply text, not for internal notes or tool narration. For longer replies, send one paragraph or one finished thought at a time instead of silently composing a whole essay and sending it all at once at the end. If you need to ask the human for missing information and wait for their answer, prefer ask instead of trying to simulate a question with send_message.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
-          "text" => %{"type" => "string", "description" => "The message text to send."}
+          "text" => %{
+            "type" => "string",
+            "description" => "The exact text to send to the chat."
+          }
         },
         "required" => ["text"],
         "additionalProperties" => false
@@ -36,18 +39,19 @@ defmodule Froth.Inference.Tools do
     %{
       "name" => "ask",
       "description" =>
-        "Ask the user a question. Returns the user's answer as a string. Optionally provide alternatives to render as choice buttons; the user may still answer with free-form text instead.",
+        "Ask the human a question and pause the current agent cycle until they answer. Use this only when you are genuinely blocked on missing preference, permission, or context that you cannot resolve from the chat log or the live system. The tool sends the question into Telegram, optionally renders inline choice buttons, and then resumes the same cycle with the user's answer as a string. The human can either press a button or reply in free text, so alternatives should be concise suggestions, not an exhaustive protocol.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
           "question" => %{
             "type" => "string",
-            "description" => "The question to ask the user."
+            "description" => "The question to ask. Keep it concrete and answerable in one reply."
           },
           "alternatives" => %{
             "type" => "array",
             "items" => %{"type" => "string"},
-            "description" => "Optional alternative answers to render as inline keyboard buttons."
+            "description" =>
+              "Optional short suggested answers to render as inline keyboard buttons. The user may still answer with free-form text instead."
           }
         },
         "required" => ["question"],
@@ -57,21 +61,24 @@ defmodule Froth.Inference.Tools do
     %{
       "name" => "read_log",
       "description" =>
-        "Read the chronological chat log for a date range. Returns all messages in order. Use to browse what happened on a given day or period.",
+        "Read the chronological chat log for a date range. Use this when you know roughly when something happened and need to browse the surrounding conversation in order. The transcript includes stable msg:ID references and may include short analysis snippets for media messages, which you can follow up with view_analysis or look. Prefer this over search when the user is asking about a stretch of time, a conversation arc, or something that search may miss because the wording is uncertain.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
           "from_date" => %{
             "type" => "string",
             "description" =>
-              "Start date or datetime, ISO 8601 (e.g. 2026-02-10 or 2026-02-10T14:30:00)."
+              "Start date or datetime in ISO 8601, for example 2026-02-10 or 2026-02-10T14:30:00."
           },
           "to_date" => %{
             "type" => "string",
             "description" =>
-              "End date or datetime, ISO 8601 (e.g. 2026-02-11 or 2026-02-11T08:00:00)."
+              "Optional end date or datetime in ISO 8601. If omitted, the log is read forward from from_date."
           },
-          "sender_id" => %{"type" => "integer", "description" => "Telegram user ID to filter by."}
+          "sender_id" => %{
+            "type" => "integer",
+            "description" => "Optional Telegram user ID to filter by a single sender."
+          }
         },
         "required" => ["from_date"],
         "additionalProperties" => false
@@ -80,7 +87,7 @@ defmodule Froth.Inference.Tools do
     %{
       "name" => "search",
       "description" =>
-        "Search chat history by text. Returns matching messages with surrounding context. Use before/after to control context size (default 3).",
+        "Search chat history by exact phrase match. The query is an array of phrases OR'd together, and each phrase is matched literally as written, case-insensitively. Use this for specific words, names, URLs, slogans, or a small handful of wording variants; one thoughtful search with a few variants is usually better than many repetitive searches. If search comes up empty and the wording may be wrong, fall back to read_log for the relevant time window instead of flailing.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
@@ -88,21 +95,27 @@ defmodule Froth.Inference.Tools do
             "type" => "array",
             "items" => %{"type" => "string"},
             "description" =>
-              "Phrases to search for (case-insensitive, OR'd together). Each item is matched exactly as a phrase."
+              "Phrases to search for. Items are OR'd together, case-insensitive, and each item is matched exactly as a phrase."
           },
           "from_date" => %{
             "type" => "string",
-            "description" => "Start date or datetime, ISO 8601."
+            "description" => "Optional start date or datetime in ISO 8601."
           },
-          "to_date" => %{"type" => "string", "description" => "End date or datetime, ISO 8601."},
-          "sender_id" => %{"type" => "integer", "description" => "Telegram user ID to filter by."},
+          "to_date" => %{
+            "type" => "string",
+            "description" => "Optional end date or datetime in ISO 8601."
+          },
+          "sender_id" => %{
+            "type" => "integer",
+            "description" => "Optional Telegram user ID to filter by a single sender."
+          },
           "before" => %{
             "type" => "integer",
-            "description" => "Context messages before each hit. Default 3."
+            "description" => "How many context messages to include before each hit. Default 3."
           },
           "after" => %{
             "type" => "integer",
-            "description" => "Context messages after each hit. Default 3."
+            "description" => "How many context messages to include after each hit. Default 3."
           }
         },
         "required" => ["query"],
@@ -128,7 +141,7 @@ defmodule Froth.Inference.Tools do
     %{
       "name" => "view_analysis",
       "description" =>
-        "Read the full analysis text for one or more analysis IDs. Use this when you see an analysis snippet in the chat log and want the complete description (photo analysis, voice transcription, video analysis, etc.).",
+        "Read the full analysis text for one or more analysis IDs. Use this when read_log or search shows an analysis:N snippet and you want the complete analysis behind it. This is the right tool for media that has already been interpreted by other agents, such as photos, voice notes, videos, PDFs, YouTube links, or X posts. If you need the original image or PDF content block itself rather than the generated analysis text, use look instead.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
@@ -136,7 +149,7 @@ defmodule Froth.Inference.Tools do
             "type" => "array",
             "items" => %{"type" => "integer"},
             "description" =>
-              "Analysis IDs to read (from the analysis:N references in the chat log)."
+              "Analysis IDs to read, taken from analysis:N references in the chat log."
           }
         },
         "required" => ["ids"],
@@ -146,15 +159,14 @@ defmodule Froth.Inference.Tools do
     %{
       "name" => "look",
       "description" =>
-        "Open a Telegram photo or document by message ID and return native content blocks. " <>
-          "For images, returns a text metadata block plus an image block. " <>
-          "For PDFs, returns a text metadata block plus a document block.",
+        "Open a Telegram media message by msg:ID and return native multimodal content blocks. Use this when you want to inspect the actual image or PDF in context rather than relying only on a text analysis. The tool currently supports images and PDFs only; for voice notes, videos, links, and other media, prefer the existing analyses via view_analysis. The result includes a short metadata text block plus the binary content block the model can inspect directly.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
           "message_id" => %{
             "type" => "integer",
-            "description" => "Telegram message ID from chat logs (the number from msg:12345)."
+            "description" =>
+              "Telegram message ID from the chat log, i.e. the number from a msg:12345 reference."
           }
         },
         "required" => ["message_id"],
@@ -164,31 +176,33 @@ defmodule Froth.Inference.Tools do
     %{
       "name" => "read_tool_transcript",
       "description" =>
-        "Read transcripts from previous agent cycles in this chat, including assistant tool calls, tool results, and linked eval/shell task output.",
+        "Read transcripts from previous agent cycles in this chat. Use this to recover what happened in an earlier tool loop, inspect a delegated sub-agent, or understand how a prior shell or eval attempt failed. The transcript can include assistant tool calls, tool results, optional message blocks, and linked task output from eval or shell tasks. Narrow with cycle_id or small limits when you already know which cycle you want, because full transcripts can get noisy.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
           "cycle_id" => %{
             "type" => "string",
-            "description" => "Optional specific cycle ID (ULID)."
+            "description" => "Optional specific cycle ID (ULID) if you want one known cycle."
           },
           "limit" => %{
             "type" => "integer",
-            "description" => "How many recent cycles to include. Default 3."
+            "description" =>
+              "How many recent cycles to include when cycle_id is omitted. Default 3."
           },
           "include_messages" => %{
             "type" => "boolean",
             "description" =>
-              "Include assistant/user message transcript blocks. Default false (noisy)."
+              "Whether to include assistant and user message transcript blocks. Default false because this can get noisy."
           },
           "include_task_output" => %{
             "type" => "boolean",
             "description" =>
-              "Include linked eval/shell task output near each cycle. Default true."
+              "Whether to include linked eval and shell task output near each cycle. Default true."
           },
           "task_output_lines" => %{
             "type" => "integer",
-            "description" => "Max event lines per task when include_task_output is true."
+            "description" =>
+              "Maximum output lines per linked task when include_task_output is true."
           }
         },
         "additionalProperties" => false
@@ -197,41 +211,56 @@ defmodule Froth.Inference.Tools do
     %{
       "name" => "elixir_eval",
       "description" =>
-        "Evaluate Elixir code on the live Froth node. Returns the inspected result and any IO output. " <>
-          "You have full access to Ecto repos (Froth.Repo), GenServers, OTP processes, the whole application. " <>
-          "Use `import Ecto.Query` then query telegram_messages, analyses, etc. " <>
-          "Variable bindings declared by your code (for example `a = 1`) are saved in the eval session and are visible to later elixir_eval calls that use the same session_id. " <>
-          "Useful for checking system state, counting things, running ad-hoc queries, inspecting processes. " <>
-          "If execution runs long (~15s), it continues in background and returns a task_id; use list_tasks / task_output / stop_task. " <>
-          "Tip: Froth.help(Module) returns docs and signatures for any module.",
+        "Evaluate Elixir code on the live Froth node. This is the main way to inspect or manipulate real runtime state: Ecto repos, OTP processes, registries, GenServers, and Froth modules are all available. Use it for ad-hoc queries, system inspection, one-off automation, and calling application APIs, and prefer it over guessing how the system works. Variable bindings persist inside an eval session, so reuse session_id when a sequence of evals should share local variables; if you need module docs or function signatures, call Froth.help(Module) instead of inventing them. The required description field is a user-visible observer note, so fill it in concretely before acting. If execution runs long, it continues in the background and returns a task_id that you can inspect with the task tools.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
           "code" => %{
             "type" => "string",
-            "description" => "Elixir code to evaluate. The last expression's value is returned."
+            "description" =>
+              "Elixir code to evaluate. The value of the last expression is returned."
+          },
+          "description" => %{
+            "type" => "object",
+            "description" =>
+              "Required structured observer note that becomes visible to humans while the tool runs. Use it to say what action you are taking, what success hierarchy you are pursuing, and what ungrounded assumptions this invocation depends on.",
+            "properties" => %{
+              "action" => %{
+                "type" => "string",
+                "description" =>
+                  "A present-tense verb phrase labeling the action, for example \"Inspecting the runtime registry\"."
+              },
+              "goals" => %{
+                "type" => "array",
+                "items" => %{"type" => "string"},
+                "maxItems" => 3,
+                "description" =>
+                  "A short stack of desired outcomes, in order, up to three items long. Express the hierarchy of what you are trying to achieve, from immediate check to broader practical aim."
+              },
+              "assumptions" => %{
+                "type" => "array",
+                "items" => %{"type" => "string"},
+                "description" =>
+                  "Things that must be true for this invocation to succeed but that you are not actually grounded enough to claim yet."
+              }
+            },
+            "required" => ["action", "goals", "assumptions"],
+            "additionalProperties" => false
           },
           "session_id" => %{
             "type" => "string",
             "description" =>
-              "Optional eval session ID. All variables declared in this session are persisted and visible to later evals with the same session_id. If omitted, a new random session is created."
-          },
-          "narration" => %{
-            "type" => "string",
-            "description" =>
-              "Optional prose narration of what this code does and why, in Aristotelian practical syllogism format (premise → premise → therefore action). Automatically sent as italics to the chat so observers can follow along."
+              "Optional eval session ID. Variables declared in one eval remain available to later evals that reuse the same session_id."
           }
         },
-        "required" => ["code", "narration"],
+        "required" => ["code", "description"],
         "additionalProperties" => false
       }
     },
     %{
       "name" => "run_shell",
       "description" =>
-        "Run a shell command (via bash). If the command finishes within ~3 seconds, " <>
-          "returns the output directly. Otherwise, returns a task_id for tracking — " <>
-          "use list_tasks and task_output to monitor progress. ",
+        "Run a shell command via bash in the Froth environment. Use this for filesystem work, git inspection, local scripts, builds, and other OS-level actions that are better expressed as shell than Elixir. Fast commands return inline output; longer commands continue in the background and return a task_id for use with list_tasks, task_output, subscribe_task, stop_task, or send_input. The required description field is a user-visible observer note, so use it to explain the action, your layered goals, and your ungrounded assumptions before acting. A non-zero exit code is treated as an error, so do not assume a command worked unless the tool result says it did.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
@@ -239,18 +268,40 @@ defmodule Froth.Inference.Tools do
             "type" => "string",
             "description" => "Shell command to run."
           },
+          "description" => %{
+            "type" => "object",
+            "description" =>
+              "Required structured observer note that becomes visible to humans while the tool runs. Use it to say what action you are taking, what success hierarchy you are pursuing, and what ungrounded assumptions this invocation depends on.",
+            "properties" => %{
+              "action" => %{
+                "type" => "string",
+                "description" =>
+                  "A present-tense verb phrase labeling the action, for example \"Listing the workspace root\"."
+              },
+              "goals" => %{
+                "type" => "array",
+                "items" => %{"type" => "string"},
+                "maxItems" => 3,
+                "description" =>
+                  "A short stack of desired outcomes, in order, up to three items long. Express the hierarchy of what you are trying to achieve, from immediate check to broader practical aim."
+              },
+              "assumptions" => %{
+                "type" => "array",
+                "items" => %{"type" => "string"},
+                "description" =>
+                  "Things that must be true for this invocation to succeed but that you are not actually grounded enough to claim yet."
+              }
+            },
+            "required" => ["action", "goals", "assumptions"],
+            "additionalProperties" => false
+          },
           "working_dir" => %{
             "type" => "string",
             "description" =>
-              "Working directory for the command. Defaults to the Froth project root."
-          },
-          "narration" => %{
-            "type" => "string",
-            "description" =>
-              "Optional prose narration of what this command does and why. Automatically sent as italics to the chat."
+              "Optional working directory for the command. Defaults to the Froth project root."
           }
         },
-        "required" => ["command", "narration"],
+        "required" => ["command", "description"],
         "additionalProperties" => false
       }
     },
@@ -337,13 +388,14 @@ defmodule Froth.Inference.Tools do
     %{
       "name" => "await",
       "description" =>
-        "When subscribed to some set of tasks, await returns the first task completion.",
+        "Pause for a human decision about currently tracked background tasks. Use this when you have one or more running shell or eval tasks and need to know whether to keep waiting, keep working in parallel, cancel the tasks, or check their progress. The tool sends a Telegram prompt with explicit buttons and resumes the same cycle with the user's decision, unless they choose to detach or cancel the cycle entirely. Do not use this unless there is real background work in flight; if nothing is running, the tool will just tell you that no tracked tasks were found.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
           "reason" => %{
             "type" => "string",
-            "description" => "Optional note about what you're waiting for."
+            "description" =>
+              "Short explanation of what the background tasks are doing and why the decision matters right now."
           }
         },
         "additionalProperties" => false
@@ -379,16 +431,14 @@ defmodule Froth.Inference.Tools do
     %{
       "name" => "spawn_agent",
       "description" =>
-        "Start an ad-hoc sub-agent in the background and return its cycle ID. " <>
-          "Use this to delegate a bounded task to another agent without manually wiring Froth.Agent.Adhoc. " <>
-          "By default the sub-agent gets shell and elixir_eval. " <>
-          "Check progress or final results later with read_tool_transcript using the returned cycle_id.",
+        "Start an ad-hoc sub-agent in the background and return its cycle ID. Use this when the task is bounded but would take multiple steps, benefit from parallelism, or is easier to delegate than to carry in the current loop. The prompt must be self-contained enough for the sub-agent to understand the job without extra chat context. By default the sub-agent gets run_shell and elixir_eval; you can restrict or remove tools if you want a narrower worker. Inspect progress or final results later with read_tool_transcript using the returned cycle_id.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
           "prompt" => %{
             "type" => "string",
-            "description" => "Self-contained prompt for the delegated sub-agent."
+            "description" =>
+              "Self-contained prompt for the delegated sub-agent, including the goal and any important constraints."
           },
           "model" => %{
             "type" => "string",
@@ -398,8 +448,7 @@ defmodule Froth.Inference.Tools do
             "type" => "array",
             "items" => %{"type" => "string"},
             "description" =>
-              "Optional tool names to expose to the sub-agent. Defaults to [\"shell\", \"elixir_eval\"]. " <>
-                "\"shell\" is an alias for run_shell. Pass [] for a no-tools sub-agent."
+              "Optional tool names to expose to the sub-agent. Defaults to [\"run_shell\", \"elixir_eval\"]. The alias \"shell\" is accepted for run_shell. Pass [] for a no-tools sub-agent."
           },
           "system_prompt" => %{
             "type" => "string",
@@ -630,8 +679,7 @@ defmodule Froth.Inference.Tools do
         end
 
       "await" ->
-        reason = input["reason"] || "Waiting for subscribed tasks."
-        {:yield, reason}
+        await_background_tasks(chat_id, input, opts)
 
       "spawn_engineer" ->
         case input["prompt"] do
@@ -1204,12 +1252,20 @@ defmodule Froth.Inference.Tools do
                    alternatives: alternatives,
                    config: config
                  }) do
+            pending_ask =
+              maybe_refresh_pending_ask_message_id(
+                pending_ask,
+                bot_id,
+                chat_id,
+                message_id
+              )
+
             {:await,
              %{
                "kind" => "ask",
                "reason" => "Waiting for the user's answer.",
                "pending_ask_id" => pending_ask.id,
-               "question_message_id" => resolved_message_id,
+               "question_message_id" => pending_ask.message_id,
                "sent_message" => sent
              }}
           else
@@ -1229,6 +1285,93 @@ defmodule Froth.Inference.Tools do
   defp ask(_chat_id, _input, _opts), do: {:error, "ask requires a valid chat_id"}
 
   defp ask_config(opts, system_prompt) when is_list(opts) and is_binary(system_prompt) do
+    pending_ask_session_config(opts, system_prompt)
+  end
+
+  defp await_background_tasks(chat_id, input, opts)
+       when is_integer(chat_id) and is_map(input) and is_list(opts) do
+    with {:ok, session_id} <- required_opt_string(opts, :session_id),
+         {:ok, bot_id} <- required_opt_string(opts, :bot_id),
+         {:ok, cycle_id} <- required_opt_string(opts, :cycle_id),
+         {:ok, tool_use_id} <- required_opt_string(opts, :tool_use_id),
+         {:ok, system_prompt} <- required_opt_string(opts, :system_prompt) do
+      task_ids =
+        case opts[:active_task_ids] do
+          values when is_list(values) -> Enum.filter(values, &is_binary/1)
+          _ -> []
+        end
+
+      if task_ids == [] do
+        {:ok, "No tracked background tasks are currently running."}
+      else
+        reason =
+          case String.trim(to_string(input["reason"] || "")) do
+            "" -> "Waiting for background tasks to settle."
+            text -> text
+          end
+
+        message_text = AwaitControl.render_message(reason, task_ids)
+        send_message_fun = Keyword.get(opts, :send_message_fun, &BotAdapter.send_message/4)
+
+        case send_message_fun.(session_id, chat_id, message_text,
+               reply_to: opts[:reply_to],
+               reply_markup: AwaitControl.reply_markup()
+             ) do
+          {:ok, sent} ->
+            config =
+              opts
+              |> pending_ask_session_config(system_prompt)
+              |> Map.put("kind", "await")
+              |> Map.put("reason", reason)
+              |> Map.put("reply_to", opts[:reply_to])
+              |> Map.put("task_ids", task_ids)
+
+            with {:ok, message_id} <- ask_message_id(sent),
+                 resolved_message_id = MessageIdSync.resolve(bot_id, chat_id, message_id),
+                 {:ok, pending_ask} <-
+                   PendingAsks.create(%{
+                     cycle_id: cycle_id,
+                     bot_id: bot_id,
+                     chat_id: chat_id,
+                     message_id: resolved_message_id,
+                     tool_use_id: tool_use_id,
+                     question: message_text,
+                     alternatives: AwaitControl.alternatives(),
+                     config: config
+                   }) do
+              pending_ask =
+                maybe_refresh_pending_ask_message_id(pending_ask, bot_id, chat_id, message_id)
+
+              {:await,
+               %{
+                 "kind" => "await",
+                 "reason" => reason,
+                 "pending_ask_id" => pending_ask.id,
+                 "question_message_id" => pending_ask.message_id,
+                 "task_ids" => task_ids,
+                 "message_text" => message_text,
+                 "sent_message" => sent
+               }}
+            else
+              {:error, %Ecto.Changeset{} = changeset} ->
+                {:error, format_changeset_errors(changeset)}
+
+              {:error, reason} ->
+                {:error, format_reason(reason)}
+            end
+
+          {:error, reason} ->
+            {:error, format_reason(reason)}
+        end
+      end
+    end
+  end
+
+  defp await_background_tasks(_chat_id, _input, _opts),
+    do: {:error, "await requires a valid chat_id"}
+
+  defp pending_ask_session_config(opts, system_prompt)
+       when is_list(opts) and is_binary(system_prompt) do
     %{
       "system" => system_prompt,
       "model" => opts[:model],
@@ -1263,6 +1406,22 @@ defmodule Froth.Inference.Tools do
       "rows" => rows
     }
   end
+
+  defp maybe_refresh_pending_ask_message_id(pending_ask, bot_id, chat_id, original_message_id)
+       when is_map(pending_ask) and is_binary(bot_id) and is_integer(chat_id) and
+              is_integer(original_message_id) do
+    resolved_message_id = MessageIdSync.resolve(bot_id, chat_id, original_message_id)
+
+    if is_integer(resolved_message_id) and resolved_message_id != pending_ask.message_id do
+      PendingAsks.sync_message_id(bot_id, chat_id, pending_ask.message_id, resolved_message_id)
+      %{pending_ask | message_id: resolved_message_id}
+    else
+      pending_ask
+    end
+  end
+
+  defp maybe_refresh_pending_ask_message_id(pending_ask, _bot_id, _chat_id, _original_message_id),
+    do: pending_ask
 
   defp normalize_ask_alternatives(nil), do: {:ok, []}
   defp normalize_ask_alternatives([]), do: {:ok, []}

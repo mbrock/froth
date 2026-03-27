@@ -5,7 +5,7 @@ defmodule Froth.Agent do
 
   import Ecto.Query
 
-  alias Froth.Agent.{Config, Cycle, Message, Worker}
+  alias Froth.Agent.{Config, Cycle, Message, ToolDescription, Worker}
   alias Froth.{Event, LLM, ObjectStore, Repo}
 
   @payload_blob_threshold 8_000
@@ -250,7 +250,7 @@ defmodule Froth.Agent do
 
           %{"type" => type, "input" => input} = block
           when type in ["tool_use", "mcp_tool_use"] ->
-            narration = Map.get(input, "narration")
+            narration = ToolDescription.text_from_input(input)
             tool = format_trace_tool_name(block)
 
             [

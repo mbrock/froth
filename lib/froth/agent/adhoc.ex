@@ -70,8 +70,13 @@ defmodule Froth.Agent.Adhoc do
             chat_id: runtime.chat_id,
             reply_to: runtime.reply_to,
             prompt: resolved.prompt,
+            system_prompt: resolved.system,
             model: resolved.model,
             provider: resolved.provider_name,
+            tools: resolved.tools,
+            thinking: resolved.thinking,
+            effort: resolved.effort,
+            tool_timeout_ms: resolved.tool_timeout_ms,
             spam: Keyword.get(opts, :spam, true)
           )
 

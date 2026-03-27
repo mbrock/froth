@@ -2,10 +2,24 @@ defmodule Froth.Agent.Cycle do
   use Ecto.Schema
   import Ecto.Changeset
 
-  @statuses [:queued, :running, :waiting_on_tools, :completed, :failed, :cancelled]
+  @statuses [
+    :queued,
+    :running,
+    :waiting_on_tools,
+    :awaiting_user_input,
+    :completed,
+    :failed,
+    :cancelled
+  ]
 
   @type status ::
-          :queued | :running | :waiting_on_tools | :completed | :failed | :cancelled
+          :queued
+          | :running
+          | :waiting_on_tools
+          | :awaiting_user_input
+          | :completed
+          | :failed
+          | :cancelled
 
   @type t :: %__MODULE__{
           id: String.t() | nil,

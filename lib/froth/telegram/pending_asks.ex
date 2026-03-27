@@ -62,10 +62,22 @@ defmodule Froth.Telegram.PendingAsks do
 
     now = DateTime.utc_now()
 
+    config_merge =
+      case Keyword.get(opts, :config_merge) do
+        value when is_map(value) -> value
+        _ -> %{}
+      end
+
+    updated_config =
+      pending_ask.config
+      |> Kernel.||(%{})
+      |> Map.merge(config_merge)
+
     {count, _rows} =
       from(p in PendingAsk, where: p.id == ^id and is_nil(p.resolved_at))
       |> Repo.update_all(
         set: [
+          config: updated_config,
           answer: answer,
           answer_message_id: answer_message_id,
           answered_via: answered_via,
@@ -80,6 +92,7 @@ defmodule Froth.Telegram.PendingAsks do
          %{
            pending_ask
            | answer: answer,
+             config: updated_config,
              answer_message_id: answer_message_id,
              answered_via: answered_via,
              resolved_at: now

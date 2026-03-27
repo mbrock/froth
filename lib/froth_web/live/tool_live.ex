@@ -2,7 +2,7 @@ defmodule FrothWeb.ToolLive do
   use FrothWeb, :live_view
 
   alias Froth.Agent
-  alias Froth.Agent.Cycle
+  alias Froth.Agent.{Cycle, ToolDescription}
   alias Froth.Agent.Message, as: AgentMessage
   alias Froth.Repo
   alias Froth.Telegram.CycleLink
@@ -587,7 +587,7 @@ defmodule FrothWeb.ToolLive do
         tool_use_id: tool_use_id,
         name: name,
         status: "executing",
-        narration: get_in(block, ["input", "narration"]),
+        narration: ToolDescription.text_from_input(input),
         summary: tool_input_summary(name, input),
         input_json: pretty_tool_input(input)
       })
@@ -1436,7 +1436,7 @@ defmodule FrothWeb.ToolLive do
 
   defp tool_input_summary(_name, input) when is_map(input) do
     input
-    |> Map.drop(["narration"])
+    |> Map.drop(["description", "narration"])
     |> safe_input_preview()
     |> summarize_preview()
   end

@@ -82,7 +82,13 @@ defmodule Froth.Tasks.Shell do
 
     case await(pid, @shell_await_ms) do
       {:completed, exit_code, output} ->
-        {:ok, format_completed(task_id, command, exit_code, output)}
+        formatted = format_completed(task_id, command, exit_code, output)
+
+        if exit_code in [0, nil] do
+          {:ok, formatted}
+        else
+          {:error, formatted}
+        end
 
       :running ->
         {:ok,

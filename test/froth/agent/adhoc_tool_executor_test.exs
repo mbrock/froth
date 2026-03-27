@@ -20,7 +20,18 @@ defmodule Froth.Agent.AdhocToolExecutorTest do
     tool_use = %ToolUse{
       id: "call_1",
       name: "run_shell",
-      input: %{"command" => "ls", "narration" => "Listing agent directory contents"}
+      input: %{
+        "command" => "ls",
+        "description" => %{
+          "action" => "Listing agent directory contents",
+          "goals" => [
+            "see what files are present",
+            "confirm the workspace shape",
+            "avoid guessing about the directory contents"
+          ],
+          "assumptions" => ["the current directory is the intended workspace"]
+        }
+      }
     }
 
     assert {:ok, %{execution: execution}} =
@@ -29,7 +40,6 @@ defmodule Froth.Agent.AdhocToolExecutorTest do
     assert execution.reply_to == 456
     assert execution.input["reply_to"] == 456
     assert execution.input["send_control_prompt"] == true
-    assert execution.input["narration_markdown"] == "_Listing agent directory contents_"
     refute Map.has_key?(execution.input["control_prompt"], "text")
 
     assert execution.input["control_prompt"]["markdown"] ==
@@ -103,13 +113,35 @@ defmodule Froth.Agent.AdhocToolExecutorTest do
     run_shell = %ToolUse{
       id: "call_1",
       name: "run_shell",
-      input: %{"command" => "pwd", "narration" => "Checking the working directory"}
+      input: %{
+        "command" => "pwd",
+        "description" => %{
+          "action" => "Checking the working directory",
+          "goals" => [
+            "see where the shell starts",
+            "confirm whether the workspace is correct",
+            "avoid running later commands in the wrong place"
+          ],
+          "assumptions" => ["pwd is available in the shell"]
+        }
+      }
     }
 
     elixir_eval = %ToolUse{
       id: "call_2",
       name: "elixir_eval",
-      input: %{"code" => "1 + 1", "narration" => "Inspecting the runtime"}
+      input: %{
+        "code" => "1 + 1",
+        "description" => %{
+          "action" => "Inspecting the runtime",
+          "goals" => [
+            "confirm eval is working",
+            "inspect live state with real code",
+            "avoid hand-waving about the runtime"
+          ],
+          "assumptions" => ["the live node is reachable"]
+        }
+      }
     }
 
     assert {:ok, %{execution: first_execution}} =

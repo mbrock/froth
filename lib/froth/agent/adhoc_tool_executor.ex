@@ -3,6 +3,7 @@ defmodule Froth.Agent.AdhocToolExecutor do
 
   use GenServer
 
+  alias Froth.Agent.FailureIntervention
   alias Froth.Agent.ToolUse
   alias Froth.Inference.Tools
   alias Froth.Telegram.ControlPrompt
@@ -22,8 +23,13 @@ defmodule Froth.Agent.AdhocToolExecutor do
        chat_id: Keyword.get(opts, :chat_id),
        reply_to: Keyword.get(opts, :reply_to),
        prompt: Keyword.get(opts, :prompt),
+       system_prompt: Keyword.get(opts, :system_prompt),
        model: Keyword.get(opts, :model),
        provider: Keyword.get(opts, :provider),
+       tools: Keyword.get(opts, :tools, []),
+       thinking: Keyword.get(opts, :thinking),
+       effort: Keyword.get(opts, :effort),
+       tool_timeout_ms: Keyword.get(opts, :tool_timeout_ms),
        spam: Keyword.get(opts, :spam, true),
        tool_execution_module: Keyword.get(opts, :tool_execution_module, ToolExecution),
        control_prompt_cycles: MapSet.new()
@@ -103,7 +109,6 @@ defmodule Froth.Agent.AdhocToolExecutor do
     base_input =
       input
       |> maybe_put_reply_to(name, reply_to)
-      |> maybe_put_narration_markdown()
 
     input =
       case name do
@@ -130,7 +135,13 @@ defmodule Froth.Agent.AdhocToolExecutor do
       chat_id: chat_id,
       reply_to: reply_to,
       cycle_id: cycle_id,
+      system_prompt: state.system_prompt,
       model: state.model,
+      provider: state.provider,
+      tools: state.tools,
+      thinking: state.thinking,
+      effort: state.effort,
+      tool_timeout_ms: state.tool_timeout_ms,
       spam: state.spam
     }
   end
@@ -146,7 +157,13 @@ defmodule Froth.Agent.AdhocToolExecutor do
       chat_id: resolved_chat_id(context, state),
       reply_to: resolved_reply_to(context, state),
       cycle_id: context_value(context, :cycle_id),
+      system_prompt: state.system_prompt,
       model: state.model,
+      provider: state.provider,
+      tools: state.tools,
+      thinking: state.thinking,
+      effort: state.effort,
+      tool_timeout_ms: state.tool_timeout_ms,
       spam: state.spam
     }
   end
@@ -167,7 +184,17 @@ defmodule Froth.Agent.AdhocToolExecutor do
       when is_binary(name) and is_map(input) do
     chat_id = execution[:chat_id] || 0
     opts = direct_tool_opts(execution)
-    %{result: Tools.execute(name, input, chat_id, opts)}
+
+    result =
+      name
+      |> Tools.execute(input, chat_id, opts)
+      |> FailureIntervention.maybe_intervene(execution)
+
+    if match?(%{result: _}, result) do
+      result
+    else
+      %{result: result}
+    end
   end
 
   def execute_direct(_execution), do: %{result: {:error, "invalid tool execution context"}}
@@ -181,6 +208,13 @@ defmodule Froth.Agent.AdhocToolExecutor do
     |> maybe_put_kw(:reply_to, execution[:reply_to])
     |> maybe_put_kw(:topic, execution[:input]["topic"])
     |> maybe_put_kw(:spam, execution[:spam])
+    |> maybe_put_kw(:system_prompt, execution[:system_prompt])
+    |> maybe_put_kw(:model, execution[:model])
+    |> maybe_put_kw(:provider, execution[:provider])
+    |> maybe_put_kw(:tools, execution[:tools])
+    |> maybe_put_kw(:thinking, execution[:thinking])
+    |> maybe_put_kw(:effort, execution[:effort])
+    |> maybe_put_kw(:tool_timeout_ms, execution[:tool_timeout_ms])
   end
 
   defp bot_id_for_direct_execution(%{chat_id: chat_id, bot_id: bot_id})
@@ -252,26 +286,6 @@ defmodule Froth.Agent.AdhocToolExecutor do
   end
 
   defp maybe_put_control_prompt(input, _send?, _cycle_id, _chat_id, _reply_to, _state), do: input
-
-  defp maybe_put_narration_markdown(input) when is_map(input) do
-    case Map.get(input, "narration") do
-      narration when is_binary(narration) ->
-        trimmed = String.trim(narration)
-
-        if trimmed == "" do
-          input
-        else
-          Map.put(
-            input,
-            "narration_markdown",
-            "_" <> ControlPrompt.markdown_escape(trimmed) <> "_"
-          )
-        end
-
-      _ ->
-        input
-    end
-  end
 
   defp control_prompt_markdown(state) do
     ControlPrompt.adhoc_markdown(state.model, state.provider, state.prompt)

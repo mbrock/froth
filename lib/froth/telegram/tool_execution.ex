@@ -1,6 +1,7 @@
 defmodule Froth.Telegram.ToolExecution do
   @moduledoc false
 
+  alias Froth.Agent.{FailureIntervention, ToolDescription}
   alias Froth.Inference.Tools
   alias Froth.Telegram.BotAdapter
 
@@ -58,6 +59,7 @@ defmodule Froth.Telegram.ToolExecution do
       ]
       |> maybe_put_tool_opt(:spam, execution[:spam])
       |> maybe_put_tool_opt(:topic, input["topic"])
+      |> maybe_put_tool_opt(:active_task_ids, execution[:active_task_ids])
       |> maybe_put_tool_opt(:tool_use_id, execution[:tool_use_id])
       |> maybe_put_tool_opt(:system_prompt, execution[:system_prompt])
       |> maybe_put_tool_opt(:model, execution[:model])
@@ -81,7 +83,13 @@ defmodule Froth.Telegram.ToolExecution do
           Tools.execute(name, input, chat_id, tool_opts)
       end
 
-    build_tool_outcome(result, narration_message, input)
+    case FailureIntervention.maybe_intervene(result, execution) do
+      %{result: _} = outcome ->
+        Map.put(outcome, :narration_message, narration_message)
+
+      updated_result ->
+        build_tool_outcome(updated_result, narration_message, input)
+    end
   end
 
   def execute(_prepared), do: %{result: {:error, "invalid tool execution context"}}
@@ -142,22 +150,29 @@ defmodule Froth.Telegram.ToolExecution do
 
   defp maybe_send_narration(_input, _execution, _reply_to, false), do: nil
 
-  defp maybe_send_narration(
-         %{"narration_markdown" => narration},
-         execution,
-         reply_to,
-         true
-       )
+  defp maybe_send_narration(input, execution, reply_to, true) when is_map(input) do
+    case ToolDescription.text_from_input(input) do
+      narration when is_binary(narration) and narration != "" ->
+        send_or_edit_narration(execution, reply_to, narration, :italic)
+
+      _ ->
+        maybe_send_legacy_narration(input, execution, reply_to)
+    end
+  end
+
+  defp maybe_send_narration(_input, _execution, _reply_to, _spam), do: nil
+
+  defp maybe_send_legacy_narration(%{"narration_markdown" => narration}, execution, reply_to)
        when is_binary(narration) and narration != "" do
     send_or_edit_narration(execution, reply_to, String.trim(narration), :markdown)
   end
 
-  defp maybe_send_narration(%{"narration" => narration}, execution, reply_to, true)
+  defp maybe_send_legacy_narration(%{"narration" => narration}, execution, reply_to)
        when is_binary(narration) and narration != "" do
     send_or_edit_narration(execution, reply_to, String.trim(narration), :italic)
   end
 
-  defp maybe_send_narration(_input, _execution, _reply_to, _spam), do: nil
+  defp maybe_send_legacy_narration(_input, _execution, _reply_to), do: nil
 
   defp send_or_edit_narration(
          %{
@@ -257,6 +272,20 @@ defmodule Froth.Telegram.ToolExecution do
     %{
       result: {:await, Map.delete(data, "sent_message")},
       sent_message: %{sent: sent_message, text: question},
+      narration_message: narration_message,
+      awaiting_user_input: true
+    }
+  end
+
+  defp build_tool_outcome(
+         {:await, %{"sent_message" => sent_message, "message_text" => message_text} = data},
+         narration_message,
+         _input
+       )
+       when is_map(sent_message) and is_binary(message_text) do
+    %{
+      result: {:await, Map.delete(data, "sent_message")},
+      sent_message: %{sent: sent_message, text: message_text},
       narration_message: narration_message,
       awaiting_user_input: true
     }

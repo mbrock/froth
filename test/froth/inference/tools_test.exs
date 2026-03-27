@@ -163,6 +163,28 @@ defmodule Froth.Inference.ToolsTest do
     assert get_in(spec, ["input_schema", "required"]) == ["question"]
   end
 
+  test "canonical tool descriptions include guidance previously duplicated in Charlie prompt" do
+    specs = Map.new(Tools.specs_for_api(), &{&1["name"], &1})
+
+    assert specs["send_message"]["description"] =~
+             "one paragraph or one finished thought at a time"
+
+    assert specs["ask"]["description"] =~ "pause the current agent cycle"
+    assert specs["read_log"]["description"] =~ "msg:ID references"
+    assert specs["search"]["description"] =~ "matched literally as written"
+    assert specs["look"]["description"] =~ "supports images and PDFs only"
+    assert specs["read_tool_transcript"]["description"] =~ "delegated sub-agent"
+    assert get_in(specs, ["elixir_eval", "input_schema", "required"]) == ["code", "description"]
+    assert get_in(specs, ["run_shell", "input_schema", "required"]) == ["command", "description"]
+
+    assert get_in(specs, ["run_shell", "input_schema", "properties", "description", "required"]) ==
+             [
+               "action",
+               "goals",
+               "assumptions"
+             ]
+  end
+
   test "web_search is exposed in tool specs" do
     spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "web_search"))
 
@@ -179,6 +201,7 @@ defmodule Froth.Inference.ToolsTest do
 
   test "spawn_agent starts an adhoc cycle with default tools, links it to the chat, and tracks it as a task" do
     test_pid = self()
+    bot_id = "spawn-agent-test-bot"
     previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
 
     on_exit(fn ->
@@ -210,7 +233,7 @@ defmodule Froth.Inference.ToolsTest do
                "spawn_agent",
                %{"prompt" => "Say hi from the delegated agent"},
                chat_id,
-               bot_id: "charlie",
+               bot_id: bot_id,
                bot_username: "charliebuddybot",
                session_id: "charlie"
              )
@@ -250,7 +273,7 @@ defmodule Froth.Inference.ToolsTest do
 
     assert Repo.get_by!(CycleLink,
              cycle_id: result["cycle_id"],
-             bot_id: "charlie",
+             bot_id: bot_id,
              chat_id: chat_id
            )
 
@@ -259,7 +282,7 @@ defmodule Froth.Inference.ToolsTest do
                "read_tool_transcript",
                %{"cycle_id" => result["cycle_id"], "include_messages" => true},
                chat_id,
-               bot_id: "charlie",
+               bot_id: bot_id,
                session_id: "charlie"
              )
 

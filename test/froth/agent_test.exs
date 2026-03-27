@@ -767,7 +767,10 @@ defmodule Froth.Agent.WorkerTest do
 
       assert_receive {:llm_call, 0, [%LLMMessage{role: :user}]}, 5_000
       refute_receive {:llm_call, 1, _}, 200
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
+
+      state = :sys.get_state(pid)
+      assert match?({:awaiting_user_input, _}, state.phase)
+      assert state.cycle.status == :awaiting_user_input
 
       messages = cycle_messages(cycle.id)
       assert Enum.map(messages, & &1.role) == [:user, :agent]
@@ -775,6 +778,9 @@ defmodule Froth.Agent.WorkerTest do
       outcome = latest_cycle_event(cycle.id, "control.outcome")
       assert outcome.metadata["outcome"] == "await_user_input"
       assert outcome.metadata["reason"] == "Waiting for the user's answer."
+
+      Process.exit(pid, {:shutdown, :cancelled})
+      assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :cancelled}}, 5_000
     end
 
     test "times out stalled tools using the worker-owned deadline" do
@@ -1301,7 +1307,15 @@ defmodule Froth.Agent.WorkerTest do
                    "name" => "run_shell",
                    "input" => %{
                      "command" => "printf 'froth-adhoc\\n'",
-                     "narration" => "I should inspect the shell output before replying."
+                     "description" => %{
+                       "action" => "Inspecting the shell output before replying.",
+                       "goals" => [
+                         "read the command output",
+                         "decide whether the command succeeded",
+                         "avoid replying from a guess"
+                       ],
+                       "assumptions" => ["the shell command can run in this workspace"]
+                     }
                    }
                  }
                ],
