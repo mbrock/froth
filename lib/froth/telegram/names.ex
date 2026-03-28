@@ -5,6 +5,7 @@ defmodule Froth.Telegram.Names do
   """
 
   alias Froth.Telegram.Queries
+  alias Froth.Telegram.Usernames
 
   # ── public API ──────────────────────────────────────────────────
 
@@ -16,9 +17,33 @@ defmodule Froth.Telegram.Names do
     messages
     |> ordered_sender_ids()
     |> Enum.take(80)
-    |> Map.new(fn sender_id ->
-      {sender_id, sender_label(sender_id, session_id)}
-    end)
+    |> labels_for_ids(session_id)
+  end
+
+  def labels_for_ids(sender_ids, session_id) when is_list(sender_ids) do
+    {positive_ids, other_ids} =
+      sender_ids
+      |> Enum.filter(&is_integer/1)
+      |> Enum.uniq()
+      |> Enum.split_with(&(&1 > 0))
+
+    positive_labels = Usernames.label_map(positive_ids, session_id)
+
+    negative_labels =
+      Map.new(other_ids, fn sender_id ->
+        {sender_id, sender_label(sender_id, session_id)}
+      end)
+
+    missing_positive_labels =
+      positive_ids
+      |> Enum.reject(&Map.has_key?(positive_labels, &1))
+      |> Map.new(fn sender_id ->
+        {sender_id, sender_label(sender_id, session_id)}
+      end)
+
+    positive_labels
+    |> Map.merge(missing_positive_labels)
+    |> Map.merge(negative_labels)
   end
 
   @doc """
@@ -29,9 +54,21 @@ defmodule Froth.Telegram.Names do
 
   def sender_label(sender_id, session_id) when is_integer(sender_id) and sender_id > 0 do
     cached({:user_label, session_id, sender_id}, fn ->
-      case telegram_call(session_id, %{"@type" => "getUser", "user_id" => sender_id}) do
-        {:ok, user} when is_map(user) -> format_user_label(user, sender_id)
-        _ -> "user:#{sender_id}"
+      case Usernames.get_label(sender_id) do
+        label when is_binary(label) and label != "" ->
+          label
+
+        _ ->
+          case telegram_call(session_id, %{"@type" => "getUser", "user_id" => sender_id}) do
+            {:ok, user} when is_map(user) ->
+              Usernames.upsert_from_user(user, session_id)
+              format_user_label(user, sender_id)
+
+            _ ->
+              fallback = "user:#{sender_id}"
+              Usernames.upsert_label(sender_id, fallback, session_id)
+              fallback
+          end
       end
     end)
   end

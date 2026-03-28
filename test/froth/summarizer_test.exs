@@ -7,6 +7,7 @@ defmodule Froth.SummarizerTest do
   alias Froth.Telegram.BotContext
   alias Froth.Telegram.Message, as: TelegramMessage
   alias Froth.Telegram.SessionConfig
+  alias Froth.Telegram.Username
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
@@ -23,10 +24,10 @@ defmodule Froth.SummarizerTest do
     insert_telegram_message(session_id, chat_id, 101, 7, 1_700_000_700, "older context")
     insert_telegram_message(session_id, chat_id, 102, 8, 1_700_000_800, "still older")
     insert_telegram_message(session_id, chat_id, 103, 9, 1_700_000_900, "future context leak")
+    insert_username(7, "seven")
+    insert_username(8, "eight")
 
     Process.put({:chat_name, session_id, chat_id}, "Froth chat")
-    Process.put({:user_label, session_id, 7}, "@seven")
-    Process.put({:user_label, session_id, 8}, "@eight")
 
     opts = [
       telegram_session_id: session_id,
@@ -153,6 +154,16 @@ defmodule Froth.SummarizerTest do
         api_hash: "test-hash",
         bot_token: "test-token",
         enabled: true
+      })
+    )
+  end
+
+  defp insert_username(user_id, username) do
+    Repo.insert!(
+      Username.changeset(%Username{}, %{
+        user_id: user_id,
+        username: username,
+        label: "@#{username}"
       })
     )
   end

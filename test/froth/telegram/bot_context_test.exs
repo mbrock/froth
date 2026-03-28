@@ -216,7 +216,9 @@ defmodule Froth.Telegram.BotContextTest do
   test "chronicle_dir loads chapters into context" do
     chat_id = unique_chat_id()
     session_id = "test-session-#{System.unique_integer([:positive])}"
-    chronicle_dir = chronicle_dir_fixture("ch01-founding": "The founding story", "ch02-war": "The war chapter")
+
+    chronicle_dir =
+      chronicle_dir_fixture("ch01-founding": "The founding story", "ch02-war": "The war chapter")
 
     insert_telegram_message(session_id, chat_id, 101, 8, 1_700_000_700, "recent context")
 

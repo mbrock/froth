@@ -127,10 +127,12 @@ defmodule Froth.Telegram.BotContextHTML do
 
     ~H"""
     <info>
-    chat: {@chat_context.chat_name} (id {@chat_context.chat_id})
-    now: {@now_utc} / {@now_latvia} / {@now_thailand}
-    <%= for p <- @participants do %>{p.label} (id {p.id}) latest message {format_time(p.latest_date)}
-    <% end %></info>
+      chat: {@chat_context.chat_name} (id {@chat_context.chat_id})
+      now: {@now_utc} / {@now_latvia} / {@now_thailand}
+      <%= for p <- @participants do %>
+        {p.label} (id {p.id}) latest message {format_time(p.latest_date)}
+      <% end %>
+    </info>
     """
   end
 

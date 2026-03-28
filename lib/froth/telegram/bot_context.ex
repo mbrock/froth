@@ -59,7 +59,7 @@ defmodule Froth.Telegram.BotContext do
     before_unix = opt_before_unix(opts)
     chapters = load_chapters(opts[:chronicle_dir])
 
-    db_rows = fetch_recent(chat_id, before_unix)
+    db_rows = fetch_recent(chat_id, before_unix, opts)
     db_rows = limit_recent_rows(db_rows, opts)
     recent = build_recent(chat_id, db_rows, opts)
 
@@ -133,7 +133,7 @@ defmodule Froth.Telegram.BotContext do
   # ── context assembly ──────────────────────────────────────────────
 
   defp build_incoming(messages, opts) do
-    session_id = opt_session_id(opts)
+    session_id = incoming_session_id(messages, opts)
 
     normalized =
       messages
@@ -144,27 +144,40 @@ defmodule Froth.Telegram.BotContext do
     Enum.map(normalized, &to_recent_message(&1, sender_labels))
   end
 
-  defp fetch_recent(chat_id, nil),
-    do: Queries.fetch_messages(chat_id, 0, :infinity)
+  defp fetch_recent(chat_id, before_unix, opts) when is_integer(chat_id) and is_list(opts) do
+    session_id = context_session_id(chat_id, opts)
+    recent_limit = opt_recent_message_limit(opts)
+    range_end = before_unix || :infinity
 
-  defp fetch_recent(chat_id, before_unix) when is_integer(before_unix),
-    do: Queries.fetch_messages(chat_id, 0, before_unix)
+    cond do
+      is_binary(session_id) and session_id != "" and is_integer(recent_limit) and recent_limit > 0 ->
+        Queries.fetch_recent_session_messages(session_id, chat_id, 0, range_end, recent_limit)
+
+      is_binary(session_id) and session_id != "" ->
+        Queries.fetch_session_messages(session_id, chat_id, 0, range_end)
+
+      true ->
+        Queries.fetch_messages(chat_id, 0, range_end)
+    end
+  end
 
   defp build_recent(_chat_id, [], _opts),
     do: %{chat_context: nil, recent_messages: []}
 
   defp build_recent(chat_id, db_rows, opts) do
-    session_id = opt_session_id(opts)
+    session_id = context_session_id(chat_id, opts)
     normalized = Enum.map(db_rows, &normalize_db_row/1)
     sender_labels = Names.sender_label_map(normalized, session_id)
     msg_ids = Enum.map(normalized, & &1.message_id)
     analyses_map = Queries.analyses_for_messages(chat_id, msg_ids)
     cycle_traces_map = build_cycle_traces_map(chat_id, msg_ids, opts)
+    participants = Queries.all_participants(chat_id)
+    participant_labels = Names.labels_for_ids(Enum.map(participants, & &1.sender_id), session_id)
 
     all_participants =
-      Queries.all_participants(chat_id)
+      participants
       |> Enum.map(fn %{sender_id: id, latest_date: latest} ->
-        %{id: id, label: Names.sender_label(id, session_id), latest_date: latest}
+        %{id: id, label: Map.get(participant_labels, id, "user:#{id}"), latest_date: latest}
       end)
 
     recent_messages =
@@ -280,6 +293,21 @@ defmodule Froth.Telegram.BotContext do
     end
   end
 
+  defp context_session_id(chat_id, opts) when is_integer(chat_id) and is_list(opts) do
+    configured = opt_session_id(opts)
+
+    if group_chat_id?(chat_id) do
+      Queries.default_user_session_id() || configured
+    else
+      configured
+    end
+  end
+
+  defp incoming_session_id([%{"chat_id" => chat_id} | _], opts) when is_integer(chat_id),
+    do: context_session_id(chat_id, opts)
+
+  defp incoming_session_id(_messages, opts), do: opt_session_id(opts)
+
   defp opt_bot_id(opts) do
     case opts[:bot_id] do
       id when is_binary(id) and id != "" -> id
@@ -306,6 +334,8 @@ defmodule Froth.Telegram.BotContext do
 
   defp maybe_put_opt(opts, _key, nil), do: opts
   defp maybe_put_opt(opts, key, value), do: [{key, value} | opts]
+
+  defp group_chat_id?(chat_id) when is_integer(chat_id), do: chat_id < 0
 
   defp msg_unix(%{"date" => v}) when is_integer(v), do: v
   defp msg_unix(%{"date" => v}) when is_binary(v), do: parse_int(v)
