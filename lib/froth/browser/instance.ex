@@ -110,6 +110,13 @@ defmodule Froth.Browser.Instance do
     :exit, reason -> {:error, reason}
   end
 
+  def console_logs(pid) when is_pid(pid) do
+    GenServer.call(pid, :console_logs)
+  catch
+    :exit, {:noproc, _} -> {:error, :browser_not_running}
+    :exit, reason -> {:error, reason}
+  end
+
   def release(pid) when is_pid(pid) do
     GenServer.call(pid, :release)
   catch
@@ -138,7 +145,8 @@ defmodule Froth.Browser.Instance do
       launch_metadata: %{},
       user_data_dir: nil,
       artifact_dir: nil,
-      recent_logs: []
+      recent_logs: [],
+      console_logs: []
     }
 
     {:ok, state, {:continue, :launch}}
@@ -187,6 +195,10 @@ defmodule Froth.Browser.Instance do
     }
 
     {:reply, {:ok, info}, state}
+  end
+
+  def handle_call(:console_logs, _from, state) do
+    {:reply, {:ok, Enum.reverse(Map.get(state, :console_logs, []))}, state}
   end
 
   def handle_call(:release, _from, state) do
@@ -295,6 +307,29 @@ defmodule Froth.Browser.Instance do
   @impl true
   def handle_info({:browser_cdp_connected, cdp_pid}, %{cdp_pid: cdp_pid} = state) do
     {:noreply, state}
+  end
+
+  def handle_info({:browser_cdp_event, _cdp_pid, %{"method" => "Runtime.consoleAPICalled"} = event}, state) do
+    params = event["params"] || %{}
+    type = params["type"] || "log"
+    args = params["args"] || []
+    text = args |> Enum.map(fn
+      %{"value" => v} when is_binary(v) -> v
+      %{"value" => v} -> inspect(v)
+      %{"description" => d} -> d
+      %{"type" => "undefined"} -> "undefined"
+      other -> inspect(other)
+    end) |> Enum.join(" ")
+    entry = %{type: type, text: text, timestamp: System.system_time(:millisecond)}
+    {:noreply, %{state | console_logs: [entry | Map.get(state, :console_logs, [])]}}
+  end
+
+  def handle_info({:browser_cdp_event, _cdp_pid, %{"method" => "Runtime.exceptionThrown"} = event}, state) do
+    params = event["params"] || %{}
+    exception = get_in(params, ["exceptionDetails", "exception"]) || %{}
+    text = exception["description"] || inspect(params)
+    entry = %{type: "exception", text: text, timestamp: System.system_time(:millisecond)}
+    {:noreply, %{state | console_logs: [entry | Map.get(state, :console_logs, [])]}}
   end
 
   def handle_info({:browser_cdp_event, _cdp_pid, _event}, state) do

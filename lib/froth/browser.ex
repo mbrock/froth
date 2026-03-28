@@ -124,6 +124,15 @@ defmodule Froth.Browser do
   end
 
   @doc """
+  Returns captured browser console logs (console.log, console.error, exceptions).
+  """
+  def console_logs(browser_ref) do
+    with {:ok, pid} <- fetch_pid(browser_ref) do
+      Instance.console_logs(pid)
+    end
+  end
+
+  @doc """
   Looks up a running browser lease in the registry.
   """
   @spec whereis(browser_id()) :: pid() | nil
