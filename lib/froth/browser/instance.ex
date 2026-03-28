@@ -198,7 +198,7 @@ defmodule Froth.Browser.Instance do
   end
 
   def handle_call(:console_logs, _from, state) do
-    {:reply, {:ok, Enum.reverse(Map.get(state, :console_logs, []))}, state}
+    {:reply, {:ok, Enum.reverse(state.console_logs)}, state}
   end
 
   def handle_call(:release, _from, state) do
@@ -321,7 +321,7 @@ defmodule Froth.Browser.Instance do
       other -> inspect(other)
     end) |> Enum.join(" ")
     entry = %{type: type, text: text, timestamp: System.system_time(:millisecond)}
-    {:noreply, %{state | console_logs: [entry | Map.get(state, :console_logs, [])]}}
+    {:noreply, %{state | console_logs: [entry | state.console_logs]}}
   end
 
   def handle_info({:browser_cdp_event, _cdp_pid, %{"method" => "Runtime.exceptionThrown"} = event}, state) do
@@ -329,7 +329,7 @@ defmodule Froth.Browser.Instance do
     exception = get_in(params, ["exceptionDetails", "exception"]) || %{}
     text = exception["description"] || inspect(params)
     entry = %{type: "exception", text: text, timestamp: System.system_time(:millisecond)}
-    {:noreply, %{state | console_logs: [entry | Map.get(state, :console_logs, [])]}}
+    {:noreply, %{state | console_logs: [entry | state.console_logs]}}
   end
 
   def handle_info({:browser_cdp_event, _cdp_pid, _event}, state) do
