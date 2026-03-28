@@ -129,12 +129,12 @@ defmodule FrothWeb.CodexLiveTest do
 
     {:ok, view, _html} = live(conn, ~p"/froth/mini/codex/#{session_id}")
 
-    assert has_element?(view, "#codex-follow-tail")
-    assert has_element?(view, "label[for='codex-follow-tail']", "Auto")
-    assert has_element?(view, "#codex-model")
+    assert has_element?(view, "#codex-working-dock")
+    assert has_element?(view, "#codex-interrupt", "Stop")
     assert has_element?(view, "#codex-reasoning-effort option[selected][value='xhigh']")
-    assert has_element?(view, "#codex-model option[selected][value='gpt-5.4']")
-    assert has_element?(view, "#codex-model option[value='gpt-5.4-mini']")
+    refute has_element?(view, "#codex-prompt-form")
+    refute has_element?(view, "#codex-upload-image")
+    refute has_element?(view, "#codex-model-form")
     assert has_element?(view, "#entry-1 strong", "Bold")
     assert has_element?(view, "#entry-1 .codex-inline-spinner")
     refute has_element?(view, "#entry-2")
@@ -152,15 +152,6 @@ defmodule FrothWeb.CodexLiveTest do
     |> render_change()
 
     assert has_element?(view, "#codex-reasoning-effort option[selected][value='high']")
-
-    view
-    |> form("#codex-model-form", model: %{model: "gpt-5.4-mini"})
-    |> render_change()
-
-    assert has_element?(view, "#codex-model option[selected][value='gpt-5.4-mini']")
-
-    {:ok, snapshot} = FakeCodexSession.snapshot(session_id)
-    assert snapshot.runtime.model == "gpt-5.4-mini"
   end
 
   test "refreshes model options when a session snapshot is missing them", %{conn: conn} do
@@ -179,9 +170,10 @@ defmodule FrothWeb.CodexLiveTest do
 
     {:ok, view, _html} = live(conn, ~p"/froth/mini/codex/#{session_id}")
 
-    assert has_element?(view, "#codex-model")
-    assert has_element?(view, "#codex-model option[selected][value='gpt-5.4-mini']")
-    assert has_element?(view, "#codex-model option[value='gpt-5.4']")
+    assert has_element?(view, "#codex-prompt-form")
+    assert has_element?(view, "#codex-upload-image")
+    assert has_element?(view, "#codex-send")
+    refute has_element?(view, "#codex-working-dock")
 
     {:ok, snapshot} = FakeCodexSession.snapshot(session_id)
     assert snapshot.available_models != []

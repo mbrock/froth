@@ -340,101 +340,6 @@ defmodule FrothWeb.CodexLive do
           phx-hook="CodexTimeline"
           class="mini-shell codex-shell safe-top flex min-h-0 flex-col text-zinc-100"
         >
-          <header class="sticky top-0 z-30 border-b border-white/10 bg-black/70 backdrop-blur-xl">
-            <div class="mx-auto flex w-full max-w-[72rem] items-center gap-3 px-3 py-2">
-              <div class="min-w-0 flex flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-                <h1 class="text-[13px] font-semibold uppercase tracking-[0.18em] text-zinc-100">
-                  Codex
-                </h1>
-                <span class={session_status_text_class(@codex_status, @active_turn_id)}>
-                  {session_status_text(@codex_status, @active_turn_id)}
-                </span>
-                <.form
-                  :if={modeline_model(@runtime) || @available_models != []}
-                  for={@model_form}
-                  id="codex-model-form"
-                  phx-change="set_model"
-                  class="inline-flex"
-                >
-                  <.input
-                    field={@model_form[:model]}
-                    id="codex-model"
-                    type="select"
-                    variant="bare"
-                    options={
-                      model_options(@available_models, current_model(@runtime, @available_models))
-                    }
-                    class="codex-model-select"
-                    aria-label="Model"
-                    disabled={@codex_status != :ready}
-                  />
-                </.form>
-                <.form
-                  for={@reasoning_form}
-                  id="codex-reasoning-form"
-                  phx-change="set_reasoning_effort"
-                  class="inline-flex"
-                >
-                  <.input
-                    field={@reasoning_form[:effort]}
-                    id="codex-reasoning-effort"
-                    type="select"
-                    variant="bare"
-                    options={reasoning_effort_options()}
-                    class="codex-effort-select"
-                    aria-label="Reasoning effort"
-                    disabled={@codex_status != :ready}
-                  />
-                </.form>
-                <span
-                  :if={
-                    elapsed_badge(
-                      @active_turn_id,
-                      @active_turn_started_at_ms,
-                      @last_turn_elapsed_ms,
-                      @now_ms
-                    )
-                  }
-                  class="text-[11px] text-zinc-500"
-                >
-                  {elapsed_badge(
-                    @active_turn_id,
-                    @active_turn_started_at_ms,
-                    @last_turn_elapsed_ms,
-                    @now_ms
-                  )}
-                </span>
-                <span :if={tool_progress_badge(@session_stats)} class="text-[11px] text-zinc-500">
-                  {tool_progress_badge(@session_stats)}
-                </span>
-              </div>
-              <div class="flex shrink-0 items-center gap-2">
-                <button id="codex-new-thread" phx-click="new_thread" class="codex-btn">
-                  New Thread
-                </button>
-                <button
-                  :if={is_binary(@active_turn_id)}
-                  id="codex-interrupt"
-                  phx-click="interrupt_turn"
-                  class="codex-btn codex-btn--warn"
-                >
-                  Interrupt
-                </button>
-                <label for="codex-follow-tail" class="codex-auto-control">
-                  <input
-                    id="codex-follow-tail"
-                    class="codex-auto-toggle"
-                    type="checkbox"
-                    checked
-                    aria-label="Auto-scroll"
-                    title="Auto-scroll"
-                  />
-                  <span>Auto</span>
-                </label>
-              </div>
-            </div>
-          </header>
-
           <main
             id="tool-feed"
             data-scroll-body
@@ -490,66 +395,178 @@ defmodule FrothWeb.CodexLive do
 
           <div id="codex-now-dock" class="safe-bottom">
             <div class="mx-auto w-full max-w-[72rem] px-3 py-2.5">
-              <.form
-                for={@prompt_form}
-                id="codex-prompt-form"
-                phx-change="prompt_changed"
-                phx-submit="send_prompt"
-                class="pb-[calc(0.2rem+var(--kb,0px))]"
-              >
+              <%= if session_working?(@codex_status, @active_turn_id) do %>
                 <div
-                  :if={@uploads.images.entries != []}
-                  id="codex-image-staging"
-                  class="mb-1.5 flex flex-wrap gap-1.5"
+                  id="codex-working-dock"
+                  class="flex items-center justify-between gap-2 rounded-[1.35rem] border border-white/10 bg-black/60 px-2 py-2 shadow-[0_10px_35px_rgba(0,0,0,0.28)]"
                 >
-                  <div
-                    :for={entry <- @uploads.images.entries}
-                    class="group relative h-14 w-14 shrink-0 overflow-hidden bg-black/55 ring-1 ring-white/8"
-                  >
-                    <.live_img_preview entry={entry} class="h-full w-full object-cover" />
-                    <button
-                      type="button"
-                      phx-click="cancel_image_upload"
-                      phx-value-ref={entry.ref}
-                      class="absolute right-0 top-0 px-1.5 py-1 text-[10px] leading-none text-zinc-300 transition hover:text-white"
-                      aria-label="Remove image"
+                  <div class="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                    <span class={session_status_text_class(@codex_status, @active_turn_id)}>
+                      {session_status_text(@codex_status, @active_turn_id)}
+                    </span>
+                    <span
+                      :if={
+                        elapsed_badge(
+                          @active_turn_id,
+                          @active_turn_started_at_ms,
+                          @last_turn_elapsed_ms,
+                          @now_ms
+                        )
+                      }
+                      class="inline-flex shrink-0 items-center rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-medium leading-none text-zinc-400"
                     >
-                      ×
+                      {elapsed_badge(
+                        @active_turn_id,
+                        @active_turn_started_at_ms,
+                        @last_turn_elapsed_ms,
+                        @now_ms
+                      )}
+                    </span>
+                    <span
+                      :if={tool_progress_badge(@session_stats)}
+                      class="inline-flex shrink-0 items-center rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-medium leading-none text-zinc-400"
+                    >
+                      {tool_progress_badge(@session_stats)}
+                    </span>
+                  </div>
+
+                  <div class="flex shrink-0 items-center gap-1.5">
+                    <.form
+                      for={@reasoning_form}
+                      id="codex-reasoning-form"
+                      phx-change="set_reasoning_effort"
+                      class="inline-flex"
+                    >
+                      <.input
+                        field={@reasoning_form[:effort]}
+                        id="codex-reasoning-effort"
+                        type="select"
+                        variant="bare"
+                        options={reasoning_effort_options()}
+                        class="h-8 w-[5.25rem] rounded-full border border-white/12 bg-white/[0.05] px-3 pr-8 font-[JetBrains_Mono,ui-monospace,SFMono-Regular,Menlo,Monaco,monospace] text-[11px] text-zinc-100 lowercase outline-none transition hover:border-white/22 hover:bg-white/[0.08] focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label="Reasoning effort"
+                        disabled={@codex_status != :ready}
+                      />
+                    </.form>
+
+                    <button
+                      id="codex-interrupt"
+                      phx-click="interrupt_turn"
+                      class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-amber-300/20 bg-amber-400/10 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-100 transition hover:border-amber-300/40 hover:bg-amber-400/18 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/40"
+                    >
+                      <.icon name="hero-stop" class="size-3.5" />
+                      <span>Stop</span>
                     </button>
                   </div>
                 </div>
-
-                <div class="codex-composer">
-                  <div class="min-w-0 flex-1">
-                    <.input
-                      field={@prompt_form[:prompt]}
-                      id="codex-prompt"
-                      type="textarea"
-                      variant="bare"
-                      rows="1"
-                      placeholder="Message Codex. Paste image, Enter sends."
-                      enterkeyhint="send"
-                      phx-hook="CodexComposer"
-                      data-upload-input-id="codex-image-upload"
-                      class="codex-input"
-                    />
+              <% else %>
+                <div class="pb-[calc(0.2rem+var(--kb,0px))]">
+                  <div
+                    :if={@uploads.images.entries != []}
+                    id="codex-image-staging"
+                    class="mb-1.5 flex flex-wrap gap-1.5"
+                  >
+                    <div
+                      :for={entry <- @uploads.images.entries}
+                      class="group relative h-14 w-14 shrink-0 overflow-hidden bg-black/55 ring-1 ring-white/8"
+                    >
+                      <.live_img_preview entry={entry} class="h-full w-full object-cover" />
+                      <button
+                        type="button"
+                        phx-click="cancel_image_upload"
+                        phx-value-ref={entry.ref}
+                        class="absolute right-0 top-0 px-1.5 py-1 text-[10px] leading-none text-zinc-300 transition hover:text-white"
+                        aria-label="Remove image"
+                      >
+                        ×
+                      </button>
+                    </div>
                   </div>
 
-                  <button
-                    id="codex-send"
-                    type="submit"
-                    class="codex-send-button"
-                    aria-label="Send"
-                    title="Send"
-                  >
-                    <.icon name="hero-arrow-up" class="size-4" />
-                  </button>
-                </div>
+                  <div class="rounded-[1.35rem] border border-white/10 bg-black/55 px-2 py-2 shadow-[0_10px_35px_rgba(0,0,0,0.28)] transition focus-within:border-cyan-400/45 focus-within:bg-black/70">
+                    <div class="mb-1.5 flex items-center justify-between gap-2">
+                      <div class="flex items-center gap-1.5">
+                        <label
+                          for="codex-image-upload"
+                          id="codex-upload-image"
+                          class="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-white/[0.05] text-zinc-300 transition hover:border-cyan-300/40 hover:bg-cyan-400/12 hover:text-cyan-50 focus-within:ring-2 focus-within:ring-cyan-400/40"
+                          aria-label="Upload image"
+                          title="Upload image"
+                        >
+                          <.icon name="hero-photo" class="size-4" />
+                        </label>
 
-                <div class="sr-only">
-                  <.live_file_input upload={@uploads.images} id="codex-image-upload" />
+                        <button
+                          id="codex-new-thread"
+                          phx-click="new_thread"
+                          class="inline-flex size-8 items-center justify-center rounded-full border border-white/10 bg-white/[0.05] text-zinc-300 transition hover:border-white/20 hover:bg-white/[0.1] hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/45"
+                          aria-label="New thread"
+                          title="New thread"
+                        >
+                          <.icon name="hero-plus" class="size-4" />
+                        </button>
+                      </div>
+
+                      <div class="flex items-center gap-1.5">
+                        <.form
+                          for={@reasoning_form}
+                          id="codex-reasoning-form"
+                          phx-change="set_reasoning_effort"
+                          class="inline-flex"
+                        >
+                          <.input
+                            field={@reasoning_form[:effort]}
+                            id="codex-reasoning-effort"
+                            type="select"
+                            variant="bare"
+                            options={reasoning_effort_options()}
+                            class="h-8 w-[5.25rem] rounded-full border border-white/12 bg-white/[0.05] px-3 pr-8 font-[JetBrains_Mono,ui-monospace,SFMono-Regular,Menlo,Monaco,monospace] text-[11px] text-zinc-100 lowercase outline-none transition hover:border-white/22 hover:bg-white/[0.08] focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+                            aria-label="Reasoning effort"
+                            disabled={@codex_status != :ready}
+                          />
+                        </.form>
+
+                        <button
+                          id="codex-send"
+                          type="submit"
+                          form="codex-prompt-form"
+                          class="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cyan-400/90 text-slate-950 shadow-[0_8px_24px_rgba(34,211,238,0.28)] transition hover:bg-cyan-300 hover:shadow-[0_10px_30px_rgba(34,211,238,0.38)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70"
+                          aria-label="Send"
+                          title="Send"
+                        >
+                          <.icon name="hero-arrow-up" class="size-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <.form
+                      for={@prompt_form}
+                      id="codex-prompt-form"
+                      phx-change="prompt_changed"
+                      phx-submit="send_prompt"
+                    >
+                      <.input
+                        field={@prompt_form[:prompt]}
+                        id="codex-prompt"
+                        type="textarea"
+                        variant="bare"
+                        rows="1"
+                        placeholder="Message Codex"
+                        enterkeyhint="send"
+                        phx-hook="CodexComposer"
+                        data-upload-input-id="codex-image-upload"
+                        class="min-h-[2.9rem] max-h-40 w-full resize-none border-0 bg-transparent px-0 py-1.5 text-[15px] leading-6 text-zinc-50 outline-none placeholder:text-zinc-500 focus:ring-0"
+                      />
+
+                      <.live_file_input
+                        upload={@uploads.images}
+                        id="codex-image-upload"
+                        class="sr-only"
+                      />
+                    </.form>
+                  </div>
                 </div>
-              </.form>
+              <% end %>
             </div>
           </div>
 
@@ -1309,16 +1326,9 @@ defmodule FrothWeb.CodexLive do
   defp model_choice_value(_), do: nil
 
   defp model_choice_label(model, value) when is_map(model) and is_binary(value) do
-    base_label =
-      model_field(model, :displayName, "displayName") ||
-        model_field(model, :display_name, "display_name") ||
-        value
-
-    if model_choice_default?(model) do
-      "#{base_label} (default)"
-    else
-      base_label
-    end
+    model_field(model, :displayName, "displayName") ||
+      model_field(model, :display_name, "display_name") ||
+      value
   end
 
   defp model_choice_label(_model, value), do: value
@@ -1373,9 +1383,7 @@ defmodule FrothWeb.CodexLive do
     to_form(%{"model" => current_model(runtime_or_model, available_models)}, as: :model)
   end
 
-  defp current_model_label(current_model) when is_binary(current_model) do
-    "#{current_model} (current)"
-  end
+  defp current_model_label(current_model) when is_binary(current_model), do: current_model
 
   defp current_model_label(_), do: @default_model
 
@@ -1391,7 +1399,14 @@ defmodule FrothWeb.CodexLive do
 
   defp modeline_reasoning(_), do: nil
 
-  defp reasoning_effort_options, do: Enum.map(@reasoning_efforts, &{&1, &1})
+  defp reasoning_effort_options do
+    [
+      {"low", "low"},
+      {"med", "medium"},
+      {"high", "high"},
+      {"max", "xhigh"}
+    ]
+  end
 
   defp reasoning_form(runtime_or_effort) do
     to_form(%{"effort" => current_reasoning_effort(runtime_or_effort)}, as: :reasoning)
@@ -1429,21 +1444,26 @@ defmodule FrothWeb.CodexLive do
     end
   end
 
+  defp session_working?(status, active_turn_id) do
+    is_binary(active_turn_id) or status == :working
+  end
+
   defp session_status_text_class(status, active_turn_id) do
-    base = "text-[10px] font-medium uppercase tracking-[0.16em]"
+    base =
+      "inline-flex shrink-0 items-center rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] leading-none"
 
     cond do
       is_binary(active_turn_id) or status == :working ->
-        base <> " text-amber-300"
+        base <> " border-amber-300/20 bg-amber-400/10 text-amber-100"
 
       status == :ready ->
-        base <> " text-emerald-300"
+        base <> " border-emerald-300/20 bg-emerald-400/10 text-emerald-100"
 
       status == :error ->
-        base <> " text-rose-300"
+        base <> " border-rose-300/20 bg-rose-400/10 text-rose-100"
 
       true ->
-        base <> " text-zinc-500"
+        base <> " border-white/10 bg-white/[0.04] text-zinc-400"
     end
   end
 

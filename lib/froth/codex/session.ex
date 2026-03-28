@@ -656,8 +656,8 @@ defmodule Froth.Codex.Session do
 
   defp apply_notification(state, "item/agentMessage/delta", %{"delta" => delta} = params)
        when is_binary(delta) do
-    assistant_id = state.active_assistant_entry_id || make_assistant_id(params)
-    full = state.active_assistant_text <> delta
+    assistant_id = assistant_delta_id(state, params)
+    full = assistant_delta_text(state, assistant_id, delta)
 
     state
     |> Map.put(:active_assistant_entry_id, assistant_id)
@@ -1079,6 +1079,28 @@ defmodule Froth.Codex.Session do
   end
 
   defp maybe_track_tool_call(state, _, _), do: state
+
+  defp assistant_delta_id(state, params) when is_map(params) do
+    if assistant_item_id_present?(params) do
+      make_assistant_id(params)
+    else
+      state.active_assistant_entry_id || make_assistant_id(params)
+    end
+  end
+
+  defp assistant_delta_text(state, assistant_id, delta)
+       when is_map(state) and is_binary(assistant_id) and is_binary(delta) do
+    if state.active_assistant_entry_id == assistant_id do
+      state.active_assistant_text <> delta
+    else
+      delta
+    end
+  end
+
+  defp assistant_item_id_present?(%{"itemId" => item_id}) when is_binary(item_id),
+    do: String.trim(item_id) != ""
+
+  defp assistant_item_id_present?(_), do: false
 
   defp upsert_assistant_message(state, turn_id, item_id, text)
        when is_binary(text) and text != "" do
