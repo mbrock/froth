@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0019" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0019: Chronological Prompt Context and Structured Cycle Trace Memory</title>
+    <status>DRAFT</status>
+    <author>Codex</author>
+    <date>2026-03-28</date>
+    <related>FROTH-RFC-0006, FROTH-RFC-0013, FROTH-RFC-0015</related>
+    <classification>Prompt rendering, cache stability, cycle trace structure, and interim query performance.</classification>
+    <research>Drafted from live measurements on 2026-03-28 using mix froth.context, explain analyze runs through bin/rpc on froth@igloo, and direct inspection of BotContext, BotContextHTML, Agent, ToolDescription, and the RFC collection.</research>
+  </meta>
+
+  <section title="Problem" id="problem">
+    <p>The current prompt renderer gets several important high-level decisions right. It uses XML-like document boundaries. It keeps the footer separate. It renders one message per part, which is the right instinct for prompt caching. The problem is not that the prompt is informal. The problem is that the most operationally important part of the prompt, the cycle and tool memory, is currently rendered in a way that loses time, structure, and exactness.</p>
+    <p>Today the recent transcript is built as a raw message tail plus attached analyses and attached cycle traces. That means a tool-heavy bot action appears under the triggering user's message, even when the bot sent Telegram messages during the cycle and even when the human-relevant chronology was interleaved with other events. The transcript shape says &quot;this all belongs inside the user message&quot; when the lived runtime shape is &quot;this was a chronological sequence of messages and agent events.&quot;</p>
+    <p>The other problem is that the recent window is governed by a hard sliding message count. Once the window is full, every new message drops the oldest message from the prefix. That invalidates prompt caching for the entire recent tail even when 99 percent of the tail is unchanged.</p>
+    <p>The cycle rendering itself also hides exact information in favor of friendly narration. Tool calls prefer prose descriptions over the formal input object. Tool results are aggressively truncated into anonymous text blobs. Status, duration, byte counts, and truncation markers are mostly absent. The current rendering is readable enough for a human skimming the terminal, but it is not a strong memory format for an agent that needs to avoid re-checking the same thing, repeating failed work, or losing the causal structure of a previous investigation.</p>
+    <p>There is also an immediate operational issue behind the renderer: the hot lookup for <tt>latest_head_id</tt> is doing a parallel sequential scan over the unified <tt>events</tt> table. The renderer is therefore paying a large latency cost to reconstruct a representation that still loses important structure after it arrives.</p>
+  </section>
+
+  <section title="Current Observations" id="current-observations">
+    <p>Measured on 2026-03-28 against the live Charlie chat through <tt>mix froth.context</tt> and <tt>bin/rpc</tt>.</p>
+    <code>clean rendered prompt (system prompt + parts, no logger prelude)
+  288,300 chars
+  290,793 bytes
+  ~72K to ~82K tokens by common text heuristics
+
+shape
+  system prompt: 6,165 chars
+  chronicle chapters: 7 parts, 72,778 chars
+  recent messages: 200 parts, 207,166 chars
+  footer: 1 part, 1,567 chars
+
+nontrivial sample in current 200-message window
+  13 messages selected by --only-messages --no-trivial
+  10 analysis blocks
+  3 rendered cycle blocks
+  15 rendered call blocks
+  15 rendered return blocks
+
+live query plans
+  latest_head_id current query:
+    ~403ms, parallel seq scan on events
+  latest_head_id narrowed to event = froth.agent.message.appended:
+    ~149ms, bitmap scan on events_event_index
+  load_messages recursive chain:
+    ~0.14ms
+  telegram_cycle_links query for reply_to lookups:
+    ~0.44ms on current table size</code>
+    <p>The important distribution is that the unstable recent tail is already the majority of the prompt by bytes. Roughly 72 percent of the prompt is the message tail, 25 percent is chronicle, 2 percent is system prompt, and the footer is negligible. That means cache invalidation in the recent tail dominates runtime cost even though the rest of the prompt is stable.</p>
+  </section>
+
+  <section title="Goals" id="goals">
+    <list type="bullet">
+      <item><p>Render recent context as a chronological sequence rather than as user messages with buried attached cycle blobs.</p></item>
+      <item><p>Make tool memory formal enough that the bot can reliably see what it already did, with what parameters, with what status, and with what result shape.</p></item>
+      <item><p>Keep XML-like outer structure and footer style; this RFC is not arguing against document tags.</p></item>
+      <item><p>Improve prompt-cache stability by replacing the hard sliding message-count window with anchored or bucketed recent-context boundaries.</p></item>
+      <item><p>Provide an exact inventory of current truncation and omission behavior in the context path.</p></item>
+      <item><p>Identify low-risk interim performance work that improves the current implementation before the larger schema changes land.</p></item>
+    </list>
+  </section>
+
+  <section title="Non-Goals" id="non-goals">
+    <list type="bullet">
+      <item><p>This RFC does not argue against XML-like prompt structure. The outer document tags stay.</p></item>
+      <item><p>This RFC does not propose changing the footer into a more formal structure. The current footer is good enough and is not where the memory failure lives.</p></item>
+      <item><p>This RFC does not require that every old cycle remain fully raw forever. Older cycle material is a strong candidate for compaction.</p></item>
+      <item><p>This RFC does not replace the broader layered-memory work in <rfc-ref number="0006"/> and <rfc-ref number="0013"/>. It assumes those layers continue to matter.</p></item>
+      <item><p>This RFC does not fully specify the eventual storage migration by itself. The storage direction is already captured in <rfc-ref number="0015"/> and is referenced here rather than duplicated.</p></item>
+    </list>
+  </section>
+
+  <section title="Thesis" id="thesis">
+    <p>Froth should keep its layered prompt architecture, but the recent layer should stop being &quot;messages with attached cycle traces&quot; and become a chronological timeline of recent items.</p>
+    <p>The timeline should be composed of stable document parts and recent timeline parts. Within the recent timeline, chat messages and agent-cycle items should be rendered in chronological order. Tool calls and results should be rendered formally, with exact input and output structure primary and narration secondary. Older raw work should be eligible for compaction on stable time boundaries. The current hard sliding message-count window should be replaced with bucketed or anchored cutoffs so the hot prefix remains cacheable across many messages.</p>
+    <p>The short version is simple:</p>
+    <list type="bullet">
+      <item><p><strong>keep</strong> XML-like separation, chapters, and footer</p></item>
+      <item><p><strong>change</strong> recent context from a sliding message tail into a chronological recent timeline</p></item>
+      <item><p><strong>replace</strong> narration-first cycle rendering with structured cycle memory</p></item>
+      <item><p><strong>stabilize</strong> cache boundaries by time buckets or anchored token-budget cutoffs</p></item>
+    </list>
+  </section>
+
+  <section title="Why The Current Shape Fails" id="why-current-shape-fails">
+    <subsection title="1. Temporal inversion" id="temporal-inversion">
+      <p>A cycle currently renders inside the triggering user's message entry. In practice that means the prompt shows a user message, then a whole tool transcript, then later bot messages that were actually produced during or after that cycle. The prompt is no longer telling the truth about order.</p>
+      <p>This matters for agents because temporal order is not cosmetic memory. It is causal memory. When a bot cannot see whether a shell command came before or after a later Telegram reply, it loses the shape of its own action.</p>
+    </subsection>
+
+    <subsection title="2. Friendly text hides exact inputs" id="friendly-text-hides-exact-inputs">
+      <p>The current renderer prefers narration text over the actual tool input object whenever narration exists. That means the exact parameters disappear precisely in the cases where the tool call was best described. Narration is useful, but exact input should not be sacrificed to obtain it.</p>
+      <p>This RFC therefore partially reverses the narration-first amendment in <rfc-ref number="0006"/> for runtime prompt rendering. Narration can remain as a compact human summary field, but it should no longer replace the formal call representation.</p>
+    </subsection>
+
+    <subsection title="3. Silent truncation obscures failures and detail" id="silent-truncation-obscures-failures">
+      <p>Tool results are truncated multiple times and often without an explicit truncation marker. Failure payloads therefore become ambiguous at exactly the moment when the bot most needs to see what went wrong.</p>
+    </subsection>
+
+    <subsection title="4. Sliding cutoffs destroy cache locality" id="sliding-cutoffs-destroy-cache-locality">
+      <p>With a hard message-count window, once the window is full, every new message changes the first recent-message part. Prefix caching therefore stops at the end of the chronicle, and the entire recent tail becomes effectively hot every turn.</p>
+      <p>The current part structure is almost good enough. The missing idea is to make the cutoff itself stable for a while instead of re-centering it on every single message.</p>
+    </subsection>
+  </section>
+
+  <section title="Proposed Rendering Model" id="proposed-rendering-model">
+    <subsection title="1. Keep stable layers, but render the recent layer as timeline buckets" id="timeline-buckets">
+      <p>The overall prompt should still be layered in the spirit of <rfc-ref number="0013"/>:</p>
+      <list type="bullet">
+        <item><p>system prompt</p></item>
+        <item><p>slow-changing memory documents such as chronicle chapters, headlines, summaries, or later hierarchical compressions</p></item>
+        <item><p>recent timeline buckets</p></item>
+        <item><p>footer</p></item>
+      </list>
+      <p>The change is that the recent layer should no longer be &quot;exactly the last N messages.&quot; Instead it should be emitted as one or more recent buckets with stable boundaries. A four-hour bucket is a plausible starting point. The key property is that the cutoff moves rarely, not every turn.</p>
+      <p>Within a bucket, new items append. Older buckets remain byte-stable and stay cacheable.</p>
+    </subsection>
+
+    <subsection title="2. Render chronological recent items, not attached cycle blobs" id="chronological-items">
+      <p>The recent layer should become a timeline of heterogeneous items:</p>
+      <list type="bullet">
+        <item><p>Telegram message items</p></item>
+        <item><p>cycle start and stop items</p></item>
+        <item><p>tool call items</p></item>
+        <item><p>tool result items</p></item>
+        <item><p>assistant reply or control items when relevant</p></item>
+      </list>
+      <p>Reply linkage should survive as metadata, not as containment. The question &quot;which user message triggered this cycle?&quot; is still useful. It just should not force the entire cycle transcript to live underneath that user message.</p>
+      <p>The long-term storage shape for this is already described in <rfc-ref number="0015"/>. This RFC is the prompt-rendering consequence of that storage direction.</p>
+    </subsection>
+
+    <subsection title="3. Structured tool memory should be exact first and friendly second" id="structured-tool-memory">
+      <p>Tool calls and results should remain wrapped in XML-like tags, but the interior should become structured and exact. The primary representation for call inputs should be pretty-printed JSON, not prose. JSON is chosen over YAML as the canonical exact form because it is unambiguous, stable under machine production, and already native to the stored tool payloads.</p>
+      <p>A plausible shape:</p>
+      <code>&lt;cycle cycle_id="01..." started_at="2026-03-27 21:04:43 UTC" reply_to="64617447424" status="completed"&gt;
+  &lt;tool_call seq="12" tool="run_shell" status="completed" duration_ms="271"&gt;
+    &lt;summary&gt;Looking at what lives in ~/src/superpower&lt;/summary&gt;
+    &lt;input format="json"&gt;
+{
+  "command": "ls ~/src/superpower/"
+}
+    &lt;/input&gt;
+  &lt;/tool_call&gt;
+  &lt;tool_result seq="13" tool="run_shell" status="ok" truncated="false" content_type="text/plain" bytes="54"&gt;
+    &lt;output&gt;
+bun.lock
+package.json
+package-lock.json
+scripts
+src
+themes
+    &lt;/output&gt;
+  &lt;/tool_result&gt;
+&lt;/cycle&gt;</code>
+      <p>The exact fields can change, but the principles should not:</p>
+      <list type="bullet">
+        <item><p>status must be explicit</p></item>
+        <item><p>durations and exit or failure signals should be present when known</p></item>
+        <item><p>truncation must be explicit when it occurs</p></item>
+        <item><p>summary is optional and secondary</p></item>
+        <item><p>formal input and output structure is primary</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="4. Prefer raw message chronology plus summarized older tool work" id="older-tool-compaction">
+      <p>Not every cycle trace deserves equal lifetime at full raw fidelity. Recent tool work should stay exact. Older tool work should be eligible for compaction into summaries generated by cheap fast models, especially when the cycle was investigative rather than decisive.</p>
+      <p>A three-band model is plausible:</p>
+      <list type="bullet">
+        <item><p><strong>hot band</strong>: exact recent raw tool traces</p></item>
+        <item><p><strong>warm band</strong>: compacted cycle summaries for older recent buckets</p></item>
+        <item><p><strong>cold band</strong>: daily, hourly, weekly, or headline-level memory layers from <rfc-ref number="0006"/> and <rfc-ref number="0013"/></p></item>
+      </list>
+      <p>This is especially relevant for tool-heavy days. The work history increasingly dominates the transcript because the robots do more work, not because the family chats more.</p>
+    </subsection>
+  </section>
+
+  <section title="Interim Performance and QoL Work" id="interim-performance">
+    <p>The large schema move in <rfc-ref number="0015"/> should still happen, but there is worthwhile immediate work that improves the current system materially.</p>
+
+    <subsection title="1. Narrow latest_head_id to message.appended" id="narrow-latest-head-id">
+      <p>The current query scans all <tt>froth.agent.*</tt> events with a non-null <tt>head_id</tt>. On the live node this takes about 403ms and parallel-seq-scans the whole events table.</p>
+      <p>Restricting the query to <tt>event = 'froth.agent.message.appended'</tt> drops the measured runtime to about 149ms using the existing <tt>events_event_index</tt>. That is not good enough, but it is already much better and appears semantically sufficient for current usage because head changes are driven by message appends.</p>
+    </subsection>
+
+    <subsection title="2. Batch head lookups per context build" id="batch-head-lookups">
+      <p>The current context builder looks up cycle heads one cycle at a time. Even without a new index, a batched <tt>distinct on (cycle_id)</tt> lookup over the relevant set of cycle IDs is materially cheaper than many one-cycle queries. A live 3-cycle batch took about 129ms, which is already much better than three separate 149ms narrowed lookups or three separate 403ms current lookups.</p>
+    </subsection>
+
+    <subsection title="3. Add an expression index for cycle head lookups" id="expression-index">
+      <p>The current unified <tt>events</tt> table has a GIN index on <tt>metadata</tt> and a btree index on <tt>event</tt>. The live plan shows that this is not enough for the head lookup query shape.</p>
+      <p>A strong near-term candidate is a partial expression index like:</p>
+      <code lang="sql">create index concurrently events_agent_message_cycle_seq_head_idx
+on events (
+  (metadata-&gt;&gt;'cycle_id'),
+  (coalesce((metadata-&gt;&gt;'seq')::bigint, 0)) desc,
+  (metadata-&gt;&gt;'head_id')
+)
+where event = 'froth.agent.message.appended';</code>
+      <p>This aligns with the actual predicate and sort key instead of hoping that a generic metadata index will help.</p>
+    </subsection>
+
+    <subsection title="4. Telegram cycle-link indexing is not urgent yet" id="cycle-link-indexing">
+      <p>The current <tt>telegram_cycle_links</tt> query is doing a sequential scan because the table only has indexes on <tt>(bot_id, chat_id)</tt> and <tt>legacy_inference_session_id</tt>. On current live size this query is still sub-millisecond and is not the main bottleneck.</p>
+      <p>It is still reasonable to add <tt>(bot_id, chat_id, reply_to)</tt> or <tt>(chat_id, reply_to)</tt> before the table grows much larger, but this is not the thing currently making <tt>mix froth.context</tt> feel slow.</p>
+    </subsection>
+  </section>
+
+  <section title="Current Truncation and Omission Inventory" id="truncation-inventory">
+    <p>This section is intentionally exhaustive for the current prompt-context path. It includes selection limits, text truncation, and important silent omissions, because all three affect what the bot can remember.</p>
+
+    <subsection title="Selection Limits" id="selection-limits">
+      <list type="numbered">
+        <item><p><strong>Default recent-message window.</strong> Charlie's default config uses <tt>recent_message_limit: 200</tt>. <tt>BotContext.limit_recent_rows/2</tt> applies this with <tt>Enum.take(rows, -n)</tt>. This is a hard selection limit. It is silent in the rendered output. The <tt>omitted_count</tt> field exists in the view model but is currently always zero and never rendered.</p></item>
+        <item><p><strong>CLI message override.</strong> <tt>mix froth.context --messages N</tt> replaces the default limit with another hard count window. This is operator-explicit but still silent in the final prompt rendering.</p></item>
+        <item><p><strong>Nontrivial-only filter.</strong> When <tt>only_nontrivial</tt> is enabled, messages are kept only if they have analyses or cycles. This is intentional and flag-driven, but the output itself does not render a gap marker or omission count.</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="Text Truncation" id="text-truncation">
+      <list type="numbered">
+        <item><p><strong>Analysis snippets.</strong> <tt>truncate_analyses/1</tt> collapses all whitespace to single spaces, trims, then slices to 150 characters. If the original text was longer, it appends an ellipsis. This is marked, but formatting structure such as headings and paragraphs is flattened before truncation.</p></item>
+        <item><p><strong>Tool-description goals list.</strong> <tt>ToolDescription.normalize_description/1</tt> keeps only the first 3 goals. This is a hard coded informational limit and is silent.</p></item>
+        <item><p><strong>Tool input encode fallback.</strong> If tool input cannot be JSON-encoded, <tt>encode_tool_input/1</tt> falls back to <tt>inspect(input, limit: 50, printable_limit: 600)</tt>. This is an inspect-based truncation. It is marked only insofar as Elixir inspect uses abbreviated output.</p></item>
+        <item><p><strong>Tool result inspect fallback.</strong> Non-binary, non-list tool results go through <tt>inspect(content, limit: 50, printable_limit: 2000)</tt>. This is inspect-based truncation and only softly marked by inspect syntax.</p></item>
+        <item><p><strong>Per-block fallback in tool-result lists.</strong> Unknown blocks inside list results go through <tt>inspect(other, limit: 20, printable_limit: 300)</tt>. Again the truncation is delegated to inspect and is only softly marked.</p></item>
+        <item><p><strong>Tool result hard slice in Agent.</strong> <tt>extract_trace_entries/1</tt> slices tool result text to 500 characters with <tt>String.slice(text, 0, 500)</tt>. This is a hard coded truncation and is silent.</p></item>
+        <item><p><strong>Tool call fallback in BotContextHTML.</strong> If narration is absent, <tt>call/1</tt> slices the JSON string to 300 characters. This is a hard coded truncation and is silent.</p></item>
+        <item><p><strong>Cycle return in BotContextHTML.</strong> <tt>cycle_return/1</tt> slices its text to 500 characters. This is a second hard coded truncation and is silent. In many cases it is redundant because the text was already sliced upstream.</p></item>
+        <item><p><strong>Unknown trace entry fallback.</strong> <tt>trace_entry/1</tt> falls back to <tt>inspect(assigns.entry, limit: 10, printable_limit: 500)</tt>. This is a fallback-path truncation and is only softly marked by inspect syntax.</p></item>
+      </list>
+    </subsection>
+
+    <subsection title="Silent Omissions and Structure Loss" id="silent-omissions">
+      <list type="numbered">
+        <item><p><strong>send_message tool uses are dropped.</strong> <tt>extract_trace_entries/1</tt> discards <tt>tool_use</tt> blocks whose name is <tt>send_message</tt>. This is not truncation; it is total omission.</p></item>
+        <item><p><strong>&quot;sent&quot; tool results are dropped.</strong> Tool results whose normalized text is exactly <tt>sent</tt> are discarded entirely. Again this is total omission rather than truncation.</p></item>
+        <item><p><strong>Narration replaces exact call input.</strong> When narration exists, the renderer shows narration instead of the actual formal input object. This is not text truncation; it is a structural loss of exact data.</p></item>
+        <item><p><strong>Cycle chronology is flattened under the replied-to message.</strong> This is not a byte truncation, but it is a major information loss because the timeline no longer reflects temporal order.</p></item>
+      </list>
+    </subsection>
+  </section>
+
+  <section title="Recommendation" id="recommendation">
+    <p>Adopt a new prompt-context renderer that keeps XML-like document structure and the existing footer, but replaces the recent sliding message tail with chronological recent timeline buckets.</p>
+    <p>Make tool memory formal: exact inputs, explicit statuses, explicit truncation markers, and typed outputs. Let narration remain as a compact summary field rather than as the primary representation.</p>
+    <p>Use the storage direction in <rfc-ref number="0015"/> as the long-term basis for true chronological interleaving. In the meantime, narrow and batch the current head lookups and add a targeted expression index so the existing renderer stops paying a whole-table scan tax for every cycle trace.</p>
+  </section>
+</rfc>
