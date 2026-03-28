@@ -127,6 +127,23 @@ defmodule Froth.Agent.WorkerTest do
     start_supervised!({TestExecutor, fun})
   end
 
+  defp append_cycle_message(%Cycle{} = cycle, parent_id, role, content, seq) do
+    message =
+      Repo.insert!(%Message{
+        role: role,
+        content: Message.wrap(content),
+        parent_id: parent_id
+      })
+
+    Agent.append_event(
+      cycle,
+      %{kind: "message.appended", head_id: message.id, message_id: message.id},
+      seq
+    )
+
+    message
+  end
+
   defp wait_for_exit(pid) do
     ref = Process.monitor(pid)
     assert_receive {:DOWN, ^ref, :process, ^pid, reason}, 5000
@@ -251,6 +268,28 @@ defmodule Froth.Agent.WorkerTest do
              "additionalProperties"
            ]) ==
              false
+  end
+
+  test "latest_head_ids batches current heads from message append events" do
+    cycle_one = Repo.insert!(%Cycle{})
+    cycle_two = Repo.insert!(%Cycle{})
+
+    first_one = append_cycle_message(cycle_one, nil, :user, "one", 0)
+    Agent.append_event(cycle_one, %{kind: "tool.started", head_id: first_one.id}, 1)
+    latest_one = append_cycle_message(cycle_one, first_one.id, :agent, "two", 2)
+    Agent.append_event(cycle_one, %{kind: "tool.completed", head_id: latest_one.id}, 3)
+
+    first_two = append_cycle_message(cycle_two, nil, :user, "alpha", 0)
+    latest_two = append_cycle_message(cycle_two, first_two.id, :agent, "beta", 1)
+    Agent.append_event(cycle_two, %{kind: "llm.completed", head_id: latest_two.id}, 2)
+
+    assert Agent.latest_head_id(cycle_one) == latest_one.id
+    assert Agent.latest_head_id(cycle_two) == latest_two.id
+
+    assert Agent.latest_head_ids([cycle_two.id, cycle_one.id, cycle_one.id, nil, ""]) == %{
+             cycle_one.id => latest_one.id,
+             cycle_two.id => latest_two.id
+           }
   end
 
   describe "simple reply (no tools)" do

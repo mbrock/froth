@@ -178,17 +178,43 @@ defmodule Froth.Agent do
   @doc "Return the current head message ID for a cycle."
   @spec latest_head_id(Cycle.t()) :: String.t() | nil
   def latest_head_id(%Cycle{id: cycle_id}) do
-    Repo.one(
-      from(e in Event,
-        where:
-          like(e.event, "froth.agent.%") and
-            fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id) and
-            not is_nil(fragment("?->>'head_id'", e.metadata)),
-        order_by: [desc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)],
-        limit: 1,
-        select: fragment("?->>'head_id'", e.metadata)
-      )
-    )
+    latest_head_ids([cycle_id])
+    |> Map.get(cycle_id)
+  end
+
+  @doc "Return the current head message IDs for cycles."
+  @spec latest_head_ids([String.t()]) :: %{optional(String.t()) => String.t()}
+  def latest_head_ids(cycle_ids) when is_list(cycle_ids) do
+    cycle_ids
+    |> normalize_cycle_ids()
+    |> case do
+      [] ->
+        %{}
+
+      cycle_ids ->
+        Repo.all(
+          from(e in Event,
+            where:
+              e.event == "froth.agent.message.appended" and
+                fragment(
+                  "?->>'cycle_id' = ANY(?)",
+                  e.metadata,
+                  type(^cycle_ids, {:array, :string})
+                ) and
+                not is_nil(fragment("?->>'head_id'", e.metadata)),
+            distinct: fragment("?->>'cycle_id'", e.metadata),
+            order_by: [
+              asc: fragment("?->>'cycle_id'", e.metadata),
+              desc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)
+            ],
+            select: %{
+              cycle_id: fragment("?->>'cycle_id'", e.metadata),
+              head_id: fragment("?->>'head_id'", e.metadata)
+            }
+          )
+        )
+        |> Map.new(fn %{cycle_id: cycle_id, head_id: head_id} -> {cycle_id, head_id} end)
+    end
   end
 
   @doc "Load the full message chain ending at `head_id`, oldest first."
@@ -232,12 +258,25 @@ defmodule Froth.Agent do
   Returns a list of `%{kind: :call, tool: name, input_json: json}` and
   `%{kind: :return, text: text}` entries, filtering out `send_message` calls.
   """
-  def cycle_trace(cycle_id) do
-    cycle_id
-    |> then(&latest_head_id(%Cycle{id: &1}))
-    |> load_messages()
-    |> Enum.map(&Message.to_api/1)
-    |> extract_trace_entries()
+  @spec cycle_trace(String.t()) :: [map()]
+  def cycle_trace(cycle_id) when is_binary(cycle_id) do
+    cycle_traces([cycle_id])
+    |> Map.get(cycle_id, [])
+  end
+
+  @doc false
+  @spec cycle_traces([String.t()]) :: %{optional(String.t()) => [map()]}
+  def cycle_traces(cycle_ids) when is_list(cycle_ids) do
+    latest_head_ids(cycle_ids)
+    |> Map.new(fn {cycle_id, head_id} ->
+      entries =
+        head_id
+        |> load_messages()
+        |> Enum.map(&Message.to_api/1)
+        |> extract_trace_entries()
+
+      {cycle_id, entries}
+    end)
   end
 
   @doc false
@@ -295,6 +334,12 @@ defmodule Froth.Agent do
   end
 
   defp format_trace_tool_name(%{"name" => name}) when is_binary(name), do: name
+
+  defp normalize_cycle_ids(cycle_ids) do
+    cycle_ids
+    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+    |> Enum.uniq()
+  end
 
   @doc false
   @spec next_event_seq(Cycle.t()) :: non_neg_integer()

@@ -225,19 +225,28 @@ defmodule Froth.Telegram.BotContext do
   end
 
   defp build_cycle_traces_map(chat_id, msg_ids, opts) do
-    Queries.cycle_traces_for_messages(chat_id, msg_ids, bot_id: opt_bot_id(opts))
-    |> Map.new(fn {message_id, links} ->
+    links_by_message =
+      Queries.cycle_traces_for_messages(chat_id, msg_ids, bot_id: opt_bot_id(opts))
+
+    traces_by_cycle =
+      links_by_message
+      |> Map.values()
+      |> Enum.flat_map(& &1)
+      |> Enum.map(& &1.cycle_id)
+      |> Agent.cycle_traces()
+
+    Map.new(links_by_message, fn {message_id, links} ->
       traces =
         links
-        |> Enum.map(&build_cycle_trace/1)
+        |> Enum.map(&build_cycle_trace(&1, traces_by_cycle))
         |> Enum.reject(&is_nil/1)
 
       {message_id, traces}
     end)
   end
 
-  defp build_cycle_trace(%{cycle_id: cycle_id, inserted_at: inserted_at}) do
-    case Agent.cycle_trace(cycle_id) do
+  defp build_cycle_trace(%{cycle_id: cycle_id, inserted_at: inserted_at}, traces_by_cycle) do
+    case Map.get(traces_by_cycle, cycle_id, []) do
       [] -> nil
       entries -> %{cycle_id: cycle_id, inserted_at: inserted_at, entries: entries}
     end

@@ -14,7 +14,7 @@ defmodule Froth.SummarizerTest do
     :ok
   end
 
-  test "context_parts uses template page breaks for summaries and recent transcript messages" do
+  test "context_parts splits recent transcript messages and trailing chat info into stable parts" do
     session_id = "test-session-#{System.unique_integer([:positive])}"
     chat_id = unique_chat_id()
 
@@ -35,26 +35,26 @@ defmodule Froth.SummarizerTest do
 
     parts = BotContext.render_parts(chat_id, opts)
 
-    assert length(parts) == 4
+    assert length(parts) == 3
 
-    assert Enum.at(parts, 0) =~ "<summary date="
-    assert Enum.at(parts, 0) =~ "Earlier summary"
+    assert Enum.at(parts, 0) =~ ~s(<msg message_id="101")
+    assert Enum.at(parts, 0) =~ ~s(time="2023-11-14 22:25 UTC")
+    assert Enum.at(parts, 0) =~ "@seven"
+    assert Enum.at(parts, 0) =~ "older context"
 
-    assert Enum.at(parts, 1) =~ "<chat_context>"
-    assert Enum.at(parts, 1) =~ "chat_id=#{chat_id}"
-    assert Enum.at(parts, 1) =~ "chat_name=Froth chat"
-    assert Enum.at(parts, 1) =~ "- @seven [id=7]"
-    refute Enum.at(parts, 1) =~ "<msg "
+    assert Enum.at(parts, 1) =~ ~s(<msg message_id="102")
+    assert Enum.at(parts, 1) =~ ~s(time="2023-11-14 22:26 UTC")
+    assert Enum.at(parts, 1) =~ "@eight"
+    assert Enum.at(parts, 1) =~ "still older"
 
-    assert Enum.at(parts, 2) =~ ~s(<msg message_id="101")
-    assert Enum.at(parts, 2) =~ "older context"
-
-    assert Enum.at(parts, 3) =~ ~s(time="2023-11-14 22:26 UTC")
-    assert Enum.at(parts, 3) =~ "@eight"
-    assert Enum.at(parts, 3) =~ "still older"
-    assert Enum.at(parts, 3) =~ ~s(<msg message_id="102")
+    assert Enum.at(parts, 2) =~ "<info>"
+    assert Enum.at(parts, 2) =~ "chat: Froth chat (id #{chat_id})"
+    assert Enum.at(parts, 2) =~ "@seven"
+    assert Enum.at(parts, 2) =~ "@eight"
+    assert Enum.at(parts, 2) =~ "user:9"
 
     refute Enum.join(parts, "") =~ "future context leak"
+    refute Enum.join(parts, "") =~ "<summary"
     assert Enum.join(BotContext.render_parts(chat_id, opts), "") == Enum.join(parts, "")
   end
 
