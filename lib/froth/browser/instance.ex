@@ -332,6 +332,16 @@ defmodule Froth.Browser.Instance do
     {:noreply, %{state | console_logs: [entry | state.console_logs]}}
   end
 
+  def handle_info({:browser_cdp_event, _cdp_pid, %{"method" => "Log.entryAdded"} = event}, state) do
+    params = event["params"] || %{}
+    log_entry = params["entry"] || %{}
+    level = log_entry["level"] || "info"
+    text = log_entry["text"] || ""
+    url = log_entry["url"]
+    entry = %{type: "log:" <> level, text: text, url: url, timestamp: System.system_time(:millisecond)}
+    {:noreply, %{state | console_logs: [entry | state.console_logs]}}
+  end
+
   def handle_info({:browser_cdp_event, _cdp_pid, _event}, state) do
     {:noreply, state}
   end
@@ -583,6 +593,11 @@ defmodule Froth.Browser.Instance do
            ),
          {:ok, _} <-
            CDP.command(cdp_pid, "Runtime.enable", %{},
+             session_id: session_id,
+             timeout_ms: timeout_ms
+           ),
+         {:ok, _} <-
+           CDP.command(cdp_pid, "Log.enable", %{},
              session_id: session_id,
              timeout_ms: timeout_ms
            ) do
