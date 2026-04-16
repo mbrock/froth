@@ -172,7 +172,6 @@ defmodule Froth.Telegram.Bot do
   end
 
   def handle_info({:event, _event, %Message{role: :agent, content: content}}, state) do
-    state = normalize_state(state)
     {:noreply, send_agent_response(state, content)}
   end
 
@@ -198,7 +197,6 @@ defmodule Froth.Telegram.Bot do
         {:DOWN, ref, :process, pid, _reason},
         %{worker_ref: ref, worker_pid: pid} = state
       ) do
-    state = normalize_state(state)
     buffered_messages = state.mid_cycle_messages
     finished_cycle_id = state.cycle && state.cycle.id
 
@@ -333,8 +331,8 @@ defmodule Froth.Telegram.Bot do
         :ignore
 
       pending_ask = pending_ask_for_message(msg, bot_config, mentioned?, is_reply_to_bot) ->
-        answer = normalize_pending_ask_answer(msg, bot_config)
-        reply_to = normalize_reply_to(msg["id"])
+        answer = pending_ask_answer_from_message(msg, bot_config)
+        reply_to = msg["id"]
 
         if is_binary(answer) and answer != "" and pending_ask_accepts_message_answer?(pending_ask) do
           case PendingAsks.resolve(pending_ask, answer,
@@ -370,92 +368,72 @@ defmodule Froth.Telegram.Bot do
   defp route_callback_query(query, bot_config) do
     query_id = callback_query_id(query)
 
-    case query do
-      %{"payload" => %{"@type" => "callbackQueryPayloadGame", "game_short_name" => game}}
-      when is_binary(query_id) ->
+    cond do
+      is_nil(query_id) ->
+        :ignore
+
+      match?(%{"payload" => %{"@type" => "callbackQueryPayloadGame"}}, query) ->
+        %{"payload" => %{"game_short_name" => game}} = query
         {:callback_game, query_id, game}
 
-      _ ->
-        case parse_callback_payload(query) do
-          {:ok, "ask", index} when is_binary(query_id) ->
-            with chat_id when is_integer(chat_id) <- callback_query_chat_id(query),
-                 message_id when is_integer(message_id) <- callback_query_message_id(query),
-                 %{} = pending_ask <-
-                   PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, message_id),
-                 alternative when is_binary(alternative) <-
-                   Enum.at(pending_ask.alternatives || [], index),
-                 {:ok, resolved_pending_ask} <-
-                   PendingAsks.resolve(pending_ask, alternative,
-                     answered_via: "callback",
-                     config_merge:
-                       resolution_config_for_callback(
-                         query,
-                         bot_config,
-                         pending_ask,
-                         alternative,
-                         index: index
-                       )
-                   ) do
-              {:callback_pending_ask, query_id, resolved_pending_ask, alternative, message_id}
-            else
-              _ -> {:callback_pending_ask_ignored, query_id}
-            end
+      true ->
+        route_callback_data(query, query_id, bot_config)
+    end
+  end
 
-          {:ok, "askcarry", _} when is_binary(query_id) ->
-            with chat_id when is_integer(chat_id) <- callback_query_chat_id(query),
-                 message_id when is_integer(message_id) <- callback_query_message_id(query),
-                 %{} = pending_ask <-
-                   PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, message_id),
-                 true <- FailureIntervention.failure_intervention?(pending_ask),
-                 {:ok, resolved_pending_ask} <-
-                   PendingAsks.resolve(pending_ask, FailureIntervention.carry_on_answer(),
-                     answered_via: "callback",
-                     config_merge:
-                       resolution_config_for_callback(
-                         query,
-                         bot_config,
-                         pending_ask,
-                         FailureIntervention.carry_on_answer()
-                       )
-                   ) do
-              {:callback_pending_ask, query_id, resolved_pending_ask,
-               FailureIntervention.carry_on_answer(), message_id}
-            else
-              _ -> {:callback_pending_ask_ignored, query_id}
-            end
-
-          {:ok, "askstop", _} when is_binary(query_id) ->
-            with chat_id when is_integer(chat_id) <- callback_query_chat_id(query),
-                 message_id when is_integer(message_id) <- callback_query_message_id(query),
-                 %{} = pending_ask <-
-                   PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, message_id),
-                 true <- FailureIntervention.failure_intervention?(pending_ask),
-                 {:ok, resolved_pending_ask} <-
-                   PendingAsks.resolve(pending_ask, FailureIntervention.stop_answer(),
-                     answered_via: "callback",
-                     config_merge:
-                       resolution_config_for_callback(
-                         query,
-                         bot_config,
-                         pending_ask,
-                         FailureIntervention.stop_answer()
-                       )
-                   ) do
-              {:callback_pending_ask, query_id, resolved_pending_ask,
-               FailureIntervention.stop_answer(), message_id}
-            else
-              _ -> {:callback_pending_ask_ignored, query_id}
-            end
-
-          {:ok, "stopcycle", cycle_id} when is_binary(query_id) and is_binary(cycle_id) ->
-            {:callback_stop_cycle, query_id, cycle_id}
-
-          {:ok, "stoploop", _} when is_binary(query_id) ->
-            {:callback_stop_active, query_id}
-
-          _ ->
-            :ignore
+  defp route_callback_data(query, query_id, bot_config) do
+    case parse_callback_payload(query) do
+      {:ok, "ask", index} ->
+        with chat_id when is_integer(chat_id) <- callback_query_chat_id(query),
+             message_id when is_integer(message_id) <- callback_query_message_id(query),
+             %{} = pending_ask <-
+               PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, message_id),
+             alternative when is_binary(alternative) <-
+               Enum.at(pending_ask.alternatives || [], index),
+             {:ok, resolved_pending_ask} <-
+               PendingAsks.resolve(pending_ask, alternative,
+                 answered_via: "callback",
+                 config_merge:
+                   resolution_config_for_callback(query, bot_config, pending_ask, alternative,
+                     index: index
+                   )
+               ) do
+          {:callback_pending_ask, query_id, resolved_pending_ask, alternative, message_id}
+        else
+          _ -> {:callback_pending_ask_ignored, query_id}
         end
+
+      {:ok, action, _} when action in ["askcarry", "askstop"] ->
+        answer =
+          case action do
+            "askcarry" -> FailureIntervention.carry_on_answer()
+            "askstop" -> FailureIntervention.stop_answer()
+          end
+
+        with chat_id when is_integer(chat_id) <- callback_query_chat_id(query),
+             message_id when is_integer(message_id) <- callback_query_message_id(query),
+             %{} = pending_ask <-
+               PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, message_id),
+             true <- FailureIntervention.failure_intervention?(pending_ask),
+             {:ok, resolved_pending_ask} <-
+               PendingAsks.resolve(pending_ask, answer,
+                 answered_via: "callback",
+                 config_merge:
+                   resolution_config_for_callback(query, bot_config, pending_ask, answer)
+               ) do
+          {:callback_pending_ask, query_id, resolved_pending_ask, answer, message_id}
+        else
+          _ -> {:callback_pending_ask_ignored, query_id}
+        end
+
+      {:ok, "stopcycle", cycle_id} when is_binary(cycle_id) ->
+        {:callback_stop_cycle, query_id, cycle_id}
+
+      {:ok, "stoploop", _} ->
+        {:callback_stop_active, query_id}
+
+      _ ->
+        :ignore
     end
   end
 
@@ -483,39 +461,24 @@ defmodule Froth.Telegram.Bot do
 
   defp parse_callback_payload(_), do: :error
 
-  defp callback_query_id(%{"id" => id}), do: normalize_int64(id)
+  defp callback_query_id(%{"id" => id}), do: id
   defp callback_query_id(_query), do: nil
 
-  defp callback_query_chat_id(%{"chat_id" => chat_id}), do: normalize_json_number(chat_id)
+  defp callback_query_chat_id(%{"chat_id" => chat_id}) when is_integer(chat_id), do: chat_id
 
-  defp callback_query_chat_id(%{"message" => %{"chat_id" => chat_id}}),
-    do: normalize_json_number(chat_id)
+  defp callback_query_chat_id(%{"message" => %{"chat_id" => chat_id}}) when is_integer(chat_id),
+    do: chat_id
 
   defp callback_query_chat_id(_query), do: nil
 
-  defp callback_query_message_id(%{"message_id" => message_id}),
-    do: normalize_json_number(message_id)
+  defp callback_query_message_id(%{"message_id" => message_id}) when is_integer(message_id),
+    do: message_id
 
-  defp callback_query_message_id(%{"message" => %{"id" => message_id}}),
-    do: normalize_json_number(message_id)
+  defp callback_query_message_id(%{"message" => %{"id" => message_id}})
+       when is_integer(message_id),
+       do: message_id
 
   defp callback_query_message_id(_query), do: nil
-
-  defp normalize_json_number(value) when is_integer(value), do: value
-
-  defp normalize_json_number(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {parsed, ""} -> parsed
-      _ -> nil
-    end
-  end
-
-  defp normalize_json_number(_value), do: nil
-
-  defp normalize_int64(value) when is_integer(value), do: Integer.to_string(value)
-  defp normalize_int64(""), do: nil
-  defp normalize_int64(value) when is_binary(value), do: value
-  defp normalize_int64(_value), do: nil
 
   defp pending_ask_for_message(msg, bot_config, mentioned?, is_reply_to_bot)
        when is_map(msg) and is_map(bot_config) do
@@ -545,18 +508,15 @@ defmodule Froth.Telegram.Bot do
     AwaitControl.accepts_message_answer?(pending_ask)
   end
 
-  defp normalize_pending_ask_answer(msg, bot_config) when is_map(msg) and is_map(bot_config) do
+  defp pending_ask_answer_from_message(msg, bot_config) do
     text =
       get_in(msg, ["content", "text", "text"]) ||
         get_in(msg, ["content", "caption", "text"])
 
-    normalize_pending_ask_answer_text(text, bot_config.bot_username)
+    strip_bot_mention(text, bot_config.bot_username)
   end
 
-  defp normalize_pending_ask_answer(_msg, _bot_config), do: nil
-
-  defp normalize_pending_ask_answer_text(text, bot_username)
-       when is_binary(text) and is_binary(bot_username) do
+  defp strip_bot_mention(text, bot_username) when is_binary(text) and is_binary(bot_username) do
     text
     |> String.trim()
     |> String.replace(~r/^@#{Regex.escape(bot_username)}[,:]?\s*/iu, "")
@@ -567,7 +527,7 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp normalize_pending_ask_answer_text(_text, _bot_username), do: nil
+  defp strip_bot_mention(_text, _bot_username), do: nil
 
   defp reply_to_message_id(%{
          "reply_to" => %{
@@ -624,7 +584,7 @@ defmodule Froth.Telegram.Bot do
 
   defp start_cycle_from_message(state, msg) when is_map(msg) do
     chat_id = msg["chat_id"]
-    reply_to = normalize_reply_to(msg["reply_to_override"] || msg["id"])
+    reply_to = msg["reply_to_override"] || msg["id"]
     system_prompt = resolve_system_prompt(chat_id, msg, state.bot_config)
 
     text =
@@ -643,7 +603,6 @@ defmodule Froth.Telegram.Bot do
   defp start_cycle(state, chat_id, reply_to, text, user_content, system_prompt)
        when is_integer(chat_id) and (is_integer(reply_to) or is_nil(reply_to)) and
               is_binary(text) and is_binary(system_prompt) do
-    state = normalize_state(state)
     bc = state.bot_config
 
     if state.worker_pid do
@@ -740,11 +699,6 @@ defmodule Froth.Telegram.Bot do
     })
   end
 
-  defp normalize_reply_to(0), do: nil
-  defp normalize_reply_to(reply_to) when is_integer(reply_to), do: reply_to
-  defp normalize_reply_to(nil), do: nil
-  defp normalize_reply_to(_reply_to), do: nil
-
   @response_instruction "\n\nNow reply using the send_message tool."
 
   defp parts_to_text_blocks(parts, bot_config) when is_list(parts) do
@@ -769,7 +723,6 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp stop_cycle(state, cycle_id, opts) when is_binary(cycle_id) do
-    state = normalize_state(state)
     notify? = Keyword.get(opts, :notify?, false)
 
     state =
@@ -932,36 +885,32 @@ defmodule Froth.Telegram.Bot do
 
   defp commit_tool_call(state, _tool_use, context, prepared, outcome) do
     {result, sent_message, narration_message, awaiting_user_input?} =
-      normalize_tool_outcome(outcome)
+      case outcome do
+        %{result: result} = o ->
+          {result, o[:sent_message], o[:narration_message], o[:awaiting_user_input] == true}
+
+        result ->
+          {result, nil, nil, false}
+      end
 
     cycle_id =
       extract_cycle_id(prepared) || extract_cycle_id(context) || extract_cycle_id(outcome)
 
     state =
       case narration_message do
-        %{message_id: _, text: _, mode: _} ->
-          track_narration_message(state, narration_message)
-
-        _ ->
-          state
+        %{message_id: _, text: _, mode: _} -> track_narration_message(state, narration_message)
+        _ -> state
       end
 
     state =
       case {sent_message, awaiting_user_input?} do
-        {%{sent: sent, text: text}, true} ->
-          track_awaiting_user_input(state, sent, text)
-
-        {%{sent: sent, text: text}, false} ->
-          track_sent_message(state, sent, text)
-
-        _ ->
-          state
+        {%{sent: sent, text: text}, true} -> track_awaiting_user_input(state, sent, text)
+        {%{sent: sent, text: text}, false} -> track_sent_message(state, sent, text)
+        _ -> state
       end
 
     state = maybe_track_task_from_result(state, cycle_id, result)
-
-    {result, state} = maybe_inject_mid_cycle_messages(result, state)
-    {result, state}
+    maybe_inject_mid_cycle_messages(result, state)
   end
 
   defp reserve_control_prompt(state, cycle_id) when is_binary(cycle_id) do
@@ -987,13 +936,6 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp maybe_put_control_prompt(input, _send?, _bc, _cycle_id, _chat_id, _reply_to), do: input
-
-  defp normalize_tool_outcome(%{result: result} = outcome) do
-    {result, outcome[:sent_message], outcome[:narration_message],
-     outcome[:awaiting_user_input] == true}
-  end
-
-  defp normalize_tool_outcome(result), do: {result, nil, nil, false}
 
   defp extract_cycle_id(%{execution: %{cycle_id: cycle_id}}) when is_binary(cycle_id),
     do: cycle_id
@@ -1078,7 +1020,7 @@ defmodule Froth.Telegram.Bot do
   defp enqueue_or_resume_pending_ask(state, pending_ask, answer, reply_to)
        when is_map(pending_ask) and is_binary(answer) do
     _ = maybe_finalize_pending_ask_message(pending_ask, state.bot_config.session_id)
-    resume = %{pending_ask: pending_ask, answer: answer, reply_to: normalize_reply_to(reply_to)}
+    resume = %{pending_ask: pending_ask, answer: answer, reply_to: reply_to}
 
     cond do
       live_pending_ask_cycle?(state, pending_ask) ->
@@ -1118,7 +1060,7 @@ defmodule Froth.Telegram.Bot do
             cycle,
             config,
             pending_ask.chat_id,
-            normalize_reply_to(reply_to || pending_ask.message_id)
+            reply_to || pending_ask.message_id
           )
         else
           _ ->
@@ -1168,7 +1110,7 @@ defmodule Froth.Telegram.Bot do
             resume_pending_ask(state, %{
               pending_ask: pending_ask,
               answer: pending_ask.answer || "",
-              reply_to: normalize_reply_to(pending_ask.answer_message_id)
+              reply_to: pending_ask.answer_message_id
             })
         end
     end
@@ -1560,7 +1502,7 @@ defmodule Froth.Telegram.Bot do
       tool_executor: self(),
       context: %{
         chat_id: pending_ask.chat_id,
-        reply_to: normalize_reply_to(reply_to || pending_ask.message_id),
+        reply_to: reply_to || pending_ask.message_id,
         bot_id: bc.id,
         session_id: bc.session_id,
         bot_username: bc.bot_username
@@ -1640,28 +1582,4 @@ defmodule Froth.Telegram.Bot do
 
   defp extract_text(content) when is_binary(content), do: content
   defp extract_text(_), do: ""
-
-  # Handles hot code reload where in-memory struct instances may predate new fields.
-  defp normalize_state(%__MODULE__{} = state) do
-    state_keys = state_keys()
-
-    state
-    |> Map.from_struct()
-    |> Map.take(state_keys)
-    |> then(&struct(__MODULE__, &1))
-  end
-
-  defp normalize_state(state) when is_map(state) do
-    state_keys = state_keys()
-
-    state
-    |> Map.take(state_keys)
-    |> then(&struct(__MODULE__, &1))
-  end
-
-  defp state_keys do
-    __MODULE__.__struct__()
-    |> Map.keys()
-    |> Enum.reject(&(&1 == :__struct__))
-  end
 end
