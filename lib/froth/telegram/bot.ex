@@ -24,6 +24,7 @@ defmodule Froth.Telegram.Bot do
   }
 
   alias Froth.Repo
+  alias Froth.Telegram.Bot.Config, as: BotConfig
   alias Froth.Telegram.BotAdapter
   alias Froth.Telegram.BotContext
   alias Froth.Telegram.ControlPrompt
@@ -82,36 +83,19 @@ defmodule Froth.Telegram.Bot do
 
   @impl true
   def init(opts) do
-    bot_config = %{
-      id: to_string(Keyword.fetch!(opts, :id)),
-      session_id: to_string(Keyword.fetch!(opts, :session_id)),
-      bot_username: to_string(Keyword.fetch!(opts, :bot_username)),
-      bot_user_id: Keyword.fetch!(opts, :bot_user_id),
-      owner_user_id: Keyword.fetch!(opts, :owner_user_id),
-      model: Keyword.get(opts, :model, "claude-opus-4-6"),
-      system_prompt:
-        Keyword.get(opts, :system_prompt, "You are a helpful assistant on Telegram."),
-      system_prompt_fun: Keyword.get(opts, :system_prompt_fun),
-      name_triggers: Keyword.get(opts, :name_triggers, []),
-      tools: Keyword.get(opts, :tools),
-      tools_module: Keyword.get(opts, :tools_module),
-      thinking: Keyword.get(opts, :thinking),
-      effort: Keyword.get(opts, :effort),
-      chronicle_dir: Keyword.get(opts, :chronicle_dir),
-      recent_message_limit: Keyword.get(opts, :recent_message_limit),
-      recent_message_anchor_size: Keyword.get(opts, :recent_message_anchor_size),
-      debounce_ms: Keyword.get(opts, :debounce_ms, 0)
-    }
+    bot_config = BotConfig.build(opts)
 
     :ok = BotAdapter.subscribe(bot_config.session_id)
 
-    session_span = Froth.Telegram.Session.span_id(bot_config.session_id)
-
-    Span.execute([:froth, :telegram, :bot, :listening], session_span, %{
-      bot_id: bot_config.id,
-      session_id: bot_config.session_id,
-      username: bot_config.bot_username
-    })
+    Span.execute(
+      [:froth, :telegram, :bot, :listening],
+      Froth.Telegram.Session.span_id(bot_config.session_id),
+      %{
+        bot_id: bot_config.id,
+        session_id: bot_config.session_id,
+        username: bot_config.bot_username
+      }
+    )
 
     {:ok, %__MODULE__{bot_config: bot_config}}
   end
@@ -568,7 +552,7 @@ defmodule Froth.Telegram.Bot do
   # --- Debounce ---
 
   defp debounce_or_start(state, msg) do
-    debounce_ms = state.bot_config[:debounce_ms] || 0
+    debounce_ms = state.bot_config.debounce_ms
 
     if debounce_ms > 0 and is_nil(state.worker_pid) do
       # Cancel existing timer if any

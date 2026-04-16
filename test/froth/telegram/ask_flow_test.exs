@@ -93,6 +93,7 @@ defmodule Froth.Telegram.AskFlowTest do
          bot_username: "charliebuddybot",
          bot_user_id: 1,
          owner_user_id: 1,
+         model: "claude-opus-4-6",
          system_prompt: "You are Charlie.",
          debounce_ms: 0,
          tools_module: Froth.Telegram.Toolsets.Charlie}
@@ -281,6 +282,7 @@ defmodule Froth.Telegram.AskFlowTest do
          bot_username: "charliebuddybot",
          bot_user_id: 1,
          owner_user_id: 1,
+         model: "claude-opus-4-6",
          system_prompt: "You are Charlie.",
          debounce_ms: 0,
          tools_module: Froth.Telegram.Toolsets.Charlie}
@@ -451,6 +453,7 @@ defmodule Froth.Telegram.AskFlowTest do
          bot_username: "charliebuddybot",
          bot_user_id: 1,
          owner_user_id: 1,
+         model: "claude-opus-4-6",
          system_prompt: "You are Charlie.",
          debounce_ms: 0,
          tools_module: Froth.Telegram.Toolsets.Charlie}
@@ -659,6 +662,7 @@ defmodule Froth.Telegram.AskFlowTest do
          bot_username: "charliebuddybot",
          bot_user_id: 1,
          owner_user_id: 1,
+         model: "claude-opus-4-6",
          system_prompt: "You are Charlie.",
          debounce_ms: 0,
          tools_module: Froth.Telegram.Toolsets.Charlie}
@@ -905,6 +909,7 @@ defmodule Froth.Telegram.AskFlowTest do
          bot_username: "charliebuddybot",
          bot_user_id: 1,
          owner_user_id: 1,
+         model: "claude-opus-4-6",
          system_prompt: "You are Charlie.",
          debounce_ms: 0,
          tools_module: Froth.Telegram.Toolsets.Charlie}
@@ -1131,6 +1136,7 @@ defmodule Froth.Telegram.AskFlowTest do
          bot_username: "charliebuddybot",
          bot_user_id: 1,
          owner_user_id: 1,
+         model: "claude-opus-4-6",
          system_prompt: "You are Charlie.",
          debounce_ms: 0,
          tools_module: Froth.Telegram.Toolsets.Charlie}

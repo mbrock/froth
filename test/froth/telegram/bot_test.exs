@@ -247,7 +247,10 @@ defmodule Froth.Telegram.BotTest do
        session_id: session_id,
        bot_username: "#{id}_username",
        bot_user_id: 1,
-       owner_user_id: 1}
+       owner_user_id: 1,
+       model: "claude-opus-4-6",
+       system_prompt_fun: fn _chat_id -> "" end,
+       tools_module: Froth.Telegram.Toolsets.Charlie}
     )
   end
 

@@ -67,31 +67,13 @@ defmodule Froth.Telegram.Charlie do
   def start_link(opts) when is_map(opts), do: start_link(Map.to_list(opts))
 
   def start_link(opts) when is_list(opts) do
-    config = build_config(opts)
     name = Keyword.get(opts, :name, __MODULE__)
-    Bot.start_link(Map.put(config, :name, name))
+
+    config =
+      default_config()
+      |> Map.merge(Map.new(opts))
+      |> Map.put(:name, name)
+
+    Bot.start_link(config)
   end
-
-  defp build_config(opts) when is_list(opts) do
-    defaults = default_config()
-    merged = defaults |> Map.merge(Map.new(opts))
-
-    merged
-    |> Map.update!(:id, &to_string/1)
-    |> Map.update!(:session_id, &to_string/1)
-    |> Map.update!(:bot_username, &to_string/1)
-    |> Map.update!(:bot_user_id, &to_int/1)
-    |> Map.update!(:owner_user_id, &to_int/1)
-  end
-
-  defp to_int(v) when is_integer(v), do: v
-
-  defp to_int(v) when is_binary(v) do
-    case Integer.parse(v) do
-      {n, ""} -> n
-      _ -> 0
-    end
-  end
-
-  defp to_int(_), do: 0
 end
