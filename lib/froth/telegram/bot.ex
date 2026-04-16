@@ -27,6 +27,7 @@ defmodule Froth.Telegram.Bot do
   alias Froth.Telegram.BotAdapter
   alias Froth.Telegram.BotContext
   alias Froth.Telegram.ControlPrompt
+  alias Froth.Telegram.CostFooter
   alias Froth.Telegram.CycleLink
   alias Froth.Telegram.MessageIdSync
   alias Froth.Telegram.Names
@@ -1682,141 +1683,35 @@ defmodule Froth.Telegram.Bot do
 
   defp maybe_append_cycle_footer(
          %{
+           cycle: %Cycle{id: cycle_id},
            last_sent_message_id: msg_id,
+           last_sent_message_text: text,
            awaiting_user_input?: false,
            chat_id: chat_id,
            bot_config: bc
          } = state
        )
-       when is_integer(msg_id) and is_integer(chat_id) do
-    case build_cycle_cost_footer(state) do
+       when is_binary(cycle_id) and is_integer(msg_id) and is_binary(text) and is_integer(chat_id) do
+    case CostFooter.render_for_cycle_id(cycle_id) do
       nil ->
         state
 
       footer ->
-        maybe_apply_cycle_footer(state, bc.session_id, chat_id, footer)
+        :ok =
+          CostFooter.apply(
+            session_id: bc.session_id,
+            chat_id: chat_id,
+            last_sent_message_id: msg_id,
+            last_sent_message_text: text,
+            footer: footer,
+            reply_to: state.reply_to
+          )
+
+        state
     end
   end
 
   defp maybe_append_cycle_footer(state), do: state
-
-  defp maybe_apply_cycle_footer(
-         %{last_sent_message_id: msg_id, last_sent_message_text: text} = state,
-         session_id,
-         chat_id,
-         footer
-       )
-       when is_integer(msg_id) and is_binary(text) and is_binary(footer) do
-    full_text = append_footer(text, footer)
-
-    if String.length(full_text) <= BotAdapter.text_limit() do
-      case BotAdapter.edit_message_text(session_id, chat_id, msg_id, full_text) do
-        {:ok, _} ->
-          state
-
-        {:error, _reason} ->
-          _ = BotAdapter.send_message(session_id, chat_id, footer, reply_to: state.reply_to)
-          state
-      end
-    else
-      _ = BotAdapter.send_message(session_id, chat_id, footer, reply_to: state.reply_to)
-      state
-    end
-  end
-
-  defp maybe_apply_cycle_footer(state, session_id, chat_id, footer) do
-    _ = BotAdapter.send_message(session_id, chat_id, footer, reply_to: state.reply_to)
-    state
-  end
-
-  defp append_footer(text, footer) when is_binary(text) and is_binary(footer) do
-    trimmed = String.trim_trailing(text)
-    if String.ends_with?(trimmed, footer), do: trimmed, else: trimmed <> "\n\n" <> footer
-  end
-
-  defp build_cycle_cost_footer(%{cycle: %Cycle{id: cycle_id}}) when is_binary(cycle_id) do
-    case Repo.get(Cycle, cycle_id) do
-      %Cycle{usage: usage} = reloaded when is_map(usage) ->
-        render_cycle_cost_footer(reloaded, usage, reloaded.cost_usd || 0.0)
-
-      _ ->
-        nil
-    end
-  end
-
-  defp build_cycle_cost_footer(_state), do: nil
-
-  defp render_cycle_cost_footer(%Cycle{} = cycle, usage, cost_usd) do
-    total_in = total_input_tokens(usage)
-    total_out = usage_int(usage["output_tokens"])
-
-    if total_in <= 0 and total_out <= 0 do
-      nil
-    else
-      duration = format_seconds(cycle_elapsed_seconds(cycle))
-      in_part = format_tokens_k(total_in)
-      out_part = format_tokens_k(total_out)
-      cache_write_part = format_tokens_k(usage_int(usage["cache_creation_input_tokens"]))
-      cache_read_part = format_tokens_k(usage_int(usage["cache_read_input_tokens"]))
-      cost = "$" <> :erlang.float_to_binary(cost_usd * 1.0, decimals: 3)
-
-      "[#{duration} | #{in_part} in | #{out_part} out | #{cache_write_part} cw | #{cache_read_part} cr | #{cost}]"
-    end
-  end
-
-  defp cycle_elapsed_seconds(%Cycle{started_at: %DateTime{} = started_at} = cycle) do
-    finished_at = cycle.finished_at || DateTime.utc_now()
-    DateTime.diff(finished_at, started_at, :millisecond) |> max(0) |> Kernel./(1000)
-  end
-
-  defp cycle_elapsed_seconds(_cycle), do: 0.0
-
-  defp format_seconds(seconds) when is_number(seconds) do
-    value = if seconds < 0, do: 0.0, else: seconds * 1.0
-    :erlang.float_to_binary(value, decimals: 1) <> "s"
-  end
-
-  defp format_tokens_k(tokens) when is_integer(tokens) and tokens >= 0 do
-    cond do
-      tokens == 0 ->
-        "0k"
-
-      rem(tokens, 1000) == 0 ->
-        "#{div(tokens, 1000)}k"
-
-      true ->
-        k = tokens / 1000
-        format_decimal(k, 1) <> "k"
-    end
-  end
-
-  defp format_tokens_k(_tokens), do: "0k"
-
-  defp format_decimal(number, decimals) when is_number(number) and is_integer(decimals) do
-    number
-    |> :erlang.float_to_binary(decimals: decimals)
-    |> String.trim_trailing("0")
-    |> String.trim_trailing(".")
-  end
-
-  defp total_input_tokens(usage) when is_map(usage) do
-    usage_int(usage["input_tokens"]) +
-      usage_int(usage["cache_creation_input_tokens"]) +
-      usage_int(usage["cache_read_input_tokens"])
-  end
-
-  defp total_input_tokens(_usage), do: 0
-
-  defp usage_int(value) when is_integer(value) and value >= 0, do: value
-
-  defp usage_int(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {n, ""} when n >= 0 -> n
-      _ -> 0
-    end
-  end
-
-  defp usage_int(_value), do: 0
 
   defp extract_text(blocks) when is_list(blocks) do
     blocks
