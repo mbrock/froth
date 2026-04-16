@@ -74,7 +74,6 @@ defmodule Froth.Application do
           Froth.Repo,
           Froth.Telemetry.Store,
           {Oban, Application.fetch_env!(:froth, Oban)},
-          Froth.Jbo.Dictionary,
           Froth.Telegram,
           Froth.Telegram.Bots,
           Froth.Telegram.LennartLinkReactor,

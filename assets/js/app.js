@@ -24,12 +24,6 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/froth"
 import topbar from "../vendor/topbar"
-import VoiceAudio from "./hooks/voice_audio"
-import SceneEngine from "./hooks/scene_engine"
-import SceneEngine3D from "./hooks/scene_engine_3d"
-import SceneView from "./hooks/scene_view"
-import SceneEditor from "./hooks/scene_editor"
-
 const ToolScroll = {
   mounted() {
     this.atBottom = true
@@ -469,11 +463,6 @@ const liveSocket = new LiveSocket("/froth/live", Socket, {
     ToolScroll,
     CodexTimeline,
     CodexComposer,
-    VoiceAudio,
-    SceneEngine,
-    SceneEngine3D,
-    SceneView,
-    SceneEditor,
   },
   dom: {
     // Use the View Transitions API when available.

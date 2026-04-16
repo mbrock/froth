@@ -44,8 +44,6 @@ defmodule FrothWeb.Router do
     live "/inference/:id", InferenceSessionsLive, :show
     live "/dataset", DatasetLive, :index
     live "/rdf", RdfLive, :index
-    live "/wiki", WikiLive, :index
-    live "/wiki/:slug", WikiLive, :show
     get "/media/:chat_id/:message_id", MediaController, :show
     live "/bot-context", BotContextLive, :index
     live "/follow", FollowLive, :index
@@ -53,8 +51,6 @@ defmodule FrothWeb.Router do
     live "/chat-stats", ChatStatsLive, :index
     live "/chat-stats/:day", ChatStatsLive, :index
     live "/jobs", JobsLive, :index
-    live "/scene", SceneLive, :index
-    live "/scene/:id", SceneLive, :index
   end
 
   scope "/froth/mini", FrothWeb do
@@ -77,12 +73,6 @@ defmodule FrothWeb.Router do
   scope "/froth", FrothWeb do
     post "/objects", ObjectStoreController, :create
     put "/objects/*key", ObjectStoreController, :put
-  end
-
-  scope "/", FrothWeb do
-    pipe_through :browser
-
-    live "/jbo", JboLive, :index
   end
 
   # Embed player

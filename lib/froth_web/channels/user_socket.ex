@@ -1,8 +1,6 @@
 defmodule FrothWeb.UserSocket do
   use Phoenix.Socket
 
-  channel "scene:*", FrothWeb.SceneChannel
-
   @impl true
   def connect(_params, socket, _connect_info) do
     {:ok, socket}

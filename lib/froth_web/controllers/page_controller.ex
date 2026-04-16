@@ -102,14 +102,6 @@ defmodule FrothWeb.PageController do
         icon_class: "border-lime-400/20 bg-lime-400/10 text-lime-100"
       },
       %{
-        id: "froth-link-wiki",
-        href: ~p"/froth/wiki",
-        title: "Wiki",
-        description: "Open the Encyclopædia Pallica entry browser.",
-        icon: "hero-globe-alt",
-        icon_class: "border-cyan-400/20 bg-cyan-400/10 text-cyan-100"
-      },
-      %{
         id: "froth-link-chat-stats",
         href: ~p"/froth/chat-stats",
         title: "Chat stats",
@@ -124,14 +116,6 @@ defmodule FrothWeb.PageController do
         description: "Watch the queue, retry jobs, and inspect backlog state.",
         icon: "hero-wrench-screwdriver",
         icon_class: "border-emerald-400/20 bg-emerald-400/10 text-emerald-100"
-      },
-      %{
-        id: "froth-link-scene",
-        href: ~p"/froth/scene",
-        title: "Scene",
-        description: "Open the scene viewer and related drilldowns.",
-        icon: "hero-film",
-        icon_class: "border-rose-400/20 bg-rose-400/10 text-rose-100"
       }
     ]
   end
