@@ -43,8 +43,6 @@ defmodule Froth.Telegram.Bot do
     :worker_ref,
     :chat_id,
     :reply_to,
-    :cycle_started_ms,
-    :cycle_span_id,
     :current_system_prompt,
     :last_tool_error,
     :last_sent_message_id,
@@ -322,19 +320,6 @@ defmodule Froth.Telegram.Bot do
     buffered_messages = state.mid_cycle_messages
     finished_cycle_id = state.cycle && state.cycle.id
 
-    if state.cycle_span_id do
-      Span.stop_span(
-        [:froth, :telegram, :bot, :cycle],
-        state.cycle_span_id,
-        state.cycle_started_ms || System.monotonic_time(),
-        %{
-          cycle_id: state.cycle && state.cycle.id,
-          bot_id: state.bot_config.id,
-          reason: inspect(reason)
-        }
-      )
-    end
-
     state =
       state
       |> maybe_set_crash_error(reason)
@@ -348,8 +333,6 @@ defmodule Froth.Telegram.Bot do
         worker_ref: nil,
         chat_id: nil,
         reply_to: nil,
-        cycle_started_ms: nil,
-        cycle_span_id: nil,
         cycle_replied?: false,
         current_system_prompt: nil,
         awaiting_user_input?: false,
@@ -801,7 +784,9 @@ defmodule Froth.Telegram.Bot do
     bc = state.bot_config
 
     if state.worker_pid do
-      Span.execute([:froth, :telegram, :bot, :busy], state.cycle_span_id, %{
+      session_span = Froth.Telegram.Session.span_id(bc.session_id)
+
+      Span.execute([:froth, :telegram, :bot, :busy], session_span, %{
         bot_id: bc.id,
         chat_id: chat_id,
         active_cycle_id: state.cycle && state.cycle.id
@@ -869,21 +854,13 @@ defmodule Froth.Telegram.Bot do
     bc = state.bot_config
     session_span = Froth.Telegram.Session.span_id(bc.session_id)
 
-    cycle_span_id =
-      Span.start_span([:froth, :telegram, :bot, :cycle], session_span, %{
-        bot_id: bc.id,
-        cycle_id: cycle.id,
-        chat_id: chat_id,
-        model: config.model || cycle.model
-      })
-
     cycle =
       Agent.update_cycle(cycle, %{
-        parent_span_id: cycle_span_id,
-        config: Map.put(cycle.config || %{}, "parent_span_id", cycle_span_id)
+        parent_span_id: session_span,
+        config: Map.put(cycle.config || %{}, "parent_span_id", session_span)
       })
 
-    config = %{config | parent_span_id: cycle_span_id}
+    config = %{config | parent_span_id: session_span}
 
     Phoenix.PubSub.subscribe(Froth.PubSub, "cycle:#{cycle.id}")
     {:ok, pid} = Worker.start_link({cycle, config})
@@ -896,8 +873,6 @@ defmodule Froth.Telegram.Bot do
         worker_ref: ref,
         chat_id: chat_id,
         reply_to: reply_to,
-        cycle_started_ms: System.monotonic_time(),
-        cycle_span_id: cycle_span_id,
         current_system_prompt: config.system,
         cycle_replied?: false,
         awaiting_user_input?: false,
@@ -960,15 +935,6 @@ defmodule Froth.Telegram.Bot do
 
     state =
       if (state.cycle && state.cycle.id == cycle_id) and is_pid(state.worker_pid) do
-        if state.cycle_span_id do
-          Span.stop_span(
-            [:froth, :telegram, :bot, :cycle],
-            state.cycle_span_id,
-            state.cycle_started_ms || System.monotonic_time(),
-            %{cycle_id: cycle_id, bot_id: state.bot_config.id, reason: "stopped"}
-          )
-        end
-
         Process.exit(state.worker_pid, {:shutdown, :cancelled})
 
         %{
@@ -978,8 +944,6 @@ defmodule Froth.Telegram.Bot do
             worker_ref: nil,
             chat_id: nil,
             reply_to: nil,
-            cycle_started_ms: nil,
-            cycle_span_id: nil,
             current_system_prompt: nil,
             cycle_replied?: false,
             awaiting_user_input?: false,
@@ -2014,10 +1978,10 @@ defmodule Froth.Telegram.Bot do
     if String.ends_with?(trimmed, footer), do: trimmed, else: trimmed <> "\n\n" <> footer
   end
 
-  defp build_cycle_cost_footer(%{cycle: %Cycle{id: cycle_id}} = state) when is_binary(cycle_id) do
+  defp build_cycle_cost_footer(%{cycle: %Cycle{id: cycle_id}}) when is_binary(cycle_id) do
     case Repo.get(Cycle, cycle_id) do
       %Cycle{usage: usage} = reloaded when is_map(usage) ->
-        render_cycle_cost_footer(state, usage, reloaded.cost_usd || 0.0)
+        render_cycle_cost_footer(reloaded, usage, reloaded.cost_usd || 0.0)
 
       _ ->
         nil
@@ -2026,14 +1990,14 @@ defmodule Froth.Telegram.Bot do
 
   defp build_cycle_cost_footer(_state), do: nil
 
-  defp render_cycle_cost_footer(state, usage, cost_usd) do
+  defp render_cycle_cost_footer(%Cycle{} = cycle, usage, cost_usd) do
     total_in = total_input_tokens(usage)
     total_out = usage_int(usage["output_tokens"])
 
     if total_in <= 0 and total_out <= 0 do
       nil
     else
-      duration = format_seconds(cycle_elapsed_seconds(state.cycle_started_ms))
+      duration = format_seconds(cycle_elapsed_seconds(cycle))
       in_part = format_tokens_k(total_in)
       out_part = format_tokens_k(total_out)
       cache_write_part = format_tokens_k(usage_int(usage["cache_creation_input_tokens"]))
@@ -2044,13 +2008,12 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp cycle_elapsed_seconds(started_mono) when is_integer(started_mono) do
-    elapsed_native = System.monotonic_time() - started_mono
-    elapsed_ms = System.convert_time_unit(elapsed_native, :native, :millisecond)
-    max(elapsed_ms, 0) / 1000
+  defp cycle_elapsed_seconds(%Cycle{started_at: %DateTime{} = started_at} = cycle) do
+    finished_at = cycle.finished_at || DateTime.utc_now()
+    DateTime.diff(finished_at, started_at, :millisecond) |> max(0) |> Kernel./(1000)
   end
 
-  defp cycle_elapsed_seconds(_), do: 0.0
+  defp cycle_elapsed_seconds(_cycle), do: 0.0
 
   defp format_seconds(seconds) when is_number(seconds) do
     value = if seconds < 0, do: 0.0, else: seconds * 1.0

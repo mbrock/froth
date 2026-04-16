@@ -207,6 +207,8 @@ defmodule Froth.Telegram.BotTest do
       {__MODULE__.FakeTelegramSession, session_id: session_id, test_pid: test_pid}
     )
 
+    started_at = DateTime.utc_now() |> DateTime.add(-12, :second)
+
     cycle =
       Repo.insert!(%Cycle{
         usage: %{
@@ -215,12 +217,12 @@ defmodule Froth.Telegram.BotTest do
           "cache_creation_input_tokens" => 400,
           "cache_read_input_tokens" => 2_500
         },
-        cost_usd: 0.012
+        cost_usd: 0.012,
+        started_at: started_at
       })
 
     worker_pid = start_supervised!({Agent, fn -> :ok end})
     worker_ref = make_ref()
-    started_ms = System.monotonic_time() - System.convert_time_unit(12, :second, :native)
 
     :sys.replace_state(bot, fn state ->
       %{
@@ -229,7 +231,6 @@ defmodule Froth.Telegram.BotTest do
           worker_pid: worker_pid,
           worker_ref: worker_ref,
           chat_id: 123,
-          cycle_started_ms: started_ms,
           cycle_replied?: true,
           last_sent_message_id: 42,
           last_sent_message_text: "hello"
