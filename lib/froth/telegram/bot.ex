@@ -52,9 +52,6 @@ defmodule Froth.Telegram.Bot do
     :current_narration_message_id,
     :current_narration_text,
     :current_narration_mode,
-    cycle_tool_calls: 0,
-    cycle_send_message_calls: 0,
-    cycle_limit_hit?: false,
     cycle_suppressed?: false,
     active_tasks: %{},
     control_prompt_cycles: MapSet.new(),
@@ -122,8 +119,6 @@ defmodule Froth.Telegram.Bot do
       chronicle_dir: Keyword.get(opts, :chronicle_dir),
       recent_message_limit: Keyword.get(opts, :recent_message_limit),
       recent_message_anchor_size: Keyword.get(opts, :recent_message_anchor_size),
-      max_tool_calls: Keyword.get(opts, :max_tool_calls),
-      max_send_message_calls: Keyword.get(opts, :max_send_message_calls),
       debounce_ms: Keyword.get(opts, :debounce_ms, 0)
     }
 
@@ -295,11 +290,6 @@ defmodule Froth.Telegram.Bot do
     {:noreply, state}
   end
 
-  def handle_info({:stream, {:tool_use_start, data}}, state) when is_map(data) do
-    state = normalize_state(state)
-    {:noreply, maybe_enforce_cycle_limits(state, data)}
-  end
-
   def handle_info({:stream, _event}, state), do: {:noreply, state}
 
   def handle_info({:eval_done_detail, %{status: status, result: result}}, state)
@@ -369,9 +359,6 @@ defmodule Froth.Telegram.Bot do
         current_narration_message_id: nil,
         current_narration_text: nil,
         current_narration_mode: nil,
-        cycle_tool_calls: 0,
-        cycle_send_message_calls: 0,
-        cycle_limit_hit?: false,
         cycle_suppressed?: false,
         mid_cycle_messages: []
     }
@@ -920,9 +907,6 @@ defmodule Froth.Telegram.Bot do
         current_narration_message_id: nil,
         current_narration_text: nil,
         current_narration_mode: nil,
-        cycle_tool_calls: 0,
-        cycle_send_message_calls: 0,
-        cycle_limit_hit?: false,
         cycle_suppressed?: false,
         mid_cycle_messages: []
     }
@@ -1005,9 +989,6 @@ defmodule Froth.Telegram.Bot do
             current_narration_message_id: nil,
             current_narration_text: nil,
             current_narration_mode: nil,
-            cycle_tool_calls: 0,
-            cycle_send_message_calls: 0,
-            cycle_limit_hit?: false,
             cycle_suppressed?: false,
             mid_cycle_messages: []
         }
@@ -2173,68 +2154,6 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp put_last_tool_error(state, _), do: state
-
-  defp maybe_enforce_cycle_limits(%{cycle_limit_hit?: true} = state, _tool_use_start), do: state
-
-  defp maybe_enforce_cycle_limits(state, %{"name" => tool_name}) when is_binary(tool_name) do
-    tool_calls = state.cycle_tool_calls + 1
-
-    send_message_calls =
-      state.cycle_send_message_calls +
-        if(tool_name == "send_message", do: 1, else: 0)
-
-    state = %{
-      state
-      | cycle_tool_calls: tool_calls,
-        cycle_send_message_calls: send_message_calls
-    }
-
-    cond do
-      exceeded_limit?(tool_calls, state.bot_config.max_tool_calls) ->
-        abort_cycle_for_limit(
-          state,
-          "I hit my tool-call limit and stopped. Ask again if you want me to continue."
-        )
-
-      exceeded_limit?(send_message_calls, state.bot_config.max_send_message_calls) ->
-        abort_cycle_for_limit(
-          state,
-          "I was about to keep replying, so I stopped. Ask again if you want more."
-        )
-
-      true ->
-        state
-    end
-  end
-
-  defp maybe_enforce_cycle_limits(state, _tool_use_start), do: state
-
-  defp exceeded_limit?(_count, nil), do: false
-  defp exceeded_limit?(count, limit) when is_integer(limit), do: count > limit
-  defp exceeded_limit?(_count, _limit), do: false
-
-  defp abort_cycle_for_limit(
-         %{cycle_limit_hit?: false, worker_pid: worker_pid, chat_id: chat_id, bot_config: bc} =
-           state,
-         message
-       )
-       when is_pid(worker_pid) and is_integer(chat_id) and is_binary(message) do
-    state = %{state | cycle_limit_hit?: true}
-
-    state =
-      case BotAdapter.send_message(bc.session_id, chat_id, message, reply_to: state.reply_to) do
-        {:ok, sent} ->
-          track_sent_message(state, sent, message)
-
-        {:error, reason} ->
-          put_last_tool_error(state, inspect(reason))
-      end
-
-    Process.exit(worker_pid, {:shutdown, :tool_limit_exceeded})
-    state
-  end
-
-  defp abort_cycle_for_limit(state, _message), do: %{state | cycle_limit_hit?: true}
 
   defp maybe_send_silent_cycle_fallback(%{cycle_replied?: true} = state), do: state
   defp maybe_send_silent_cycle_fallback(%{cycle_suppressed?: true} = state), do: state

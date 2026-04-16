@@ -38,7 +38,6 @@ defmodule Froth.Telegram.Lennart do
       name_triggers: ["lennart"],
       tools_module: LennartTools,
       recent_message_limit: 250,
-      max_tool_calls: 20,
       effort: "high"
     }
   end
