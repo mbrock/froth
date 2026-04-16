@@ -2281,7 +2281,7 @@ defmodule Froth.Telegram.Bot do
   defp usage_int(_value), do: 0
 
   defp estimate_usage_cost_usd(usage, model) when is_map(usage) do
-    case model_pricing_rates(model, prompt_over_200k?(usage)) do
+    case model_pricing_rates(model) do
       nil ->
         nil
 
@@ -2300,69 +2300,30 @@ defmodule Froth.Telegram.Bot do
 
   defp estimate_usage_cost_usd(_usage, _model), do: nil
 
-  defp prompt_over_200k?(usage) when is_map(usage) do
-    total_input_tokens(usage) > 200_000
-  end
-
-  # Source-of-truth rates (USD / MTok) from https://claude.com/pricing,
-  # synced on 2026-02-27.
-  defp model_pricing_rates(model, over_200k?) when is_binary(model) do
+  # Source-of-truth rates (USD / MTok) from https://claude.com/pricing.
+  # Flat pricing — the 200K-token tier has been retired.
+  defp model_pricing_rates(model) when is_binary(model) do
     downcased = String.downcase(model)
 
     cond do
+      String.contains?(downcased, "opus-4-7") ->
+        %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
+
       String.contains?(downcased, "opus-4-6") ->
-        if over_200k? do
-          %{input: 10.0, output: 37.5, cache_write: 12.5, cache_read: 1.0}
-        else
-          %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
-        end
+        %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
 
       String.contains?(downcased, "sonnet-4-6") ->
-        if over_200k? do
-          %{input: 6.0, output: 22.5, cache_write: 7.5, cache_read: 0.6}
-        else
-          %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
-        end
+        %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
 
       String.contains?(downcased, "haiku-4-5") ->
         %{input: 1.0, output: 5.0, cache_write: 1.25, cache_read: 0.1}
-
-      String.contains?(downcased, "opus-4-5") ->
-        %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
-
-      String.contains?(downcased, "sonnet-4-5") ->
-        %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
-
-      String.contains?(downcased, "opus-4-1") ->
-        %{input: 15.0, output: 75.0, cache_write: 18.75, cache_read: 1.5}
-
-      String.contains?(downcased, "sonnet-4") ->
-        %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
-
-      String.contains?(downcased, "opus-4") ->
-        %{input: 15.0, output: 75.0, cache_write: 18.75, cache_read: 1.5}
-
-      String.contains?(downcased, "sonnet-3-7") ->
-        %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
-
-      String.contains?(downcased, "sonnet-3-5") ->
-        %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
-
-      String.contains?(downcased, "haiku-3-5") ->
-        %{input: 0.8, output: 4.0, cache_write: 1.0, cache_read: 0.08}
-
-      String.contains?(downcased, "opus-3") ->
-        %{input: 15.0, output: 75.0, cache_write: 18.75, cache_read: 1.5}
-
-      String.contains?(downcased, "haiku-3") ->
-        %{input: 0.25, output: 1.25, cache_write: 0.30, cache_read: 0.03}
 
       true ->
         nil
     end
   end
 
-  defp model_pricing_rates(_model, _over_200k?), do: nil
+  defp model_pricing_rates(_model), do: nil
 
   defp extract_text(%{"_wrapped" => value}) when is_binary(value), do: value
 
