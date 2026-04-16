@@ -30,6 +30,7 @@ defmodule Froth.Telegram.Bot do
   alias Froth.Telegram.ControlPrompt
   alias Froth.Telegram.CostFooter
   alias Froth.Telegram.CycleLink
+  alias Froth.Telegram.Message, as: TgMessage
   alias Froth.Telegram.MessageIdSync
   alias Froth.Telegram.Names
   alias Froth.Telegram.PendingAsks
@@ -290,8 +291,8 @@ defmodule Froth.Telegram.Bot do
 
   defp route_update(%{"@type" => "updateNewMessage", "message" => msg}, bot_config)
        when is_map(msg) do
-    sender = get_in(msg, ["sender_id", "user_id"])
-    chat_id = msg["chat_id"]
+    sender = TgMessage.sender_user_id(msg)
+    chat_id = TgMessage.chat_id(msg)
 
     is_reply_to_bot = replied_to_bot?(msg, bot_config.bot_user_id)
 
@@ -350,7 +351,7 @@ defmodule Froth.Telegram.Bot do
   defp route_update(_, _), do: :ignore
 
   defp route_callback_query(query, bot_config) do
-    query_id = callback_query_id(query)
+    query_id = query["id"]
 
     cond do
       is_nil(query_id) ->
@@ -368,8 +369,8 @@ defmodule Froth.Telegram.Bot do
   defp route_callback_data(query, query_id, bot_config) do
     case parse_callback_payload(query) do
       {:ok, "ask", index} ->
-        with chat_id when is_integer(chat_id) <- callback_query_chat_id(query),
-             message_id when is_integer(message_id) <- callback_query_message_id(query),
+        with chat_id when is_integer(chat_id) <- TgMessage.chat_id(query),
+             message_id when is_integer(message_id) <- TgMessage.message_id(query),
              %{} = pending_ask <-
                PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, message_id),
              alternative when is_binary(alternative) <-
@@ -394,8 +395,8 @@ defmodule Froth.Telegram.Bot do
             "askstop" -> FailureIntervention.stop_answer()
           end
 
-        with chat_id when is_integer(chat_id) <- callback_query_chat_id(query),
-             message_id when is_integer(message_id) <- callback_query_message_id(query),
+        with chat_id when is_integer(chat_id) <- TgMessage.chat_id(query),
+             message_id when is_integer(message_id) <- TgMessage.message_id(query),
              %{} = pending_ask <-
                PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, message_id),
              true <- FailureIntervention.failure_intervention?(pending_ask),
@@ -445,31 +446,12 @@ defmodule Froth.Telegram.Bot do
 
   defp parse_callback_payload(_), do: :error
 
-  defp callback_query_id(%{"id" => id}), do: id
-  defp callback_query_id(_query), do: nil
-
-  defp callback_query_chat_id(%{"chat_id" => chat_id}) when is_integer(chat_id), do: chat_id
-
-  defp callback_query_chat_id(%{"message" => %{"chat_id" => chat_id}}) when is_integer(chat_id),
-    do: chat_id
-
-  defp callback_query_chat_id(_query), do: nil
-
-  defp callback_query_message_id(%{"message_id" => message_id}) when is_integer(message_id),
-    do: message_id
-
-  defp callback_query_message_id(%{"message" => %{"id" => message_id}})
-       when is_integer(message_id),
-       do: message_id
-
-  defp callback_query_message_id(_query), do: nil
-
   defp pending_ask_for_message(msg, bot_config, mentioned?, is_reply_to_bot)
        when is_map(msg) and is_map(bot_config) do
     chat_id = msg["chat_id"]
 
     cond do
-      reply_message_id = reply_to_message_id(msg) ->
+      reply_message_id = TgMessage.reply_to_message_id(msg) ->
         PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, reply_message_id)
 
       (is_integer(chat_id) and chat_id > 0) or mentioned? or is_reply_to_bot ->
@@ -493,11 +475,7 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp pending_ask_answer_from_message(msg, bot_config) do
-    text =
-      get_in(msg, ["content", "text", "text"]) ||
-        get_in(msg, ["content", "caption", "text"])
-
-    strip_bot_mention(text, bot_config.bot_username)
+    strip_bot_mention(TgMessage.text(msg), bot_config.bot_username)
   end
 
   defp strip_bot_mention(text, bot_username) when is_binary(text) and is_binary(bot_username) do
@@ -512,17 +490,6 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp strip_bot_mention(_text, _bot_username), do: nil
-
-  defp reply_to_message_id(%{
-         "reply_to" => %{
-           "@type" => "messageReplyToMessage",
-           "message_id" => reply_message_id
-         }
-       })
-       when is_integer(reply_message_id),
-       do: reply_message_id
-
-  defp reply_to_message_id(_msg), do: nil
 
   defp replied_to_bot?(msg, bot_user_id) when is_map(msg) and is_integer(bot_user_id) do
     case msg do
@@ -571,9 +538,7 @@ defmodule Froth.Telegram.Bot do
     reply_to = msg["reply_to_override"] || msg["id"]
     system_prompt = resolve_system_prompt(chat_id, msg, state.bot_config)
 
-    text =
-      get_in(msg, ["content", "text", "text"]) ||
-        get_in(msg, ["content", "caption", "text"]) || ""
+    text = TgMessage.text(msg) || ""
 
     user_content =
       case BotContext.for_message(msg, state.bot_config) do
@@ -1202,7 +1167,7 @@ defmodule Froth.Telegram.Bot do
 
   defp resolution_config_for_message(msg, bot_config, pending_ask, answer)
        when is_map(msg) and is_map(bot_config) do
-    actor_id = get_in(msg, ["sender_id", "user_id"])
+    actor_id = TgMessage.sender_user_id(msg)
 
     answer
     |> resolution_config_base(bot_config, pending_ask, actor_id)
@@ -1221,7 +1186,7 @@ defmodule Froth.Telegram.Bot do
 
   defp resolution_config_for_callback(query, bot_config, pending_ask, answer, opts \\ [])
        when is_map(query) and is_map(bot_config) and is_list(opts) do
-    actor_id = callback_query_sender_id(query)
+    actor_id = TgMessage.sender_user_id(query)
 
     answer
     |> resolution_config_base(bot_config, pending_ask, actor_id)
@@ -1282,16 +1247,6 @@ defmodule Froth.Telegram.Bot do
        when is_map(pending_ask) and is_binary(answer) do
     Enum.find_index(pending_ask.alternatives || [], &(&1 == answer))
   end
-
-  defp callback_query_sender_id(%{"sender_user_id" => sender_user_id})
-       when is_integer(sender_user_id),
-       do: sender_user_id
-
-  defp callback_query_sender_id(%{"sender_id" => %{"user_id" => sender_user_id}})
-       when is_integer(sender_user_id),
-       do: sender_user_id
-
-  defp callback_query_sender_id(_query), do: nil
 
   defp maybe_track_task_from_result(state, cycle_id, {:ok, result}) when is_binary(cycle_id) do
     case extract_task_id(result) do
