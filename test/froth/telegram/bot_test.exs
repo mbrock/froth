@@ -3,12 +3,16 @@ defmodule Froth.Telegram.BotTest do
 
   alias Froth.Agent.Cycle
   alias Froth.Agent.ToolUse
+  alias Froth.Repo
   alias Froth.Telegram.Bot
 
   setup do
     if is_nil(Process.whereis(Froth.Telegram.Registry)) do
       start_supervised!({Registry, keys: :unique, name: Froth.Telegram.Registry})
     end
+
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
 
     :ok
   end
@@ -203,6 +207,17 @@ defmodule Froth.Telegram.BotTest do
       {__MODULE__.FakeTelegramSession, session_id: session_id, test_pid: test_pid}
     )
 
+    cycle =
+      Repo.insert!(%Cycle{
+        usage: %{
+          "input_tokens" => 1_200,
+          "output_tokens" => 300,
+          "cache_creation_input_tokens" => 400,
+          "cache_read_input_tokens" => 2_500
+        },
+        cost_usd: 0.012
+      })
+
     worker_pid = start_supervised!({Agent, fn -> :ok end})
     worker_ref = make_ref()
     started_ms = System.monotonic_time() - System.convert_time_unit(12, :second, :native)
@@ -210,20 +225,14 @@ defmodule Froth.Telegram.BotTest do
     :sys.replace_state(bot, fn state ->
       %{
         state
-        | cycle: %Cycle{id: "cycle_1"},
+        | cycle: cycle,
           worker_pid: worker_pid,
           worker_ref: worker_ref,
           chat_id: 123,
           cycle_started_ms: started_ms,
           cycle_replied?: true,
           last_sent_message_id: 42,
-          last_sent_message_text: "hello",
-          cycle_usage_total: %{
-            "input_tokens" => 1_200,
-            "output_tokens" => 300,
-            "cache_creation_input_tokens" => 400,
-            "cache_read_input_tokens" => 2_500
-          }
+          last_sent_message_text: "hello"
       }
     end)
 

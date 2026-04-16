@@ -52,9 +52,6 @@ defmodule Froth.Telegram.Bot do
     :current_narration_message_id,
     :current_narration_text,
     :current_narration_mode,
-    cycle_usage_total: %{},
-    cycle_cost_usd: 0.0,
-    stream_usage_current: %{},
     cycle_tool_calls: 0,
     cycle_send_message_calls: 0,
     cycle_limit_hit?: false,
@@ -286,7 +283,6 @@ defmodule Froth.Telegram.Bot do
 
   def handle_info({:event, _event, %Message{role: :agent, content: content}}, state) do
     state = normalize_state(state)
-    state = commit_stream_usage(state)
     {:noreply, send_agent_response(state, content)}
   end
 
@@ -297,24 +293,6 @@ defmodule Froth.Telegram.Bot do
 
   def handle_info({:event, _event, %Message{}}, state) do
     {:noreply, state}
-  end
-
-  def handle_info({:stream, {:usage, usage_event}}, state) when is_map(usage_event) do
-    state = normalize_state(state)
-
-    usage =
-      cond do
-        is_map(usage_event["accumulated_usage"]) ->
-          usage_event["accumulated_usage"]
-
-        is_map(usage_event["usage"]) ->
-          merge_usage_maps(state.stream_usage_current, usage_event["usage"])
-
-        true ->
-          state.stream_usage_current
-      end
-
-    {:noreply, %{state | stream_usage_current: usage}}
   end
 
   def handle_info({:stream, {:tool_use_start, data}}, state) when is_map(data) do
@@ -370,7 +348,6 @@ defmodule Froth.Telegram.Bot do
     state =
       state
       |> maybe_set_crash_error(reason)
-      |> commit_stream_usage()
       |> maybe_append_cycle_footer()
       |> maybe_send_silent_cycle_fallback()
 
@@ -392,9 +369,6 @@ defmodule Froth.Telegram.Bot do
         current_narration_message_id: nil,
         current_narration_text: nil,
         current_narration_mode: nil,
-        cycle_usage_total: %{},
-        cycle_cost_usd: 0.0,
-        stream_usage_current: %{},
         cycle_tool_calls: 0,
         cycle_send_message_calls: 0,
         cycle_limit_hit?: false,
@@ -946,9 +920,6 @@ defmodule Froth.Telegram.Bot do
         current_narration_message_id: nil,
         current_narration_text: nil,
         current_narration_mode: nil,
-        cycle_usage_total: %{},
-        cycle_cost_usd: 0.0,
-        stream_usage_current: %{},
         cycle_tool_calls: 0,
         cycle_send_message_calls: 0,
         cycle_limit_hit?: false,
@@ -1034,9 +1005,6 @@ defmodule Froth.Telegram.Bot do
             current_narration_message_id: nil,
             current_narration_text: nil,
             current_narration_mode: nil,
-            cycle_usage_total: %{},
-            cycle_cost_usd: 0.0,
-            stream_usage_current: %{},
             cycle_tool_calls: 0,
             cycle_send_message_calls: 0,
             cycle_limit_hit?: false,
@@ -2015,39 +1983,6 @@ defmodule Froth.Telegram.Bot do
 
   defp sent_message_id(_), do: nil
 
-  defp commit_stream_usage(%{stream_usage_current: usage} = state)
-       when is_map(usage) and map_size(usage) > 0 do
-    turn_cost = estimate_usage_cost_usd(usage, state.bot_config && state.bot_config.model) || 0.0
-
-    %{
-      state
-      | cycle_usage_total: merge_usage_maps(state.cycle_usage_total, usage),
-        cycle_cost_usd: state.cycle_cost_usd + turn_cost,
-        stream_usage_current: %{}
-    }
-  end
-
-  defp commit_stream_usage(state), do: state
-
-  defp merge_usage_maps(left, right) when is_map(left) and is_map(right) do
-    Map.merge(left, right, fn _key, left_value, right_value ->
-      cond do
-        is_map(left_value) and is_map(right_value) ->
-          merge_usage_maps(left_value, right_value)
-
-        is_integer(left_value) and is_integer(right_value) ->
-          left_value + right_value
-
-        true ->
-          right_value
-      end
-    end)
-  end
-
-  defp merge_usage_maps(_left, right) when is_map(right), do: right
-  defp merge_usage_maps(left, _right) when is_map(left), do: left
-  defp merge_usage_maps(_left, _right), do: %{}
-
   defp maybe_append_cycle_footer(
          %{cycle_replied?: true, awaiting_user_input?: false, chat_id: chat_id, bot_config: bc} =
            state
@@ -2098,29 +2033,31 @@ defmodule Froth.Telegram.Bot do
     if String.ends_with?(trimmed, footer), do: trimmed, else: trimmed <> "\n\n" <> footer
   end
 
-  defp build_cycle_cost_footer(state) do
-    usage = state.cycle_usage_total || %{}
+  defp build_cycle_cost_footer(%{cycle: %Cycle{id: cycle_id}} = state) when is_binary(cycle_id) do
+    case Repo.get(Cycle, cycle_id) do
+      %Cycle{usage: usage} = reloaded when is_map(usage) ->
+        render_cycle_cost_footer(state, usage, reloaded.cost_usd || 0.0)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp build_cycle_cost_footer(_state), do: nil
+
+  defp render_cycle_cost_footer(state, usage, cost_usd) do
     total_in = total_input_tokens(usage)
     total_out = usage_int(usage["output_tokens"])
 
     if total_in <= 0 and total_out <= 0 do
       nil
     else
-      elapsed_seconds = cycle_elapsed_seconds(state.cycle_started_ms)
-      duration = format_seconds(elapsed_seconds)
+      duration = format_seconds(cycle_elapsed_seconds(state.cycle_started_ms))
       in_part = format_tokens_k(total_in)
       out_part = format_tokens_k(total_out)
       cache_write_part = format_tokens_k(usage_int(usage["cache_creation_input_tokens"]))
       cache_read_part = format_tokens_k(usage_int(usage["cache_read_input_tokens"]))
-
-      usd =
-        if state.cycle_cost_usd > 0 do
-          state.cycle_cost_usd
-        else
-          estimate_usage_cost_usd(usage, state.bot_config && state.bot_config.model) || 0.0
-        end
-
-      cost = "$" <> :erlang.float_to_binary(usd, decimals: 3)
+      cost = "$" <> :erlang.float_to_binary(cost_usd * 1.0, decimals: 3)
 
       "[#{duration} | #{in_part} in | #{out_part} out | #{cache_write_part} cw | #{cache_read_part} cr | #{cost}]"
     end
@@ -2180,51 +2117,6 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp usage_int(_value), do: 0
-
-  defp estimate_usage_cost_usd(usage, model) when is_map(usage) do
-    case model_pricing_rates(model) do
-      nil ->
-        nil
-
-      rates ->
-        input_tokens = usage_int(usage["input_tokens"])
-        output_tokens = usage_int(usage["output_tokens"])
-        cache_creation_tokens = usage_int(usage["cache_creation_input_tokens"])
-        cache_read_tokens = usage_int(usage["cache_read_input_tokens"])
-
-        (input_tokens * rates.input +
-           output_tokens * rates.output +
-           cache_creation_tokens * rates.cache_write +
-           cache_read_tokens * rates.cache_read) / 1_000_000
-    end
-  end
-
-  defp estimate_usage_cost_usd(_usage, _model), do: nil
-
-  # Source-of-truth rates (USD / MTok) from https://claude.com/pricing.
-  # Flat pricing — the 200K-token tier has been retired.
-  defp model_pricing_rates(model) when is_binary(model) do
-    downcased = String.downcase(model)
-
-    cond do
-      String.contains?(downcased, "opus-4-7") ->
-        %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
-
-      String.contains?(downcased, "opus-4-6") ->
-        %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
-
-      String.contains?(downcased, "sonnet-4-6") ->
-        %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
-
-      String.contains?(downcased, "haiku-4-5") ->
-        %{input: 1.0, output: 5.0, cache_write: 1.25, cache_read: 0.1}
-
-      true ->
-        nil
-    end
-  end
-
-  defp model_pricing_rates(_model), do: nil
 
   defp extract_text(blocks) when is_list(blocks) do
     blocks
