@@ -67,40 +67,6 @@ config :froth, Froth.Dataset,
   endpoint: System.get_env("FROTH_SPARQL_ENDPOINT", "http://localhost:3030/kg/sparql"),
   query_opts: [request_method: :post, protocol_version: "1.1"]
 
-config :froth, Froth.Browser,
-  executable: System.get_env("FROTH_BROWSER_EXECUTABLE"),
-  profile:
-    (case System.get_env("FROTH_BROWSER_PROFILE") do
-       nil -> :headless_bulk
-       value -> value
-     end),
-  tmp_dir: System.get_env("FROTH_BROWSER_TMP_DIR", Path.expand("tmp/browser")),
-  artifact_dir:
-    System.get_env("FROTH_BROWSER_ARTIFACT_DIR", Path.expand("tmp/browser-artifacts")),
-  launch_timeout_ms:
-    (case System.get_env("FROTH_BROWSER_LAUNCH_TIMEOUT_MS") do
-       nil -> 15_000
-       value -> String.to_integer(value)
-     end),
-  command_timeout_ms:
-    (case System.get_env("FROTH_BROWSER_COMMAND_TIMEOUT_MS") do
-       nil -> 10_000
-       value -> String.to_integer(value)
-     end),
-  navigation_timeout_ms:
-    (case System.get_env("FROTH_BROWSER_NAVIGATION_TIMEOUT_MS") do
-       nil -> 15_000
-       value -> String.to_integer(value)
-     end)
-
-config :froth, Froth.Video,
-  render_dir: System.get_env("FROTH_VIDEO_RENDER_DIR", Path.expand("tmp/video-renders")),
-  compute_worker_count:
-    (case System.get_env("FROTH_VIDEO_COMPUTE_WORKER_COUNT") do
-       nil -> 2
-       value -> String.to_integer(value)
-     end)
-
 config :froth, Froth.ObjectStore,
   mode:
     (case System.get_env("FROTH_OBJECT_STORE_MODE", "local") do

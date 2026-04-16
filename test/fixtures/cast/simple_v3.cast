@@ -1,6 +1,0 @@
-{"version":3,"term":{"cols":82,"rows":25,"type":"xterm-256color","theme":{"fg":"#f8f8f2","bg":"#282a36","palette":"#21222c:#ff5555:#50fa7b:#f1fa8c:#bd93f9:#ff79c6:#8be9fd:#f8f8f2:#6272a4:#ff6e6e:#69ff94:#ffffa5:#d6acff:#ff92df:#a4ffff:#ffffff"}},"title":"Simple v3"}
-# playback comments should be ignored
-[0.1,"o","hello"]
-[0.15,"o","\rhello world"]
-[0.25,"r","90x28"]
-[0.05,"x","0"]

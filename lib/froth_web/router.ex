@@ -34,7 +34,6 @@ defmodule FrothWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
-    get "/asciicasts/:sha256", AsciicastController, :show
     get "/objects/*key", ObjectStoreController, :show
     get "/summaries", SummariesController, :index
     get "/headlines", HeadlinesController, :index
@@ -48,7 +47,6 @@ defmodule FrothWeb.Router do
     live "/wiki", WikiLive, :index
     live "/wiki/:slug", WikiLive, :show
     get "/media/:chat_id/:message_id", MediaController, :show
-    # live "/voice", VoiceLive, :index  # replaced by /froth/voice controller
     live "/bot-context", BotContextLive, :index
     live "/follow", FollowLive, :index
     live "/telemetry", TelemetryLive, :index

@@ -244,20 +244,7 @@ defmodule Froth.Telemetry do
     [:froth, :web, :connect_failed],
     [:froth, :web, :snapshot_failed],
     [:froth, :web, :miniapp_log],
-    [:froth, :web, :miniapp_params],
-    [:froth, :ws_proto, :connecting],
-    [:froth, :ws_proto, :upgrade_sent],
-    [:froth, :ws_proto, :connect_failed],
-    [:froth, :ws_proto, :raw_recv],
-    [:froth, :ws_proto, :connected],
-    [:froth, :ws_proto, :upgrade_failed],
-    [:froth, :ws_proto, :ping],
-    [:froth, :ws_proto, :recv_close],
-    [:froth, :ws_proto, :closed],
-    [:froth, :ws_proto, :socket_error],
-    [:froth, :ws_proto, :send_done],
-    [:froth, :ws_proto, :send_failed],
-    [:froth, :ws_proto, :unhandled]
+    [:froth, :web, :miniapp_params]
   ]
 
   @all_events @http_events ++

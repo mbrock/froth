@@ -1634,11 +1634,6 @@ defmodule Froth.Telegram.Bot do
           _ = Froth.Tasks.Shell.send_signal(task_id, "TERM")
         end
 
-      String.starts_with?(task_id, "video:") ->
-        if Froth.Tasks.Video.alive?(task_id) do
-          _ = Froth.Tasks.Video.stop_video(task_id)
-        end
-
       true ->
         :ok
     end

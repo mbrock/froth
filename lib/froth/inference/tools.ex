@@ -633,11 +633,6 @@ defmodule Froth.Inference.Tools do
               Froth.Tasks.stop(task_id)
               {:ok, "Stopped task #{task_id}."}
 
-            Froth.Tasks.Video.alive?(task_id) ->
-              Froth.Tasks.Video.stop_video(task_id)
-              Froth.Tasks.stop(task_id)
-              {:ok, "Stopped task #{task_id}."}
-
             true ->
               task = Froth.Tasks.get(task_id)
 

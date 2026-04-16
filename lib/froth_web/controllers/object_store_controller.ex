@@ -1,9 +1,7 @@
 defmodule FrothWeb.ObjectStoreController do
   use FrothWeb, :controller
 
-  alias Froth.Cast.Parser
   alias Froth.ObjectStore
-  @asciicast_content_types ["application/x-asciicast", "application/json"]
 
   def show(conn, %{"key" => segments}) when is_list(segments) do
     with {:ok, key} <- normalize_segments(segments) do
@@ -28,6 +26,8 @@ defmodule FrothWeb.ObjectStoreController do
            ObjectStore.put_blob(body,
              content_type: content_type
            ) do
+      _ = content_type
+
       payload =
         %{
           key: stored.key,
@@ -36,7 +36,6 @@ defmodule FrothWeb.ObjectStoreController do
           content_type: stored.content_type,
           content_length: stored.content_length
         }
-        |> maybe_put_asciicast_html_url(conn, body, stored.sha256, content_type)
 
       conn
       |> put_resp_header("location", public_object_url(conn, stored.key))
@@ -106,24 +105,6 @@ defmodule FrothWeb.ObjectStoreController do
     |> ObjectStore.normalize_key()
   end
 
-  defp maybe_put_asciicast_html_url(payload, conn, body, sha256, content_type) do
-    if content_type in @asciicast_content_types do
-      case Parser.parse(body) do
-        {:ok, _recording} ->
-          Map.put(
-            payload,
-            :asciicast_html_url,
-            public_asciicast_url(conn, sha256)
-          )
-
-        {:error, _reason} ->
-          payload
-      end
-    else
-      payload
-    end
-  end
-
   defp authorize_write(conn) do
     configured = Application.get_env(:froth, ObjectStore, [])[:write_token]
     provided = List.first(get_req_header(conn, "x-froth-object-store-token"))
@@ -158,13 +139,6 @@ defmodule FrothWeb.ObjectStoreController do
     case forwarded_origin(conn) do
       nil -> ObjectStore.public_url(key)
       origin -> origin <> "/froth/objects/" <> key
-    end
-  end
-
-  defp public_asciicast_url(conn, sha256) do
-    case forwarded_origin(conn) do
-      nil -> url(conn, ~p"/froth/asciicasts/#{sha256}")
-      origin -> origin <> "/froth/asciicasts/" <> sha256
     end
   end
 

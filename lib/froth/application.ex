@@ -58,9 +58,7 @@ defmodule Froth.Application do
     [
       FrothWeb.Telemetry,
       {Finch, name: Froth.Finch},
-      Froth.Browser.Supervisor,
       {Phoenix.PubSub, name: Froth.PubSub},
-      FrothWeb.ComputePresence,
       {Task.Supervisor, name: Froth.TaskSupervisor},
       cluster_supervisor_child()
     ]
