@@ -1674,25 +1674,15 @@ defmodule Froth.Telegram.Bot do
          content
        )
        when is_integer(chat_id) do
-    raw_text = extract_text(content)
+    case normalize_agent_reply_text(extract_text(content)) do
+      {:ok, text, entities} ->
+        send_plaintext_response(state, bc.session_id, chat_id, reply_to, text, entities: entities)
 
-    case extract_text_tool_calls(raw_text) do
-      [] ->
-        case normalize_agent_reply_text(raw_text) do
-          {:ok, text, entities} ->
-            send_plaintext_response(state, bc.session_id, chat_id, reply_to, text,
-              entities: entities
-            )
+      :no_reply ->
+        %{state | cycle_suppressed?: true}
 
-          :no_reply ->
-            %{state | cycle_suppressed?: true}
-
-          :empty ->
-            state
-        end
-
-      tool_uses ->
-        execute_text_tool_calls(state, tool_uses)
+      :empty ->
+        state
     end
   end
 
@@ -1807,89 +1797,6 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp process_grok_citations(_), do: {"", []}
-
-  defp extract_text_tool_calls(text) when is_binary(text) do
-    ~r/<tool_call>\s*(\{.*?\})\s*<\/tool_call>/s
-    |> Regex.scan(text, capture: :all_but_first)
-    |> Enum.map(&List.first/1)
-    |> Enum.map(&decode_text_tool_call/1)
-    |> Enum.reject(&is_nil/1)
-  end
-
-  defp extract_text_tool_calls(_), do: []
-
-  defp decode_text_tool_call(json) when is_binary(json) do
-    with {:ok, %{"name" => "send_message", "arguments" => arguments}} when is_map(arguments) <-
-           Jason.decode(json),
-         text when is_binary(text) and text != "" <- arguments["text"] do
-      %ToolUse{name: "send_message", input: %{"text" => text}}
-    else
-      _ -> nil
-    end
-  end
-
-  defp decode_text_tool_call(_), do: nil
-
-  defp execute_text_tool_calls(
-         %{chat_id: chat_id, reply_to: reply_to, cycle: cycle} = state,
-         tool_uses
-       )
-       when is_integer(chat_id) and is_list(tool_uses) do
-    cycle_id = if(cycle, do: cycle.id, else: nil)
-    context = %{chat_id: chat_id, reply_to: reply_to, cycle_id: cycle_id}
-
-    {state, sent_any?} =
-      Enum.reduce_while(tool_uses, {state, false}, fn tool_use, {state, sent_any?} ->
-        {result, state} = execute_prepared_tool_call(state, tool_use, context)
-
-        case result do
-          {:ok, _} ->
-            {:cont, {state, true}}
-
-          {:error, reason} when is_binary(reason) ->
-            {:halt, {put_last_tool_error(state, reason), sent_any?}}
-
-          {:error, reason} ->
-            {:halt, {put_last_tool_error(state, inspect(reason)), sent_any?}}
-        end
-      end)
-
-    if sent_any?, do: state, else: maybe_send_plaintext_tool_call_fallback(state, tool_uses)
-  end
-
-  defp execute_text_tool_calls(state, _tool_uses), do: state
-
-  defp execute_prepared_tool_call(state, %ToolUse{} = tool_use, context) do
-    case prepare_tool_call(state, tool_use, context) do
-      {{:ok, prepared}, state} ->
-        outcome = ToolExecution.execute(prepared.execution)
-        commit_tool_call(state, tool_use, context, prepared, outcome)
-
-      {{:error, reason}, state} ->
-        {{:error, reason}, state}
-    end
-  end
-
-  defp maybe_send_plaintext_tool_call_fallback(state, [%ToolUse{input: %{"text" => text}} | _])
-       when is_binary(text) do
-    normalize_agent_reply_text(text)
-    |> case do
-      {:ok, cleaned, entities} ->
-        send_plaintext_response(
-          state,
-          state.bot_config.session_id,
-          state.chat_id,
-          state.reply_to,
-          cleaned,
-          entities: entities
-        )
-
-      _ ->
-        state
-    end
-  end
-
-  defp maybe_send_plaintext_tool_call_fallback(state, _tool_uses), do: state
 
   defp send_message_tool_enabled?(bot_config) when is_map(bot_config) do
     bot_config
