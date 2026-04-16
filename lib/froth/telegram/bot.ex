@@ -841,6 +841,9 @@ defmodule Froth.Telegram.Bot do
     if not is_integer(chat_id) do
       {{:error, "missing chat_id in tool context"}, state}
     else
+      cycle_config = (state.cycle && state.cycle.config) || %{}
+      task_ids = state.active_tasks |> Map.get(cycle_id, MapSet.new()) |> Enum.sort()
+
       execution_base = %{
         tool_use_id: tool_use.id,
         bot_id: bc.id,
@@ -855,12 +858,12 @@ defmodule Froth.Telegram.Bot do
         current_narration_mode: state.current_narration_mode,
         last_agent_message_id: state.last_sent_message_id,
         system_prompt: resolve_system_prompt(chat_id, nil, bc),
-        model: current_cycle_model(state),
-        tools: current_cycle_tools(state),
-        active_task_ids: current_cycle_task_ids(state, cycle_id),
-        thinking: current_cycle_thinking(state),
-        effort: current_cycle_effort(state),
-        tool_timeout_ms: current_cycle_tool_timeout_ms(state)
+        model: cycle_config["model"] || bc.model,
+        tools: cycle_config["tool_specs"] || resolve_tool_specs(bc),
+        active_task_ids: task_ids,
+        thinking: cycle_config["thinking"] || bc.thinking,
+        effort: cycle_config["effort"] || bc.effort,
+        tool_timeout_ms: cycle_config["tool_timeout_ms"]
       }
 
       {execution, state} =
@@ -1548,109 +1551,25 @@ defmodule Froth.Telegram.Bot do
   defp pending_ask_worker_config(state, pending_ask, reply_to)
        when is_map(pending_ask) do
     config = pending_ask.config || %{}
-    system_prompt = config_string(config, "system") || state.bot_config.system_prompt || ""
-
-    tools =
-      config_list(config, "tools") || resolve_tool_specs(state.bot_config) || []
+    bc = state.bot_config
 
     %Config{
-      system: system_prompt,
-      model: config_string(config, "model") || state.bot_config.model,
-      tools: tools,
+      system: config["system"] || bc.system_prompt || "",
+      model: config["model"] || bc.model,
+      tools: config["tools"] || resolve_tool_specs(bc),
       tool_executor: self(),
       context: %{
         chat_id: pending_ask.chat_id,
         reply_to: normalize_reply_to(reply_to || pending_ask.message_id),
-        bot_id: state.bot_config.id,
-        session_id: state.bot_config.session_id,
-        bot_username: state.bot_config.bot_username
+        bot_id: bc.id,
+        session_id: bc.session_id,
+        bot_username: bc.bot_username
       },
-      thinking: config_map(config, "thinking") || state.bot_config.thinking,
-      effort: config_string(config, "effort") || state.bot_config.effort,
-      tool_timeout_ms: config_integer(config, "tool_timeout_ms")
+      thinking: config["thinking"] || bc.thinking,
+      effort: config["effort"] || bc.effort,
+      tool_timeout_ms: config["tool_timeout_ms"]
     }
   end
-
-  defp current_cycle_model(%{cycle: %Cycle{model: model}}) when is_binary(model) and model != "",
-    do: model
-
-  defp current_cycle_model(%{bot_config: %{model: model}}) when is_binary(model), do: model
-  defp current_cycle_model(_state), do: nil
-
-  defp current_cycle_tools(%{cycle: %Cycle{config: %{"tool_specs" => tool_specs}}})
-       when is_list(tool_specs),
-       do: tool_specs
-
-  defp current_cycle_tools(%{bot_config: bot_config}), do: resolve_tool_specs(bot_config)
-
-  defp current_cycle_task_ids(%{active_tasks: active_tasks}, cycle_id)
-       when is_map(active_tasks) and is_binary(cycle_id) do
-    active_tasks
-    |> Map.get(cycle_id, MapSet.new())
-    |> Enum.sort()
-  end
-
-  defp current_cycle_task_ids(_state, _cycle_id), do: []
-
-  defp current_cycle_thinking(%{cycle: %Cycle{config: %{"thinking" => thinking}}})
-       when is_map(thinking),
-       do: thinking
-
-  defp current_cycle_thinking(%{bot_config: %{thinking: thinking}}) when is_map(thinking),
-    do: thinking
-
-  defp current_cycle_thinking(_state), do: nil
-
-  defp current_cycle_effort(%{cycle: %Cycle{config: %{"effort" => effort}}})
-       when is_binary(effort) and effort != "",
-       do: effort
-
-  defp current_cycle_effort(%{bot_config: %{effort: effort}}) when is_binary(effort),
-    do: effort
-
-  defp current_cycle_effort(_state), do: nil
-
-  defp current_cycle_tool_timeout_ms(%{cycle: %Cycle{config: %{"tool_timeout_ms" => timeout_ms}}})
-       when is_integer(timeout_ms) and timeout_ms > 0,
-       do: timeout_ms
-
-  defp current_cycle_tool_timeout_ms(_state), do: nil
-
-  defp config_string(config, key) when is_map(config) and is_binary(key) do
-    case Map.get(config, key) do
-      value when is_binary(value) and value != "" -> value
-      _ -> nil
-    end
-  end
-
-  defp config_string(_config, _key), do: nil
-
-  defp config_integer(config, key) when is_map(config) and is_binary(key) do
-    case Map.get(config, key) do
-      value when is_integer(value) and value > 0 -> value
-      _ -> nil
-    end
-  end
-
-  defp config_integer(_config, _key), do: nil
-
-  defp config_map(config, key) when is_map(config) and is_binary(key) do
-    case Map.get(config, key) do
-      value when is_map(value) -> value
-      _ -> nil
-    end
-  end
-
-  defp config_map(_config, _key), do: nil
-
-  defp config_list(config, key) when is_map(config) and is_binary(key) do
-    case Map.get(config, key) do
-      value when is_list(value) -> value
-      _ -> nil
-    end
-  end
-
-  defp config_list(_config, _key), do: nil
 
   defp sync_sent_message_id(state, old_id, new_id)
        when is_integer(old_id) and is_integer(new_id) do
