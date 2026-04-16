@@ -209,20 +209,6 @@ config :froth, Froth.Telegram.Charlie,
   bot_user_id: String.to_integer(System.get_env("CHARLIE_BOT_USER_ID", "0")),
   owner_user_id: String.to_integer(System.get_env("CHARLIE_OWNER_USER_ID", "0"))
 
-lennart_bot_user_id =
-  String.to_integer(
-    System.get_env("LENNART_BOT_USER_ID") || System.get_env("BERTIL_BOT_USER_ID") || "0"
-  )
-
-lennart_owner_user_id =
-  String.to_integer(
-    System.get_env("LENNART_OWNER_USER_ID") || System.get_env("BERTIL_OWNER_USER_ID") || "0"
-  )
-
-config :froth, Froth.Telegram.Lennart,
-  bot_user_id: lennart_bot_user_id,
-  owner_user_id: lennart_owner_user_id
-
 config :froth, Froth.Telegram,
   # optional override for where the built executable lives
   cnode_executable: System.get_env("TELEGRAM_TDLIB_CNODE_EXECUTABLE"),

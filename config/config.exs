@@ -96,7 +96,7 @@ config :froth, Oban,
   ]
 
 # Legacy static bot workers stay opt-in. Built-in profile bots such as Charlie
-# and Lennart are managed by `Froth.Telegram.Bots`.
+# are managed by `Froth.Telegram.Bots`.
 config :froth, Froth.Telegram.Bot, []
 
 config :libcluster, topologies: []

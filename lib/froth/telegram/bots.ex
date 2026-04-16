@@ -7,7 +7,7 @@ defmodule Froth.Telegram.Bots do
 
   use Supervisor
 
-  alias Froth.Telegram.{Charlie, Lennart}
+  alias Froth.Telegram.Charlie
   alias Froth.Telemetry.Span
 
   @registry Froth.Telegram.BotRegistry
@@ -100,7 +100,7 @@ defmodule Froth.Telegram.Bots do
       |> Keyword.get(:bots, [])
 
     case bots do
-      [] -> [Charlie.default_config(), Lennart.default_config()]
+      [] -> [Charlie.default_config()]
       list when is_list(list) -> list
     end
   end

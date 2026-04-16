@@ -76,7 +76,6 @@ defmodule Froth.Application do
           {Oban, Application.fetch_env!(:froth, Oban)},
           Froth.Telegram,
           Froth.Telegram.Bots,
-          Froth.Telegram.LennartLinkReactor,
           Froth.DailyDigest,
           {Registry, keys: :unique, name: Froth.Agent.Registry},
           {Task.Supervisor, name: Froth.Agent.TaskSupervisor}

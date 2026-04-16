@@ -5,7 +5,7 @@ defmodule Froth.Agent.Adhoc do
   alias Froth.Agent.{AdhocToolExecutor, Config, Cycle, Message}
   alias Froth.LLM
   alias Froth.Repo
-  alias Froth.Telegram.{Charlie, Lennart}
+  alias Froth.Telegram.Charlie
 
   @default_bot_id "charlie"
   @default_session_id "charlie"
@@ -200,20 +200,10 @@ defmodule Froth.Agent.Adhoc do
   end
 
   defp bot_defaults("charlie"), do: charlie_defaults()
-  defp bot_defaults("lennart"), do: lennart_defaults()
   defp bot_defaults(_bot_id), do: %{session_id: nil, bot_username: nil}
 
   defp charlie_defaults do
     cfg = Charlie.default_config()
-
-    %{
-      session_id: cfg.session_id,
-      bot_username: cfg.bot_username
-    }
-  end
-
-  defp lennart_defaults do
-    cfg = Lennart.default_config()
 
     %{
       session_id: cfg.session_id,
