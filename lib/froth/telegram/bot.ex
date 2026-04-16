@@ -43,7 +43,6 @@ defmodule Froth.Telegram.Bot do
     :worker_ref,
     :chat_id,
     :reply_to,
-    :current_system_prompt,
     :last_sent_message_id,
     :last_sent_message_text,
     :current_narration_message_id,
@@ -311,7 +310,6 @@ defmodule Froth.Telegram.Bot do
         worker_ref: nil,
         chat_id: nil,
         reply_to: nil,
-        current_system_prompt: nil,
         awaiting_user_input?: false,
         last_sent_message_id: nil,
         last_sent_message_text: nil,
@@ -848,7 +846,6 @@ defmodule Froth.Telegram.Bot do
         worker_ref: ref,
         chat_id: chat_id,
         reply_to: reply_to,
-        current_system_prompt: config.system,
         awaiting_user_input?: false,
         last_sent_message_id: nil,
         last_sent_message_text: nil,
@@ -916,7 +913,6 @@ defmodule Froth.Telegram.Bot do
             worker_ref: nil,
             chat_id: nil,
             reply_to: nil,
-            current_system_prompt: nil,
             awaiting_user_input?: false,
             last_sent_message_id: nil,
             last_sent_message_text: nil,
@@ -965,7 +961,7 @@ defmodule Froth.Telegram.Bot do
         current_narration_text: state.current_narration_text,
         current_narration_mode: state.current_narration_mode,
         last_agent_message_id: state.last_sent_message_id,
-        system_prompt: state.current_system_prompt || resolve_system_prompt(chat_id, nil, bc),
+        system_prompt: resolve_system_prompt(chat_id, nil, bc),
         model: current_cycle_model(state),
         tools: current_cycle_tools(state),
         active_task_ids: current_cycle_task_ids(state, cycle_id),
@@ -1211,7 +1207,7 @@ defmodule Froth.Telegram.Bot do
 
       {:tool_result, %ToolResult{} = tool_result} ->
         with %Cycle{} = cycle <- Repo.get(Cycle, pending_ask.cycle_id),
-             {system_prompt, config} <- pending_ask_worker_config(state, pending_ask, reply_to),
+             %Config{} = config <- pending_ask_worker_config(state, pending_ask, reply_to),
              {_message, _head_id} <-
                Agent.append_message(
                  cycle,
@@ -1228,7 +1224,6 @@ defmodule Froth.Telegram.Bot do
             pending_ask.chat_id,
             normalize_reply_to(reply_to || pending_ask.message_id)
           )
-          |> Map.put(:current_system_prompt, system_prompt)
         else
           _ ->
             state
@@ -1764,23 +1759,22 @@ defmodule Froth.Telegram.Bot do
     tools =
       config_list(config, "tools") || resolve_tool_specs(state.bot_config) || []
 
-    {system_prompt,
-     %Config{
-       system: system_prompt,
-       model: config_string(config, "model") || state.bot_config.model,
-       tools: tools,
-       tool_executor: self(),
-       context: %{
-         chat_id: pending_ask.chat_id,
-         reply_to: normalize_reply_to(reply_to || pending_ask.message_id),
-         bot_id: state.bot_config.id,
-         session_id: state.bot_config.session_id,
-         bot_username: state.bot_config.bot_username
-       },
-       thinking: config_map(config, "thinking") || state.bot_config.thinking,
-       effort: config_string(config, "effort") || state.bot_config.effort,
-       tool_timeout_ms: config_integer(config, "tool_timeout_ms")
-     }}
+    %Config{
+      system: system_prompt,
+      model: config_string(config, "model") || state.bot_config.model,
+      tools: tools,
+      tool_executor: self(),
+      context: %{
+        chat_id: pending_ask.chat_id,
+        reply_to: normalize_reply_to(reply_to || pending_ask.message_id),
+        bot_id: state.bot_config.id,
+        session_id: state.bot_config.session_id,
+        bot_username: state.bot_config.bot_username
+      },
+      thinking: config_map(config, "thinking") || state.bot_config.thinking,
+      effort: config_string(config, "effort") || state.bot_config.effort,
+      tool_timeout_ms: config_integer(config, "tool_timeout_ms")
+    }
   end
 
   defp current_cycle_model(%{cycle: %Cycle{model: model}}) when is_binary(model) and model != "",
