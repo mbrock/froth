@@ -973,11 +973,7 @@ defmodule FrothWeb.ToolLive do
 
   defp agent_event_from_message(_), do: %{id: Ecto.ULID.generate(), role: :user, blocks: []}
 
-  defp agent_event_blocks(%{"_wrapped" => value}) when is_binary(value) do
-    [%{"type" => "text", "text" => value}]
-  end
-
-  defp agent_event_blocks(%{"_wrapped" => blocks}) when is_list(blocks), do: blocks
+  defp agent_event_blocks(blocks) when is_list(blocks), do: blocks
 
   defp agent_event_blocks(content) when is_binary(content) do
     [%{"type" => "text", "text" => content}]

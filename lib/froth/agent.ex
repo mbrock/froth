@@ -530,10 +530,8 @@ defmodule Froth.Agent do
     }
   end
 
-  defp message_content_kind(content) when is_binary(content), do: "text"
-  defp message_content_kind(%{"_wrapped" => value}), do: message_content_kind(value)
   defp message_content_kind(content) when is_list(content), do: "#{length(content)} blocks"
-  defp message_content_kind(content) when is_map(content), do: "map"
+  defp message_content_kind(content) when is_binary(content), do: "text"
   defp message_content_kind(nil), do: "empty"
   defp message_content_kind(_content), do: "value"
 

@@ -416,9 +416,6 @@ defmodule Mix.Tasks.Froth.Headlines do
     end
   end
 
-  defp message_blocks(%Message{content: %{"_wrapped" => value}}),
-    do: normalize_message_blocks(value)
-
   defp message_blocks(%Message{content: value}), do: normalize_message_blocks(value)
 
   defp normalize_message_blocks(blocks) when is_list(blocks), do: blocks

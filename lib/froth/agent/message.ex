@@ -1,12 +1,13 @@
 defmodule Froth.Agent.Message do
   use Ecto.Schema
 
+  alias Froth.Agent.Message.Content
   alias Froth.LLM.Message, as: LLMMessage
 
   @type t :: %__MODULE__{
           id: String.t() | nil,
           role: :user | :agent,
-          content: term(),
+          content: [map()],
           parent_id: String.t() | nil
         }
 
@@ -15,40 +16,50 @@ defmodule Froth.Agent.Message do
 
   schema "agent_messages" do
     field(:role, Ecto.Enum, values: [:user, :agent])
-    field(:content, :map)
+    field(:content, Content)
     field(:metadata, :map)
     belongs_to(:parent, __MODULE__)
     timestamps()
   end
 
-  def user(content), do: %__MODULE__{role: :user, content: wrap(content)}
-  def agent(content), do: %__MODULE__{role: :agent, content: wrap(content)}
+  def user(content), do: %__MODULE__{role: :user, content: Content.to_blocks(content)}
+  def agent(content), do: %__MODULE__{role: :agent, content: Content.to_blocks(content)}
 
   def agent(content, metadata),
-    do: %__MODULE__{role: :agent, content: wrap(content), metadata: metadata}
+    do: %__MODULE__{
+      role: :agent,
+      content: Content.to_blocks(content),
+      metadata: metadata
+    }
 
   def to_api(%__MODULE__{role: :user, content: content}) do
-    %{"role" => "user", "content" => unwrap(content)}
+    %{"role" => "user", "content" => content}
   end
 
   def to_api(%__MODULE__{role: :agent, content: content}) do
-    %{"role" => "assistant", "content" => unwrap(content)}
+    %{"role" => "assistant", "content" => content}
   end
 
   def to_llm_message(%__MODULE__{role: :user, content: content}) do
-    LLMMessage.user(unwrap(content))
+    LLMMessage.user(content)
   end
 
   def to_llm_message(%__MODULE__{role: :agent, content: content}) do
-    LLMMessage.assistant(unwrap(content))
+    LLMMessage.assistant(content)
   end
 
-  def wrap(value) when is_map(value), do: value
-  def wrap(value), do: %{"_wrapped" => value}
+  @doc """
+  Normalize a value into the canonical block-list shape.
 
+  Kept as a convenience for callers that construct `%Message{}` structs
+  directly without going through `user/1` or `agent/1`.
+  """
+  @spec wrap(term()) :: [map()]
+  def wrap(value), do: Content.to_blocks(value)
+
+  @doc "Extract concatenated text blocks, returning nil if there is none."
+  @spec extract_text(t() | [map()] | binary() | nil) :: String.t() | nil
   def extract_text(%__MODULE__{content: content}), do: extract_text(content)
-
-  def extract_text(%{"_wrapped" => value}), do: extract_text(value)
 
   def extract_text(blocks) when is_list(blocks) do
     blocks
@@ -65,7 +76,4 @@ defmodule Froth.Agent.Message do
 
   def extract_text(text) when is_binary(text), do: text
   def extract_text(_), do: nil
-
-  defp unwrap(%{"_wrapped" => value}), do: value
-  defp unwrap(map) when is_map(map), do: map
 end

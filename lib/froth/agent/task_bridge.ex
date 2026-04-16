@@ -145,8 +145,6 @@ defmodule Froth.Agent.TaskBridge do
     end
   end
 
-  defp summarize_content(%{"_wrapped" => value}), do: summarize_content(value)
-
   defp summarize_content(content) when is_list(content) do
     content
     |> Enum.map_join("\n", fn block ->
@@ -157,17 +155,6 @@ defmodule Froth.Agent.TaskBridge do
       "" -> nil
       text -> text
     end
-  end
-
-  defp summarize_content(content) when is_binary(content) do
-    case String.trim(content) do
-      "" -> nil
-      text -> text
-    end
-  end
-
-  defp summarize_content(other) do
-    inspect(other, pretty: true, limit: 20, printable_limit: 1_200)
   end
 
   defp task_error(metadata) when is_map(metadata) do

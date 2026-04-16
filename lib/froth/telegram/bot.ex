@@ -1771,12 +1771,6 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp normalize_agent_reply_text(content) do
-    content
-    |> extract_text()
-    |> normalize_agent_reply_text()
-  end
-
   @citation_re ~r/\[\[(\d+)\]\]\(([^)]+)\)/
 
   defp process_grok_citations(text) when is_binary(text) do
@@ -2325,21 +2319,13 @@ defmodule Froth.Telegram.Bot do
 
   defp model_pricing_rates(_model), do: nil
 
-  defp extract_text(%{"_wrapped" => value}) when is_binary(value), do: value
-
-  defp extract_text(%{"_wrapped" => blocks}) when is_list(blocks) do
+  defp extract_text(blocks) when is_list(blocks) do
     blocks
     |> Enum.filter(&match?(%{"type" => "text"}, &1))
     |> Enum.map_join("\n", & &1["text"])
   end
 
-  defp extract_text(content) when is_map(content) do
-    case content["text"] do
-      t when is_binary(t) -> t
-      _ -> ""
-    end
-  end
-
+  defp extract_text(content) when is_binary(content), do: content
   defp extract_text(_), do: ""
 
   defp maybe_track_tool_error(state, {:error, reason}) when is_binary(reason) do
@@ -2359,7 +2345,7 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp extract_tool_error(%{"_wrapped" => blocks}) when is_list(blocks) do
+  defp extract_tool_error(blocks) when is_list(blocks) do
     blocks
     |> Enum.reverse()
     |> Enum.find_value(fn
@@ -2536,7 +2522,7 @@ defmodule Froth.Telegram.Bot do
 
   defp metadata_value(_metadata, _key), do: nil
 
-  defp extract_tool_use_names(%{"_wrapped" => blocks}) when is_list(blocks) do
+  defp extract_tool_use_names(blocks) when is_list(blocks) do
     blocks
     |> Enum.flat_map(fn
       %{"type" => "tool_use", "name" => name} when is_binary(name) -> [name]

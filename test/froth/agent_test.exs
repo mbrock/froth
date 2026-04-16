@@ -507,7 +507,7 @@ defmodule Froth.Agent.WorkerTest do
 
       messages = cycle_messages(cycle.id)
       persisted_tool_result = Enum.at(messages, 2)
-      [persisted_block] = persisted_tool_result.content["_wrapped"]
+      [persisted_block] = persisted_tool_result.content
 
       assert persisted_block["content"] == <<"echoed: test message", replacement::binary>>
       assert String.valid?(persisted_block["content"])
@@ -674,7 +674,7 @@ defmodule Froth.Agent.WorkerTest do
 
       messages = cycle_messages(cycle.id)
       assert Enum.map(messages, & &1.role) == [:user, :agent, :agent]
-      assert Enum.any?(hd(tl(messages)).content["_wrapped"], &(&1["type"] == "mcp_tool_use"))
+      assert Enum.any?(hd(tl(messages)).content, &(&1["type"] == "mcp_tool_use"))
 
       cycle = Repo.get!(Cycle, cycle.id)
       assert cycle.status == :completed
@@ -741,7 +741,7 @@ defmodule Froth.Agent.WorkerTest do
       assert Enum.map(messages, & &1.role) == [:user, :agent, :user]
 
       last_message = List.last(messages)
-      [tool_result] = last_message.content["_wrapped"]
+      [tool_result] = last_message.content
       assert tool_result["type"] == "tool_result"
       assert tool_result["content"] == "Yielding: Waiting for subscribed tasks."
 

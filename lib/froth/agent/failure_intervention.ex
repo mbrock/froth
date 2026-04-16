@@ -555,8 +555,6 @@ defmodule Froth.Agent.FailureIntervention do
     "#{role_label}: #{render_transcript_content(content)}"
   end
 
-  defp render_transcript_content(%{"_wrapped" => value}), do: render_transcript_content(value)
-
   defp render_transcript_content(blocks) when is_list(blocks) do
     blocks
     |> Enum.map_join(" ", fn
@@ -699,7 +697,6 @@ defmodule Froth.Agent.FailureIntervention do
   defp count_tool_turns(messages) when is_list(messages) do
     messages
     |> Enum.flat_map(fn
-      %AgentMessage{content: %{"_wrapped" => blocks}} when is_list(blocks) -> blocks
       %AgentMessage{content: blocks} when is_list(blocks) -> blocks
       _ -> []
     end)
@@ -714,7 +711,6 @@ defmodule Froth.Agent.FailureIntervention do
     count =
       messages
       |> Enum.flat_map(fn
-        %AgentMessage{content: %{"_wrapped" => blocks}} when is_list(blocks) -> blocks
         %AgentMessage{content: blocks} when is_list(blocks) -> blocks
         _ -> []
       end)
