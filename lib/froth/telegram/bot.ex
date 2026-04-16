@@ -145,11 +145,15 @@ defmodule Froth.Telegram.Bot do
     bc = state.bot_config
     action = route_update(update, bc)
 
-    Span.execute([:froth, :telegram, :bot, :update], Froth.Telegram.Session.span_id(bc.session_id), %{
-      bot_id: bc.id,
-      update: update,
-      action: action
-    })
+    Span.execute(
+      [:froth, :telegram, :bot, :update],
+      Froth.Telegram.Session.span_id(bc.session_id),
+      %{
+        bot_id: bc.id,
+        update: update,
+        action: action
+      }
+    )
 
     {:noreply, dispatch_update_action(state, action)}
   end
@@ -287,7 +291,10 @@ defmodule Froth.Telegram.Bot do
     state
   end
 
-  defp dispatch_update_action(state, {:callback_pending_ask, query_id, pending_ask, answer, reply_to}) do
+  defp dispatch_update_action(
+         state,
+         {:callback_pending_ask, query_id, pending_ask, answer, reply_to}
+       ) do
     BotAdapter.answer_callback(state.bot_config.session_id, query_id)
     enqueue_or_resume_pending_ask(state, pending_ask, answer, reply_to)
   end
@@ -1436,36 +1443,25 @@ defmodule Froth.Telegram.Bot do
          content
        )
        when is_integer(chat_id) do
-    case normalize_agent_reply_text(extract_text(content)) do
-      {:ok, text, entities} ->
-        send_plaintext_response(state, bc.session_id, chat_id, reply_to, text, entities: entities)
-
-      :no_reply ->
+    case String.trim(extract_text(content)) do
+      "" ->
         state
 
-      :empty ->
-        state
+      text ->
+        send_plaintext_response(state, bc.session_id, chat_id, reply_to, text)
     end
   end
 
   defp send_agent_response(state, _), do: state
 
-  defp send_plaintext_response(state, session_id, chat_id, reply_to, text, opts)
+  defp send_plaintext_response(state, session_id, chat_id, reply_to, text)
        when is_binary(session_id) and is_integer(chat_id) and is_binary(text) do
-    send_opts = [reply_to: reply_to] ++ Keyword.take(opts, [:entities])
-
     chunks = split_long_text(text, @telegram_text_limit)
 
     Enum.reduce(chunks, state, fn chunk, acc ->
-      # Only first chunk gets entities (formatting offsets won't be valid for later chunks)
-      chunk_opts = if chunk == hd(chunks), do: send_opts, else: [reply_to: reply_to]
-
-      case BotAdapter.send_message(session_id, chat_id, chunk, chunk_opts) do
-        {:ok, sent} ->
-          track_sent_message(acc, sent, chunk)
-
-        {:error, _reason} ->
-          acc
+      case BotAdapter.send_message(session_id, chat_id, chunk, reply_to: reply_to) do
+        {:ok, sent} -> track_sent_message(acc, sent, chunk)
+        {:error, _reason} -> acc
       end
     end)
   end
@@ -1484,7 +1480,6 @@ defmodule Froth.Telegram.Bot do
     if String.length(text) <= limit do
       Enum.reverse([text | acc])
     else
-      # Try to split at a double newline (paragraph boundary) within the limit
       candidate = String.slice(text, 0, limit)
 
       split_pos =
@@ -1493,7 +1488,6 @@ defmodule Froth.Telegram.Bot do
             pos + 2
 
           _ ->
-            # Fall back to last single newline
             case :binary.matches(candidate, "\n") |> List.last() do
               {pos, _len} when pos > div(limit, 4) -> pos + 1
               _ -> limit
@@ -1504,61 +1498,6 @@ defmodule Froth.Telegram.Bot do
       do_split_text(String.trim_leading(rest), limit, [String.trim_trailing(chunk) | acc])
     end
   end
-
-  defp normalize_agent_reply_text(text) when is_binary(text) do
-    {cleaned, entities} = process_grok_citations(text)
-
-    cleaned
-    |> String.trim()
-    |> case do
-      "" ->
-        :empty
-
-      trimmed ->
-        if String.upcase(trimmed) == "NO_REPLY" do
-          :no_reply
-        else
-          {:ok, trimmed, entities}
-        end
-    end
-  end
-
-  @citation_re ~r/\[\[(\d+)\]\]\(([^)]+)\)/
-
-  defp process_grok_citations(text) when is_binary(text) do
-    # Strip XML-style grok tags first
-    text =
-      text
-      |> then(&Regex.replace(~r/<grok:render\b[^>]*\/>/u, &1, ""))
-      |> then(&Regex.replace(~r/<grok:render\b[^>]*>.*?<\/grok:render>/su, &1, ""))
-      |> then(&Regex.replace(~r/<grok:cite\b[^>]*>.*?<\/grok:cite>/su, &1, ""))
-      |> then(&Regex.replace(~r/<argument\b[^>]*>.*?<\/argument>/su, &1, ""))
-
-    # Collect [[N]](url) citations, strip inline, append as footnotes
-    citations =
-      Regex.scan(@citation_re, text)
-      |> Enum.map(fn [_full, num, url] -> {num, url} end)
-      |> Enum.uniq_by(fn {num, _url} -> num end)
-
-    cleaned = Regex.replace(@citation_re, text, "")
-
-    footnotes =
-      case citations do
-        [] ->
-          ""
-
-        refs ->
-          "\n\n" <>
-            Enum.map_join(refs, "\n", fn {num, url} ->
-              clean_url = Regex.replace(~r/\[(?:post|web):\d+\]$/, url, "")
-              "[#{num}] #{clean_url}"
-            end)
-      end
-
-    {cleaned <> footnotes, []}
-  end
-
-  defp process_grok_citations(_), do: {"", []}
 
   defp send_message_tool_enabled?(bot_config) when is_map(bot_config) do
     bot_config
