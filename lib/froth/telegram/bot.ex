@@ -58,6 +58,7 @@ defmodule Froth.Telegram.Bot do
   ]
 
   @telegram_text_limit 4096
+  @game_url "https://1.foo/name-game-3"
 
   def child_spec(opts) when is_map(opts), do: child_spec(Map.to_list(opts))
 
@@ -81,20 +82,6 @@ defmodule Froth.Telegram.Bot do
 
   @impl true
   def init(opts) do
-    tools =
-      if Keyword.has_key?(opts, :tools) do
-        Keyword.fetch!(opts, :tools)
-      else
-        nil
-      end
-
-    tools_module =
-      if Keyword.has_key?(opts, :tools_module) do
-        Keyword.fetch!(opts, :tools_module)
-      else
-        nil
-      end
-
     bot_config = %{
       id: to_string(Keyword.fetch!(opts, :id)),
       session_id: to_string(Keyword.fetch!(opts, :session_id)),
@@ -106,8 +93,8 @@ defmodule Froth.Telegram.Bot do
         Keyword.get(opts, :system_prompt, "You are a helpful assistant on Telegram."),
       system_prompt_fun: Keyword.get(opts, :system_prompt_fun),
       name_triggers: Keyword.get(opts, :name_triggers, []),
-      tools: tools,
-      tools_module: tools_module,
+      tools: Keyword.get(opts, :tools),
+      tools_module: Keyword.get(opts, :tools_module),
       thinking: Keyword.get(opts, :thinking),
       effort: Keyword.get(opts, :effort),
       chronicle_dir: Keyword.get(opts, :chronicle_dir),
@@ -223,8 +210,8 @@ defmodule Froth.Telegram.Bot do
           game: game_short_name
         })
 
-        game_url = game_url_for(game_short_name)
-        BotAdapter.answer_callback_with_url(bc.session_id, query_id, game_url)
+        _ = game_short_name
+        BotAdapter.answer_callback_with_url(bc.session_id, query_id, @game_url)
         {:noreply, state}
 
       {:callback_pending_ask, query_id, pending_ask, answer, reply_to} ->
@@ -303,36 +290,10 @@ defmodule Froth.Telegram.Bot do
 
     state = maybe_append_cycle_footer(state)
 
-    reset_state = %{
-      state
-      | cycle: nil,
-        worker_pid: nil,
-        worker_ref: nil,
-        chat_id: nil,
-        reply_to: nil,
-        awaiting_user_input?: false,
-        last_sent_message_id: nil,
-        last_sent_message_text: nil,
-        current_narration_message_id: nil,
-        current_narration_text: nil,
-        current_narration_mode: nil,
-        mid_cycle_messages: []
-    }
-
-    reset_state =
-      if is_binary(finished_cycle_id) do
-        %{
-          reset_state
-          | active_tasks: Map.delete(reset_state.active_tasks, finished_cycle_id),
-            control_prompt_cycles:
-              MapSet.delete(reset_state.control_prompt_cycles, finished_cycle_id)
-        }
-      else
-        reset_state
-      end
-
     {:noreply,
-     reset_state
+     state
+     |> reset_cycle_state()
+     |> prune_cycle_indexes(finished_cycle_id)
      |> maybe_resume_pending_ask()
      |> maybe_resume_buffered_cycle(buffered_messages)}
   end
@@ -358,9 +319,6 @@ defmodule Froth.Telegram.Bot do
     {:noreply, state}
   end
 
-  def handle_cast({:auto_approve, _ref}, state), do: {:noreply, state}
-  def handle_cast({:continue_loop, _id}, state), do: {:noreply, state}
-  def handle_cast({:abort_tool, _ref}, state), do: {:noreply, state}
   def handle_cast(_, state), do: {:noreply, state}
 
   @impl true
@@ -565,9 +523,6 @@ defmodule Froth.Telegram.Bot do
         end
     end
   end
-
-  defp game_url_for("word"), do: "https://1.foo/name-game-3"
-  defp game_url_for(_), do: "https://1.foo/name-game-3"
 
   defp parse_callback_payload(%{
          "payload" => %{"@type" => "callbackQueryPayloadData", "data" => data_b64}
@@ -839,21 +794,15 @@ defmodule Froth.Telegram.Bot do
     {:ok, pid} = Worker.start_link({cycle, config})
     ref = Process.monitor(pid)
 
-    %{
-      state
-      | cycle: cycle,
-        worker_pid: pid,
-        worker_ref: ref,
-        chat_id: chat_id,
-        reply_to: reply_to,
-        awaiting_user_input?: false,
-        last_sent_message_id: nil,
-        last_sent_message_text: nil,
-        current_narration_message_id: nil,
-        current_narration_text: nil,
-        current_narration_mode: nil,
-        mid_cycle_messages: []
-    }
+    state
+    |> reset_cycle_state()
+    |> Map.merge(%{
+      cycle: cycle,
+      worker_pid: pid,
+      worker_ref: ref,
+      chat_id: chat_id,
+      reply_to: reply_to
+    })
   end
 
   defp normalize_reply_to(0), do: nil
@@ -905,38 +854,47 @@ defmodule Froth.Telegram.Bot do
     state =
       if (state.cycle && state.cycle.id == cycle_id) and is_pid(state.worker_pid) do
         Process.exit(state.worker_pid, {:shutdown, :cancelled})
-
-        %{
-          state
-          | cycle: nil,
-            worker_pid: nil,
-            worker_ref: nil,
-            chat_id: nil,
-            reply_to: nil,
-            awaiting_user_input?: false,
-            last_sent_message_id: nil,
-            last_sent_message_text: nil,
-            current_narration_message_id: nil,
-            current_narration_text: nil,
-            current_narration_mode: nil,
-            mid_cycle_messages: []
-        }
+        reset_cycle_state(state)
       else
         state
       end
 
     task_ids = Map.get(state.active_tasks, cycle_id, MapSet.new())
+    Enum.each(task_ids, &stop_background_task/1)
 
-    Enum.each(task_ids, fn task_id ->
-      stop_background_task(task_id)
-    end)
+    prune_cycle_indexes(state, cycle_id)
+  end
 
+  # Clear all per-cycle fields back to their struct defaults. Does not touch
+  # the cross-cycle indexes (`active_tasks`, `control_prompt_cycles`) — use
+  # `prune_cycle_indexes/2` for that.
+  defp reset_cycle_state(state) do
+    %{
+      state
+      | cycle: nil,
+        worker_pid: nil,
+        worker_ref: nil,
+        chat_id: nil,
+        reply_to: nil,
+        awaiting_user_input?: false,
+        last_sent_message_id: nil,
+        last_sent_message_text: nil,
+        current_narration_message_id: nil,
+        current_narration_text: nil,
+        current_narration_mode: nil,
+        mid_cycle_messages: []
+    }
+  end
+
+  defp prune_cycle_indexes(state, cycle_id) when is_binary(cycle_id) do
     %{
       state
       | active_tasks: Map.delete(state.active_tasks, cycle_id),
         control_prompt_cycles: MapSet.delete(state.control_prompt_cycles, cycle_id)
     }
   end
+
+  defp prune_cycle_indexes(state, _cycle_id), do: state
 
   defp prepare_tool_call(state, %ToolUse{name: name, input: input} = tool_use, context)
        when is_map(input) do
@@ -1263,7 +1221,9 @@ defmodule Froth.Telegram.Bot do
                  {:tool_result, tool_result}
                ) do
             :ok -> state
-            {:error, _reason} -> %{state | pending_ask_resumes: state.pending_ask_resumes}
+            # Only way the worker replies with an error is an invalid resolution,
+            # which we can't construct from here. Leave state untouched.
+            {:error, _reason} -> state
           end
         catch
           :exit, _reason ->
