@@ -57,7 +57,6 @@ defmodule Froth.Telegram.Bot do
     pending_ask_resumes: []
   ]
 
-  @telegram_text_limit 4096
   @game_url "https://1.foo/name-game-3"
 
   def child_spec(opts) when is_map(opts), do: child_spec(Map.to_list(opts))
@@ -1456,47 +1455,14 @@ defmodule Froth.Telegram.Bot do
 
   defp send_plaintext_response(state, session_id, chat_id, reply_to, text)
        when is_binary(session_id) and is_integer(chat_id) and is_binary(text) do
-    chunks = split_long_text(text, @telegram_text_limit)
-
-    Enum.reduce(chunks, state, fn chunk, acc ->
+    text
+    |> BotAdapter.split_long_text()
+    |> Enum.reduce(state, fn chunk, acc ->
       case BotAdapter.send_message(session_id, chat_id, chunk, reply_to: reply_to) do
         {:ok, sent} -> track_sent_message(acc, sent, chunk)
         {:error, _reason} -> acc
       end
     end)
-  end
-
-  defp split_long_text(text, limit) when is_binary(text) and is_integer(limit) do
-    if String.length(text) <= limit do
-      [text]
-    else
-      do_split_text(text, limit, [])
-    end
-  end
-
-  defp do_split_text("", _limit, acc), do: Enum.reverse(acc)
-
-  defp do_split_text(text, limit, acc) do
-    if String.length(text) <= limit do
-      Enum.reverse([text | acc])
-    else
-      candidate = String.slice(text, 0, limit)
-
-      split_pos =
-        case :binary.matches(candidate, "\n\n") |> List.last() do
-          {pos, _len} when pos > div(limit, 4) ->
-            pos + 2
-
-          _ ->
-            case :binary.matches(candidate, "\n") |> List.last() do
-              {pos, _len} when pos > div(limit, 4) -> pos + 1
-              _ -> limit
-            end
-        end
-
-      {chunk, rest} = String.split_at(text, split_pos)
-      do_split_text(String.trim_leading(rest), limit, [String.trim_trailing(chunk) | acc])
-    end
   end
 
   defp send_message_tool_enabled?(bot_config) when is_map(bot_config) do
@@ -1743,7 +1709,7 @@ defmodule Froth.Telegram.Bot do
        when is_integer(msg_id) and is_binary(text) and is_binary(footer) do
     full_text = append_footer(text, footer)
 
-    if String.length(full_text) <= @telegram_text_limit do
+    if String.length(full_text) <= BotAdapter.text_limit() do
       case BotAdapter.edit_message_text(session_id, chat_id, msg_id, full_text) do
         {:ok, _} ->
           state

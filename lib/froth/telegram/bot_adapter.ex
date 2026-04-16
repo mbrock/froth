@@ -6,8 +6,52 @@ defmodule Froth.Telegram.BotAdapter do
   and message send/edit helpers.
   """
 
+  @text_limit 4096
+
+  @doc "Telegram's hard per-message text limit in UTF-16 code units. Exposed for callers that want to chunk proactively."
+  def text_limit, do: @text_limit
+
   def subscribe(session_id) when is_binary(session_id) do
     Phoenix.PubSub.subscribe(Froth.PubSub, Froth.Telegram.Session.topic(session_id))
+  end
+
+  @doc """
+  Split a long text into chunks of at most `@text_limit` characters, preferring
+  paragraph (`"\\n\\n"`) and line (`"\\n"`) boundaries over hard cuts.
+  """
+  def split_long_text(text) when is_binary(text), do: split_long_text(text, @text_limit)
+
+  def split_long_text(text, limit) when is_binary(text) and is_integer(limit) and limit > 0 do
+    if String.length(text) <= limit do
+      [text]
+    else
+      do_split_text(text, limit, [])
+    end
+  end
+
+  defp do_split_text("", _limit, acc), do: Enum.reverse(acc)
+
+  defp do_split_text(text, limit, acc) do
+    if String.length(text) <= limit do
+      Enum.reverse([text | acc])
+    else
+      candidate = String.slice(text, 0, limit)
+
+      split_pos =
+        case :binary.matches(candidate, "\n\n") |> List.last() do
+          {pos, _len} when pos > div(limit, 4) ->
+            pos + 2
+
+          _ ->
+            case :binary.matches(candidate, "\n") |> List.last() do
+              {pos, _len} when pos > div(limit, 4) -> pos + 1
+              _ -> limit
+            end
+        end
+
+      {chunk, rest} = String.split_at(text, split_pos)
+      do_split_text(String.trim_leading(rest), limit, [String.trim_trailing(chunk) | acc])
+    end
   end
 
   def mentioned?(msg, bot_username, bot_user_id)
