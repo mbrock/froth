@@ -37,9 +37,7 @@ defmodule Froth.Telegram.BotTest do
              )
 
     state = :sys.get_state(bot)
-    assert state.current_narration_message_id == 77
-    assert state.current_narration_text == "Checking X"
-    assert state.current_narration_mode == :italic
+    assert state.narration == %{message_id: 77, text: "Checking X", mode: :italic}
   end
 
   test "commit_tool clears active narration when a normal message is sent" do
@@ -48,12 +46,7 @@ defmodule Froth.Telegram.BotTest do
     context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
 
     :sys.replace_state(bot, fn state ->
-      %{
-        state
-        | current_narration_message_id: 77,
-          current_narration_text: "Checking X\nAlso checking Y",
-          current_narration_mode: :italic
-      }
+      %{state | narration: %{message_id: 77, text: "Checking X\nAlso checking Y", mode: :italic}}
     end)
 
     outcome = %{
@@ -71,10 +64,8 @@ defmodule Froth.Telegram.BotTest do
              )
 
     state = :sys.get_state(bot)
-    assert state.last_sent_message_id == 42
-    assert state.current_narration_message_id == nil
-    assert state.current_narration_text == nil
-    assert state.current_narration_mode == nil
+    assert state.last_sent == %{id: 42, text: "hello"}
+    assert state.narration == nil
   end
 
   test "prepare_tool reserves the control prompt once per cycle" do
@@ -121,8 +112,7 @@ defmodule Froth.Telegram.BotTest do
     assert result_text =~ "Message received during tool execution: new incoming"
 
     state = :sys.get_state(bot)
-    assert state.last_sent_message_id == 42
-    assert state.last_sent_message_text == "hello"
+    assert state.last_sent == %{id: 42, text: "hello"}
     assert state.mid_cycle_messages == []
   end
 
@@ -145,10 +135,8 @@ defmodule Froth.Telegram.BotTest do
     :sys.replace_state(bot, fn state ->
       %{
         state
-        | last_sent_message_id: 101,
-          current_narration_message_id: 202,
-          current_narration_text: "Checking X",
-          current_narration_mode: :italic
+        | last_sent: %{id: 101, text: "hello"},
+          narration: %{message_id: 202, text: "Checking X", mode: :italic}
       }
     end)
 
@@ -162,8 +150,8 @@ defmodule Froth.Telegram.BotTest do
        }}
     )
 
-    assert :sys.get_state(bot).current_narration_message_id == 303
-    assert :sys.get_state(bot).last_sent_message_id == 101
+    assert :sys.get_state(bot).narration.message_id == 303
+    assert :sys.get_state(bot).last_sent.id == 101
 
     send(
       bot,
@@ -176,8 +164,8 @@ defmodule Froth.Telegram.BotTest do
     )
 
     state = :sys.get_state(bot)
-    assert state.last_sent_message_id == 404
-    assert state.current_narration_message_id == 303
+    assert state.last_sent.id == 404
+    assert state.narration.message_id == 303
   end
 
   test "cycle footer edits the final message with cache stats when a cycle finishes" do
@@ -213,8 +201,7 @@ defmodule Froth.Telegram.BotTest do
           worker_pid: worker_pid,
           worker_ref: worker_ref,
           chat_id: 123,
-          last_sent_message_id: 42,
-          last_sent_message_text: "hello"
+          last_sent: %{id: 42, text: "hello"}
       }
     end)
 

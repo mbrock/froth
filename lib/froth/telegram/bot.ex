@@ -46,11 +46,8 @@ defmodule Froth.Telegram.Bot do
     :worker_ref,
     :chat_id,
     :reply_to,
-    :last_sent_message_id,
-    :last_sent_message_text,
-    :current_narration_message_id,
-    :current_narration_text,
-    :current_narration_mode,
+    :last_sent,
+    :narration,
     active_tasks: %{},
     control_prompt_cycles: MapSet.new(),
     awaiting_user_input?: false,
@@ -714,11 +711,8 @@ defmodule Froth.Telegram.Bot do
         chat_id: nil,
         reply_to: nil,
         awaiting_user_input?: false,
-        last_sent_message_id: nil,
-        last_sent_message_text: nil,
-        current_narration_message_id: nil,
-        current_narration_text: nil,
-        current_narration_mode: nil,
+        last_sent: nil,
+        narration: nil,
         mid_cycle_messages: []
     }
   end
@@ -755,10 +749,10 @@ defmodule Froth.Telegram.Bot do
         reply_to: reply_to,
         cycle_id: cycle_id,
         provider: state.cycle && state.cycle.provider,
-        current_narration_message_id: state.current_narration_message_id,
-        current_narration_text: state.current_narration_text,
-        current_narration_mode: state.current_narration_mode,
-        last_agent_message_id: state.last_sent_message_id,
+        current_narration_message_id: state.narration && state.narration.message_id,
+        current_narration_text: state.narration && state.narration.text,
+        current_narration_mode: state.narration && state.narration.mode,
+        last_agent_message_id: state.last_sent && state.last_sent.id,
         system_prompt: resolve_system_prompt(chat_id, nil, bc),
         model: cycle_config["model"] || bc.model,
         tools: cycle_config["tool_specs"] || resolve_tool_specs(bc),
@@ -1382,52 +1376,25 @@ defmodule Froth.Telegram.Bot do
   defp resolve_tool_specs(_), do: []
 
   defp track_sent_message(state, sent, text) when is_map(state) and is_binary(text) do
-    base =
-      state
-      |> clear_current_narration()
-      |> Map.put(:awaiting_user_input?, false)
-      |> Map.put(:last_sent_message_text, text)
+    last_sent =
+      case sent_message_id(sent) do
+        id when is_integer(id) -> %{id: id, text: text}
+        _ -> %{id: nil, text: text}
+      end
 
-    case sent_message_id(sent) do
-      id when is_integer(id) ->
-        %{base | last_sent_message_id: id}
-
-      _ ->
-        base
-    end
+    %{state | narration: nil, awaiting_user_input?: false, last_sent: last_sent}
   end
 
   defp track_awaiting_user_input(state, _sent, _text) do
-    state
-    |> clear_current_narration()
-    |> Map.put(:awaiting_user_input?, true)
-    |> Map.put(:last_sent_message_id, nil)
-    |> Map.put(:last_sent_message_text, nil)
+    %{state | narration: nil, awaiting_user_input?: true, last_sent: nil}
   end
 
-  defp track_narration_message(
-         state,
-         %{message_id: message_id, text: text, mode: mode}
-       )
+  defp track_narration_message(state, %{message_id: message_id, text: text, mode: mode})
        when is_integer(message_id) and is_binary(text) and mode in [:italic, :markdown] do
-    %{
-      state
-      | current_narration_message_id: message_id,
-        current_narration_text: text,
-        current_narration_mode: mode
-    }
+    %{state | narration: %{message_id: message_id, text: text, mode: mode}}
   end
 
   defp track_narration_message(state, _), do: state
-
-  defp clear_current_narration(state) do
-    %{
-      state
-      | current_narration_message_id: nil,
-        current_narration_text: nil,
-        current_narration_mode: nil
-    }
-  end
 
   defp pending_ask_worker_config(state, pending_ask, reply_to)
        when is_map(pending_ask) do
@@ -1454,21 +1421,21 @@ defmodule Froth.Telegram.Bot do
 
   defp sync_sent_message_id(state, old_id, new_id)
        when is_integer(old_id) and is_integer(new_id) do
-    state =
-      if state.last_sent_message_id == old_id do
-        %{state | last_sent_message_id: new_id}
-      else
-        state
-      end
-
-    if state.current_narration_message_id == old_id do
-      %{state | current_narration_message_id: new_id}
-    else
-      state
-    end
+    state
+    |> update_in([Access.key(:last_sent)], &swap_id(&1, :id, old_id, new_id))
+    |> update_in([Access.key(:narration)], &swap_id(&1, :message_id, old_id, new_id))
   end
 
   defp sync_sent_message_id(state, _old_id, _new_id), do: state
+
+  defp swap_id(%{} = map, key, old_id, new_id) do
+    case Map.get(map, key) do
+      ^old_id -> Map.put(map, key, new_id)
+      _ -> map
+    end
+  end
+
+  defp swap_id(other, _key, _old_id, _new_id), do: other
 
   defp sent_message_id(%{"id" => id}) when is_integer(id), do: id
 
@@ -1484,8 +1451,7 @@ defmodule Froth.Telegram.Bot do
   defp maybe_append_cycle_footer(
          %{
            cycle: %Cycle{id: cycle_id},
-           last_sent_message_id: msg_id,
-           last_sent_message_text: text,
+           last_sent: %{id: msg_id, text: text},
            awaiting_user_input?: false,
            chat_id: chat_id,
            bot_config: bc
