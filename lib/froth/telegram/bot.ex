@@ -44,16 +44,13 @@ defmodule Froth.Telegram.Bot do
     :chat_id,
     :reply_to,
     :current_system_prompt,
-    :last_tool_error,
     :last_sent_message_id,
     :last_sent_message_text,
     :current_narration_message_id,
     :current_narration_text,
     :current_narration_mode,
-    cycle_suppressed?: false,
     active_tasks: %{},
     control_prompt_cycles: MapSet.new(),
-    cycle_replied?: false,
     awaiting_user_input?: false,
     debounce_timer: nil,
     debounce_msg: nil,
@@ -279,26 +276,11 @@ defmodule Froth.Telegram.Bot do
     {:noreply, send_agent_response(state, content)}
   end
 
-  def handle_info({:event, _event, %Message{role: :user, content: content}}, state) do
-    state = normalize_state(state)
-    {:noreply, maybe_capture_tool_error(state, content)}
-  end
-
   def handle_info({:event, _event, %Message{}}, state) do
     {:noreply, state}
   end
 
   def handle_info({:stream, _event}, state), do: {:noreply, state}
-
-  def handle_info({:eval_done_detail, %{status: status, result: result}}, state)
-      when status in [:error, "error"] and is_binary(result) do
-    {:noreply, put_last_tool_error(state, result)}
-  end
-
-  def handle_info({:eval_done_detail, %{status: status, io_output: io_output}}, state)
-      when status in [:error, "error"] and is_binary(io_output) do
-    {:noreply, put_last_tool_error(state, io_output)}
-  end
 
   def handle_info({:eval_done_detail, _}, state) do
     {:noreply, state}
@@ -313,18 +295,14 @@ defmodule Froth.Telegram.Bot do
   end
 
   def handle_info(
-        {:DOWN, ref, :process, pid, reason},
+        {:DOWN, ref, :process, pid, _reason},
         %{worker_ref: ref, worker_pid: pid} = state
       ) do
     state = normalize_state(state)
     buffered_messages = state.mid_cycle_messages
     finished_cycle_id = state.cycle && state.cycle.id
 
-    state =
-      state
-      |> maybe_set_crash_error(reason)
-      |> maybe_append_cycle_footer()
-      |> maybe_send_silent_cycle_fallback()
+    state = maybe_append_cycle_footer(state)
 
     reset_state = %{
       state
@@ -333,16 +311,13 @@ defmodule Froth.Telegram.Bot do
         worker_ref: nil,
         chat_id: nil,
         reply_to: nil,
-        cycle_replied?: false,
         current_system_prompt: nil,
         awaiting_user_input?: false,
-        last_tool_error: nil,
         last_sent_message_id: nil,
         last_sent_message_text: nil,
         current_narration_message_id: nil,
         current_narration_text: nil,
         current_narration_mode: nil,
-        cycle_suppressed?: false,
         mid_cycle_messages: []
     }
 
@@ -874,15 +849,12 @@ defmodule Froth.Telegram.Bot do
         chat_id: chat_id,
         reply_to: reply_to,
         current_system_prompt: config.system,
-        cycle_replied?: false,
         awaiting_user_input?: false,
-        last_tool_error: nil,
         last_sent_message_id: nil,
         last_sent_message_text: nil,
         current_narration_message_id: nil,
         current_narration_text: nil,
         current_narration_mode: nil,
-        cycle_suppressed?: false,
         mid_cycle_messages: []
     }
   end
@@ -945,15 +917,12 @@ defmodule Froth.Telegram.Bot do
             chat_id: nil,
             reply_to: nil,
             current_system_prompt: nil,
-            cycle_replied?: false,
             awaiting_user_input?: false,
-            last_tool_error: nil,
             last_sent_message_id: nil,
             last_sent_message_text: nil,
             current_narration_message_id: nil,
             current_narration_text: nil,
             current_narration_mode: nil,
-            cycle_suppressed?: false,
             mid_cycle_messages: []
         }
       else
@@ -1097,10 +1066,7 @@ defmodule Froth.Telegram.Bot do
           state
       end
 
-    state =
-      state
-      |> maybe_track_task_from_result(cycle_id, result)
-      |> maybe_track_tool_error(result)
+    state = maybe_track_task_from_result(state, cycle_id, result)
 
     {result, state} = maybe_inject_mid_cycle_messages(result, state)
     {result, state}
@@ -1592,7 +1558,7 @@ defmodule Froth.Telegram.Bot do
         send_plaintext_response(state, bc.session_id, chat_id, reply_to, text, entities: entities)
 
       :no_reply ->
-        %{state | cycle_suppressed?: true}
+        state
 
       :empty ->
         state
@@ -1615,8 +1581,8 @@ defmodule Froth.Telegram.Bot do
         {:ok, sent} ->
           track_sent_message(acc, sent, chunk)
 
-        {:error, reason} ->
-          put_last_tool_error(acc, inspect(reason))
+        {:error, _reason} ->
+          acc
       end
     end)
   end
@@ -1747,7 +1713,6 @@ defmodule Froth.Telegram.Bot do
       state
       |> clear_current_narration()
       |> Map.put(:awaiting_user_input?, false)
-      |> Map.put(:cycle_replied?, true)
       |> Map.put(:last_sent_message_text, text)
 
     case sent_message_id(sent) do
@@ -1929,10 +1894,14 @@ defmodule Froth.Telegram.Bot do
   defp sent_message_id(_), do: nil
 
   defp maybe_append_cycle_footer(
-         %{cycle_replied?: true, awaiting_user_input?: false, chat_id: chat_id, bot_config: bc} =
-           state
+         %{
+           last_sent_message_id: msg_id,
+           awaiting_user_input?: false,
+           chat_id: chat_id,
+           bot_config: bc
+         } = state
        )
-       when is_integer(chat_id) do
+       when is_integer(msg_id) and is_integer(chat_id) do
     case build_cycle_cost_footer(state) do
       nil ->
         state
@@ -2070,172 +2039,6 @@ defmodule Froth.Telegram.Bot do
 
   defp extract_text(content) when is_binary(content), do: content
   defp extract_text(_), do: ""
-
-  defp maybe_track_tool_error(state, {:error, reason}) when is_binary(reason) do
-    put_last_tool_error(state, reason)
-  end
-
-  defp maybe_track_tool_error(state, {:error, reason}) do
-    put_last_tool_error(state, inspect(reason))
-  end
-
-  defp maybe_track_tool_error(state, _), do: state
-
-  defp maybe_capture_tool_error(state, content) do
-    case extract_tool_error(content) do
-      nil -> state
-      error -> put_last_tool_error(state, error)
-    end
-  end
-
-  defp extract_tool_error(blocks) when is_list(blocks) do
-    blocks
-    |> Enum.reverse()
-    |> Enum.find_value(fn
-      %{"type" => "tool_result", "is_error" => true, "content" => content}
-      when is_binary(content) ->
-        content
-
-      _ ->
-        nil
-    end)
-  end
-
-  defp extract_tool_error(_), do: nil
-
-  defp put_last_tool_error(state, error) when is_binary(error) do
-    error =
-      error
-      |> String.trim()
-      |> String.slice(0, 1200)
-
-    if error == "" do
-      state
-    else
-      %{state | last_tool_error: error}
-    end
-  end
-
-  defp put_last_tool_error(state, _), do: state
-
-  defp maybe_send_silent_cycle_fallback(%{cycle_replied?: true} = state), do: state
-  defp maybe_send_silent_cycle_fallback(%{cycle_suppressed?: true} = state), do: state
-  defp maybe_send_silent_cycle_fallback(%{awaiting_user_input?: true} = state), do: state
-
-  defp maybe_send_silent_cycle_fallback(%{chat_id: chat_id, bot_config: bc} = state)
-       when is_integer(chat_id) do
-    error = state.last_tool_error || infer_silent_cycle_reason(state)
-
-    _ =
-      BotAdapter.send_message(
-        bc.session_id,
-        chat_id,
-        fallback_cycle_message(error),
-        reply_to: state.reply_to
-      )
-
-    state
-  end
-
-  defp maybe_send_silent_cycle_fallback(state), do: state
-
-  defp fallback_cycle_message(nil) do
-    "I stopped before replying.\n\nReason: no diagnostic detail was recorded."
-  end
-
-  defp fallback_cycle_message(error) when is_binary(error) do
-    line =
-      error
-      |> String.split("\n")
-      |> List.first()
-      |> to_string()
-      |> String.trim()
-      |> String.slice(0, 400)
-
-    if line == "" do
-      fallback_cycle_message(nil)
-    else
-      "I stopped before replying.\n\nReason: #{line}"
-    end
-  end
-
-  defp infer_silent_cycle_reason(%{cycle: %Cycle{} = cycle}) do
-    Agent.describe_cycle_stop(cycle) ||
-      cycle
-      |> Agent.latest_head_id()
-      |> Agent.load_messages()
-      |> List.last()
-      |> describe_silent_cycle_message()
-  end
-
-  defp infer_silent_cycle_reason(_), do: nil
-
-  defp describe_silent_cycle_message(%Message{role: :user, content: content}) do
-    extract_tool_error(content) || "cycle completed without sending a reply after tool execution"
-  end
-
-  defp describe_silent_cycle_message(%Message{role: :agent, content: content, metadata: metadata}) do
-    stop_reason = metadata_value(metadata, "stop_reason")
-    tool_names = extract_tool_use_names(content)
-
-    stop_suffix =
-      if is_binary(stop_reason) and stop_reason != "",
-        do: " (stop_reason=#{stop_reason})",
-        else: ""
-
-    cond do
-      tool_names != [] ->
-        "assistant stopped after requesting #{Enum.join(tool_names, ", ")} without sending a reply#{stop_suffix}"
-
-      String.trim(extract_text(content)) == "" ->
-        "assistant produced no reply content#{stop_suffix}"
-
-      true ->
-        "assistant cycle completed without sending a reply#{stop_suffix}"
-    end
-  end
-
-  defp describe_silent_cycle_message(%Message{}), do: "cycle completed without sending a reply"
-  defp describe_silent_cycle_message(_), do: nil
-
-  defp metadata_value(metadata, "stop_reason") when is_map(metadata),
-    do: metadata["stop_reason"] || metadata[:stop_reason]
-
-  defp metadata_value(_metadata, _key), do: nil
-
-  defp extract_tool_use_names(blocks) when is_list(blocks) do
-    blocks
-    |> Enum.flat_map(fn
-      %{"type" => "tool_use", "name" => name} when is_binary(name) -> [name]
-      %{"type" => "mcp_tool_use", "name" => name} when is_binary(name) -> [name]
-      _ -> []
-    end)
-    |> Enum.take(3)
-  end
-
-  defp extract_tool_use_names(_), do: []
-
-  defp maybe_set_crash_error(state, :normal), do: state
-  defp maybe_set_crash_error(state, :shutdown), do: state
-  defp maybe_set_crash_error(state, {:shutdown, _}), do: state
-
-  defp maybe_set_crash_error(%{last_tool_error: nil} = state, reason) do
-    put_last_tool_error(state, extract_crash_message(reason))
-  end
-
-  defp maybe_set_crash_error(state, _reason), do: state
-
-  defp extract_crash_message({:error, {:http_error, status, %{"error" => %{"message" => msg}}}}) do
-    "API error (#{status}): #{msg}"
-  end
-
-  defp extract_crash_message({:error, reason}) do
-    "Agent error: #{inspect(reason, limit: 5, printable_limit: 300)}"
-  end
-
-  defp extract_crash_message(reason) do
-    "Agent crashed: #{inspect(reason, limit: 5, printable_limit: 300)}"
-  end
 
   # Handles hot code reload where in-memory struct instances may predate new fields.
   defp normalize_state(%__MODULE__{} = state) do

@@ -40,7 +40,6 @@ defmodule Froth.Telegram.BotTest do
     assert state.current_narration_message_id == 77
     assert state.current_narration_text == "Checking X"
     assert state.current_narration_mode == :italic
-    refute state.cycle_replied?
   end
 
   test "commit_tool clears active narration when a normal message is sent" do
@@ -72,7 +71,6 @@ defmodule Froth.Telegram.BotTest do
              )
 
     state = :sys.get_state(bot)
-    assert state.cycle_replied? == true
     assert state.last_sent_message_id == 42
     assert state.current_narration_message_id == nil
     assert state.current_narration_text == nil
@@ -123,25 +121,9 @@ defmodule Froth.Telegram.BotTest do
     assert result_text =~ "Message received during tool execution: new incoming"
 
     state = :sys.get_state(bot)
-    assert state.cycle_replied? == true
     assert state.last_sent_message_id == 42
     assert state.last_sent_message_text == "hello"
     assert state.mid_cycle_messages == []
-  end
-
-  test "commit_tool tracks error details for fallback reporting" do
-    bot = start_bot()
-    tool_use = %ToolUse{id: "call_1", name: "run_shell", input: %{"command" => "false"}}
-    context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
-
-    assert {:error, "tool task failed: boom"} =
-             GenServer.call(
-               bot,
-               {:commit_tool, tool_use, context, %{execution: %{cycle_id: "cycle_1"}},
-                %{result: {:error, "tool task failed: boom"}}}
-             )
-
-    assert :sys.get_state(bot).last_tool_error == "tool task failed: boom"
   end
 
   test "telegram error updates do not crash the bot" do
@@ -231,7 +213,6 @@ defmodule Froth.Telegram.BotTest do
           worker_pid: worker_pid,
           worker_ref: worker_ref,
           chat_id: 123,
-          cycle_replied?: true,
           last_sent_message_id: 42,
           last_sent_message_text: "hello"
       }
