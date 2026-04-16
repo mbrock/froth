@@ -216,18 +216,22 @@ defmodule Froth.Telegram.BotAdapter do
     )
   end
 
-  def send_italic(session_id, chat_id, reply_to, text)
-      when is_binary(session_id) and is_integer(chat_id) and is_binary(text) do
-    send_message(session_id, chat_id, text,
-      reply_to: reply_to,
-      entities: [
-        %{
-          "@type" => "textEntity",
-          "offset" => 0,
-          "length" => String.length(text),
-          "type" => %{"@type" => "textEntityTypeItalic"}
-        }
-      ]
+  def send_italic(session_id, chat_id, reply_to, text, opts \\ [])
+      when is_binary(session_id) and is_integer(chat_id) and is_binary(text) and is_list(opts) do
+    italic = [
+      %{
+        "@type" => "textEntity",
+        "offset" => 0,
+        "length" => String.length(text),
+        "type" => %{"@type" => "textEntityTypeItalic"}
+      }
+    ]
+
+    send_message(
+      session_id,
+      chat_id,
+      text,
+      opts |> Keyword.put(:reply_to, reply_to) |> Keyword.put(:entities, italic)
     )
   end
 

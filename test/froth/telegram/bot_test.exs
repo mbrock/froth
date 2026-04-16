@@ -68,23 +68,6 @@ defmodule Froth.Telegram.BotTest do
     assert state.narration == nil
   end
 
-  test "prepare_tool reserves the control prompt once per cycle" do
-    bot = start_bot()
-    tool_use = %ToolUse{id: "call_1", name: "elixir_eval", input: %{"code" => "1 + 1"}}
-    context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
-
-    assert {:ok, %{execution: execution}} =
-             GenServer.call(bot, {:prepare_tool, tool_use, context})
-
-    assert execution.input["send_control_prompt"] == true
-    assert MapSet.member?(:sys.get_state(bot).control_prompt_cycles, "cycle_1")
-
-    assert {:ok, %{execution: execution_2}} =
-             GenServer.call(bot, {:prepare_tool, tool_use, context})
-
-    assert execution_2.input["send_control_prompt"] == false
-  end
-
   test "commit_tool tracks sent messages and injects buffered mid-cycle messages" do
     bot = start_bot()
     tool_use = %ToolUse{id: "call_1", name: "send_message", input: %{"text" => "hello"}}

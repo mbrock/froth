@@ -683,18 +683,6 @@ defmodule Froth.Telegram.AskFlowTest do
     )
 
     assert_receive {:llm_call, 0, _messages, _opts}, 5_000
-
-    assert_receive {:telegram_call,
-                    %{
-                      "@type" => "sendMessage",
-                      "chat_id" => ^chat_id,
-                      "input_message_content" => %{
-                        "text" => %{"text" => "I am running code and tools before I reply."}
-                      }
-                    }},
-                   5_000
-
-    assert_receive {:message_send_succeeded, _temp_id, _control_prompt_id, ^chat_id}, 5_000
     assert_receive {:llm_call, 1, shell_resumed_messages, _opts}, 8_000
 
     shell_result_message = List.last(shell_resumed_messages)
@@ -718,12 +706,13 @@ defmodule Froth.Telegram.AskFlowTest do
                     %{
                       "@type" => "sendMessage",
                       "chat_id" => ^chat_id,
-                      "input_message_content" => %{"text" => %{"text" => await_text}},
+                      "input_message_content" => %{
+                        "text" => %{"text" => "Awaiting background work" <> _ = await_text}
+                      },
                       "reply_markup" => %{"@type" => "replyMarkupInlineKeyboard", "rows" => rows}
                     }},
                    8_000
 
-    assert await_text =~ "Awaiting background work"
     assert await_text =~ task_id
     assert get_in(rows, [Access.at(0), Access.at(0), "text"]) == "⛓️‍💥"
     assert get_in(rows, [Access.at(0), Access.at(1), "text"]) == "🏃‍➡️"
@@ -929,17 +918,6 @@ defmodule Froth.Telegram.AskFlowTest do
        }}
     )
 
-    assert_receive {:telegram_call,
-                    %{
-                      "@type" => "sendMessage",
-                      "chat_id" => ^chat_id,
-                      "input_message_content" => %{
-                        "text" => %{"text" => "I am running code and tools before I reply."}
-                      }
-                    }},
-                   5_000
-
-    assert_receive {:message_send_succeeded, _old_id, _control_prompt_id, ^chat_id}, 5_000
     assert_receive {:llm_call, tool_names, _api_messages, _opts}, 5_000
     assert "run_shell" in tool_names
     assert_receive {:llm_call, ["deliver_failure_report"], report_messages, report_opts}, 5_000
@@ -1156,17 +1134,6 @@ defmodule Froth.Telegram.AskFlowTest do
        }}
     )
 
-    assert_receive {:telegram_call,
-                    %{
-                      "@type" => "sendMessage",
-                      "chat_id" => ^chat_id,
-                      "input_message_content" => %{
-                        "text" => %{"text" => "I am running code and tools before I reply."}
-                      }
-                    }},
-                   5_000
-
-    assert_receive {:message_send_succeeded, _old_id, _control_prompt_id, ^chat_id}, 5_000
     assert_receive {:llm_call, tool_names, _api_messages, _opts}, 5_000
     assert "run_shell" in tool_names
     assert_receive {:llm_call, ["deliver_failure_report"], _report_messages, _report_opts}, 5_000

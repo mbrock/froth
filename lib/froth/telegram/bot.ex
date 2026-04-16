@@ -27,7 +27,6 @@ defmodule Froth.Telegram.Bot do
   alias Froth.Telegram.Bot.Config, as: BotConfig
   alias Froth.Telegram.BotAdapter
   alias Froth.Telegram.BotContext
-  alias Froth.Telegram.ControlPrompt
   alias Froth.Telegram.CostFooter
   alias Froth.Telegram.CycleLink
   alias Froth.Telegram.Message, as: TgMessage
@@ -49,7 +48,6 @@ defmodule Froth.Telegram.Bot do
     :last_sent,
     :narration,
     active_tasks: %{},
-    control_prompt_cycles: MapSet.new(),
     awaiting_user_input?: false,
     debounce_timer: nil,
     debounce_msg: nil,
@@ -700,8 +698,7 @@ defmodule Froth.Telegram.Bot do
   end
 
   # Clear all per-cycle fields back to their struct defaults. Does not touch
-  # the cross-cycle indexes (`active_tasks`, `control_prompt_cycles`) — use
-  # `prune_cycle_indexes/2` for that.
+  # `active_tasks` (keyed by cycle_id) — use `prune_cycle_indexes/2` for that.
   defp reset_cycle_state(state) do
     %{
       state
@@ -718,11 +715,7 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp prune_cycle_indexes(state, cycle_id) when is_binary(cycle_id) do
-    %{
-      state
-      | active_tasks: Map.delete(state.active_tasks, cycle_id),
-        control_prompt_cycles: MapSet.delete(state.control_prompt_cycles, cycle_id)
-    }
+    %{state | active_tasks: Map.delete(state.active_tasks, cycle_id)}
   end
 
   defp prune_cycle_indexes(state, _cycle_id), do: state
@@ -762,57 +755,21 @@ defmodule Froth.Telegram.Bot do
         tool_timeout_ms: cycle_config["tool_timeout_ms"]
       }
 
-      {execution, state} =
+      input =
         case name do
-          "send_message" ->
-            {Map.merge(execution_base, %{name: name, input: input}), state}
-
           "elixir_eval" ->
-            {state, send_control_prompt?} = reserve_control_prompt(state, cycle_id)
+            input
+            |> Map.put("reply_to", reply_to)
+            |> Map.put("topic", "cycle:#{cycle_id}")
 
-            {Map.merge(execution_base, %{
-               name: name,
-               input:
-                 input
-                 |> Map.put("reply_to", reply_to)
-                 |> Map.put("send_control_prompt", send_control_prompt?)
-                 |> Map.put("topic", "cycle:#{cycle_id}")
-                 |> maybe_put_control_prompt(
-                   send_control_prompt?,
-                   bc,
-                   cycle_id,
-                   chat_id,
-                   reply_to
-                 )
-             }), state}
-
-          "run_shell" ->
-            {state, send_control_prompt?} = reserve_control_prompt(state, cycle_id)
-
-            {Map.merge(execution_base, %{
-               name: name,
-               input:
-                 input
-                 |> Map.put("reply_to", reply_to)
-                 |> Map.put("send_control_prompt", send_control_prompt?)
-                 |> maybe_put_control_prompt(
-                   send_control_prompt?,
-                   bc,
-                   cycle_id,
-                   chat_id,
-                   reply_to
-                 )
-             }), state}
-
-          "spawn_agent" ->
-            {Map.merge(execution_base, %{
-               name: name,
-               input: Map.put(input, "reply_to", reply_to)
-             }), state}
+          name when name in ["run_shell", "spawn_agent"] ->
+            Map.put(input, "reply_to", reply_to)
 
           _ ->
-            {Map.merge(execution_base, %{name: name, input: input}), state}
+            input
         end
+
+      execution = Map.merge(execution_base, %{name: name, input: input})
 
       prepared = %{
         execution: execution,
@@ -855,30 +812,6 @@ defmodule Froth.Telegram.Bot do
     state = maybe_track_task_from_result(state, cycle_id, result)
     maybe_inject_mid_cycle_messages(result, state)
   end
-
-  defp reserve_control_prompt(state, cycle_id) when is_binary(cycle_id) do
-    {cycles, send_control_prompt?} = ControlPrompt.reserve(state.control_prompt_cycles, cycle_id)
-    {%{state | control_prompt_cycles: cycles}, send_control_prompt?}
-  end
-
-  defp reserve_control_prompt(state, _cycle_id), do: {state, false}
-
-  defp maybe_put_control_prompt(input, true, bc, cycle_id, chat_id, reply_to)
-       when is_binary(cycle_id) and is_integer(chat_id) do
-    ControlPrompt.maybe_put(
-      input,
-      true,
-      cycle_id: cycle_id,
-      chat_id: chat_id,
-      reply_to: reply_to,
-      session_id: bc.session_id,
-      bot_id: bc.id,
-      bot_username: bc.bot_username,
-      text: "I am running code and tools before I reply."
-    )
-  end
-
-  defp maybe_put_control_prompt(input, _send?, _bc, _cycle_id, _chat_id, _reply_to), do: input
 
   defp extract_cycle_id(%{execution: %{cycle_id: cycle_id}}) when is_binary(cycle_id),
     do: cycle_id
@@ -1124,11 +1057,7 @@ defmodule Froth.Telegram.Bot do
           nil
       end
 
-    %{
-      state
-      | active_tasks: Map.delete(state.active_tasks, cycle_id),
-        control_prompt_cycles: MapSet.delete(state.control_prompt_cycles, cycle_id)
-    }
+    %{state | active_tasks: Map.delete(state.active_tasks, cycle_id)}
   end
 
   defp stop_pending_ask_cycle(state, _pending_ask, _mode), do: state
