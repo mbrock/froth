@@ -142,108 +142,18 @@ defmodule Froth.Telegram.Bot do
   end
 
   def handle_info({:telegram_update, update}, state) do
-    update_type = update["@type"] || "unknown"
     bc = state.bot_config
-    session_span = Froth.Telegram.Session.span_id(bc.session_id)
-    chat_id = update_chat_id(update)
-    sender_id = update_sender_id(update)
-    text = update_text(update)
+    action = route_update(update, bc)
 
-    case route_update(update, bc) do
-      {:mention, msg} ->
-        Span.execute([:froth, :telegram, :bot, :update], session_span, %{
-          bot_id: bc.id,
-          update_type: update_type,
-          action: "mention",
-          chat_id: chat_id,
-          sender_id: sender_id,
-          message_id: msg["id"],
-          text: String.slice(text || "", 0, 200)
-        })
+    Span.execute([:froth, :telegram, :bot, :update], Froth.Telegram.Session.span_id(bc.session_id), %{
+      bot_id: bc.id,
+      update: update,
+      action: action
+    })
 
-        {:noreply, debounce_or_start(state, msg)}
-
-      {:pending_ask_answer, pending_ask, answer, reply_to} ->
-        Span.execute([:froth, :telegram, :bot, :update], session_span, %{
-          bot_id: bc.id,
-          update_type: update_type,
-          action: "pending_ask_answer",
-          chat_id: chat_id,
-          pending_ask_id: pending_ask.id
-        })
-
-        {:noreply, enqueue_or_resume_pending_ask(state, pending_ask, answer, reply_to)}
-
-      {:callback_stop_cycle, query_id, cycle_id} ->
-        Span.execute([:froth, :telegram, :bot, :update], session_span, %{
-          bot_id: bc.id,
-          update_type: update_type,
-          action: "callback_stop_cycle",
-          cycle_id: cycle_id
-        })
-
-        BotAdapter.answer_callback(bc.session_id, query_id)
-        {:noreply, stop_cycle(state, cycle_id, notify?: true)}
-
-      {:callback_stop_active, query_id} ->
-        Span.execute([:froth, :telegram, :bot, :update], session_span, %{
-          bot_id: bc.id,
-          update_type: update_type,
-          action: "callback_stop_active"
-        })
-
-        BotAdapter.answer_callback(bc.session_id, query_id)
-
-        state =
-          case state.cycle do
-            %Cycle{id: cycle_id} -> stop_cycle(state, cycle_id, notify?: true)
-            _ -> state
-          end
-
-        {:noreply, state}
-
-      {:callback_game, query_id, game_short_name} ->
-        Span.execute([:froth, :telegram, :bot, :update], session_span, %{
-          bot_id: bc.id,
-          update_type: update_type,
-          action: "callback_game",
-          game: game_short_name
-        })
-
-        _ = game_short_name
-        BotAdapter.answer_callback_with_url(bc.session_id, query_id, @game_url)
-        {:noreply, state}
-
-      {:callback_pending_ask, query_id, pending_ask, answer, reply_to} ->
-        Span.execute([:froth, :telegram, :bot, :update], session_span, %{
-          bot_id: bc.id,
-          update_type: update_type,
-          action: "callback_pending_ask",
-          chat_id: chat_id,
-          pending_ask_id: pending_ask.id
-        })
-
-        BotAdapter.answer_callback(bc.session_id, query_id)
-        {:noreply, enqueue_or_resume_pending_ask(state, pending_ask, answer, reply_to)}
-
-      {:callback_pending_ask_ignored, query_id} ->
-        BotAdapter.answer_callback(bc.session_id, query_id)
-        {:noreply, state}
-
-      :ignore ->
-        Span.execute([:froth, :telegram, :bot, :update], session_span, %{
-          bot_id: bc.id,
-          update_type: update_type,
-          action: "ignore",
-          chat_id: chat_id,
-          sender_id: sender_id
-        })
-
-        {:noreply, state}
-    end
+    {:noreply, dispatch_update_action(state, action)}
   end
 
-  @impl true
   def handle_info(:debounce_fire, state) do
     state = %{state | debounce_timer: nil}
 
@@ -350,6 +260,45 @@ defmodule Froth.Telegram.Bot do
 
   def handle_call(_, _from, state), do: {:reply, {:error, "unsupported"}, state}
 
+  defp dispatch_update_action(state, {:mention, msg}) do
+    debounce_or_start(state, msg)
+  end
+
+  defp dispatch_update_action(state, {:pending_ask_answer, pending_ask, answer, reply_to}) do
+    enqueue_or_resume_pending_ask(state, pending_ask, answer, reply_to)
+  end
+
+  defp dispatch_update_action(state, {:callback_stop_cycle, query_id, cycle_id}) do
+    BotAdapter.answer_callback(state.bot_config.session_id, query_id)
+    stop_cycle(state, cycle_id, notify?: true)
+  end
+
+  defp dispatch_update_action(state, {:callback_stop_active, query_id}) do
+    BotAdapter.answer_callback(state.bot_config.session_id, query_id)
+
+    case state.cycle do
+      %Cycle{id: cycle_id} -> stop_cycle(state, cycle_id, notify?: true)
+      _ -> state
+    end
+  end
+
+  defp dispatch_update_action(state, {:callback_game, query_id, _game_short_name}) do
+    BotAdapter.answer_callback_with_url(state.bot_config.session_id, query_id, @game_url)
+    state
+  end
+
+  defp dispatch_update_action(state, {:callback_pending_ask, query_id, pending_ask, answer, reply_to}) do
+    BotAdapter.answer_callback(state.bot_config.session_id, query_id)
+    enqueue_or_resume_pending_ask(state, pending_ask, answer, reply_to)
+  end
+
+  defp dispatch_update_action(state, {:callback_pending_ask_ignored, query_id}) do
+    BotAdapter.answer_callback(state.bot_config.session_id, query_id)
+    state
+  end
+
+  defp dispatch_update_action(state, :ignore), do: state
+
   defp route_update(%{"@type" => "updateNewMessage", "message" => msg}, bot_config)
        when is_map(msg) do
     sender = get_in(msg, ["sender_id", "user_id"])
@@ -410,27 +359,6 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp route_update(_, _), do: :ignore
-
-  defp update_chat_id(%{"message" => %{"chat_id" => chat_id}}) when is_integer(chat_id),
-    do: chat_id
-
-  defp update_chat_id(_), do: nil
-
-  defp update_sender_id(%{"message" => %{"sender_id" => %{"user_id" => sender_id}}})
-       when is_integer(sender_id),
-       do: sender_id
-
-  defp update_sender_id(_), do: nil
-
-  defp update_text(%{"message" => %{"content" => %{"text" => %{"text" => text}}}})
-       when is_binary(text),
-       do: text
-
-  defp update_text(%{"message" => %{"content" => %{"caption" => %{"text" => text}}}})
-       when is_binary(text),
-       do: text
-
-  defp update_text(_), do: nil
 
   defp route_callback_query(query, bot_config) do
     query_id = callback_query_id(query)
