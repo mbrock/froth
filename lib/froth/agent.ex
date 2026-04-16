@@ -743,7 +743,7 @@ defmodule Froth.Agent do
   defp merge_usage_maps(_left, right), do: right
 
   defp estimate_usage_cost_usd(usage, model) when is_map(usage) and is_binary(model) do
-    case model_pricing_rates(model, prompt_over_200k?(usage)) do
+    case model_pricing_rates(model) do
       nil ->
         nil
 
@@ -762,20 +762,6 @@ defmodule Froth.Agent do
 
   defp estimate_usage_cost_usd(_usage, _model), do: nil
 
-  defp prompt_over_200k?(usage) when is_map(usage) do
-    total_input_tokens(usage) > 200_000
-  end
-
-  defp prompt_over_200k?(_usage), do: false
-
-  defp total_input_tokens(usage) when is_map(usage) do
-    usage_int(usage["input_tokens"]) +
-      usage_int(usage["cache_creation_input_tokens"]) +
-      usage_int(usage["cache_read_input_tokens"])
-  end
-
-  defp total_input_tokens(_usage), do: 0
-
   defp usage_int(value) when is_integer(value) and value >= 0, do: value
 
   defp usage_int(value) when is_binary(value) do
@@ -787,37 +773,30 @@ defmodule Froth.Agent do
 
   defp usage_int(_value), do: 0
 
-  # Source-of-truth rates (USD / MTok) from https://claude.com/pricing,
-  # synced in the existing Telegram runtime and reused here for cycle summaries.
-  defp model_pricing_rates(model, over_200k?) when is_binary(model) do
+  # Source-of-truth rates (USD / MTok) from https://claude.com/pricing.
+  # Flat pricing — the 200K-token tier has been retired.
+  defp model_pricing_rates(model) when is_binary(model) do
     downcased = String.downcase(model)
 
     cond do
+      String.contains?(downcased, "opus-4-7") ->
+        %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
+
       String.contains?(downcased, "opus-4-6") ->
-        if over_200k? do
-          %{input: 10.0, output: 37.5, cache_write: 12.5, cache_read: 1.0}
-        else
-          %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
-        end
+        %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
 
       String.contains?(downcased, "sonnet-4-6") ->
-        if over_200k? do
-          %{input: 6.0, output: 22.5, cache_write: 7.5, cache_read: 0.6}
-        else
-          %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
-        end
+        %{input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3}
 
       String.contains?(downcased, "haiku-4-5") ->
-        if over_200k? do
-          %{input: 1.6, output: 8.0, cache_write: 2.0, cache_read: 0.16}
-        else
-          %{input: 0.8, output: 4.0, cache_write: 1.0, cache_read: 0.08}
-        end
+        %{input: 1.0, output: 5.0, cache_write: 1.25, cache_read: 0.1}
 
       true ->
         nil
     end
   end
+
+  defp model_pricing_rates(_model), do: nil
 
   defp describe_control_outcome(%{"outcome" => "yield", "reason" => reason})
        when is_binary(reason) and reason != "" do
