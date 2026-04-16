@@ -128,8 +128,8 @@ defmodule Froth.Telegram do
       content = %{
         "@type" => "inputMessageVideo",
         "video" => file_ref,
-        "width" => 0,
-        "height" => 0,
+        "width" => Keyword.get(opts, :width, 0),
+        "height" => Keyword.get(opts, :height, 0),
         "duration" => 0
       }
 

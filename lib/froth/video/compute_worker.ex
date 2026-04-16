@@ -45,7 +45,7 @@ defmodule Froth.Video.ComputeWorker do
 
   def local_offer(opts \\ []) when is_list(opts) do
     slots = local_worker_slots(opts)
-    browser_profile = browser_profile(opts)
+    browser_profile = browser_profile_config() |> Chrome.normalize_profile()
     browser_meta = Chrome.profile_metadata(browser_profile)
 
     %{

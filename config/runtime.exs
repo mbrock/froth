@@ -142,11 +142,11 @@ config :froth, Froth.Anthropic,
   model: System.get_env("ANTHROPIC_MODEL", "claude-opus-4-6"),
   system: System.get_env("ANTHROPIC_SYSTEM", ""),
   max_tokens:
-    (case System.get_env("ANTHROPIC_MAX_TOKENS", "16384") do
+    (case System.get_env("ANTHROPIC_MAX_TOKENS", "65536") do
        value ->
          case Integer.parse(value) do
            {n, ""} when n > 0 -> n
-           _ -> 16_384
+           _ -> 65_536
          end
      end),
   output_config:
@@ -154,7 +154,7 @@ config :froth, Froth.Anthropic,
        "" ->
          nil
 
-       effort when effort in ["low", "medium", "high", "max"] ->
+       effort when effort in ["low", "medium", "high", "xhigh", "max"] ->
          %{"effort" => effort}
 
        _ ->

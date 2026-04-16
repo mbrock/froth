@@ -79,11 +79,11 @@ defmodule FrothWeb.PageController do
       },
       %{
         id: "froth-link-analyses",
-        href: ~p"/froth/analyses",
+        href: ~p"/froth/analyses/day",
         title: "Analyses",
         description: "Browse the media and text analyses grouped by day.",
         badge: "day view",
-        path_label: "/froth/analyses",
+        path_label: "/froth/analyses/day",
         icon: "hero-chart-bar",
         icon_class: "border-sky-400/20 bg-sky-400/10 text-sky-100",
         badge_class: "border-sky-400/20 bg-sky-400/10 text-sky-100"

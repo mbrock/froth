@@ -1,0 +1,39 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  bin/agent_inspect cache [bot_id] [limit]
+  bin/agent_inspect request <cycle_id>
+EOF
+}
+
+cmd="${1:-}"
+
+case "$cmd" in
+  cache)
+    bot_id="${2:-charlie}"
+    limit="${3:-5}"
+
+    bin/rpc <<EOF
+Froth.AgentInspect.print_cache_report("${bot_id}", ${limit})
+EOF
+    ;;
+  request)
+    cycle_id="${2:-}"
+
+    if [ -z "$cycle_id" ]; then
+      usage
+      exit 1
+    fi
+
+    bin/rpc <<EOF
+Froth.AgentInspect.print_request_summary("${cycle_id}")
+EOF
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac

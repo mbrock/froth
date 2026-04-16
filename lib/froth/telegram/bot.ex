@@ -31,6 +31,7 @@ defmodule Froth.Telegram.Bot do
   alias Froth.Telegram.MessageIdSync
   alias Froth.Telegram.Names
   alias Froth.Telegram.PendingAsks
+  alias Froth.Telegram.PromptCache
   alias Froth.Telegram.SyntheticMessage
   alias Froth.Telegram.ToolExecution
   alias Froth.Telemetry.Span
@@ -123,6 +124,7 @@ defmodule Froth.Telegram.Bot do
       effort: Keyword.get(opts, :effort),
       chronicle_dir: Keyword.get(opts, :chronicle_dir),
       recent_message_limit: Keyword.get(opts, :recent_message_limit),
+      recent_message_anchor_size: Keyword.get(opts, :recent_message_anchor_size),
       max_tool_calls: Keyword.get(opts, :max_tool_calls),
       max_send_message_calls: Keyword.get(opts, :max_send_message_calls),
       debounce_ms: Keyword.get(opts, :debounce_ms, 0)
@@ -965,7 +967,7 @@ defmodule Froth.Telegram.Bot do
   defp parts_to_text_blocks(parts, bot_config) when is_list(parts) do
     parts
     |> maybe_append_response_instruction(bot_config)
-    |> Enum.map(fn part -> %{"type" => "text", "text" => part} end)
+    |> PromptCache.text_blocks(bot_config)
   end
 
   defp maybe_append_response_instruction(parts, bot_config) do
@@ -2212,6 +2214,8 @@ defmodule Froth.Telegram.Bot do
       duration = format_seconds(elapsed_seconds)
       in_part = format_tokens_k(total_in)
       out_part = format_tokens_k(total_out)
+      cache_write_part = format_tokens_k(usage_int(usage["cache_creation_input_tokens"]))
+      cache_read_part = format_tokens_k(usage_int(usage["cache_read_input_tokens"]))
 
       usd =
         if state.cycle_cost_usd > 0 do
@@ -2221,7 +2225,8 @@ defmodule Froth.Telegram.Bot do
         end
 
       cost = "$" <> :erlang.float_to_binary(usd, decimals: 3)
-      "[#{duration} | #{in_part} in | #{out_part} out | #{cost}]"
+
+      "[#{duration} | #{in_part} in | #{out_part} out | #{cache_write_part} cw | #{cache_read_part} cr | #{cost}]"
     end
   end
 

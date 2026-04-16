@@ -30,15 +30,36 @@ defmodule Mix.Tasks.Froth.Context do
         config = Froth.Telegram.Charlie.default_config()
         chat_id = -1_003_690_254_489
 
-        limit = message_limit || config.recent_message_limit
-
         opts = [
           telegram_session_id: config.session_id,
           bot_id: config.id,
           chronicle_dir: if(only_messages, do: nil, else: config.chronicle_dir),
-          recent_message_limit: limit,
           only_nontrivial: no_trivial
         ]
+
+        opts =
+          if is_integer(message_limit) and message_limit > 0 do
+            [{:recent_message_limit, message_limit} | opts]
+          else
+            opts
+            |> Keyword.put(
+              :recent_window_target_hours,
+              Map.get(config, :recent_window_target_hours)
+            )
+            |> Keyword.put(:recent_window_min_hours, Map.get(config, :recent_window_min_hours))
+            |> Keyword.put(
+              :recent_window_backfill_hours,
+              Map.get(config, :recent_window_backfill_hours)
+            )
+            |> Keyword.put(
+              :recent_window_char_budget,
+              Map.get(config, :recent_window_char_budget)
+            )
+            |> Keyword.put(
+              :recent_window_bucket_minutes,
+              Map.get(config, :recent_window_bucket_minutes)
+            )
+          end
 
         parts = Froth.Telegram.BotContext.render_parts(chat_id, opts)
         system_prompt = config.system_prompt_fun.(chat_id, config)

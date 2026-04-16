@@ -309,22 +309,33 @@ defmodule Froth.Browser.Instance do
     {:noreply, state}
   end
 
-  def handle_info({:browser_cdp_event, _cdp_pid, %{"method" => "Runtime.consoleAPICalled"} = event}, state) do
+  def handle_info(
+        {:browser_cdp_event, _cdp_pid, %{"method" => "Runtime.consoleAPICalled"} = event},
+        state
+      ) do
     params = event["params"] || %{}
     type = params["type"] || "log"
     args = params["args"] || []
-    text = args |> Enum.map(fn
-      %{"value" => v} when is_binary(v) -> v
-      %{"value" => v} -> inspect(v)
-      %{"description" => d} -> d
-      %{"type" => "undefined"} -> "undefined"
-      other -> inspect(other)
-    end) |> Enum.join(" ")
+
+    text =
+      args
+      |> Enum.map(fn
+        %{"value" => v} when is_binary(v) -> v
+        %{"value" => v} -> inspect(v)
+        %{"description" => d} -> d
+        %{"type" => "undefined"} -> "undefined"
+        other -> inspect(other)
+      end)
+      |> Enum.join(" ")
+
     entry = %{type: type, text: text, timestamp: System.system_time(:millisecond)}
     {:noreply, %{state | console_logs: [entry | state.console_logs]}}
   end
 
-  def handle_info({:browser_cdp_event, _cdp_pid, %{"method" => "Runtime.exceptionThrown"} = event}, state) do
+  def handle_info(
+        {:browser_cdp_event, _cdp_pid, %{"method" => "Runtime.exceptionThrown"} = event},
+        state
+      ) do
     params = event["params"] || %{}
     exception = get_in(params, ["exceptionDetails", "exception"]) || %{}
     text = exception["description"] || inspect(params)
@@ -338,7 +349,14 @@ defmodule Froth.Browser.Instance do
     level = log_entry["level"] || "info"
     text = log_entry["text"] || ""
     url = log_entry["url"]
-    entry = %{type: "log:" <> level, text: text, url: url, timestamp: System.system_time(:millisecond)}
+
+    entry = %{
+      type: "log:" <> level,
+      text: text,
+      url: url,
+      timestamp: System.system_time(:millisecond)
+    }
+
     {:noreply, %{state | console_logs: [entry | state.console_logs]}}
   end
 

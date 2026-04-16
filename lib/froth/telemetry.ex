@@ -141,6 +141,9 @@ defmodule Froth.Telemetry do
   ]
 
   @codex_events [
+    [:froth, :codex, :session, :start],
+    [:froth, :codex, :session, :stop],
+    [:froth, :codex, :session, :close_requested],
     [:froth, :codex, :pubsub_subscribe],
     [:froth, :codex, :pubsub_unsubscribe],
     [:froth, :codex, :started],

@@ -210,13 +210,8 @@ defmodule Froth.LLM do
                    model,
                    Keyword.get(opts, :thinking, Keyword.get(cfg, :thinking))
                  ),
-               output_config: resolve_output_config(opts, cfg),
-               cache_control:
-                 Keyword.get(
-                   opts,
-                   :cache_control,
-                   Keyword.get(cfg, :cache_control, %{"type" => "ephemeral"})
-                 ),
+               output_config: resolve_output_config(model, opts, cfg),
+               cache_control: resolve_cache_control(provider_name, api_messages, opts, cfg),
                response_modalities:
                  Keyword.get(opts, :response_modalities, Keyword.get(cfg, :response_modalities)),
                response_format:
@@ -251,9 +246,17 @@ defmodule Froth.LLM do
 
   defp resolve_thinking(model, configured) when is_binary(model) do
     cond do
-      is_map(configured) -> normalize_thinking(model, configured)
-      is_nil(configured) and model == "claude-opus-4-6" -> %{"type" => "adaptive"}
-      true -> configured
+      is_map(configured) ->
+        normalize_thinking(model, configured)
+
+      is_nil(configured) and model == "claude-opus-4-6" ->
+        %{"type" => "adaptive"}
+
+      is_nil(configured) and model == "claude-opus-4-7" ->
+        %{"type" => "adaptive", "display" => "summarized"}
+
+      true ->
+        configured
     end
   end
 
@@ -265,21 +268,42 @@ defmodule Froth.LLM do
         {to_string(key), value}
       end)
 
-    if String.starts_with?(model, "claude-") do
-      Map.put_new(configured, "type", "adaptive")
+    configured =
+      if String.starts_with?(model, "claude-") do
+        Map.put_new(configured, "type", "adaptive")
+      else
+        configured
+      end
+
+    if model == "claude-opus-4-7" do
+      Map.put_new(configured, "display", "summarized")
     else
       configured
     end
   end
 
-  defp resolve_output_config(opts, cfg) do
+  defp resolve_output_config(model, opts, cfg) do
     output_config = Keyword.get(opts, :output_config, Keyword.get(cfg, :output_config))
-    effort = Keyword.get(opts, :effort, Keyword.get(cfg, :effort))
+
+    effort =
+      opts
+      |> Keyword.get(:effort, Keyword.get(cfg, :effort))
 
     if is_binary(effort) do
       (output_config || %{}) |> Map.put("effort", effort)
     else
-      output_config
+      maybe_default_anthropic_output_config(model, output_config)
+    end
+  end
+
+  defp maybe_default_anthropic_output_config("claude-opus-4-7", output_config) do
+    (output_config || %{}) |> Map.put_new("effort", "xhigh")
+  end
+
+  defp maybe_default_anthropic_output_config(_model, output_config) do
+    case output_config do
+      %{} = config when map_size(config) > 0 -> config
+      _ -> output_config
     end
   end
 
@@ -444,6 +468,42 @@ defmodule Froth.LLM do
   def provider_name_for_model(_model), do: nil
 
   # -- Internal helpers --
+
+  defp resolve_cache_control(provider_name, api_messages, opts, cfg) do
+    cache_control =
+      Keyword.get(
+        opts,
+        :cache_control,
+        Keyword.get(cfg, :cache_control, %{"type" => "ephemeral"})
+      )
+
+    if provider_name == :anthropic and explicit_cache_breakpoints?(api_messages) do
+      nil
+    else
+      cache_control
+    end
+  end
+
+  defp explicit_cache_breakpoints?(messages) when is_list(messages) do
+    Enum.any?(messages, fn
+      %Message{content: content} -> content_has_cache_breakpoint?(content)
+      %{"content" => content} -> content_has_cache_breakpoint?(content)
+      %{content: content} -> content_has_cache_breakpoint?(content)
+      _ -> false
+    end)
+  end
+
+  defp explicit_cache_breakpoints?(_messages), do: false
+
+  defp content_has_cache_breakpoint?(content) when is_list(content) do
+    Enum.any?(content, fn
+      %{"cache_control" => %{} = _cache_control} -> true
+      %{cache_control: %{} = _cache_control} -> true
+      _ -> false
+    end)
+  end
+
+  defp content_has_cache_breakpoint?(_content), do: false
 
   defp emit_edit(provider, %Edit{} = edit, parent_id) do
     Span.execute([:froth, :llm, :edit], parent_id, %{

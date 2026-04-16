@@ -336,8 +336,8 @@ defmodule Froth.RouteAudit do
 
   defp resolve_route_path(%{path: path}, context) do
     case path do
-      "/froth/analyses/:day" ->
-        {:ok, "/froth/analyses/#{context.analysis_day}", "latest analysis day"}
+      "/froth/analyses/day/:day" ->
+        {:ok, "/froth/analyses/day/#{context.analysis_day}", "latest analysis day"}
 
       "/froth/inference/:id" ->
         resolve_param_path("/froth/inference/:id", context.cycle_id, "latest cycle id")

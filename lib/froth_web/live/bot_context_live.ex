@@ -14,7 +14,12 @@ defmodule FrothWeb.BotContextLive do
       telegram_session_id: config.session_id,
       bot_id: config.id,
       chronicle_dir: config.chronicle_dir,
-      recent_message_limit: config.recent_message_limit
+      recent_message_limit: Map.get(config, :recent_message_limit),
+      recent_window_target_hours: Map.get(config, :recent_window_target_hours),
+      recent_window_min_hours: Map.get(config, :recent_window_min_hours),
+      recent_window_backfill_hours: Map.get(config, :recent_window_backfill_hours),
+      recent_window_char_budget: Map.get(config, :recent_window_char_budget),
+      recent_window_bucket_minutes: Map.get(config, :recent_window_bucket_minutes)
     ]
 
     parts = BotContext.render_parts(@default_chat_id, opts)

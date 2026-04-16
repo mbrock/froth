@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0020" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0020: Durable Runtime Facts and an Analytics Mirror</title>
+    <status>DRAFT</status>
+    <author>Codex</author>
+    <date>2026-03-28</date>
+    <related>FROTH-RFC-0008, FROTH-RFC-0015, FROTH-RFC-0018, FROTH-RFC-0019</related>
+    <classification>Observability, operational debugging, and analytics infrastructure.</classification>
+    <research>Drafted from live incident work on 2026-03-28 while debugging Charlie prompt caching through bin/rpc, object-store payload inspection, agent event queries, and direct Telegram message volume analysis.</research>
+  </meta>
+
+  <section title="Problem" id="problem">
+    <p>Froth stores a large amount of truth already, but it is too hard to reach the right facts quickly and cheaply during an incident. The operational pattern today is familiar: an engineer knows the system probably has the answer somewhere in events, messages, cycle links, or object-store blobs, but the path to that answer is indirect enough that they start improvising one-off queries and file hunts. This is survivable once. It is not a humane operating model.</p>
+    <p>The immediate pain shows up in two forms.</p>
+    <list type="bullet">
+      <item><p><strong>Tracing pain.</strong> Important runtime facts are fragmented across tables and storage layers. A single question like &quot;why did Charlie miss cache on this cycle?&quot; requires correlating Telegram cycle links, agent events, object-store blobs, prompt-part structure, and provider usage metadata.</p></item>
+      <item><p><strong>Analytics pain.</strong> Exploratory statistics currently run against the live transactional store. Even when the queries are correct, the user can feel the system getting heavier while the analysis runs. That is the wrong trade: the more curious we are about system behavior, the more we risk disturbing the system we are trying to understand.</p></item>
+    </list>
+    <p>The system therefore needs two improvements at once: a better runtime facts surface for operational questions, and a separate analytics mirror for heavier exploratory work.</p>
+  </section>
+
+  <section title="Goals" id="goals">
+    <list type="bullet">
+      <item><p>Make high-value operational facts directly queryable without ad hoc reconstruction.</p></item>
+      <item><p>Preserve full request and response payloads durably and make their location obvious.</p></item>
+      <item><p>Move expensive analytical scans off the hot transactional path.</p></item>
+      <item><p>Make common incident questions answerable by a stable command or function, not by hand-written query fragments.</p></item>
+      <item><p>Keep the analytics substrate cheap, append-friendly, and easy to query with familiar tools.</p></item>
+    </list>
+  </section>
+
+  <section title="Non-Goals" id="non-goals">
+    <list type="bullet">
+      <item><p>This RFC does not replace the primary Postgres event store.</p></item>
+      <item><p>This RFC does not require that every large payload be duplicated inline into Postgres rows.</p></item>
+      <item><p>This RFC does not propose a general-purpose data warehouse from day one.</p></item>
+      <item><p>This RFC does not change the semantic event model by itself; it changes how that model is surfaced and copied.</p></item>
+    </list>
+  </section>
+
+  <section title="Thesis" id="thesis">
+    <p>Froth should separate <strong>operational facts</strong> from <strong>analytical scans</strong>.</p>
+    <p>Operational facts should be surfaced as direct, intelligible summaries attached to the runtime event stream and exposed through stable inspector functions and scripts. Analytical scans should run against an append-only mirror built from those same facts and stored in a columnar format such as Parquet, queryable through DuckDB or equivalent local tooling.</p>
+    <p>The short version is simple:</p>
+    <list type="bullet">
+      <item><p><strong>emit clearer facts</strong> at the time work happens</p></item>
+      <item><p><strong>add stable inspectors</strong> for the recurring questions engineers actually ask</p></item>
+      <item><p><strong>copy facts out</strong> to a cheap analytics mirror on a schedule</p></item>
+      <item><p><strong>stop doing heavy exploration</strong> against the live app database and LiveView process path</p></item>
+    </list>
+  </section>
+
+  <section title="Operational Facts Surface" id="operational-facts">
+    <subsection title="1. Event summaries should answer the first question directly" id="first-question">
+      <p>The runtime should emit enough summary metadata that the first operational question is answered without opening the blob unless the engineer genuinely wants the raw payload. For LLM requests and prompt construction this means facts like:</p>
+      <list type="bullet">
+        <item><p>cycle_id</p></item>
+        <item><p>provider and model</p></item>
+        <item><p>message_count and tool_count</p></item>
+        <item><p>content block count on the first user message</p></item>
+        <item><p>explicit cache breakpoint positions and labels</p></item>
+        <item><p>window selection facts such as target hours, min hours, bucket minutes, char budget, oldest retained timestamp, newest retained timestamp, and retained raw char mass</p></item>
+      </list>
+      <p>These are not arbitrary decorations. They are the fields an engineer reaches for immediately when debugging cost, cache behavior, context drift, or recent-window selection.</p>
+    </subsection>
+
+    <subsection title="2. Full payload persistence should be obvious and durable" id="payload-persistence">
+      <p>Large payloads already offload into the object store through <tt>blob_ref</tt>. That is a good direction, but the discoverability is poor during live debugging. The event row should always make the storage mode explicit:</p>
+      <list type="bullet">
+        <item><p>whether the payload is inline or offloaded</p></item>
+        <item><p>the object-store key when offloaded</p></item>
+        <item><p>payload byte length</p></item>
+        <item><p>a compact typed preview of the contents</p></item>
+      </list>
+      <p>The goal is not to stuff giant blobs back into Postgres. The goal is to make the location and shape of the truth legible.</p>
+    </subsection>
+
+    <subsection title="3. Stable inspectors should be the normal operator interface" id="stable-inspectors">
+      <p>Recurring questions should graduate from &quot;ad hoc query someone remembers&quot; into named functions or scripts. The recent addition of <tt>bin/agent_inspect</tt> and <tt>Froth.AgentInspect</tt> is the right shape of interim improvement. The operator should be able to ask:</p>
+      <list type="bullet">
+        <item><p>show recent cache behavior for bot X</p></item>
+        <item><p>show request breakpoint positions for cycle Y</p></item>
+        <item><p>show recent-window selection facts for cycle Y</p></item>
+        <item><p>show where the full payload lives</p></item>
+      </list>
+      <p>Each of these should have one obvious command path and one obvious Elixir API path.</p>
+    </subsection>
+  </section>
+
+  <section title="Analytics Mirror" id="analytics-mirror">
+    <subsection title="1. Why a mirror is needed" id="why-mirror">
+      <p>The live database is optimized for the application, not for arbitrary exploratory analytics. Incident work on 2026-03-28 made that obvious: querying message-length distributions, sender text mass, and recent-volume curves through the live store was possible, but it was visibly heavier than it should be for routine analysis.</p>
+      <p>Analytics should therefore run against a copy designed for scans and ad hoc aggregation, not against the same store and processes serving LiveView and runtime work.</p>
+    </subsection>
+
+    <subsection title="2. Minimal viable shape" id="minimal-shape">
+      <p>The simplest useful version is an hourly export job that materializes append-only Parquet files from Postgres into object storage. DuckDB then becomes the local query engine.</p>
+      <p>A plausible directory shape:</p>
+      <code>analytics/
+  events/date=2026-03-28/hour=19/events.parquet
+  llm_requests/date=2026-03-28/hour=19/requests.parquet
+  llm_usage/date=2026-03-28/hour=19/usage.parquet
+  telegram_messages/date=2026-03-28/hour=19/messages.parquet
+  context_windows/date=2026-03-28/hour=19/windows.parquet</code>
+      <p>The key idea is not a giant ETL pipeline. It is a boring append-only analytical copy with stable partitioning by date and hour.</p>
+    </subsection>
+
+    <subsection title="3. What should be exported" id="what-exported">
+      <p>The mirror should export narrow, analysis-friendly relations instead of opaque giant JSON blobs only.</p>
+      <list type="bullet">
+        <item><p><strong>events</strong>: core event identity, timestamps, kind, span linkage, and compact summary columns</p></item>
+        <item><p><strong>llm_requests</strong>: cycle_id, provider, model, message_count, tool_count, block counts, breakpoint metadata, payload size, blob_ref</p></item>
+        <item><p><strong>llm_usage</strong>: cycle_id, seq, input tokens, output tokens, cache creation tokens, cache read tokens, cost estimates</p></item>
+        <item><p><strong>telegram_messages</strong>: chat_id, sender_id, session_id, timestamps, text length, text hash, message type</p></item>
+        <item><p><strong>context_windows</strong>: cycle_id, target hours, floor hours, bucket size, char budget, retained char mass, oldest retained timestamp, newest retained timestamp, retained message count</p></item>
+      </list>
+      <p>Raw blobs can still stay in object storage and be joined by key when needed. The analytical mirror should not force every query to crack giant JSON documents open.</p>
+    </subsection>
+
+    <subsection title="4. Why Parquet and DuckDB are a good fit" id="parquet-duckdb">
+      <p>Parquet gives cheap compression, cheap scans, and easy partitioning. DuckDB gives a zero-service local query engine that can read those files directly. That combination is a good fit for Froth because the use case is exploratory engineering analysis rather than continuous low-latency BI serving.</p>
+      <p>The decisive advantage is operator ergonomics: a human can point DuckDB at a directory of hourly partitions and immediately ask questions like &quot;what percentage of today's text mass came from messages over 1000 chars&quot; or &quot;which cycles missed cache after more than five minutes of idle time&quot; without touching the live Phoenix node.</p>
+    </subsection>
+  </section>
+
+  <section title="Recommended Near-Term Work" id="near-term-work">
+    <list type="numbered">
+      <item><p><strong>Add context-window telemetry.</strong> Emit explicit retained-window facts whenever BotContext builds a recent window.</p></item>
+      <item><p><strong>Promote key inspectors.</strong> Keep extending stable tools like <tt>bin/agent_inspect</tt> instead of relying on ad hoc <tt>bin/rpc</tt> fragments for common incident questions.</p></item>
+      <item><p><strong>Add an analytics export worker.</strong> Start with hourly Parquet snapshots for LLM usage, LLM requests, Telegram message lengths, and context-window summaries.</p></item>
+      <item><p><strong>Teach the web UI to use projections.</strong> LiveViews that support exploration should prefer pre-aggregated or mirrored data rather than issuing heavy raw scans against the live transactional tables.</p></item>
+      <item><p><strong>Document the standard workflow.</strong> The normal path for debugging should become: inspect runtime summary, open blob only if necessary, use analytics mirror for heavy exploration.</p></item>
+    </list>
+  </section>
+
+  <section title="Tradeoffs" id="tradeoffs">
+    <p>The mirror introduces another copy of the data and therefore another operational moving part. That is real complexity. The reason it is still worth it is that today the complexity already exists, but it is paid in a worse currency: operator confusion, repeated ad hoc scripts, and heavy queries against the live system.</p>
+    <p>There is also a temptation to export everything immediately. That is unnecessary. The first win comes from exporting a small number of narrow, high-value relations and proving that common investigations become easier and cheaper.</p>
+  </section>
+
+  <section title="Conclusion" id="conclusion">
+    <p>Froth does not lack data. It lacks a calm, durable path from questions to facts. The fix is not &quot;write cleverer one-off queries&quot; but &quot;promote recurring questions into stable runtime summaries and stable inspection tools, then move heavy exploration onto an analytics mirror.&quot;</p>
+    <p>The system should feel like it is helping the engineer understand it, not like it is hiding its truth behind five storage layers and a hand-built rake of SQL fragments.</p>
+  </section>
+</rfc>

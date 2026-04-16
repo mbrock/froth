@@ -72,6 +72,14 @@ defmodule Froth.Codex.Session do
     end
   end
 
+  @spec span_id(session_id()) :: String.t() | nil
+  def span_id(session_id) when is_binary(session_id) do
+    case Registry.lookup(@registry, session_id) do
+      [{_pid, span_id}] when is_binary(span_id) -> span_id
+      _ -> nil
+    end
+  end
+
   @spec topic(session_id()) :: String.t()
   def topic(session_id) when is_binary(session_id), do: "codex:session:#{session_id}"
 
@@ -132,6 +140,25 @@ defmodule Froth.Codex.Session do
     with {:ok, snap} <- snapshot(session_id), do: {:ok, snap.thread_id}
   end
 
+  @spec close(session_id()) :: :ok | {:error, term()}
+  def close(session_id) when is_binary(session_id) do
+    session_id = String.trim(session_id)
+
+    case whereis(session_id) do
+      pid when is_pid(pid) ->
+        try do
+          GenServer.call(pid, :close, @request_timeout_ms + 1_000)
+        catch
+          :exit, {:timeout, _} -> {:error, :timeout}
+          :exit, {:noproc, _} -> :ok
+          :exit, reason -> {:error, reason}
+        end
+
+      nil ->
+        :ok
+    end
+  end
+
   # --- GenServer setup ---
 
   def child_spec(opts) do
@@ -140,7 +167,7 @@ defmodule Froth.Codex.Session do
     %{
       id: {__MODULE__, session_id},
       start: {__MODULE__, :start_link, [opts]},
-      restart: :permanent,
+      restart: :transient,
       shutdown: 5_000,
       type: :worker
     }
@@ -159,9 +186,14 @@ defmodule Froth.Codex.Session do
   def init(%{session_id: session_id, thread_id: requested_thread_id}) do
     Process.flag(:trap_exit, true)
     {restored_entries, restored_seq} = CodexEvents.load_recent_entries(session_id, @max_entries)
+    session_span_id = Span.start_span([:froth, :codex, :session], nil, %{session_id: session_id})
+    Registry.update_value(@registry, session_id, fn _ -> session_span_id end)
 
     state = %{
       session_id: session_id,
+      span_id: session_span_id,
+      mono_start: System.monotonic_time(),
+      close_reason: nil,
       codex_pid: nil,
       codex_topic: "codex:wire:#{session_id}",
       status: :booting,
@@ -211,6 +243,17 @@ defmodule Froth.Codex.Session do
       end
 
     {:reply, snapshot_from_state(state), state}
+  end
+
+  def handle_call(:close, _from, state) do
+    Span.execute([:froth, :codex, :session, :close_requested], state.span_id, %{
+      session_id: state.session_id,
+      thread_id: state.thread_id,
+      active_turn_id: state.active_turn_id,
+      status: state.status
+    })
+
+    {:stop, :normal, :ok, %{state | close_reason: :requested}}
   end
 
   def handle_call({:send_prompt, prompt, opts}, _from, state) do
@@ -323,7 +366,7 @@ defmodule Froth.Codex.Session do
   end
 
   def handle_info({:EXIT, pid, reason}, %{codex_pid: pid} = state) when is_pid(pid) do
-    Span.execute([:froth, :codex, :session_codex_exit], nil, %{
+    Span.execute([:froth, :codex, :session_codex_exit], state.span_id, %{
       session_id: state.session_id,
       reason: inspect(reason)
     })
@@ -344,9 +387,23 @@ defmodule Froth.Codex.Session do
   def handle_info(_, state), do: {:noreply, state}
 
   @impl true
-  def terminate(_reason, state) do
+  def terminate(reason, state) do
     if is_pid(state.codex_pid) and Process.alive?(state.codex_pid) do
       _ = Froth.Codex.stop(state.codex_pid)
+    end
+
+    if state[:span_id] do
+      Span.stop_span(
+        [:froth, :codex, :session],
+        state.span_id,
+        state[:mono_start] || System.monotonic_time(),
+        %{
+          session_id: state.session_id,
+          status: state.status,
+          thread_id: state.thread_id,
+          reason: close_reason(state, reason)
+        }
+      )
     end
 
     :ok
@@ -369,7 +426,8 @@ defmodule Froth.Codex.Session do
            name: nil,
            topic: state.codex_topic,
            cwd: File.cwd!(),
-           request_timeout: @request_timeout_ms
+           request_timeout: @request_timeout_ms,
+           parent_span_id: state.span_id
          ) do
       {:ok, pid} ->
         with :ok <- Froth.Codex.subscribe(pid),
@@ -770,7 +828,7 @@ defmodule Froth.Codex.Session do
     apply_notification(state, method, params)
   rescue
     error ->
-      Span.execute([:froth, :codex, :notification_failed], nil, %{
+      Span.execute([:froth, :codex, :notification_failed], state.span_id, %{
         method: method,
         error: Exception.message(error)
       })
@@ -1319,6 +1377,9 @@ defmodule Froth.Codex.Session do
         nil
     end
   end
+
+  defp close_reason(state, :normal), do: state.close_reason || :normal
+  defp close_reason(_state, reason), do: reason
 
   defp client_info(session_id) do
     version =

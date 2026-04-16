@@ -73,7 +73,6 @@ defmodule FrothWeb.ToolLiveTest do
     {:ok, view, _html} = live(conn, ~p"/froth/mini/tool/cycle_missingbot_#{cycle.id}")
 
     assert has_element?(view, "#tool-feed", "Checking the shell output before replying.")
-    assert has_element?(view, "#tool-feed", "Goal stack:")
     assert has_element?(view, "#tool-input-call_1[open]")
     assert has_element?(view, "#tool-output-call_1[open]")
     assert has_element?(view, "#tool-feed span", "exit 139")

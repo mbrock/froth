@@ -10,7 +10,7 @@ defmodule Froth.Telegram.BotContext do
   alias Froth.Agent
   alias Froth.Telegram.BotContextHTML
   alias Froth.Telegram.BotContextHTML.Context
-  alias Froth.Telegram.{Names, Queries}
+  alias Froth.Telegram.{Names, Queries, RecentWindow}
 
   # ── public API ─────────────────────────────────────────────────────
 
@@ -145,20 +145,9 @@ defmodule Froth.Telegram.BotContext do
   end
 
   defp fetch_recent(chat_id, before_unix, opts) when is_integer(chat_id) and is_list(opts) do
-    session_id = context_session_id(chat_id, opts)
-    recent_limit = opt_recent_message_limit(opts)
     range_end = before_unix || :infinity
 
-    cond do
-      is_binary(session_id) and session_id != "" and is_integer(recent_limit) and recent_limit > 0 ->
-        Queries.fetch_recent_session_messages(session_id, chat_id, 0, range_end, recent_limit)
-
-      is_binary(session_id) and session_id != "" ->
-        Queries.fetch_session_messages(session_id, chat_id, 0, range_end)
-
-      true ->
-        Queries.fetch_messages(chat_id, 0, range_end)
-    end
+    RecentWindow.fetch_recent(chat_id, range_end, opts)
   end
 
   defp build_recent(_chat_id, [], _opts),
@@ -272,6 +261,44 @@ defmodule Froth.Telegram.BotContext do
     base = maybe_put_opt(base, :chronicle_dir, Map.get(bot_config, :chronicle_dir))
     base = maybe_put_opt(base, :recent_message_limit, Map.get(bot_config, :recent_message_limit))
 
+    base =
+      maybe_put_opt(
+        base,
+        :recent_window_target_hours,
+        Map.get(bot_config, :recent_window_target_hours)
+      )
+
+    base =
+      maybe_put_opt(base, :recent_window_min_hours, Map.get(bot_config, :recent_window_min_hours))
+
+    base =
+      maybe_put_opt(
+        base,
+        :recent_window_backfill_hours,
+        Map.get(bot_config, :recent_window_backfill_hours)
+      )
+
+    base =
+      maybe_put_opt(
+        base,
+        :recent_window_char_budget,
+        Map.get(bot_config, :recent_window_char_budget)
+      )
+
+    base =
+      maybe_put_opt(
+        base,
+        :recent_window_bucket_minutes,
+        Map.get(bot_config, :recent_window_bucket_minutes)
+      )
+
+    base =
+      maybe_put_opt(
+        base,
+        :recent_message_anchor_size,
+        Map.get(bot_config, :recent_message_anchor_size)
+      )
+
     case msg_unix(msg) do
       unix when is_integer(unix) -> [{:before_unix, unix} | base]
       _ -> base
@@ -323,12 +350,39 @@ defmodule Froth.Telegram.BotContext do
     end
   end
 
+  defp opt_recent_message_anchor_size(opts) do
+    case opts[:recent_message_anchor_size] do
+      n when is_integer(n) and n > 1 ->
+        n
+
+      v when is_binary(v) ->
+        case parse_int(v) do
+          n when is_integer(n) and n > 1 -> n
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
   # ── helpers ───────────────────────────────────────────────────────
 
   defp limit_recent_rows(rows, opts) when is_list(rows) and is_list(opts) do
-    case opt_recent_message_limit(opts) do
-      n when is_integer(n) and n > 0 -> Enum.take(rows, -n)
-      _ -> rows
+    case {RecentWindow.time_mass_config(opts), opt_recent_message_limit(opts),
+          opt_recent_message_anchor_size(opts)} do
+      {{:ok, _config}, _n, _anchor_size} ->
+        rows
+
+      {:error, n, anchor_size}
+      when is_integer(n) and n > 0 and is_integer(anchor_size) and anchor_size > 1 ->
+        rows
+
+      {:error, n, _anchor_size} when is_integer(n) and n > 0 ->
+        Enum.take(rows, -n)
+
+      _ ->
+        rows
     end
   end
 

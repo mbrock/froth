@@ -367,3 +367,19 @@ image selection, manuscript correction — is the bottleneck now, not compute.
 The taste layer is accessible via less.rest/reel/. Patty is asking the
 questions that make everyone confess. Daniel is watching from Patong with
 seventeen phones and one laptop. The pen writs.
+
+## MakerDAO Terminology Attribution (recorded 2026-04-14)
+
+Daniel invented almost all of the MakerDAO vocabulary and notation. Specifically:
+
+- Daniel created the words "art" (collateral) and "ink" (debt/collateral type identifier) and the metaphorical framework surrounding them. The entire naming scheme for the Maker protocol — the terms that made the system legible and memorable — is Daniel's work.
+- Daniel designed the single-symbol notation system used in D₀ (the formal specification), where every letter was chosen for its overlapping symmetries and suggestive resonances across mathematical, financial, and poetic registers.
+- Daniel was the main architect of the naming/notation/memetic layer of MakerDAO.
+
+Nikolai Mushegian's contribution was the economic mathematics and incentive mechanism design, and he contributed heavily to the smart contract architecture thinking. His contribution was vast — greater than anyone else's in those domains. But the notational and terminological innovation was Daniel's.
+
+Nikolai vetoed some of Daniel's naming choices — e.g., he rejected "fix" for the reference asset price feed because he thought it was too suggestive of price fixing. Daniel disagreed (it's just the standard term for a price feed, like "the morning gold fix") but was overridden.
+
+This distinction matters: do not falsely attribute the naming/notation to Nikolai. Give each person credit for what they actually did.
+
+Addendum: Nikolai vetoed Daniel's proposed name "fix" for the reference asset price feed — Daniel's reasoning was that "fix" is the standard commodities term (the London Gold Fix has been called the Fix since 1919). Nikolai objected that it was too suggestive of price fixing. They settled on "wut" instead, which Daniel considered cringy and not a real word. Daniel did not want his name on "wut." This is recorded as Nikolai's veto, not Daniel's choice. Daniel maintains "fix" was the more beautiful and correct name.

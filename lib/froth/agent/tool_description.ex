@@ -43,23 +43,9 @@ defmodule Froth.Agent.ToolDescription do
 
   defp normalize_legacy_narration(_narration), do: nil
 
-  defp render_text(%{action: action, goals: goals, assumptions: assumptions}) do
-    []
-    |> maybe_append_line(action)
-    |> maybe_append_line(join_labeled_list("Goal stack", goals, " -> "))
-    |> maybe_append_line(join_labeled_list("Assumptions", assumptions, "; "))
-    |> Enum.join("\n")
-  end
-
-  defp maybe_append_line(lines, nil), do: lines
-  defp maybe_append_line(lines, ""), do: lines
-  defp maybe_append_line(lines, line), do: lines ++ [line]
-
-  defp join_labeled_list(_label, [], _separator), do: nil
-
-  defp join_labeled_list(label, items, separator) when is_list(items) and is_binary(separator) do
-    label <> ": " <> Enum.join(items, separator)
-  end
+  defp render_text(%{action: action}) when is_binary(action) and action != "", do: action
+  defp render_text(%{action: nil, goals: [first | _]}), do: first
+  defp render_text(_), do: nil
 
   defp normalize_list(items, limit \\ nil)
 

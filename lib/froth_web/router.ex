@@ -24,6 +24,13 @@ defmodule FrothWeb.Router do
   end
 
   scope "/froth", FrothWeb do
+    pipe_through :api
+
+    get "/analyses", AnalysesApiController, :index
+    get "/analyses/:chat_id", AnalysesApiController, :show
+  end
+
+  scope "/froth", FrothWeb do
     pipe_through :browser
 
     get "/", PageController, :home
@@ -32,8 +39,8 @@ defmodule FrothWeb.Router do
     get "/summaries", SummariesController, :index
     get "/headlines", HeadlinesController, :index
     get "/podcasts", PodcastsController, :index
-    live "/analyses", AnalysesLive, :index
-    live "/analyses/:day", AnalysesLive, :index
+    live "/analyses/day", AnalysesLive, :index
+    live "/analyses/day/:day", AnalysesLive, :index
     live "/inference", InferenceSessionsLive, :index
     live "/inference/:id", InferenceSessionsLive, :show
     live "/dataset", DatasetLive, :index

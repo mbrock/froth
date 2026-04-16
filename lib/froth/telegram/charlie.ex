@@ -10,7 +10,7 @@ defmodule Froth.Telegram.Charlie do
   @default_bot_id "charlie"
   @default_bot_username "charliebuddybot"
   @default_session_id "charlie"
-  @default_model "claude-opus-4-6"
+  @default_model "claude-opus-4-7"
 
   def default_config do
     cfg = Application.get_env(:froth, __MODULE__, [])
@@ -35,7 +35,13 @@ defmodule Froth.Telegram.Charlie do
       ],
       tools_module: CharlieTools,
       chronicle_dir: Application.app_dir(:froth, "priv/chronicle"),
-      recent_message_limit: 200,
+      # recent_window_target_hours: 4,
+      # recent_window_min_hours: 1,
+      # recent_window_backfill_hours: 8,
+      # recent_window_char_budget: 200_000,
+      # recent_window_bucket_minutes: 30,
+      recent_message_limit: 500,
+      recent_message_anchor_size: 100,
       debounce_ms: 2000
     }
   end

@@ -1,8 +1,17 @@
 defmodule Froth.Telegram.BotTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
+  alias Froth.Agent.Cycle
   alias Froth.Agent.ToolUse
   alias Froth.Telegram.Bot
+
+  setup do
+    if is_nil(Process.whereis(Froth.Telegram.Registry)) do
+      start_supervised!({Registry, keys: :unique, name: Froth.Telegram.Registry})
+    end
+
+    :ok
+  end
 
   test "struct includes mid-cycle message buffer" do
     assert %Bot{mid_cycle_messages: []} = %Bot{}
@@ -185,16 +194,98 @@ defmodule Froth.Telegram.BotTest do
     assert state.current_narration_message_id == 303
   end
 
-  defp start_bot do
+  test "cycle footer edits the final message with cache stats when a cycle finishes" do
+    test_pid = self()
+    session_id = "test-session-#{System.unique_integer([:positive])}"
+    bot = start_bot(session_id: session_id)
+
+    start_supervised!(
+      {__MODULE__.FakeTelegramSession, session_id: session_id, test_pid: test_pid}
+    )
+
+    worker_pid = start_supervised!({Agent, fn -> :ok end})
+    worker_ref = make_ref()
+    started_ms = System.monotonic_time() - System.convert_time_unit(12, :second, :native)
+
+    :sys.replace_state(bot, fn state ->
+      %{
+        state
+        | cycle: %Cycle{id: "cycle_1"},
+          worker_pid: worker_pid,
+          worker_ref: worker_ref,
+          chat_id: 123,
+          cycle_started_ms: started_ms,
+          cycle_replied?: true,
+          last_sent_message_id: 42,
+          last_sent_message_text: "hello",
+          cycle_usage_total: %{
+            "input_tokens" => 1_200,
+            "output_tokens" => 300,
+            "cache_creation_input_tokens" => 400,
+            "cache_read_input_tokens" => 2_500
+          }
+      }
+    end)
+
+    send(bot, {:DOWN, worker_ref, :process, worker_pid, :normal})
+
+    assert_receive {:telegram_call,
+                    %{
+                      "@type" => "editMessageText",
+                      "chat_id" => 123,
+                      "message_id" => 42,
+                      "input_message_content" => %{"text" => %{"text" => edited_text}}
+                    }},
+                   5_000
+
+    assert edited_text =~ "hello"
+    assert edited_text =~ "4.1k in"
+    assert edited_text =~ "0.3k out"
+    assert edited_text =~ "0.4k cw"
+    assert edited_text =~ "2.5k cr"
+    assert edited_text =~ "$"
+  end
+
+  defp start_bot(opts \\ []) do
     id = "bot-#{System.unique_integer([:positive])}"
+    session_id = Keyword.get(opts, :session_id, "test-session")
 
     start_supervised!(
       {Bot,
        id: id,
-       session_id: "test-session",
+       session_id: session_id,
        bot_username: "#{id}_username",
        bot_user_id: 1,
        owner_user_id: 1}
     )
+  end
+
+  defmodule FakeTelegramSession do
+    use GenServer
+
+    def start_link(opts) when is_list(opts) do
+      session_id = Keyword.fetch!(opts, :session_id)
+      GenServer.start_link(__MODULE__, opts, name: Froth.Telegram.Session.via(session_id))
+    end
+
+    @impl true
+    def init(opts) do
+      {:ok,
+       %{
+         test_pid: Keyword.fetch!(opts, :test_pid)
+       }}
+    end
+
+    @impl true
+    def handle_call({:call, request}, _from, state) do
+      send(state.test_pid, {:telegram_call, request})
+      {:reply, {:ok, %{}}, state}
+    end
+
+    @impl true
+    def handle_cast({:send, request}, state) do
+      send(state.test_pid, {:telegram_send, request})
+      {:noreply, state}
+    end
   end
 end

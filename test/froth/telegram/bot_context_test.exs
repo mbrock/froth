@@ -1,5 +1,6 @@
 defmodule Froth.Telegram.BotContextTest do
   use ExUnit.Case, async: false
+  import Ecto.Query
 
   alias Froth.Agent
   alias Froth.Agent.Cycle
@@ -176,6 +177,148 @@ defmodule Froth.Telegram.BotContextTest do
     assert prompt =~ "older"
     assert prompt =~ "newer"
     assert prompt =~ "fresh message"
+  end
+
+  test "anchored recent message windows only advance on the configured batch size" do
+    chat_id = unique_chat_id()
+
+    opts = [
+      telegram_session_id: "test-session",
+      recent_message_limit: 3,
+      recent_message_anchor_size: 2
+    ]
+
+    insert_telegram_message("test-session", chat_id, 101, 7, 1_700_000_100, "m1")
+    insert_telegram_message("test-session", chat_id, 102, 7, 1_700_000_200, "m2")
+    insert_telegram_message("test-session", chat_id, 103, 7, 1_700_000_300, "m3")
+    insert_telegram_message("test-session", chat_id, 104, 7, 1_700_000_400, "m4")
+    insert_telegram_message("test-session", chat_id, 105, 7, 1_700_000_500, "m5")
+
+    parts_before =
+      chat_id
+      |> BotContext.render_parts(opts)
+
+    prompt_before = Enum.join(parts_before, "")
+    refute prompt_before =~ "m1"
+    refute prompt_before =~ "m2"
+    assert prompt_before =~ "m3"
+    assert prompt_before =~ "m4"
+    assert prompt_before =~ "m5"
+
+    insert_telegram_message("test-session", chat_id, 106, 7, 1_700_000_600, "m6")
+
+    parts_after_append =
+      chat_id
+      |> BotContext.render_parts(opts)
+
+    prompt_after_append = Enum.join(parts_after_append, "")
+    assert prompt_after_append =~ "m3"
+    assert prompt_after_append =~ "m4"
+    assert prompt_after_append =~ "m5"
+    assert prompt_after_append =~ "m6"
+
+    stable_before = Enum.take(parts_before, length(parts_before) - 1)
+    stable_after_append = Enum.take(parts_after_append, length(parts_before) - 1)
+
+    assert stable_after_append == stable_before
+
+    insert_telegram_message("test-session", chat_id, 107, 7, 1_700_000_700, "m7")
+
+    prompt_after_roll =
+      chat_id
+      |> BotContext.render_parts(opts)
+      |> Enum.join("")
+
+    refute prompt_after_roll =~ "m3"
+    refute prompt_after_roll =~ "m4"
+    assert prompt_after_roll =~ "m5"
+    assert prompt_after_roll =~ "m6"
+    assert prompt_after_roll =~ "m7"
+  end
+
+  test "time and mass recent windows keep a recent horizon and trim by bucketed text mass" do
+    chat_id = unique_chat_id()
+
+    bot_config =
+      bot_config(
+        recent_window_target_hours: 4,
+        recent_window_min_hours: 1,
+        recent_window_backfill_hours: 8,
+        recent_window_char_budget: 250,
+        recent_window_bucket_minutes: 30
+      )
+
+    base_unix = 1_700_000_000
+
+    for idx <- 0..7 do
+      insert_telegram_message(
+        bot_config.session_id,
+        chat_id,
+        100 + idx,
+        7,
+        base_unix + idx * 1800 + 60,
+        String.duplicate("a", 100)
+      )
+    end
+
+    parts =
+      BotContext.for_message(
+        incoming_message(
+          chat_id: chat_id,
+          id: 999,
+          sender_id: 42,
+          text: "fresh message",
+          date: base_unix + 8 * 1800
+        ),
+        bot_config
+      )
+
+    prompt = Enum.join(parts, "")
+
+    refute prompt =~ ~s(message_id="100")
+    refute prompt =~ ~s(message_id="101")
+    refute prompt =~ ~s(message_id="102")
+    refute prompt =~ ~s(message_id="103")
+    refute prompt =~ ~s(message_id="104")
+    refute prompt =~ ~s(message_id="105")
+    assert prompt =~ ~s(message_id="106")
+    assert prompt =~ ~s(message_id="107")
+    assert prompt =~ ~s(message_id="999")
+  end
+
+  test "orders tied session messages deterministically by message id" do
+    chat_id = unique_chat_id()
+    bot_config = bot_config(recent_message_limit: 10)
+    tied_inserted_at = ~N[2026-03-28 12:44:43]
+
+    insert_telegram_message(bot_config.session_id, chat_id, 200, 7, 1_700_000_100, "first")
+    insert_telegram_message(bot_config.session_id, chat_id, 202, 7, 1_700_000_200, "higher id")
+    insert_telegram_message(bot_config.session_id, chat_id, 201, 8, 1_700_000_200, "lower id")
+
+    set_message_inserted_at(bot_config.session_id, chat_id, 202, tied_inserted_at)
+    set_message_inserted_at(bot_config.session_id, chat_id, 201, tied_inserted_at)
+
+    parts =
+      BotContext.for_message(
+        incoming_message(
+          chat_id: chat_id,
+          id: 999,
+          sender_id: 42,
+          text: "fresh message",
+          date: 1_700_000_300
+        ),
+        bot_config
+      )
+
+    prompt = Enum.join(parts, "")
+    lower_idx = match_index(prompt, ~s(<msg message_id="201"))
+    higher_idx = match_index(prompt, ~s(<msg message_id="202"))
+
+    assert prompt =~ ~s(<msg message_id="201")
+    assert prompt =~ ~s(<msg message_id="202")
+    assert is_integer(lower_idx)
+    assert is_integer(higher_idx)
+    assert lower_idx < higher_idx
   end
 
   test "includes analysis excerpts in normal bot context representation" do
@@ -359,7 +502,13 @@ defmodule Froth.Telegram.BotContextTest do
     %{
       id: Keyword.get(opts, :id, "charlie"),
       session_id: Keyword.get(opts, :session_id, "test-session"),
-      recent_message_limit: Keyword.get(opts, :recent_message_limit)
+      recent_message_limit: Keyword.get(opts, :recent_message_limit),
+      recent_message_anchor_size: Keyword.get(opts, :recent_message_anchor_size),
+      recent_window_target_hours: Keyword.get(opts, :recent_window_target_hours),
+      recent_window_min_hours: Keyword.get(opts, :recent_window_min_hours),
+      recent_window_backfill_hours: Keyword.get(opts, :recent_window_backfill_hours),
+      recent_window_char_budget: Keyword.get(opts, :recent_window_char_budget),
+      recent_window_bucket_minutes: Keyword.get(opts, :recent_window_bucket_minutes)
     }
   end
 
@@ -420,6 +569,23 @@ defmodule Froth.Telegram.BotContextTest do
         generated_at: DateTime.utc_now() |> DateTime.truncate(:second)
       })
     )
+  end
+
+  defp set_message_inserted_at(session_id, chat_id, message_id, inserted_at) do
+    from(m in TelegramMessage,
+      where:
+        m.telegram_session_id == ^session_id and
+          m.chat_id == ^chat_id and
+          m.message_id == ^message_id
+    )
+    |> Repo.update_all(set: [inserted_at: inserted_at])
+  end
+
+  defp match_index(haystack, needle) when is_binary(haystack) and is_binary(needle) do
+    case :binary.match(haystack, needle) do
+      {idx, _len} -> idx
+      :nomatch -> nil
+    end
   end
 
   defp ensure_session(session_id) do

@@ -22,7 +22,7 @@ defmodule FrothWeb.AnalysesLive do
 
       _ ->
         {:noreply,
-         push_patch(socket, to: ~p"/froth/analyses/#{Date.to_iso8601(Date.utc_today())}")}
+         push_patch(socket, to: ~p"/froth/analyses/day/#{Date.to_iso8601(Date.utc_today())}")}
     end
   end
 
@@ -34,12 +34,12 @@ defmodule FrothWeb.AnalysesLive do
   @impl true
   def handle_event("prev", _, socket) do
     day = Date.add(socket.assigns.day, -1)
-    {:noreply, push_patch(socket, to: ~p"/froth/analyses/#{Date.to_iso8601(day)}")}
+    {:noreply, push_patch(socket, to: ~p"/froth/analyses/day/#{Date.to_iso8601(day)}")}
   end
 
   def handle_event("next", _, socket) do
     day = Date.add(socket.assigns.day, 1)
-    {:noreply, push_patch(socket, to: ~p"/froth/analyses/#{Date.to_iso8601(day)}")}
+    {:noreply, push_patch(socket, to: ~p"/froth/analyses/day/#{Date.to_iso8601(day)}")}
   end
 
   defp day_bounds(day) do
@@ -124,7 +124,7 @@ defmodule FrothWeb.AnalysesLive do
         <div class="flex flex-wrap gap-1 mb-6">
           <.link
             :for={d <- @days}
-            navigate={~p"/froth/analyses/#{Date.to_iso8601(d)}"}
+            navigate={~p"/froth/analyses/day/#{Date.to_iso8601(d)}"}
             class={"text-xs px-2 py-0.5 #{if d == @day, do: "bg-white text-black", else: "text-neutral-500 hover:text-white"}"}
           >
             {Calendar.strftime(d, "%b %d")}

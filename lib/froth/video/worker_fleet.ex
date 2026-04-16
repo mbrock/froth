@@ -1,6 +1,7 @@
 defmodule Froth.Video.WorkerFleet do
   @moduledoc false
 
+  alias Froth.Browser.Chrome
   alias Froth.Video.ComputeWorker
 
   @offer_timeout_ms 5_000
@@ -34,6 +35,7 @@ defmodule Froth.Video.WorkerFleet do
       offers when is_list(offers) ->
         offers
         |> Enum.uniq_by(& &1.node)
+        |> filter_requested_capabilities(opts)
         |> Enum.sort_by(&sort_key/1)
 
       _ ->
@@ -62,6 +64,7 @@ defmodule Froth.Video.WorkerFleet do
 
         [local_offer | remote_offers]
         |> Enum.uniq_by(& &1.node)
+        |> filter_requested_capabilities(opts)
         |> Enum.sort_by(&sort_key/1)
     end
   end
@@ -159,7 +162,8 @@ defmodule Froth.Video.WorkerFleet do
   end
 
   defp fetch_remote_offer(remote_node, opts, timeout_ms) do
-    :erpc.call(remote_node, ComputeWorker, :local_offer, [opts], timeout_ms)
+    remote_offer_opts = Keyword.delete(opts, :browser_profile)
+    :erpc.call(remote_node, ComputeWorker, :local_offer, [remote_offer_opts], timeout_ms)
   rescue
     _error -> nil
   catch
@@ -187,6 +191,29 @@ defmodule Froth.Video.WorkerFleet do
     |> Enum.sort()
     |> Enum.join(", ")
   end
+
+  defp filter_requested_capabilities(offers, opts) do
+    requested_meta =
+      opts
+      |> Keyword.get(:browser_profile)
+      |> requested_profile_metadata()
+
+    Enum.filter(offers, &offer_supports_profile?(&1, requested_meta))
+  end
+
+  defp requested_profile_metadata(nil), do: nil
+  defp requested_profile_metadata(profile), do: Chrome.profile_metadata(profile)
+
+  defp offer_supports_profile?(_offer, nil), do: true
+
+  defp offer_supports_profile?(offer, requested_meta) do
+    supports_flag?(offer, :headless, requested_meta.headless?) and
+      supports_flag?(offer, :headful, requested_meta.headful?) and
+      supports_flag?(offer, :gpu, requested_meta.gpu?)
+  end
+
+  defp supports_flag?(_offer, _flag, false), do: true
+  defp supports_flag?(offer, flag, true), do: Map.get(offer, flag) == true
 
   defp sort_key(offer) do
     {
