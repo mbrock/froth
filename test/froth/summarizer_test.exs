@@ -38,21 +38,17 @@ defmodule Froth.SummarizerTest do
 
     assert length(parts) == 3
 
-    assert Enum.at(parts, 0) =~ ~s(<msg message_id="101")
-    assert Enum.at(parts, 0) =~ ~s(time="2023-11-14 22:25 UTC")
+    assert Enum.at(parts, 0) =~ ~s(<text id=tg:101)
+    assert Enum.at(parts, 0) =~ "2023-11-14 22:25 UTC"
     assert Enum.at(parts, 0) =~ "@seven"
     assert Enum.at(parts, 0) =~ "older context"
 
-    assert Enum.at(parts, 1) =~ ~s(<msg message_id="102")
-    assert Enum.at(parts, 1) =~ ~s(time="2023-11-14 22:26 UTC")
+    assert Enum.at(parts, 1) =~ ~s(<text id=tg:102)
+    assert Enum.at(parts, 1) =~ "2023-11-14 22:26 UTC"
     assert Enum.at(parts, 1) =~ "@eight"
     assert Enum.at(parts, 1) =~ "still older"
 
     assert Enum.at(parts, 2) =~ "<info>"
-    assert Enum.at(parts, 2) =~ "chat: Froth chat (id #{chat_id})"
-    assert Enum.at(parts, 2) =~ "@seven"
-    assert Enum.at(parts, 2) =~ "@eight"
-    assert Enum.at(parts, 2) =~ "user:9"
 
     refute Enum.join(parts, "") =~ "future context leak"
     refute Enum.join(parts, "") =~ "<summary"

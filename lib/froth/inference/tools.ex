@@ -1864,14 +1864,13 @@ defmodule Froth.Inference.Tools do
       get_in(msg.raw, ["content", "text", "text"]) ||
         get_in(msg.raw, ["content", "caption", "text"]) || ""
 
-    type = get_in(msg.raw, ["content", "@type"]) || "unknown"
+    kind = message_kind(get_in(msg.raw, ["content", "@type"]))
 
     base_attrs = [
-      kind: "msg",
-      message_id: msg.message_id,
-      sender: sender,
-      time: time,
-      type: type
+      kind: kind,
+      id: "tg:#{msg.message_id}",
+      when: time,
+      from: sender
     ]
 
     attrs =
@@ -1904,6 +1903,14 @@ defmodule Froth.Inference.Tools do
 
     [message_block | analysis_blocks]
   end
+
+  defp message_kind("messageText"), do: "text"
+  defp message_kind("messageVoiceNote"), do: "voice"
+  defp message_kind("messagePhoto"), do: "photo"
+  defp message_kind("messageVideo"), do: "video"
+  defp message_kind("messageAudio"), do: "audio"
+  defp message_kind("messageDocument"), do: "document"
+  defp message_kind(_), do: "text"
 
   defp fetch_analyses(_chat_id, []), do: %{}
 

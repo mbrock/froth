@@ -35,7 +35,7 @@ defmodule Froth.Telegram.BotContextTest do
     assert is_list(parts)
     prompt = Enum.join(parts, "")
 
-    assert prompt =~ ~s(<msg message_id="10")
+    assert prompt =~ ~s(<text id=tg:10)
     assert prompt =~ "hello from telegram"
     refute prompt =~ "<summary"
     refute prompt =~ "<active_tasks>"
@@ -102,9 +102,9 @@ defmodule Froth.Telegram.BotContextTest do
     assert prompt =~ "older context"
     assert prompt =~ "still older"
     refute prompt =~ "future context leak"
-    assert prompt =~ ~s(<msg message_id="101")
-    assert prompt =~ ~s(<msg message_id="102")
-    assert prompt =~ ~s(<msg message_id="999")
+    assert prompt =~ ~s(<text id=tg:101)
+    assert prompt =~ ~s(<text id=tg:102)
+    assert prompt =~ ~s(<text id=tg:999)
     assert prompt =~ "fresh message"
     assert prompt =~ "<info>"
   end
@@ -275,15 +275,15 @@ defmodule Froth.Telegram.BotContextTest do
 
     prompt = Enum.join(parts, "")
 
-    refute prompt =~ ~s(message_id="100")
-    refute prompt =~ ~s(message_id="101")
-    refute prompt =~ ~s(message_id="102")
-    refute prompt =~ ~s(message_id="103")
-    refute prompt =~ ~s(message_id="104")
-    refute prompt =~ ~s(message_id="105")
-    assert prompt =~ ~s(message_id="106")
-    assert prompt =~ ~s(message_id="107")
-    assert prompt =~ ~s(message_id="999")
+    refute prompt =~ ~s(id=tg:100 )
+    refute prompt =~ ~s(id=tg:101 )
+    refute prompt =~ ~s(id=tg:102 )
+    refute prompt =~ ~s(id=tg:103 )
+    refute prompt =~ ~s(id=tg:104 )
+    refute prompt =~ ~s(id=tg:105 )
+    assert prompt =~ ~s(id=tg:106 )
+    assert prompt =~ ~s(id=tg:107 )
+    assert prompt =~ ~s(id=tg:999 )
   end
 
   test "orders tied session messages deterministically by message id" do
@@ -311,11 +311,11 @@ defmodule Froth.Telegram.BotContextTest do
       )
 
     prompt = Enum.join(parts, "")
-    lower_idx = match_index(prompt, ~s(<msg message_id="201"))
-    higher_idx = match_index(prompt, ~s(<msg message_id="202"))
+    lower_idx = match_index(prompt, ~s(<text id=tg:201))
+    higher_idx = match_index(prompt, ~s(<text id=tg:202))
 
-    assert prompt =~ ~s(<msg message_id="201")
-    assert prompt =~ ~s(<msg message_id="202")
+    assert prompt =~ ~s(<text id=tg:201)
+    assert prompt =~ ~s(<text id=tg:202)
     assert is_integer(lower_idx)
     assert is_integer(higher_idx)
     assert lower_idx < higher_idx
@@ -352,8 +352,8 @@ defmodule Froth.Telegram.BotContextTest do
 
     prompt = Enum.join(parts, "")
     assert prompt =~ ~s(<analysis )
-    assert prompt =~ ~s(type="vision")
-    assert prompt =~ "observed cat on desk with notes"
+    assert prompt =~ ~s(type=vision)
+    assert prompt =~ "observed   cat  on    desk with notes"
   end
 
   test "chronicle_dir loads chapters into context" do
@@ -379,9 +379,9 @@ defmodule Froth.Telegram.BotContextTest do
 
     prompt = Enum.join(parts, "")
 
-    assert prompt =~ ~s(<chapter name="ch01-founding">)
+    assert prompt =~ ~s(<chapter name=ch01-founding>)
     assert prompt =~ "The founding story"
-    assert prompt =~ ~s(<chapter name="ch02-war">)
+    assert prompt =~ ~s(<chapter name=ch02-war>)
     assert prompt =~ "The war chapter"
     assert prompt =~ "recent context"
   end
@@ -441,14 +441,14 @@ defmodule Froth.Telegram.BotContextTest do
 
     assert is_list(parts)
     prompt = Enum.join(parts, "")
-    assert Regex.match?(~r/<msg message_id="123".*<cycle cycle_id="#{cycle_id}"/s, prompt)
-    assert prompt =~ ~s(<call tool="search">)
-    # Each input key becomes a nested tag; list values repeat the tag.
+    assert prompt =~ ~s(<text id=tg:123)
+    assert prompt =~ ~s(<cycle id=#{cycle_id} for=tg:123)
+    assert prompt =~ ~s(<call tool=search>)
     assert prompt =~ "<query>"
     assert prompt =~ "froth"
     assert prompt =~ "context"
     assert prompt =~ "found signal"
-    refute prompt =~ ~s(<call tool="send_message">)
+    refute prompt =~ ~s(<call tool=send_message>)
   end
 
   test "ignores linked cycles that only used send_message" do
@@ -493,7 +493,7 @@ defmodule Froth.Telegram.BotContextTest do
       )
 
     assert is_list(parts)
-    refute Enum.join(parts, "") =~ "<cycle cycle_id="
+    refute Enum.join(parts, "") =~ "<cycle id="
   end
 
   test "returns nil for malformed input" do

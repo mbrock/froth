@@ -151,9 +151,10 @@ defmodule Froth.Telegram.BotContextHTML do
       <date>{@now_thailand}</date>
     </info>
     """
-      # <%= for p <- @participants do %>
-      #   {p.label} (id {p.id}) latest message {format_time(p.latest_date)}
-      # <% end %>
+
+    # <%= for p <- @participants do %>
+    #   {p.label} (id {p.id}) latest message {format_time(p.latest_date)}
+    # <% end %>
   end
 
   # ── recent transcript ──────────────────────────────────────────────
@@ -184,18 +185,26 @@ defmodule Froth.Telegram.BotContextHTML do
   attr :cycles, :list, default: []
 
   def recent_message(assigns) do
-    tag = case assigns.type do
-      "messageText" -> "text"
-      "messageVoiceNote" -> "voice"
-      "messagePhoto" -> "photo"
-      "messageVideo" -> "video"
-      "messageAudio" -> "audio"
-      "messageDocument" -> "document"
-    end
+    tag =
+      case assigns.type do
+        "messageText" -> "text"
+        "messageVoiceNote" -> "voice"
+        "messagePhoto" -> "photo"
+        "messageVideo" -> "video"
+        "messageAudio" -> "audio"
+        "messageDocument" -> "document"
+        _ -> "text"
+      end
 
-    extra = %{"from" => assigns.sender, "when" => format_time(assigns.date), "id" => "tg:" <> to_string(assigns.message_id)}
+    msg_id = "tg:" <> to_string(assigns.message_id)
 
-    assigns = assign(assigns, tag: tag, extra: extra)
+    extra = [
+      id: msg_id,
+      when: format_time(assigns.date),
+      from: assigns.sender,
+    ]
+
+    assigns = Map.merge(assigns, %{tag: tag, extra: extra, msg_id: msg_id})
 
     ~H"""
     <.dynamic_tag tag_name={@tag} {@extra}>
@@ -207,13 +216,14 @@ defmodule Froth.Telegram.BotContextHTML do
         text={a.text}
         blob_id={Map.get(a, :blob_id)}
       />
-      <.cycle_trace
-        :for={cycle <- @cycles}
-        cycle_id={cycle.cycle_id}
-        inserted_at={cycle.inserted_at}
-        entries={cycle.entries}
-      />
     </.dynamic_tag>
+    <.cycle_trace
+      :for={cycle <- @cycles}
+      msg_id={@msg_id}
+      cycle_id={cycle.cycle_id}
+      inserted_at={cycle.inserted_at}
+      entries={cycle.entries}
+    />
     """
   end
 
@@ -234,13 +244,14 @@ defmodule Froth.Telegram.BotContextHTML do
   defp analysis_blob_attr(""), do: nil
   defp analysis_blob_attr(id) when is_binary(id), do: id
 
+  attr :msg_id, :string, required: true
   attr :cycle_id, :string, required: true
   attr :inserted_at, :any, required: true
   attr :entries, :list, required: true
 
   def cycle_trace(assigns) do
     ~H"""
-    <cycle cycle_id={@cycle_id} time={format_datetime(@inserted_at)}>
+    <cycle id={@cycle_id} for={@msg_id} time={format_datetime(@inserted_at)}>
       <.trace_entry :for={entry <- @entries} entry={entry} />
     </cycle>
     """

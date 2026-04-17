@@ -12,7 +12,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
     test "renders a chapter with name" do
       html = render(BotContextHTML.chapter(%{name: "2026-03-05", text: "A quiet day."}))
 
-      assert html =~ ~s(<chapter name="2026-03-05">)
+      assert html =~ ~s(<chapter name=2026-03-05>)
       assert html =~ "A quiet day."
       assert html =~ "</chapter>"
     end
@@ -26,8 +26,8 @@ defmodule Froth.Telegram.BotContextHTMLTest do
 
       html = render(BotContextHTML.recent(%{messages: messages}))
 
-      assert html =~ ~s(<msg message_id="4401" sender="@mikkel" time=)
-      assert html =~ ~s(type="messageText">)
+      assert html =~ ~s(<text id=tg:4401)
+      assert html =~ ~s(from=@mikkel)
       assert html =~ "morning"
     end
   end
@@ -37,6 +37,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       html =
         render(
           BotContextHTML.cycle_trace(%{
+            msg_id: "tg:4401",
             cycle_id: "abc",
             inserted_at: ~U[2026-03-06 09:21:33Z],
             entries: [
@@ -50,8 +51,8 @@ defmodule Froth.Telegram.BotContextHTMLTest do
           })
         )
 
-      assert html =~ ~s(<cycle cycle_id="abc" time="2026-03-06 09:21:33 UTC">)
-      assert html =~ ~s(<call tool="search">)
+      assert html =~ ~s(<cycle id=abc for=tg:4401 time="2026-03-06 09:21:33 UTC">)
+      assert html =~ ~s(<call tool=search>)
       assert html =~ "<query>"
       assert html =~ "froth"
       assert html =~ "</query>"
@@ -63,6 +64,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       html =
         render(
           BotContextHTML.cycle_trace(%{
+            msg_id: "tg:4401",
             cycle_id: "abc",
             inserted_at: ~U[2026-03-06 09:21:33Z],
             entries: [
@@ -82,7 +84,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       # it becomes an attribute; since <command> is a void tag it falls
       # back to <field name="command">. The nested description map
       # collapses its short scalar fields to attrs on <description>.
-      assert html =~ ~s(<call tool="run_shell")
+      assert html =~ ~s(<call tool=run_shell)
       assert html =~ "command=\"rg 'foo' lib | head -5\""
       assert html =~ ~s(<description action="searching for foo")
     end
@@ -93,6 +95,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       html =
         render(
           BotContextHTML.cycle_trace(%{
+            msg_id: "tg:4401",
             cycle_id: "def",
             inserted_at: ~U[2026-03-06 09:22:00Z],
             entries: [
@@ -107,17 +110,17 @@ defmodule Froth.Telegram.BotContextHTMLTest do
 
       # Multi-line code must not be collapsed into an attribute.
       assert html =~ "<code>"
-      # HEEx escapes `>` to `&gt;` inside text content — expected.
-      assert html =~ "Enum.map(1..10, fn n -&gt;"
+      assert html =~ "Enum.map(1..10, fn n ->"
       assert html =~ "</code>"
       # Short, single-line `topic` goes on the enclosing tag as an attr.
-      assert html =~ ~s(topic="cycle:abc")
+      assert html =~ ~s(topic=cycle:abc)
     end
 
     test "short scalar inputs render as attributes on <call>" do
       html =
         render(
           BotContextHTML.cycle_trace(%{
+            msg_id: "tg:4401",
             cycle_id: "ghi",
             inserted_at: ~U[2026-03-06 09:23:00Z],
             entries: [
@@ -135,7 +138,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
         )
 
       assert html =~
-               ~s(<call tool="pager" id="blob:01KP" mode="grep" pattern="error">)
+               ~s(<call tool=pager id=blob:01KP mode=grep pattern=error />)
     end
 
     test "returning a block list uses the compact trace renderer" do
@@ -149,6 +152,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       html =
         render(
           BotContextHTML.cycle_trace(%{
+            msg_id: "tg:4401",
             cycle_id: "abc",
             inserted_at: ~U[2026-03-06 09:21:33Z],
             entries: [%{kind: :return, outcome: {:ok, blocks}}]
@@ -156,7 +160,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
         )
 
       assert html =~ "<shell"
-      assert html =~ ~s(task_id="shell:abc")
+      assert html =~ ~s(task_id=shell:abc)
       assert html =~ "hello world"
     end
 
@@ -164,13 +168,14 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       html =
         render(
           BotContextHTML.cycle_trace(%{
+            msg_id: "tg:4401",
             cycle_id: "abc",
             inserted_at: ~U[2026-03-06 09:21:33Z],
             entries: [%{kind: :return, outcome: {:error, "nope"}}]
           })
         )
 
-      assert html =~ ~s(<return is_error="true">)
+      assert html =~ ~s(<return is_error=true>)
       assert html =~ "nope"
     end
 
@@ -178,6 +183,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       html =
         render(
           BotContextHTML.cycle_trace(%{
+            msg_id: "tg:4401",
             cycle_id: "abc",
             inserted_at: ~U[2026-03-06 09:21:33Z],
             entries: [
@@ -195,9 +201,9 @@ defmodule Froth.Telegram.BotContextHTMLTest do
         )
 
       assert html =~ "<intervention"
-      assert html =~ ~s(designation="retry_with_hint")
+      assert html =~ ~s(designation=retry_with_hint)
       assert html =~ ~s(reason="shell exited 127")
-      assert html =~ ~s(pending_ask="ask_42")
+      assert html =~ ~s(pending_ask=ask_42)
     end
   end
 
@@ -209,17 +215,18 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       assert html =~ "@mikkel"
       assert html =~ "checking the logs"
 
-      # cycle traces are attached to recent messages
-      assert html =~ ~s(<cycle cycle_id="01JNWXYZ")
-      assert html =~ ~s(<call tool="search">)
+      # cycle traces follow their messages as siblings
+      assert html =~ ~s(<cycle id=01JNWXYZ)
+      assert html =~ ~s(<call tool=search>)
       assert html =~ "<query>"
       assert html =~ "context"
       assert html =~ "builder"
-      assert html =~ ~s(<cycle cycle_id="01JNWABC")
-      assert html =~ ~s(<call tool="look")
+      assert html =~ ~s(<cycle id=01JNWABC)
+      assert html =~ ~s(<call tool=look)
 
       # newest user message is part of the same <msg> stream
-      assert html =~ ~s(<msg message_id="4405" sender="user:42")
+      assert html =~ ~s(<text id=tg:4405)
+      assert html =~ ~s(from=user:42)
       assert html =~ "what does the context look like right now?"
       refute html =~ "<previous_cycle"
     end
@@ -233,7 +240,8 @@ defmodule Froth.Telegram.BotContextHTMLTest do
 
       html = render(BotContextHTML.context(%{ctx: ctx}))
 
-      assert html =~ ~s(<msg message_id="1" sender="user:99")
+      assert html =~ ~s(<text id=tg:1)
+      assert html =~ ~s(from=user:99)
       assert html =~ "hi"
       refute html =~ "<chapter"
       refute html =~ "<info>"
@@ -262,6 +270,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       html =
         BotContextHTML.render_to_string(
           BotContextHTML.cycle_trace(%{
+            msg_id: "tg:4401",
             cycle_id: "abc",
             inserted_at: ~U[2026-03-06 09:21:33Z],
             entries: [
@@ -303,19 +312,17 @@ defmodule Froth.Telegram.BotContextHTMLTest do
 
       assert length(parts) == 5
 
-      assert Enum.at(parts, 0) =~ ~s(<chapter name="ch01">)
+      assert Enum.at(parts, 0) =~ ~s(<chapter name=ch01>)
       assert Enum.at(parts, 0) =~ "Summary one"
-      assert Enum.at(parts, 1) =~ ~s(<chapter name="ch02">)
+      assert Enum.at(parts, 1) =~ ~s(<chapter name=ch02>)
       assert Enum.at(parts, 1) =~ "Summary two"
-      assert Enum.at(parts, 2) =~ ~s(<msg message_id="4401")
+      assert Enum.at(parts, 2) =~ ~s(<text id=tg:4401)
       assert Enum.at(parts, 2) =~ "hi"
-      assert Enum.at(parts, 3) =~ ~s(<msg message_id="4402")
+      assert Enum.at(parts, 3) =~ ~s(<text id=tg:4402)
       assert Enum.at(parts, 3) =~ "hey"
       assert Enum.at(parts, 4) =~ "<info>"
-      assert Enum.at(parts, 4) =~ "chat: Froth chat (id -100123)"
-      assert Enum.at(parts, 4) =~ "@mikkel (id 42) latest message"
-      assert Enum.at(parts, 4) =~ "@luna (id 43) latest message"
-      assert Enum.at(parts, 4) =~ "now:"
+      assert Enum.at(parts, 4) =~ ~s(<chat name="Froth chat" id=tg:-100123)
+      assert Enum.at(parts, 4) =~ "<info>"
     end
 
     test "drops html comment nodes from rendered parts" do

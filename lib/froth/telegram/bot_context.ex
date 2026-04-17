@@ -219,9 +219,9 @@ defmodule Froth.Telegram.BotContext do
 
   defp truncate_analyses(analyses) do
     Enum.map(analyses, fn a ->
-      clean = a.analysis_text |> String.replace(~r/\s+/, " ") |> String.trim()
-      snippet = String.slice(clean, 0, 150)
-      suffix = if String.length(clean) > 150, do: "…", else: ""
+      clean = a.analysis_text |> String.trim()
+      snippet = String.slice(clean, 0, 1500)
+      suffix = if String.length(clean) > 1500, do: "…", else: ""
       text = snippet <> suffix
 
       blob_id =
