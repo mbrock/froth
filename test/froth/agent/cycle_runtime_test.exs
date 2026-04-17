@@ -1,7 +1,7 @@
 defmodule Froth.Agent.CycleRuntimeTest do
   use ExUnit.Case, async: false
 
-  alias Froth.Agent.{Cycle, CycleRuntime, Surface, ToolUse}
+  alias Froth.Agent.{Cycle, CycleRuntime, ToolUse}
   alias Froth.Agent.CycleRuntime.{Context, View}
   alias Froth.Telegram.Bot.Config, as: BotConfig
 
@@ -22,8 +22,9 @@ defmodule Froth.Agent.CycleRuntimeTest do
       assert CycleRuntime.whereis(cycle_id) == pid
       assert CycleRuntime.alive?(cycle_id)
 
-      assert %{cycle_id: ^cycle_id, bot_id: "charlie", parent_cycle_id: nil} =
-               GenServer.call(CycleRuntime.via(cycle_id), :get_state)
+      state = GenServer.call(CycleRuntime.via(cycle_id), :get_state)
+      assert %Context{cycle_id: ^cycle_id} = state.context
+      assert state.parent_cycle_id == nil
     end
 
     test "terminating the runtime removes it from the registry" do
@@ -55,36 +56,36 @@ defmodule Froth.Agent.CycleRuntimeTest do
       runtime = start_scaffold_runtime()
 
       tool_use = %ToolUse{id: "call_1", name: "run_shell", input: %{"command" => "pwd"}}
-      context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
+      invocation = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
 
       prepared = %{context: sample_context(runtime, tool_use)}
 
       assert {:ok, "ok"} =
                GenServer.call(
                  runtime,
-                 {:commit_tool, tool_use, context, prepared,
+                 {:commit_tool, tool_use, invocation, prepared,
                   %{
                     result: {:ok, "ok"},
                     narration_message: %{message_id: 77, text: "Checking X", mode: :italic}
                   }}
                )
 
-      state = :sys.get_state(runtime)
-      assert state.narration == %{message_id: 77, text: "Checking X", mode: :italic}
+      assert %View{narration: %{message_id: 77, text: "Checking X", mode: :italic}} =
+               :sys.get_state(runtime).context.view
     end
 
     test "clears active narration when a normal message is sent" do
       runtime = start_scaffold_runtime()
 
       :sys.replace_state(runtime, fn rstate ->
-        %{
-          rstate
-          | narration: %{message_id: 77, text: "Checking X\nAlso checking Y", mode: :italic}
-        }
+        put_in(
+          rstate.context.view.narration,
+          %{message_id: 77, text: "Checking X\nAlso checking Y", mode: :italic}
+        )
       end)
 
       tool_use = %ToolUse{id: "call_1", name: "send_message", input: %{"text" => "hello"}}
-      context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
+      invocation = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
 
       outcome = %{
         result: {:ok, "sent"},
@@ -96,12 +97,12 @@ defmodule Froth.Agent.CycleRuntimeTest do
       assert {:ok, "sent"} =
                GenServer.call(
                  runtime,
-                 {:commit_tool, tool_use, context, prepared, outcome}
+                 {:commit_tool, tool_use, invocation, prepared, outcome}
                )
 
-      state = :sys.get_state(runtime)
-      assert state.last_sent == %{id: 42, text: "hello"}
-      assert state.narration == nil
+      view = :sys.get_state(runtime).context.view
+      assert view.last_sent == %{id: 42, text: "hello"}
+      assert view.narration == nil
     end
   end
 
@@ -109,6 +110,7 @@ defmodule Froth.Agent.CycleRuntimeTest do
     test "starts a child runtime under the parent and registers it" do
       parent = start_scaffold_runtime()
       parent_state = :sys.get_state(parent)
+      parent_ctx = parent_state.context
 
       child_cycle_id = unique_cycle_id()
 
@@ -119,11 +121,13 @@ defmodule Froth.Agent.CycleRuntimeTest do
       assert CycleRuntime.whereis(child_cycle_id) == child_pid
 
       child_state = GenServer.call(child_pid, :get_state)
-      assert child_state.parent_cycle_id == parent_state.cycle_id
-      assert child_state.bot_id == parent_state.bot_id
-      assert child_state.bot_config == parent_state.bot_config
-      assert child_state.chat_id == parent_state.chat_id
-      assert child_state.reply_to == parent_state.reply_to
+      child_ctx = child_state.context
+
+      assert child_state.parent_cycle_id == parent_ctx.cycle_id
+      assert child_ctx.bot_config == parent_ctx.bot_config
+      assert child_ctx.surface.chat_id == parent_ctx.surface.chat_id
+      assert child_ctx.surface.reply_to == parent_ctx.surface.reply_to
+      assert child_ctx.spam == parent_ctx.spam
     end
 
     test "terminating the parent cascades to children" do
@@ -146,27 +150,31 @@ defmodule Froth.Agent.CycleRuntimeTest do
       runtime = start_scaffold_runtime()
 
       :sys.replace_state(runtime, fn rstate ->
-        %{
-          rstate
+        %View{} = existing = rstate.context.view
+
+        view = %View{
+          existing
           | last_sent: %{id: 101, text: "hello"},
             narration: %{message_id: 202, text: "Checking X", mode: :italic}
         }
+
+        put_in(rstate.context.view, view)
       end)
 
       :ok = CycleRuntime.sync_sent_message_id(202, 303)
       # Force the cast to be processed before we read state.
       _ = :sys.get_state(runtime)
 
-      state = :sys.get_state(runtime)
-      assert state.narration.message_id == 303
-      assert state.last_sent.id == 101
+      view = :sys.get_state(runtime).context.view
+      assert view.narration.message_id == 303
+      assert view.last_sent.id == 101
 
       :ok = CycleRuntime.sync_sent_message_id(101, 404)
       _ = :sys.get_state(runtime)
 
-      state = :sys.get_state(runtime)
-      assert state.last_sent.id == 404
-      assert state.narration.message_id == 303
+      view = :sys.get_state(runtime).context.view
+      assert view.last_sent.id == 404
+      assert view.narration.message_id == 303
     end
   end
 
@@ -193,25 +201,8 @@ defmodule Froth.Agent.CycleRuntimeTest do
   end
 
   defp sample_context(runtime, tool_use) do
-    state = :sys.get_state(runtime)
-
-    %Context{
-      cycle_id: state.cycle_id,
-      cycle: state.cycle,
-      bot_config: state.bot_config,
-      surface: %Surface{
-        session_id: state.bot_config && state.bot_config.session_id,
-        chat_id: state.chat_id,
-        reply_to: state.reply_to
-      },
-      view: %View{
-        narration: state.narration,
-        last_sent: state.last_sent,
-        active_task_ids: []
-      },
-      tool_call: tool_use,
-      spam: state.spam
-    }
+    %Context{} = ctx = :sys.get_state(runtime).context
+    %Context{ctx | tool_call: tool_use}
   end
 
   defp minimal_bot_config do

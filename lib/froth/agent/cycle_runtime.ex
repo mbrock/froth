@@ -290,24 +290,32 @@ defmodule Froth.Agent.CycleRuntime do
 
     cycle = Keyword.get(opts, :cycle)
     worker_config = Keyword.get(opts, :worker_config)
+    bc = Keyword.get(opts, :bot_config)
+    chat_id = Keyword.get(opts, :chat_id)
 
     {:ok, children_sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
 
-    state = %{
+    context = %Context{
       cycle_id: Keyword.fetch!(opts, :cycle_id),
-      bot_id: Keyword.get(opts, :bot_id),
-      parent_cycle_id: Keyword.get(opts, :parent_cycle_id),
       cycle: cycle,
-      worker_pid: nil,
-      active_tasks: MapSet.new(),
-      bot_config: Keyword.get(opts, :bot_config),
-      bot_pid: Keyword.get(opts, :bot_pid),
-      chat_id: Keyword.get(opts, :chat_id),
-      reply_to: Keyword.get(opts, :reply_to),
+      bot_config: bc,
+      surface: %Surface{
+        session_id: bc && bc.session_id,
+        chat_id: chat_id,
+        reply_to: Keyword.get(opts, :reply_to)
+      },
+      view: %View{},
+      tool_call: nil,
       spam: Keyword.get(opts, :spam, true),
-      narration: nil,
-      last_sent: nil,
-      awaiting_user_input?: false,
+      system_prompt: bc && BotConfig.resolve_system_prompt(chat_id || 0, nil, bc),
+      tool_specs: BotConfig.resolve_tool_specs(bc)
+    }
+
+    state = %{
+      context: context,
+      parent_cycle_id: Keyword.get(opts, :parent_cycle_id),
+      worker_pid: nil,
+      bot_pid: Keyword.get(opts, :bot_pid),
       children_sup: children_sup
     }
 
@@ -327,7 +335,7 @@ defmodule Froth.Agent.CycleRuntime do
   def handle_call(:get_state, _from, state), do: {:reply, state, state}
 
   def handle_call(:active_task_ids, _from, state) do
-    {:reply, state.active_tasks |> Enum.sort(), state}
+    {:reply, state.context.view.active_task_ids, state}
   end
 
   def handle_call({:resolve_pending_ask, pending_ask_id, resolution}, _from, state) do
@@ -341,43 +349,50 @@ defmodule Froth.Agent.CycleRuntime do
     end
   end
 
-  def handle_call({:prepare_tool, %ToolUse{} = tool_use, context}, _from, state) do
-    {reply, state} = prepare_tool_call(state, tool_use, context)
+  def handle_call({:prepare_tool, %ToolUse{} = tool_use, invocation}, _from, state) do
+    {reply, state} = prepare_tool_call(state, tool_use, invocation)
     {:reply, reply, state}
   end
 
   def handle_call(
-        {:commit_tool, %ToolUse{} = tool_use, context, prepared, outcome},
+        {:commit_tool, %ToolUse{} = tool_use, invocation, prepared, outcome},
         _from,
         state
       ) do
-    {reply, state} = commit_tool_call(state, tool_use, context, prepared, outcome)
+    {reply, state} = commit_tool_call(state, tool_use, invocation, prepared, outcome)
     {:reply, reply, state}
   end
 
   def handle_call({:spawn_subagent, opts}, _from, state) when is_list(opts) do
+    %Context{
+      cycle_id: cycle_id,
+      bot_config: bc,
+      surface: %Surface{chat_id: chat_id, reply_to: reply_to},
+      spam: spam
+    } = state.context
+
     child_opts =
       opts
-      |> Keyword.put_new(:parent_cycle_id, state.cycle_id)
-      |> Keyword.put_new(:bot_id, state.bot_id)
-      |> Keyword.put_new(:bot_config, state.bot_config)
+      |> Keyword.put_new(:parent_cycle_id, cycle_id)
+      |> Keyword.put_new(:bot_id, bc && bc.id)
+      |> Keyword.put_new(:bot_config, bc)
       |> Keyword.put_new(:bot_pid, state.bot_pid)
-      |> Keyword.put_new(:chat_id, state.chat_id)
-      |> Keyword.put_new(:reply_to, state.reply_to)
-      |> Keyword.put_new(:spam, state.spam)
+      |> Keyword.put_new(:chat_id, chat_id)
+      |> Keyword.put_new(:reply_to, reply_to)
+      |> Keyword.put_new(:spam, spam)
 
     reply = DynamicSupervisor.start_child(state.children_sup, {__MODULE__, child_opts})
     {:reply, reply, state}
   end
 
-  def handle_call({:execute, %ToolUse{} = tool_use, context}, _from, state) do
-    {reply, state} = prepare_tool_call(state, tool_use, context)
+  def handle_call({:execute, %ToolUse{} = tool_use, invocation}, _from, state) do
+    {reply, state} = prepare_tool_call(state, tool_use, invocation)
 
     {result, state} =
       case reply do
         {:ok, prepared} ->
           outcome = ToolExecution.execute(prepared.context)
-          commit_tool_call(state, tool_use, context, prepared, outcome)
+          commit_tool_call(state, tool_use, invocation, prepared, outcome)
 
         {:error, reason} ->
           {{:error, reason}, state}
@@ -388,25 +403,27 @@ defmodule Froth.Agent.CycleRuntime do
 
   @impl true
   def handle_cast({:register_task, task_id}, state) when is_binary(task_id) do
-    {:noreply, %{state | active_tasks: MapSet.put(state.active_tasks, task_id)}}
+    {:noreply, update_view(state, &add_task_id(&1, task_id))}
   end
 
   def handle_cast({:sync_sent_message_id, old_id, new_id}, state)
       when is_integer(old_id) and is_integer(new_id) do
     {:noreply,
-     %{
-       state
-       | last_sent: swap_id(state.last_sent, :id, old_id, new_id),
-         narration: swap_id(state.narration, :message_id, old_id, new_id)
-     }}
+     update_view(state, fn %View{} = view ->
+       %View{
+         view
+         | last_sent: swap_id(view.last_sent, :id, old_id, new_id),
+           narration: swap_id(view.narration, :message_id, old_id, new_id)
+       }
+     end)}
   end
 
   def handle_cast(:clear_awaiting_user_input, state) do
-    {:noreply, %{state | awaiting_user_input?: false}}
+    {:noreply, update_view(state, fn %View{} = v -> %View{v | awaiting_user_input?: false} end)}
   end
 
   def handle_cast({:track_sent_message, sent, text}, state) when is_binary(text) do
-    {:noreply, apply_sent_message(state, sent, text)}
+    {:noreply, update_view(state, &apply_sent_message(&1, sent, text))}
   end
 
   @impl true
@@ -421,8 +438,15 @@ defmodule Froth.Agent.CycleRuntime do
 
   @impl true
   def terminate(_reason, state) do
-    _ = maybe_append_cycle_footer(state)
+    _ = maybe_append_cycle_footer(state.context)
     :ok
+  end
+
+  # Nested-update helper: apply a View -> View function to
+  # `state.context.view`, returning the new state.
+  defp update_view(state, fun) when is_function(fun, 1) do
+    %Context{} = ctx = state.context
+    %{state | context: %Context{ctx | view: fun.(ctx.view)}}
   end
 
   # --- Worker lifecycle ---
@@ -444,16 +468,18 @@ defmodule Froth.Agent.CycleRuntime do
 
   # --- Tool execution ---
 
+  # Produce a per-call `%Context{}` from `state.context` by filling in
+  # `:tool_call` (with input shape-tweaks applied) and optionally
+  # overriding `:surface.{chat_id,reply_to}` from the Worker's
+  # `invocation` kwlist. Everything else passes through unchanged.
   defp prepare_tool_call(state, %ToolUse{name: name, input: input} = tool_use, invocation)
        when is_map(input) do
-    shaped =
-      tool_use
-      |> Map.put(
-        :input,
-        shape_tool_input(name, input, state.cycle_id, invocation[:reply_to] || state.reply_to)
-      )
+    %Context{} = base = state.context
+    surface = overlay_surface(base.surface, invocation)
+    shaped_input = shape_tool_input(name, input, base.cycle_id, surface.reply_to)
+    tool_call = %ToolUse{tool_use | input: shaped_input}
 
-    ctx = build_context(state, shaped, invocation)
+    ctx = %Context{base | surface: surface, tool_call: tool_call}
 
     prepared = %{
       context: ctx,
@@ -466,38 +492,11 @@ defmodule Froth.Agent.CycleRuntime do
   defp prepare_tool_call(state, _tool_use, _invocation),
     do: {{:error, "invalid tool input"}, state}
 
-  # Build a `%Context{}` around a ToolUse, projecting the runtime's
-  # live state into the shape tool-execution consumers want. The
-  # `invocation` map comes from the Worker and may override
-  # `:chat_id` / `:reply_to` / `:cycle_id`.
-  defp build_context(state, %ToolUse{} = tool_call, invocation) do
-    chat_id = invocation[:chat_id] || state.chat_id
-    reply_to = invocation[:reply_to] || state.reply_to
-    cycle_id = invocation[:cycle_id] || state.cycle_id
-    bc = state.bot_config
-
-    surface = %Surface{
-      session_id: bc && bc.session_id,
-      chat_id: chat_id,
-      reply_to: reply_to
-    }
-
-    view = %View{
-      narration: state.narration,
-      last_sent: state.last_sent,
-      active_task_ids: Enum.sort(state.active_tasks)
-    }
-
-    %Context{
-      cycle_id: cycle_id,
-      cycle: state.cycle,
-      bot_config: bc,
-      surface: surface,
-      view: view,
-      tool_call: tool_call,
-      spam: state.spam,
-      system_prompt: bc && BotConfig.resolve_system_prompt(chat_id || 0, nil, bc),
-      tool_specs: BotConfig.resolve_tool_specs(bc)
+  defp overlay_surface(%Surface{} = base, invocation) do
+    %Surface{
+      session_id: base.session_id,
+      chat_id: invocation[:chat_id] || base.chat_id,
+      reply_to: invocation[:reply_to] || base.reply_to
     }
   end
 
@@ -514,7 +513,7 @@ defmodule Froth.Agent.CycleRuntime do
 
   defp shape_tool_input(_name, input, _cycle_id, _reply_to), do: input
 
-  defp commit_tool_call(state, _tool_use, _invocation, prepared, outcome) do
+  defp commit_tool_call(state, _tool_use, _invocation, _prepared, outcome) do
     {result, sent_message, narration_message, awaiting_user_input?} =
       case outcome do
         %{result: result} = o ->
@@ -524,40 +523,48 @@ defmodule Froth.Agent.CycleRuntime do
           {result, nil, nil, false}
       end
 
-    cycle_id =
-      case prepared do
-        %{context: %Context{cycle_id: id}} when is_binary(id) -> id
-        _ -> state.cycle_id
-      end
-
     state =
-      case narration_message do
-        %{message_id: _, text: _, mode: _} -> track_narration_message(state, narration_message)
-        _ -> state
-      end
+      update_view(state, fn view ->
+        view
+        |> apply_narration_message(narration_message)
+        |> apply_sent_or_awaiting(sent_message, awaiting_user_input?)
+        |> apply_task_from_result(result)
+      end)
 
-    state =
-      case {sent_message, awaiting_user_input?} do
-        {%{sent: sent, text: text}, true} -> apply_awaiting_user_input(state, sent, text)
-        {%{sent: sent, text: text}, false} -> apply_sent_message(state, sent, text)
-        _ -> state
-      end
-
-    state = maybe_track_task_from_result(state, cycle_id, result)
     {result, state}
   end
 
-  defp maybe_track_task_from_result(state, cycle_id, {:ok, result}) when is_binary(cycle_id) do
-    case extract_task_id(result) do
-      task_id when is_binary(task_id) ->
-        %{state | active_tasks: MapSet.put(state.active_tasks, task_id)}
+  defp apply_narration_message(%View{} = view, %{message_id: mid, text: text, mode: mode})
+       when is_integer(mid) and is_binary(text) and mode in [:italic, :markdown] do
+    %View{view | narration: %{message_id: mid, text: text, mode: mode}}
+  end
 
-      _ ->
-        state
+  defp apply_narration_message(%View{} = view, _), do: view
+
+  defp apply_sent_or_awaiting(%View{} = view, %{sent: sent, text: text}, true)
+       when is_binary(text) do
+    apply_awaiting_user_input(view, sent, text)
+  end
+
+  defp apply_sent_or_awaiting(%View{} = view, %{sent: sent, text: text}, false)
+       when is_binary(text) do
+    apply_sent_message(view, sent, text)
+  end
+
+  defp apply_sent_or_awaiting(%View{} = view, _sent_message, _awaiting?), do: view
+
+  defp apply_task_from_result(%View{} = view, {:ok, result}) do
+    case extract_task_id(result) do
+      task_id when is_binary(task_id) -> add_task_id(view, task_id)
+      _ -> view
     end
   end
 
-  defp maybe_track_task_from_result(state, _cycle_id, _result), do: state
+  defp apply_task_from_result(%View{} = view, _result), do: view
+
+  defp add_task_id(%View{active_task_ids: ids} = view, task_id) when is_binary(task_id) do
+    %View{view | active_task_ids: Enum.sort(Enum.uniq([task_id | ids]))}
+  end
 
   defp extract_task_id(text) when is_binary(text) do
     case Regex.run(~r/\btask_id=([a-z]+:[a-zA-Z0-9:_-]+)/, text, capture: :all_but_first) do
@@ -575,38 +582,36 @@ defmodule Froth.Agent.CycleRuntime do
     end
   end
 
-  # --- Narration / last-sent tracking ---
+  # --- Narration / last-sent helpers (View -> View) ---
 
-  defp track_narration_message(state, %{message_id: message_id, text: text, mode: mode})
-       when is_integer(message_id) and is_binary(text) and mode in [:italic, :markdown] do
-    %{state | narration: %{message_id: message_id, text: text, mode: mode}}
+  defp apply_sent_message(%View{} = view, sent, text) when is_binary(text) do
+    %View{
+      view
+      | narration: nil,
+        awaiting_user_input?: false,
+        last_sent: build_last_sent(sent, text)
+    }
   end
 
-  defp track_narration_message(state, _), do: state
+  defp apply_sent_message(view, _sent, _text), do: view
 
-  defp apply_sent_message(state, sent, text) when is_binary(text) do
-    last_sent =
-      case sent_message_id(sent) do
-        id when is_integer(id) -> %{id: id, text: text}
-        _ -> %{id: nil, text: text}
-      end
-
-    %{state | narration: nil, awaiting_user_input?: false, last_sent: last_sent}
+  defp apply_awaiting_user_input(%View{} = view, sent, text) when is_binary(text) do
+    %View{
+      view
+      | narration: nil,
+        awaiting_user_input?: true,
+        last_sent: build_last_sent(sent, text)
+    }
   end
 
-  defp apply_sent_message(state, _sent, _text), do: state
+  defp apply_awaiting_user_input(view, _sent, _text), do: view
 
-  defp apply_awaiting_user_input(state, sent, text) when is_binary(text) do
-    last_sent =
-      case sent_message_id(sent) do
-        id when is_integer(id) -> %{id: id, text: text}
-        _ -> %{id: nil, text: text}
-      end
-
-    %{state | narration: nil, awaiting_user_input?: true, last_sent: last_sent}
+  defp build_last_sent(sent, text) do
+    case sent_message_id(sent) do
+      id when is_integer(id) -> %{id: id, text: text}
+      _ -> %{id: nil, text: text}
+    end
   end
-
-  defp apply_awaiting_user_input(state, _sent, _text), do: state
 
   defp sent_message_id(%{"id" => id}) when is_integer(id), do: id
 
@@ -621,14 +626,15 @@ defmodule Froth.Agent.CycleRuntime do
 
   # --- Cycle footer on finish ---
 
-  defp maybe_append_cycle_footer(%{
+  defp maybe_append_cycle_footer(%Context{
          cycle_id: cycle_id,
          cycle: %Cycle{id: cycle_id},
-         last_sent: %{id: msg_id, text: text},
-         awaiting_user_input?: false,
-         chat_id: chat_id,
-         reply_to: reply_to,
-         bot_config: %BotConfig{} = bc
+         bot_config: %BotConfig{} = bc,
+         surface: %Surface{chat_id: chat_id, reply_to: reply_to},
+         view: %View{
+           last_sent: %{id: msg_id, text: text},
+           awaiting_user_input?: false
+         }
        })
        when is_binary(cycle_id) and is_integer(msg_id) and is_binary(text) and is_integer(chat_id) do
     # Tolerate a bad `cycle_id` (e.g. a non-ULID test fixture) so
@@ -656,7 +662,7 @@ defmodule Froth.Agent.CycleRuntime do
     end
   end
 
-  defp maybe_append_cycle_footer(_state), do: :ok
+  defp maybe_append_cycle_footer(_ctx), do: :ok
 
   # --- Misc helpers ---
 

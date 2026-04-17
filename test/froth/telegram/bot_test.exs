@@ -68,7 +68,7 @@ defmodule Froth.Telegram.BotTest do
       )
 
     :sys.replace_state(runtime_pid, fn rstate ->
-      %{rstate | last_sent: %{id: 42, text: "hello"}}
+      put_in(rstate.context.view.last_sent, %{id: 42, text: "hello"})
     end)
 
     on_exit(fn ->

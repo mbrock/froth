@@ -134,7 +134,7 @@ defmodule Froth.Telegram.AskFlowTest do
     assert is_pid(waiting_state.cycle_state.cycle_runtime_pid)
     waiting_runtime_pid = waiting_state.cycle_state.cycle_runtime_pid
 
-    assert :sys.get_state(waiting_state.cycle_state.cycle_runtime_pid).awaiting_user_input? ==
+    assert :sys.get_state(waiting_state.cycle_state.cycle_runtime_pid).context.view.awaiting_user_input? ==
              true
 
     waiting_messages = cycle_messages(waiting_state.cycle_state.cycle_id)

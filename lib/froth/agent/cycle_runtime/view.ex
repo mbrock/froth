@@ -13,11 +13,16 @@ defmodule Froth.Agent.CycleRuntime.View do
       place during tool execution.
     * `:last_sent` — `nil` or `%{id, text}`. The most recent
       non-narration outbound message (a plain `send_message`, etc.).
-    * `:active_task_ids` — sorted list of background task ids
+    * `:active_task_ids` — sorted, unique list of background task ids
       (`"shell:..."`, `"eval:..."`) this cycle has spawned.
+    * `:awaiting_user_input?` — `true` while a pending ask has parked
+      the cycle. Used to gate the cost-footer edit at cycle finish.
   """
 
-  defstruct narration: nil, last_sent: nil, active_task_ids: []
+  defstruct narration: nil,
+            last_sent: nil,
+            active_task_ids: [],
+            awaiting_user_input?: false
 
   @type narration :: %{
           message_id: integer(),
@@ -30,6 +35,7 @@ defmodule Froth.Agent.CycleRuntime.View do
   @type t :: %__MODULE__{
           narration: narration() | nil,
           last_sent: last_sent() | nil,
-          active_task_ids: [String.t()]
+          active_task_ids: [String.t()],
+          awaiting_user_input?: boolean()
         }
 end
