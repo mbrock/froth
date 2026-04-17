@@ -13,6 +13,7 @@ defmodule Froth.Inference.Tools do
   alias Froth.Telegram.PendingAsks
   alias Froth.Telemetry.Span
   alias Froth.Tools.Pager, as: PagerTool
+  alias Froth.Tools.ViewAnalysis, as: ViewAnalysisTool
   import Ecto.Query
 
   @default_session_id "charlie"
@@ -22,7 +23,7 @@ defmodule Froth.Inference.Tools do
   @read_tool_transcript_max_task_output_chars 3_000
   @spawn_agent_default_model "gpt-5.4-mini"
   @spawn_agent_default_tool_names ["run_shell", "elixir_eval"]
-  @extracted_tool_modules [PagerTool]
+  @extracted_tool_modules [PagerTool, ViewAnalysisTool]
   @tool_specs [
     %{
       "name" => "send_message",
@@ -123,24 +124,6 @@ defmodule Froth.Inference.Tools do
           }
         },
         "required" => ["query"],
-        "additionalProperties" => false
-      }
-    },
-    %{
-      "name" => "view_analysis",
-      "description" =>
-        "Read the full analysis text for one or more analysis IDs. Use this when read_log or search shows an analysis:N snippet and you want the complete analysis behind it. This is the right tool for media that has already been interpreted by other agents, such as photos, voice notes, videos, PDFs, YouTube links, or X posts. If you need the original image or PDF content block itself rather than the generated analysis text, use look instead.",
-      "input_schema" => %{
-        "type" => "object",
-        "properties" => %{
-          "ids" => %{
-            "type" => "array",
-            "items" => %{"type" => "integer"},
-            "description" =>
-              "Analysis IDs to read, taken from analysis:N references in the chat log."
-          }
-        },
-        "required" => ["ids"],
         "additionalProperties" => false
       }
     },
@@ -461,7 +444,7 @@ defmodule Froth.Inference.Tools do
 
   def label("read_log"), do: "read chat log"
   def label("search"), do: "search chat log"
-  def label("view_analysis"), do: "open analysis"
+  def label("view_analysis"), do: ViewAnalysisTool.label()
   def label("look"), do: "look at media"
   def label("read_tool_transcript"), do: "read tool transcript"
   def label("elixir_eval"), do: "run code"
@@ -501,7 +484,7 @@ defmodule Froth.Inference.Tools do
         {:ok, search(chat_id, input, session_id)}
 
       "view_analysis" ->
-        {:ok, view_analysis(input)}
+        ViewAnalysisTool.execute(ctx, tool_call, hooks)
 
       "look" ->
         look(chat_id, input, session_id)
@@ -1875,38 +1858,6 @@ defmodule Froth.Inference.Tools do
       log: false
     )
     |> Enum.group_by(& &1.message_id)
-  end
-
-  defp view_analysis(input) do
-    ids = input["ids"] || []
-
-    analyses =
-      Repo.all(
-        from(a in Froth.Analysis,
-          where: a.id in ^ids,
-          select: %{
-            id: a.id,
-            type: a.type,
-            message_id: a.message_id,
-            agent: a.agent,
-            analysis_text: a.analysis_text
-          }
-        ),
-        log: false
-      )
-
-    if analyses == [] do
-      "No analyses found for the given IDs."
-    else
-      # One block per analysis — each carries its own ids/type and
-      # (via materialize) its own pager handle if the body is long.
-      Enum.map(analyses, fn a ->
-        Froth.Context.Block.new(
-          [kind: "analysis", id: a.id, type: a.type, message_id: a.message_id, agent: a.agent],
-          a.analysis_text
-        )
-      end)
-    end
   end
 
   defp look(chat_id, input, session_id)

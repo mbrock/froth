@@ -1,9 +1,11 @@
 defmodule Froth.Inference.ToolsTest do
   use Froth.TelegramBotCase, async: true
 
+  alias Froth.Analysis
   alias Froth.ApiKey
   alias Froth.Agent
   alias Froth.Agent.{Cycle, Message}
+  alias Froth.Context.Block
   alias Froth.Inference.Tools
   alias Froth.LLM.Message, as: LLMMessage
   alias Froth.LLM.Request
@@ -148,6 +150,56 @@ defmodule Froth.Inference.ToolsTest do
 
     refute is_nil(spec)
     assert get_in(spec, ["input_schema", "required"]) == ["message_id"]
+  end
+
+  test "view_analysis is exposed in tool specs" do
+    spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "view_analysis"))
+
+    refute is_nil(spec)
+    assert get_in(spec, ["input_schema", "required"]) == ["ids"]
+  end
+
+  test "view_analysis returns one block per matching analysis id" do
+    first =
+      Repo.insert!(
+        Analysis.changeset(%Analysis{}, %{
+          type: "image",
+          chat_id: unique_chat_id(),
+          message_id: 101,
+          agent: "vision",
+          analysis_text: "first analysis text",
+          generated_at: DateTime.utc_now()
+        })
+      )
+
+    second =
+      Repo.insert!(
+        Analysis.changeset(%Analysis{}, %{
+          type: "pdf",
+          chat_id: unique_chat_id(),
+          message_id: 202,
+          agent: "charlie",
+          analysis_text: "second analysis text",
+          generated_at: DateTime.utc_now()
+        })
+      )
+
+    assert {:ok, [%Block{} = block_a, %Block{} = block_b]} =
+             Tools.execute("view_analysis", %{"ids" => [second.id, first.id]}, 0, [])
+
+    blocks_by_id = Map.new([block_a, block_b], &{Block.attr(&1, :id), &1})
+
+    assert Block.attr(blocks_by_id[first.id], :kind) == "analysis"
+    assert Block.attr(blocks_by_id[first.id], :type) == "image"
+    assert Block.attr(blocks_by_id[first.id], :message_id) == 101
+    assert Block.attr(blocks_by_id[first.id], :agent) == "vision"
+    assert blocks_by_id[first.id].body == "first analysis text"
+
+    assert Block.attr(blocks_by_id[second.id], :kind) == "analysis"
+    assert Block.attr(blocks_by_id[second.id], :type) == "pdf"
+    assert Block.attr(blocks_by_id[second.id], :message_id) == 202
+    assert Block.attr(blocks_by_id[second.id], :agent) == "charlie"
+    assert blocks_by_id[second.id].body == "second analysis text"
   end
 
   test "ask is exposed in tool specs" do
