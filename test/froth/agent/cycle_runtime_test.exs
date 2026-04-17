@@ -1,5 +1,5 @@
 defmodule Froth.Agent.CycleRuntimeTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Froth.Agent.{Cycle, CycleRuntime, ToolUse}
   alias Froth.Agent.CycleRuntime.{Context, View}

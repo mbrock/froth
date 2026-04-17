@@ -1,5 +1,5 @@
 defmodule FrothWeb.TelemetryLiveTest do
-  use FrothWeb.ConnCase, async: false
+  use FrothWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
 

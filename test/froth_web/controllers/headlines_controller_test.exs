@@ -1,5 +1,5 @@
 defmodule FrothWeb.HeadlinesControllerTest do
-  use FrothWeb.ConnCase, async: false
+  use FrothWeb.ConnCase, async: true
 
   alias Froth.{ChatSummary, Event, Repo}
 

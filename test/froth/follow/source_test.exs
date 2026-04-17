@@ -1,11 +1,13 @@
 defmodule Froth.Follow.SourceTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Froth.Follow.{Filter, Source}
   alias Froth.Repo
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Froth.Repo)
+    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Froth.Repo, shared: false)
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
+    :ok
   end
 
   test "recent_entries projects and filters persisted telemetry rows" do

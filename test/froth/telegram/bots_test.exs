@@ -1,5 +1,5 @@
 defmodule Froth.Telegram.BotsTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Froth.Telegram.{Bots, Charlie}
 
