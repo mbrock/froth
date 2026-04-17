@@ -126,7 +126,11 @@ defmodule Froth.Context.Markup do
         trailing_newline = if pretty?, do: "\n", else: ""
 
         [
-          pad, "<", tag, rendered_attrs, ">",
+          pad,
+          "<",
+          tag,
+          rendered_attrs,
+          ">",
           leading_newline,
           render_nodes(children, pretty?, depth + 1),
           trailing_newline,
@@ -156,7 +160,8 @@ defmodule Froth.Context.Markup do
 
   defp inline_children?([text], tag, rendered_attrs, depth) when is_binary(text) do
     not String.contains?(text, "\n") and
-      depth * 2 + String.length(tag) * 2 + IO.iodata_length(rendered_attrs) + String.length(text) + 5 <= 80
+      depth * 2 + String.length(tag) * 2 + IO.iodata_length(rendered_attrs) + String.length(text) +
+        5 <= 80
   end
 
   defp inline_children?(_, _, _, _), do: false

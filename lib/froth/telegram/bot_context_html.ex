@@ -201,7 +201,7 @@ defmodule Froth.Telegram.BotContextHTML do
     extra = [
       id: msg_id,
       when: format_time(assigns.date),
-      from: assigns.sender,
+      from: assigns.sender
     ]
 
     assigns = Map.merge(assigns, %{tag: tag, extra: extra, msg_id: msg_id})
