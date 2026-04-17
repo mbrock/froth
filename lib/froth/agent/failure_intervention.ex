@@ -550,7 +550,7 @@ defmodule Froth.Agent.FailureIntervention do
     messages
     |> Enum.map(&render_transcript_message/1)
     |> Enum.join("\n\n")
-    |> truncate(@max_transcript_chars)
+    |> truncate_tail(@max_transcript_chars)
   end
 
   defp render_transcript_message(%AgentMessage{role: role, content: content}) do
@@ -881,4 +881,22 @@ defmodule Froth.Agent.FailureIntervention do
 
   defp truncate(text, _limit) when is_binary(text), do: text
   defp truncate(value, _limit), do: inspect(value)
+
+  # Keep the LAST `limit` characters, with a leading "..." when clipped.
+  # Used for cycle transcripts where the most recent turns (the failing
+  # tool call and its immediate context) matter more than the ancient
+  # preamble. The old `truncate/2` did the opposite and would feed the
+  # diagnostic agent only the stale opening of a long conversation.
+  defp truncate_tail(text, limit) when is_binary(text) and is_integer(limit) and limit > 3 do
+    len = String.length(text)
+
+    if len > limit do
+      "..." <> String.slice(text, len - (limit - 3), limit - 3)
+    else
+      text
+    end
+  end
+
+  defp truncate_tail(text, _limit) when is_binary(text), do: text
+  defp truncate_tail(value, _limit), do: inspect(value)
 end
