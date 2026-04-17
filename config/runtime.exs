@@ -209,6 +209,14 @@ config :froth, Froth.Telegram.Charlie,
   bot_user_id: String.to_integer(System.get_env("CHARLIE_BOT_USER_ID", "0")),
   owner_user_id: String.to_integer(System.get_env("CHARLIE_OWNER_USER_ID", "0"))
 
+# Auto-start the Charlie bot on full nodes. Test env and worker nodes
+# skip this. Set FROTH_DISABLE_CHARLIE=1 to disable on full nodes too.
+if config_env() != :test and node_role != :worker and
+     System.get_env("FROTH_DISABLE_CHARLIE") in [nil, "", "0", "false"] do
+  config :froth, Froth.Telegram.Bots,
+    bots: [%{id: "charlie", runtime_module: Froth.Telegram.Charlie}]
+end
+
 config :froth, Froth.Telegram,
   # optional override for where the built executable lives
   cnode_executable: System.get_env("TELEGRAM_TDLIB_CNODE_EXECUTABLE"),
