@@ -137,7 +137,7 @@ defmodule Froth.Telegram.AskFlowTest do
     assert :sys.get_state(waiting_state.cycle_state.cycle_runtime_pid).awaiting_user_input? ==
              true
 
-    waiting_messages = cycle_messages(waiting_state.cycle_state.cycle.id)
+    waiting_messages = cycle_messages(waiting_state.cycle_state.cycle_id)
 
     assert [{:user, first_waiting_user_text}, {:agent, nil}] =
              Enum.map(waiting_messages, &{&1.role, Message.extract_text(&1)})
@@ -501,7 +501,7 @@ defmodule Froth.Telegram.AskFlowTest do
     assert is_pid(waiting_state.cycle_state.cycle_runtime_pid)
     waiting_runtime_pid = waiting_state.cycle_state.cycle_runtime_pid
 
-    waiting_messages = cycle_messages(waiting_state.cycle_state.cycle.id)
+    waiting_messages = cycle_messages(waiting_state.cycle_state.cycle_id)
 
     assert [{:user, first_waiting_user_text}, {:agent, nil}] =
              Enum.map(waiting_messages, &{&1.role, Message.extract_text(&1)})
@@ -728,7 +728,7 @@ defmodule Froth.Telegram.AskFlowTest do
     assert is_pid(waiting_state.cycle_state.cycle_runtime_pid)
     waiting_runtime_pid = waiting_state.cycle_state.cycle_runtime_pid
 
-    assert task_id in Froth.Agent.CycleRuntime.active_task_ids(waiting_state.cycle_state.cycle.id)
+    assert task_id in Froth.Agent.CycleRuntime.active_task_ids(waiting_state.cycle_state.cycle_id)
 
     callback_query_id = "3234567890123456789"
 

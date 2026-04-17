@@ -192,7 +192,7 @@ defmodule Froth.Telegram.Bot do
   def handle_cast({:stop_loop, _inference_session_id}, state) do
     state =
       case state.cycle_state do
-        %CycleState{cycle: %Cycle{id: cycle_id}} -> stop_cycle(state, cycle_id, notify?: true)
+        %CycleState{cycle_id: cycle_id} -> stop_cycle(state, cycle_id, notify?: true)
         _ -> state
       end
 
@@ -221,7 +221,7 @@ defmodule Froth.Telegram.Bot do
     BotAdapter.answer_callback(state.bot_config.session_id, query_id)
 
     case state.cycle_state do
-      %CycleState{cycle: %Cycle{id: cycle_id}} -> stop_cycle(state, cycle_id, notify?: true)
+      %CycleState{cycle_id: cycle_id} -> stop_cycle(state, cycle_id, notify?: true)
       _ -> state
     end
   end
@@ -517,7 +517,7 @@ defmodule Froth.Telegram.Bot do
       Span.execute([:froth, :telegram, :bot, :busy], session_span, %{
         bot_id: bc.id,
         chat_id: chat_id,
-        active_cycle_id: cs.cycle.id
+        active_cycle_id: cs.cycle_id
       })
 
       # Buffer the message for mid-loop injection on the runtime. It
@@ -525,7 +525,7 @@ defmodule Froth.Telegram.Bot do
       # the interim message) and hand anything left over back to us at
       # cycle finish so we can start a follow-up cycle.
       buffered = %{chat_id: chat_id, reply_to: reply_to, text: text, time: DateTime.utc_now()}
-      :ok = CycleRuntime.buffer_user_message(cs.cycle.id, buffered)
+      :ok = CycleRuntime.buffer_user_message(cs.cycle_id, buffered)
       state
     else
       BotAdapter.send_typing(bc.session_id, chat_id)
@@ -612,7 +612,7 @@ defmodule Froth.Telegram.Bot do
     %{
       state
       | cycle_state: %CycleState{
-          cycle: cycle,
+          cycle_id: cycle.id,
           cycle_runtime_pid: runtime_pid,
           cycle_runtime_ref: ref,
           chat_id: chat_id,
@@ -648,21 +648,18 @@ defmodule Froth.Telegram.Bot do
     notify? = Keyword.get(opts, :notify?, false)
     cs = state.cycle_state
 
-    if notify? and match?(%CycleState{cycle: %Cycle{id: ^cycle_id}}, cs) do
+    active? = match?(%CycleState{cycle_id: ^cycle_id}, cs)
+
+    if notify? and active? do
       BotAdapter.send_italic(state.bot_config.session_id, cs.chat_id, cs.reply_to, "stopped")
     end
 
     # Capture task ids before terminating the runtime; once it's dead,
     # its `active_tasks` state is gone along with its Registry entry.
-    task_ids =
-      if match?(%CycleState{cycle: %Cycle{id: ^cycle_id}}, cs) do
-        CycleRuntime.active_task_ids(cycle_id)
-      else
-        []
-      end
+    task_ids = if active?, do: CycleRuntime.active_task_ids(cycle_id), else: []
 
     state =
-      if match?(%CycleState{cycle: %Cycle{id: ^cycle_id}}, cs) do
+      if active? do
         Process.exit(cs.cycle_runtime_pid, {:shutdown, :cancelled})
         reset_cycle_state(state)
       else
@@ -830,7 +827,7 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp live_pending_ask_cycle?(
-         %{cycle_state: %CycleState{cycle: %Cycle{id: cycle_id}}},
+         %{cycle_state: %CycleState{cycle_id: cycle_id}},
          pending_ask
        )
        when is_binary(cycle_id) do
@@ -925,7 +922,7 @@ defmodule Froth.Telegram.Bot do
 
   defp clear_pending_ask_wait(state) do
     case state.cycle_state do
-      %CycleState{cycle: %Cycle{id: cycle_id}} ->
+      %CycleState{cycle_id: cycle_id} ->
         :ok = CycleRuntime.clear_awaiting_user_input(cycle_id)
         state
 
@@ -1064,7 +1061,7 @@ defmodule Froth.Telegram.Bot do
        when is_binary(session_id) and is_integer(chat_id) and is_binary(text) do
     cycle_id =
       case state.cycle_state do
-        %CycleState{cycle: %Cycle{id: id}} -> id
+        %CycleState{cycle_id: id} -> id
         _ -> nil
       end
 
