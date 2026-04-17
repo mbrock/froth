@@ -22,7 +22,7 @@ defmodule Froth.Context.BlockHTML do
 
   use Phoenix.Component
 
-  alias Froth.Context.Block
+  alias Froth.Context.{Block, Markup}
 
   @preview_chars 120
 
@@ -177,8 +177,7 @@ defmodule Froth.Context.BlockHTML do
   def live_to_string(blocks) when is_list(blocks) do
     %{blocks: blocks}
     |> live()
-    |> Phoenix.HTML.Safe.to_iodata()
-    |> IO.iodata_to_binary()
+    |> Markup.render_prompt_markup()
     |> String.trim()
   end
 end

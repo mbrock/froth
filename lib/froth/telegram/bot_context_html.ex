@@ -11,12 +11,10 @@ defmodule Froth.Telegram.BotContextHTML do
 
   use Phoenix.Component
 
-  alias Froth.Context.Block
+  alias Froth.Context.{Block, Markup}
   alias Froth.Context.BlockHTML
 
   @part_break <<31>>
-  @entity_like_ampersand_regex ~r/&([0-9A-Za-z]+);/
-
   defmodule Context do
     @moduledoc """
     View model for a complete bot context prompt.
@@ -147,13 +145,15 @@ defmodule Froth.Telegram.BotContextHTML do
 
     ~H"""
     <info>
-      chat: {@chat_context.chat_name} (id {@chat_context.chat_id})
-      now: {@now_utc} / {@now_latvia} / {@now_thailand}
-      <%= for p <- @participants do %>
-        {p.label} (id {p.id}) latest message {format_time(p.latest_date)}
-      <% end %>
+      <chat name={@chat_context.chat_name} id={"tg:" <> to_string(@chat_context.chat_id)} />
+      <date>{@now_utc}</date>
+      <date>{@now_latvia}</date>
+      <date>{@now_thailand}</date>
     </info>
     """
+      # <%= for p <- @participants do %>
+      #   {p.label} (id {p.id}) latest message {format_time(p.latest_date)}
+      # <% end %>
   end
 
   # ── recent transcript ──────────────────────────────────────────────
@@ -184,8 +184,21 @@ defmodule Froth.Telegram.BotContextHTML do
   attr :cycles, :list, default: []
 
   def recent_message(assigns) do
+    tag = case assigns.type do
+      "messageText" -> "text"
+      "messageVoiceNote" -> "voice"
+      "messagePhoto" -> "photo"
+      "messageVideo" -> "video"
+      "messageAudio" -> "audio"
+      "messageDocument" -> "document"
+    end
+
+    extra = %{"from" => assigns.sender, "when" => format_time(assigns.date), "id" => "tg:" <> to_string(assigns.message_id)}
+
+    assigns = assign(assigns, tag: tag, extra: extra)
+
     ~H"""
-    <msg message_id={to_string(@message_id)} sender={@sender} time={format_time(@date)} type={@type}>
+    <.dynamic_tag tag_name={@tag} {@extra}>
       {@text}
       <.analysis
         :for={a <- @analyses}
@@ -200,7 +213,7 @@ defmodule Froth.Telegram.BotContextHTML do
         inserted_at={cycle.inserted_at}
         entries={cycle.entries}
       />
-    </msg>
+    </.dynamic_tag>
     """
   end
 
@@ -367,8 +380,12 @@ defmodule Froth.Telegram.BotContextHTML do
     assigns = assign(assigns, tag: safe_field_tag(assigns.name))
 
     ~H"""
-    <.dynamic_tag :if={@tag != "field"} tag_name={@tag} {@extra}>{render_slot(@inner_block)}</.dynamic_tag>
-    <.dynamic_tag :if={@tag == "field"} tag_name="field" name={@name} {@extra}>{render_slot(@inner_block)}</.dynamic_tag>
+    <.dynamic_tag :if={@tag != "field"} tag_name={@tag} {@extra}>
+      {render_slot(@inner_block)}
+    </.dynamic_tag>
+    <.dynamic_tag :if={@tag == "field"} tag_name="field" name={@name} {@extra}>
+      {render_slot(@inner_block)}
+    </.dynamic_tag>
     """
   end
 
@@ -517,8 +534,7 @@ defmodule Froth.Telegram.BotContextHTML do
 
   def render_to_string(rendered) do
     rendered
-    |> render_raw()
-    |> sanitize_markup(true)
+    |> Markup.render_markup(true)
     |> String.replace(@part_break, "\n")
     |> String.replace(~r/\n{3,}/, "\n\n")
     |> String.trim()
@@ -526,179 +542,11 @@ defmodule Froth.Telegram.BotContextHTML do
 
   def render_to_parts(rendered) do
     rendered
-    |> render_raw()
-    |> sanitize_markup(true)
+    |> Markup.render_markup(true)
     |> String.split(@part_break, trim: true)
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
   end
-
-  defp render_raw(rendered) do
-    rendered
-    |> Phoenix.HTML.Safe.to_iodata()
-    |> IO.iodata_to_binary()
-  end
-
-  defp sanitize_markup(markup, pretty?) when is_binary(markup) and is_boolean(pretty?) do
-    ensure_fast_html_started()
-
-    try do
-      case Floki.parse_fragment(markup) do
-        {:ok, fragment} ->
-          fragment
-          |> drop_phx_attrs()
-          |> render_nodes(pretty?)
-          |> IO.iodata_to_binary()
-
-        {:error, _reason} ->
-          markup
-      end
-    catch
-      :exit, _reason ->
-        markup
-    end
-  end
-
-  defp drop_phx_attrs(nodes) when is_list(nodes) do
-    nodes
-    |> Enum.map(&drop_phx_attrs/1)
-    |> Enum.reject(&is_nil/1)
-  end
-
-  defp drop_phx_attrs({tag, attrs, children}) when is_list(attrs) and is_list(children) do
-    clean_attrs =
-      Enum.reject(attrs, fn {name, _value} ->
-        String.starts_with?(name, "phx-") or String.starts_with?(name, "data-phx-")
-      end)
-
-    {tag, clean_attrs, drop_phx_attrs(children)}
-  end
-
-  defp drop_phx_attrs({:comment, _text}), do: nil
-
-  defp drop_phx_attrs(text) when is_binary(text) do
-    normalized =
-      text
-      |> normalize_part_break_whitespace()
-      |> trim_template_boundary_whitespace()
-
-    trimmed = String.trim(normalized)
-
-    if trimmed == "", do: nil, else: trimmed
-  end
-
-  defp drop_phx_attrs(other), do: other
-
-  defp normalize_part_break_whitespace(text) when is_binary(text) do
-    part_break = Regex.escape(@part_break)
-    Regex.replace(~r/\s*#{part_break}\s*/, text, @part_break)
-  end
-
-  defp trim_template_boundary_whitespace(text) when is_binary(text) do
-    text
-    |> String.replace(~r/\A[ \t\r]*\n[ \t]*/, "")
-    |> String.replace(~r/[ \t\r]*\n[ \t]*\z/, "")
-    |> String.trim_trailing()
-  end
-
-  defp render_nodes(nodes, pretty?) when is_list(nodes) do
-    {iodata, _prev} =
-      Enum.reduce(nodes, {[], nil}, fn node, {acc, prev} ->
-        separator =
-          if pretty? and not is_nil(prev), do: ["\n"], else: []
-
-        {[acc, separator, render_node(node, pretty?)], node}
-      end)
-
-    iodata
-  end
-
-  defp render_node({tag, attrs, children}, pretty?) do
-    open = ["<", tag, render_attrs(attrs), ">"]
-
-    cond do
-      void_tag?(tag) and children == [] ->
-        open
-
-      children == [] ->
-        if pretty? do
-          [open, "\n", "</", tag, ">"]
-        else
-          [open, "</", tag, ">"]
-        end
-
-      true ->
-        leading_newline = if pretty?, do: "\n", else: ""
-        trailing_newline = if pretty?, do: "\n", else: ""
-
-        [
-          open,
-          leading_newline,
-          render_nodes(children, pretty?),
-          trailing_newline,
-          "</",
-          tag,
-          ">"
-        ]
-    end
-  end
-
-  defp render_node(text, _pretty?) when is_binary(text), do: escape_text(text)
-  defp render_node(other, _pretty?), do: to_string(other)
-
-  defp render_attrs(attrs) when is_list(attrs) do
-    Enum.map(attrs, fn {name, value} ->
-      [" ", name, "=\"", escape_attr(value), "\""]
-    end)
-  end
-
-  defp escape_text(text) when is_binary(text) do
-    text
-    |> escape_entity_like_ampersands()
-    |> String.replace("<", "&lt;")
-    |> String.replace(">", "&gt;")
-  end
-
-  defp escape_attr(value) when is_binary(value) do
-    value
-    |> escape_entity_like_ampersands()
-    |> String.replace("<", "&lt;")
-    |> String.replace(">", "&gt;")
-    |> String.replace("\"", "&quot;")
-  end
-
-  defp escape_attr(value), do: value |> to_string() |> escape_attr()
-
-  defp escape_entity_like_ampersands(text) when is_binary(text) do
-    Regex.replace(@entity_like_ampersand_regex, text, "&amp;\\1;")
-  end
-
-  defp ensure_fast_html_started do
-    if Application.get_env(:floki, :html_parser) == Floki.HTMLParser.FastHtml do
-      _ = Application.ensure_all_started(:fast_html)
-    end
-
-    :ok
-  end
-
-  defp void_tag?(tag),
-    do:
-      tag in [
-        "area",
-        "base",
-        "br",
-        "col",
-        "embed",
-        "hr",
-        "img",
-        "input",
-        "link",
-        "meta",
-        "param",
-        "source",
-        "track",
-        "wbr"
-      ]
 
   # ── formatting helpers ────────────────────────────────────────────
 
