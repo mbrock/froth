@@ -1,127 +1,77 @@
 defmodule Froth.Telegram.ToolExecution do
   @moduledoc false
 
-  alias Froth.Agent.{FailureIntervention, ToolDescription}
+  alias Froth.Agent.{FailureIntervention, Surface, ToolDescription, ToolUse}
+  alias Froth.Agent.CycleRuntime.{Context, View}
   alias Froth.Inference.Tools
-  alias Froth.Telegram.BotAdapter
-  alias Froth.Telegram.ControlPrompt
+  alias Froth.Telegram.Bot.Config, as: BotConfig
+  alias Froth.Telegram.{BotAdapter, ControlPrompt}
 
   @telegram_text_limit 4096
 
-  def execute(%{name: "send_message", spam: false}) do
+  # Spam suppressed — send_message is a no-op.
+  def execute(%Context{spam: false, tool_call: %ToolUse{name: "send_message"}}) do
     %{result: {:ok, "suppressed"}}
   end
 
-  def execute(%{
-        name: "send_message",
-        input: %{"text" => text},
-        session_id: session_id,
-        chat_id: chat_id,
-        reply_to: reply_to
+  # Telegram-side send_message with real surface.
+  def execute(%Context{
+        tool_call: %ToolUse{name: "send_message", input: %{"text" => text}},
+        surface: %Surface{session_id: session_id, chat_id: chat_id, reply_to: reply_to}
       })
       when is_binary(text) and is_binary(session_id) and is_integer(chat_id) do
     case BotAdapter.send_message(session_id, chat_id, text, reply_to: reply_to) do
       {:ok, sent} ->
-        %{
-          result: {:ok, "sent"},
-          sent_message: %{
-            sent: sent,
-            text: text
-          }
-        }
+        %{result: {:ok, "sent"}, sent_message: %{sent: sent, text: text}}
 
       {:error, reason} ->
         %{result: {:error, inspect(reason)}}
     end
   end
 
+  # Generic tool execution with a real Telegram chat: narrate to chat
+  # and dispatch through `Tools.execute/4`.
   def execute(
-        %{
-          name: name,
-          input: input,
-          session_id: session_id,
-          bot_id: bot_id,
-          bot_username: bot_username,
-          chat_id: chat_id
-        } = execution
+        %Context{
+          tool_call: %ToolUse{name: name, input: input} = tool_call,
+          bot_config: %BotConfig{},
+          surface: %Surface{session_id: session_id, chat_id: chat_id, reply_to: ctx_reply_to}
+        } = ctx
       )
-      when is_binary(name) and is_map(input) and is_binary(session_id) and is_binary(bot_id) and
-             is_integer(chat_id) do
-    spam = Map.get(execution, :spam, true)
-    reply_to = Map.get(input, "reply_to") || Map.get(input, :reply_to) || execution[:reply_to]
+      when is_binary(name) and is_map(input) and is_binary(session_id) and is_integer(chat_id) do
+    reply_to = Map.get(input, "reply_to") || Map.get(input, :reply_to) || ctx_reply_to
+    narration_message = maybe_send_narration(ctx, reply_to)
 
-    tool_opts =
-      [
-        bot_id: bot_id,
-        bot_username: bot_username,
-        cycle_id: execution[:cycle_id],
-        session_id: session_id,
-        reply_to: execution[:reply_to]
-      ]
-      |> maybe_put_tool_opt(:spam, execution[:spam])
-      |> maybe_put_tool_opt(:topic, input["topic"])
-      |> maybe_put_tool_opt(:active_task_ids, execution[:active_task_ids])
-      |> maybe_put_tool_opt(:tool_use_id, execution[:tool_use_id])
-      |> maybe_put_tool_opt(:system_prompt, execution[:system_prompt])
-      |> maybe_put_tool_opt(:model, execution[:model])
-      |> maybe_put_tool_opt(:tools, execution[:tools])
-      |> maybe_put_tool_opt(:thinking, execution[:thinking])
-      |> maybe_put_tool_opt(:effort, execution[:effort])
-      |> maybe_put_tool_opt(:tool_timeout_ms, execution[:tool_timeout_ms])
+    tool_opts = tool_opts_from(ctx)
+    result = Tools.execute(name, input, chat_id, tool_opts)
 
-    narration_message = maybe_send_narration(input, execution, reply_to, spam)
-
-    result =
-      case name do
-        "elixir_eval" ->
-          Tools.execute(name, input, chat_id, tool_opts)
-
-        "run_shell" ->
-          Tools.execute(name, input, chat_id, tool_opts)
-
-        _ ->
-          Tools.execute(name, input, chat_id, tool_opts)
-      end
-
-    case FailureIntervention.maybe_intervene(result, execution) do
+    case FailureIntervention.maybe_intervene(result, ctx) do
       %{result: _} = outcome ->
         Map.put(outcome, :narration_message, narration_message)
 
       updated_result ->
-        build_tool_outcome(updated_result, narration_message, input)
+        build_tool_outcome(updated_result, narration_message, tool_call.input)
     end
   end
 
   # Headless fallback for paths without a Telegram chat (e.g.
   # `Agent.run_adhoc/2` from a cron or script). Skip narration and
-  # send_message entirely; invoke the tool directly via `Tools.execute/4`
-  # with chat_id=0 (tools that require a real chat_id return errors).
-  def execute(%{name: name, input: input} = execution)
+  # Telegram-side effects entirely; invoke the tool directly with
+  # chat_id=0 (tools that require a real chat_id return errors).
+  def execute(%Context{tool_call: %ToolUse{name: name, input: input}} = ctx)
       when is_binary(name) and is_map(input) do
-    chat_id = execution[:chat_id] || 0
-    spam = Map.get(execution, :spam, true)
+    chat_id =
+      case ctx.surface do
+        %Surface{chat_id: id} when is_integer(id) -> id
+        _ -> 0
+      end
 
-    tool_opts =
-      [cycle_id: execution[:cycle_id]]
-      |> maybe_put_tool_opt(:tool_use_id, execution[:tool_use_id])
-      |> maybe_put_tool_opt(:bot_id, execution[:bot_id])
-      |> maybe_put_tool_opt(:bot_username, execution[:bot_username])
-      |> maybe_put_tool_opt(:session_id, execution[:session_id])
-      |> maybe_put_tool_opt(:spam, spam)
-      |> maybe_put_tool_opt(:topic, input["topic"])
-      |> maybe_put_tool_opt(:active_task_ids, execution[:active_task_ids])
-      |> maybe_put_tool_opt(:system_prompt, execution[:system_prompt])
-      |> maybe_put_tool_opt(:model, execution[:model])
-      |> maybe_put_tool_opt(:tools, execution[:tools])
-      |> maybe_put_tool_opt(:thinking, execution[:thinking])
-      |> maybe_put_tool_opt(:effort, execution[:effort])
-      |> maybe_put_tool_opt(:tool_timeout_ms, execution[:tool_timeout_ms])
-      |> maybe_put_tool_opt(:reply_to, execution[:reply_to])
+    tool_opts = tool_opts_from(ctx)
 
     result =
       name
       |> Tools.execute(input, chat_id, tool_opts)
-      |> FailureIntervention.maybe_intervene(execution)
+      |> FailureIntervention.maybe_intervene(ctx)
 
     case result do
       %{result: _} = outcome -> outcome
@@ -129,42 +79,73 @@ defmodule Froth.Telegram.ToolExecution do
     end
   end
 
-  def execute(_prepared), do: %{result: {:error, "invalid tool execution context"}}
+  def execute(_ctx), do: %{result: {:error, "invalid tool execution context"}}
 
-  defp maybe_send_narration(_input, _execution, _reply_to, false), do: nil
+  # --- Tool opts projection ---
 
-  defp maybe_send_narration(input, execution, reply_to, true) when is_map(input) do
+  # Build the `Keyword.t()` of opts `Tools.execute/4` expects, drawing
+  # from the Context's structured sub-parts. Nil-skips are centralised
+  # via `maybe_put_tool_opt/3` so the two clauses above share one
+  # projection instead of duplicating 15 `maybe_put` lines each.
+  defp tool_opts_from(%Context{} = ctx) do
+    bc = ctx.bot_config
+    surface = ctx.surface
+    view = ctx.view
+    tool_call = ctx.tool_call
+
+    []
+    |> maybe_put_tool_opt(:cycle_id, ctx.cycle_id)
+    |> maybe_put_tool_opt(:tool_use_id, tool_call && tool_call.id)
+    |> maybe_put_tool_opt(:bot_id, bc && bc.id)
+    |> maybe_put_tool_opt(:bot_username, bc && bc.bot_username)
+    |> maybe_put_tool_opt(:session_id, surface && surface.session_id)
+    |> maybe_put_tool_opt(:reply_to, surface && surface.reply_to)
+    |> maybe_put_tool_opt(:spam, ctx.spam)
+    |> maybe_put_tool_opt(:topic, tool_call && Map.get(tool_call.input, "topic"))
+    |> maybe_put_tool_opt(:active_task_ids, view && view.active_task_ids)
+    |> maybe_put_tool_opt(:system_prompt, ctx.system_prompt)
+    |> maybe_put_tool_opt(:tools, ctx.tool_specs)
+    |> maybe_put_tool_opt(:model, bc && bc.model)
+    |> maybe_put_tool_opt(:thinking, bc && bc.thinking)
+    |> maybe_put_tool_opt(:effort, bc && bc.effort)
+  end
+
+  # --- Narration ---
+
+  defp maybe_send_narration(%Context{spam: false}, _reply_to), do: nil
+
+  defp maybe_send_narration(%Context{tool_call: %ToolUse{input: input}} = ctx, reply_to)
+       when is_map(input) do
     case ToolDescription.text_from_input(input) do
       narration when is_binary(narration) and narration != "" ->
-        send_or_edit_narration(execution, reply_to, narration, :italic)
+        send_or_edit_narration(ctx, reply_to, narration, :italic)
 
       _ ->
-        maybe_send_legacy_narration(input, execution, reply_to)
+        maybe_send_legacy_narration(input, ctx, reply_to)
     end
   end
 
-  defp maybe_send_narration(_input, _execution, _reply_to, _spam), do: nil
-
-  defp maybe_send_legacy_narration(%{"narration_markdown" => narration}, execution, reply_to)
+  defp maybe_send_legacy_narration(%{"narration_markdown" => narration}, ctx, reply_to)
        when is_binary(narration) and narration != "" do
-    send_or_edit_narration(execution, reply_to, String.trim(narration), :markdown)
+    send_or_edit_narration(ctx, reply_to, String.trim(narration), :markdown)
   end
 
-  defp maybe_send_legacy_narration(%{"narration" => narration}, execution, reply_to)
+  defp maybe_send_legacy_narration(%{"narration" => narration}, ctx, reply_to)
        when is_binary(narration) and narration != "" do
-    send_or_edit_narration(execution, reply_to, String.trim(narration), :italic)
+    send_or_edit_narration(ctx, reply_to, String.trim(narration), :italic)
   end
 
-  defp maybe_send_legacy_narration(_input, _execution, _reply_to), do: nil
+  defp maybe_send_legacy_narration(_input, _ctx, _reply_to), do: nil
 
+  # Existing narration message — try editing in place before falling
+  # back to a fresh post.
   defp send_or_edit_narration(
-         %{
-           session_id: session_id,
-           chat_id: chat_id,
-           current_narration_message_id: message_id,
-           current_narration_text: current_text,
-           current_narration_mode: mode
-         } = execution,
+         %Context{
+           surface: %Surface{session_id: session_id, chat_id: chat_id},
+           view: %View{
+             narration: %{message_id: message_id, text: current_text, mode: mode}
+           }
+         } = ctx,
          reply_to,
          narration,
          mode
@@ -176,28 +157,29 @@ defmodule Froth.Telegram.ToolExecution do
     if String.length(combined) <= @telegram_text_limit do
       case edit_narration(session_id, chat_id, message_id, combined, mode) do
         {:ok, _sent} -> %{message_id: message_id, text: combined, mode: mode}
-        {:error, _reason} -> send_new_narration(execution, reply_to, narration, mode)
+        {:error, _reason} -> send_new_narration(ctx, reply_to, narration, mode)
       end
     else
-      send_new_narration(execution, reply_to, narration, mode)
+      send_new_narration(ctx, reply_to, narration, mode)
     end
   end
 
+  # No existing narration — just post a fresh one.
   defp send_or_edit_narration(
-         %{session_id: session_id, chat_id: chat_id} = execution,
+         %Context{surface: %Surface{session_id: session_id, chat_id: chat_id}} = ctx,
          reply_to,
          narration,
          mode
        )
        when is_binary(session_id) and is_integer(chat_id) and narration != "" do
-    send_new_narration(execution, reply_to, narration, mode)
+    send_new_narration(ctx, reply_to, narration, mode)
   end
 
   defp send_or_edit_narration(_, _, _, _), do: nil
 
-  defp send_new_narration(execution, reply_to, narration, mode) do
-    %{session_id: session_id, chat_id: chat_id} = execution
-    opts = [reply_markup: cycle_reply_markup(execution)]
+  defp send_new_narration(%Context{} = ctx, reply_to, narration, mode) do
+    %Surface{session_id: session_id, chat_id: chat_id} = ctx.surface
+    opts = [reply_markup: cycle_reply_markup(ctx)]
 
     result =
       case mode do
@@ -211,7 +193,7 @@ defmodule Froth.Telegram.ToolExecution do
     end
   end
 
-  defp cycle_reply_markup(%{cycle_id: cycle_id, bot_id: bot_id} = execution)
+  defp cycle_reply_markup(%Context{cycle_id: cycle_id, bot_config: %BotConfig{id: bot_id} = bc})
        when is_binary(cycle_id) and is_binary(bot_id) do
     %{
       "@type" => "replyMarkupInlineKeyboard",
@@ -219,13 +201,13 @@ defmodule Froth.Telegram.ToolExecution do
         ControlPrompt.buttons(
           cycle_id: cycle_id,
           bot_id: bot_id,
-          bot_username: execution[:bot_username]
+          bot_username: bc.bot_username
         )
       ]
     }
   end
 
-  defp cycle_reply_markup(_execution), do: nil
+  defp cycle_reply_markup(_ctx), do: nil
 
   defp edit_narration(session_id, chat_id, message_id, narration, :markdown),
     do: BotAdapter.edit_message_markdown(session_id, chat_id, message_id, narration)

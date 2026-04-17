@@ -1,9 +1,8 @@
 defmodule Froth.Agent.CycleRuntimeTest do
   use ExUnit.Case, async: false
 
-  alias Froth.Agent.CycleRuntime
-  alias Froth.Agent.Cycle
-  alias Froth.Agent.ToolUse
+  alias Froth.Agent.{Cycle, CycleRuntime, Surface, ToolUse}
+  alias Froth.Agent.CycleRuntime.{Context, View}
   alias Froth.Telegram.Bot.Config, as: BotConfig
 
   describe "scaffolding: registry + supervisor wiring" do
@@ -58,10 +57,12 @@ defmodule Froth.Agent.CycleRuntimeTest do
       tool_use = %ToolUse{id: "call_1", name: "run_shell", input: %{"command" => "pwd"}}
       context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
 
+      prepared = %{context: sample_context(runtime, tool_use)}
+
       assert {:ok, "ok"} =
                GenServer.call(
                  runtime,
-                 {:commit_tool, tool_use, context, %{execution: %{cycle_id: "cycle_1"}},
+                 {:commit_tool, tool_use, context, prepared,
                   %{
                     result: {:ok, "ok"},
                     narration_message: %{message_id: 77, text: "Checking X", mode: :italic}
@@ -90,10 +91,12 @@ defmodule Froth.Agent.CycleRuntimeTest do
         sent_message: %{sent: %{"id" => 42}, text: "hello"}
       }
 
+      prepared = %{context: sample_context(runtime, tool_use)}
+
       assert {:ok, "sent"} =
                GenServer.call(
                  runtime,
-                 {:commit_tool, tool_use, context, %{execution: %{cycle_id: "cycle_1"}}, outcome}
+                 {:commit_tool, tool_use, context, prepared, outcome}
                )
 
       state = :sys.get_state(runtime)
@@ -187,6 +190,28 @@ defmodule Froth.Agent.CycleRuntimeTest do
     end)
 
     pid
+  end
+
+  defp sample_context(runtime, tool_use) do
+    state = :sys.get_state(runtime)
+
+    %Context{
+      cycle_id: state.cycle_id,
+      cycle: state.cycle,
+      bot_config: state.bot_config,
+      surface: %Surface{
+        session_id: state.bot_config && state.bot_config.session_id,
+        chat_id: state.chat_id,
+        reply_to: state.reply_to
+      },
+      view: %View{
+        narration: state.narration,
+        last_sent: state.last_sent,
+        active_task_ids: []
+      },
+      tool_call: tool_use,
+      spam: state.spam
+    }
   end
 
   defp minimal_bot_config do

@@ -27,7 +27,8 @@ defmodule Froth.Agent.CycleRuntime do
 
   use GenServer, restart: :temporary
 
-  alias Froth.Agent.{Config, Cycle, ToolUse, Worker}
+  alias Froth.Agent.{Config, Cycle, Surface, ToolUse, Worker}
+  alias Froth.Agent.CycleRuntime.{Context, View}
   alias Froth.Telegram.Bot.Config, as: BotConfig
   alias Froth.Telegram.{CostFooter, ToolExecution}
 
@@ -375,7 +376,7 @@ defmodule Froth.Agent.CycleRuntime do
     {result, state} =
       case reply do
         {:ok, prepared} ->
-          outcome = ToolExecution.execute(prepared.execution)
+          outcome = ToolExecution.execute(prepared.context)
           commit_tool_call(state, tool_use, context, prepared, outcome)
 
         {:error, reason} ->
@@ -443,61 +444,60 @@ defmodule Froth.Agent.CycleRuntime do
 
   # --- Tool execution ---
 
-  defp prepare_tool_call(state, %ToolUse{name: name, input: input} = tool_use, context)
+  defp prepare_tool_call(state, %ToolUse{name: name, input: input} = tool_use, invocation)
        when is_map(input) do
-    chat_id = context[:chat_id] || state.chat_id
-    reply_to = context[:reply_to] || state.reply_to
-    cycle_id = context[:cycle_id] || state.cycle_id
+    shaped =
+      tool_use
+      |> Map.put(
+        :input,
+        shape_tool_input(name, input, state.cycle_id, invocation[:reply_to] || state.reply_to)
+      )
 
-    execution =
-      state
-      |> execution_base(cycle_id, chat_id, reply_to)
-      |> Map.merge(%{
-        tool_use_id: tool_use.id,
-        name: name,
-        input: shape_tool_input(name, input, cycle_id, reply_to)
-      })
+    ctx = build_context(state, shaped, invocation)
 
     prepared = %{
-      execution: execution,
-      execute: {ToolExecution, :execute, [execution]}
+      context: ctx,
+      execute: {ToolExecution, :execute, [ctx]}
     }
 
     {{:ok, prepared}, state}
   end
 
-  defp prepare_tool_call(state, _tool_use, _context),
+  defp prepare_tool_call(state, _tool_use, _invocation),
     do: {{:error, "invalid tool input"}, state}
 
-  # Flat map of fields consumed by `ToolExecution`, `FailureIntervention`,
-  # and downstream tools. Projects out of `bot_config` (configuration)
-  # and the live runtime state.
-  defp execution_base(state, cycle_id, chat_id, reply_to) do
+  # Build a `%Context{}` around a ToolUse, projecting the runtime's
+  # live state into the shape tool-execution consumers want. The
+  # `invocation` map comes from the Worker and may override
+  # `:chat_id` / `:reply_to` / `:cycle_id`.
+  defp build_context(state, %ToolUse{} = tool_call, invocation) do
+    chat_id = invocation[:chat_id] || state.chat_id
+    reply_to = invocation[:reply_to] || state.reply_to
+    cycle_id = invocation[:cycle_id] || state.cycle_id
     bc = state.bot_config
-    narration = state.narration
-    last_sent = state.last_sent
-    task_ids = state.active_tasks |> Enum.sort()
 
-    %{
-      bot_id: bc && bc.id,
-      bot_username: bc && bc.bot_username,
+    surface = %Surface{
       session_id: bc && bc.session_id,
-      model: bc && bc.model,
-      thinking: bc && bc.thinking,
-      effort: bc && bc.effort,
-      tools: BotConfig.resolve_tool_specs(bc),
-      system_prompt: bc && BotConfig.resolve_system_prompt(chat_id, nil, bc),
       chat_id: chat_id,
-      reply_to: reply_to,
+      reply_to: reply_to
+    }
+
+    view = %View{
+      narration: state.narration,
+      last_sent: state.last_sent,
+      active_task_ids: Enum.sort(state.active_tasks)
+    }
+
+    %Context{
       cycle_id: cycle_id,
-      provider: state.cycle && state.cycle.provider,
-      current_narration_message_id: narration && narration.message_id,
-      current_narration_text: narration && narration.text,
-      current_narration_mode: narration && narration.mode,
-      last_agent_message_id: last_sent && last_sent.id,
-      active_task_ids: task_ids,
+      cycle: state.cycle,
+      bot_config: bc,
+      surface: surface,
+      view: view,
+      tool_call: tool_call,
       spam: state.spam,
-      tool_timeout_ms: nil
+      system_prompt: bc && BotConfig.resolve_system_prompt(chat_id || 0, nil, bc),
+      tool_specs: BotConfig.resolve_tool_specs(bc)
     }
   end
 
@@ -514,7 +514,7 @@ defmodule Froth.Agent.CycleRuntime do
 
   defp shape_tool_input(_name, input, _cycle_id, _reply_to), do: input
 
-  defp commit_tool_call(state, _tool_use, context, prepared, outcome) do
+  defp commit_tool_call(state, _tool_use, _invocation, prepared, outcome) do
     {result, sent_message, narration_message, awaiting_user_input?} =
       case outcome do
         %{result: result} = o ->
@@ -525,7 +525,10 @@ defmodule Froth.Agent.CycleRuntime do
       end
 
     cycle_id =
-      extract_cycle_id(prepared) || extract_cycle_id(context) || extract_cycle_id(outcome)
+      case prepared do
+        %{context: %Context{cycle_id: id}} when is_binary(id) -> id
+        _ -> state.cycle_id
+      end
 
     state =
       case narration_message do
@@ -543,12 +546,6 @@ defmodule Froth.Agent.CycleRuntime do
     state = maybe_track_task_from_result(state, cycle_id, result)
     {result, state}
   end
-
-  defp extract_cycle_id(%{execution: %{cycle_id: cycle_id}}) when is_binary(cycle_id),
-    do: cycle_id
-
-  defp extract_cycle_id(%{cycle_id: cycle_id}) when is_binary(cycle_id), do: cycle_id
-  defp extract_cycle_id(_), do: nil
 
   defp maybe_track_task_from_result(state, cycle_id, {:ok, result}) when is_binary(cycle_id) do
     case extract_task_id(result) do
