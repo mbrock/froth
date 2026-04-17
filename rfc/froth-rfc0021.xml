@@ -3,7 +3,7 @@
 <rfc number="0021" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0021: Cycles as Processes, Subagents as Child Cycles</title>
-    <status>DRAFT</status>
+    <status>PARTIALLY IMPLEMENTED</status>
     <author>Codex</author>
     <date>2026-04-16</date>
     <related>FROTH-RFC-0003, FROTH-RFC-0004, FROTH-RFC-0018</related>
@@ -178,6 +178,23 @@ GenServer.start_link(__MODULE__, opts, name: via(cycle_id))</code>
     <p>Once cycles are supervised processes, the Bot GenServer's remaining job is narrow: receive TDLib updates for one session, look up static bot config from app env, route to cycles. None of that is bot-shaped — it is <em>session-shaped</em>. A bot in Froth is mostly an identity (<tt>bot_username</tt>, default agent config, permission flags), which is static configuration, not a process.</p>
     <p>A plausible future refactor collapses the Bot GenServer into a <tt>Froth.Telegram.SessionDispatcher</tt> — one process per TDLib session, whose entire job is dispatch. Bot identity becomes a module that reads <tt>Application.fetch_env!(:froth, Froth.Telegram.Bot)</tt>. Debounce moves to per-conversation processes keyed by <tt>{session_id, chat_id}</tt>.</p>
     <p>This RFC does <em>not</em> undertake that refactor. The Bot GenServer remains as the dispatcher and is simply kept small. Dissolving the Bot process on top of cycle extraction would entangle the TDLib-subscription shape with the cycle work; one structural move at a time.</p>
+  </section>
+
+  <section title="Implementation Status" id="implementation-status">
+    <p>Implemented (as of this writing):</p>
+    <list type="bullet">
+      <item><p>Step 1 — scaffolding: <tt>Froth.Agent.CycleRegistry</tt>, <tt>Froth.Agent.CycleSupervisor</tt>, <tt>Froth.Agent.CycleRuntime</tt> module.</p></item>
+      <item><p>Step 2 — Worker + all per-cycle live state (<tt>narration</tt>, <tt>last_sent</tt>, <tt>awaiting_user_input?</tt>, <tt>active_tasks</tt>, <tt>bot_config</tt> snapshot, <tt>chat_id</tt>, <tt>reply_to</tt>) live on <tt>CycleRuntime</tt>. Worker <tt>tool_executor</tt> points at the runtime. Tool prepare/commit/execute handlers moved off the Bot. <tt>%Bot.CycleState{}</tt> is a 5-field handle.</p></item>
+      <item><p>Step 3 — parallel root cycles: every inbound user message starts its own cycle; <tt>mid_cycle_messages</tt> buffering is gone.</p></item>
+      <item><p>Step 4 — <tt>CycleRuntime.spawn_subagent/2</tt> exists; each runtime has its own child <tt>DynamicSupervisor</tt>. <tt>Inference.Tools.spawn_agent</tt> and <tt>Froth.Search</tt> don't use the child-sup path today — <tt>spawn_agent</tt> is fire-and-forget and starts its delegated cycle as an independent root (matching the old Task-supervised Adhoc behavior). <tt>Froth.Search</tt> was not touched in this pass; it still uses <tt>Agent.run/2</tt> directly.</p></item>
+      <item><p>Step 5 — <tt>Froth.Agent.Adhoc</tt> and <tt>Froth.Agent.AdhocToolExecutor</tt> are deleted. <tt>Froth.Headlines</tt> and <tt>Froth.Agent.run_adhoc</tt> build cycles directly and drive them via <tt>CycleRuntime.run_to_completion/1</tt>; the <tt>:sys.get_state</tt> runtime introspection hack is gone.</p></item>
+    </list>
+    <p>Not yet done:</p>
+    <list type="bullet">
+      <item><p>Step 6 — tool-execution context is still a flat map. A <tt>%CycleRuntime.Context{}</tt> struct would tighten <tt>ToolExecution</tt> and <tt>FailureIntervention</tt> call sites but is pure refactoring.</p></item>
+      <item><p>Step 7 — subagent re-parenting. Side-stepped for <tt>spawn_agent</tt> by starting subagents as independent roots (so they trivially outlive the parent). If we later want "user stops parent → cascade to subagents," that becomes explicit code via <tt>parent_cycle_id</tt> registry lookup rather than BEAM supervision.</p></item>
+      <item><p><tt>Froth.Search</tt> still uses <tt>Agent.run/2</tt> with the legacy Worker+cycle_stream pattern. Migrating it to <tt>CycleRuntime.event_stream_for/1</tt> would remove the last caller of <tt>Agent.run/2</tt>'s ad-hoc Worker-start path.</p></item>
+    </list>
   </section>
 
   <section title="Conclusion" id="conclusion">
