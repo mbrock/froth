@@ -37,6 +37,7 @@ defmodule Froth.FakeTelegramSession do
 
     {:ok,
      %{
+       request_handler: Keyword.get(opts, :request_handler),
        session_id: Keyword.fetch!(opts, :session_id),
        test_pid: test_pid
      }}
@@ -46,28 +47,35 @@ defmodule Froth.FakeTelegramSession do
   def handle_call({:call, request}, _from, state) do
     send(state.test_pid, {:telegram_call, request})
 
-    case request["@type"] do
-      "sendMessage" ->
-        temp_id = 1_000_000 + System.unique_integer([:positive])
-        final_id = temp_id + 10_000
-        chat_id = request["chat_id"]
-        text = get_in(request, ["input_message_content", "text", "text"]) || ""
-        send(self(), {:send_success, temp_id, final_id, chat_id, text})
+    case custom_reply(state.request_handler, request) do
+      {:reply, reply} ->
+        {:reply, reply, state}
 
-        {:reply, {:ok, %{"id" => temp_id, "chat_id" => chat_id}}, state}
+      :default ->
+        case request["@type"] do
+          "sendMessage" ->
+            temp_id = 1_000_000 + System.unique_integer([:positive])
+            final_id = temp_id + 10_000
+            chat_id = request["chat_id"]
+            text = get_in(request, ["input_message_content", "text", "text"]) || ""
+            send(self(), {:send_success, temp_id, final_id, chat_id, text})
 
-      "answerCallbackQuery" ->
-        {:reply, {:ok, %{}}, state}
+            {:reply, {:ok, %{"id" => temp_id, "chat_id" => chat_id}}, state}
 
-      "editMessageText" ->
-        {:reply, {:ok, %{}}, state}
+          "answerCallbackQuery" ->
+            {:reply, {:ok, %{}}, state}
 
-      "parseTextEntities" ->
-        {:reply,
-         {:ok, %{"@type" => "formattedText", "text" => request["text"], "entities" => []}}, state}
+          "editMessageText" ->
+            {:reply, {:ok, %{}}, state}
 
-      _ ->
-        {:reply, {:ok, %{}}, state}
+          "parseTextEntities" ->
+            {:reply,
+             {:ok, %{"@type" => "formattedText", "text" => request["text"], "entities" => []}},
+             state}
+
+          _ ->
+            {:reply, {:ok, %{}}, state}
+        end
     end
   end
 
@@ -93,4 +101,13 @@ defmodule Froth.FakeTelegramSession do
     send(state.test_pid, {:message_send_succeeded, old_id, new_id, chat_id, text})
     {:noreply, state}
   end
+
+  defp custom_reply(handler, request) when is_function(handler, 1) do
+    case handler.(request) do
+      :default -> :default
+      reply -> {:reply, reply}
+    end
+  end
+
+  defp custom_reply(_handler, _request), do: :default
 end

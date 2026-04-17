@@ -66,9 +66,12 @@ defmodule Froth.TelegramBotCase do
     session_id =
       Keyword.get(opts, :session_id, "session-#{System.unique_integer([:positive])}")
 
-    ExUnit.Callbacks.start_supervised!(
-      {Froth.FakeTelegramSession, session_id: session_id, test_pid: self()}
-    )
+    session_opts =
+      opts
+      |> Keyword.put(:session_id, session_id)
+      |> Keyword.put(:test_pid, self())
+
+    ExUnit.Callbacks.start_supervised!({Froth.FakeTelegramSession, session_opts})
 
     session_id
   end

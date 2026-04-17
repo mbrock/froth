@@ -399,6 +399,63 @@ defmodule Froth.Inference.ToolsTest do
     assert message =~ "Invalid message_id"
   end
 
+  test "look loads a pdf document through telegram and returns multimodal blocks" do
+    chat_id = unique_chat_id()
+    file_id = 987_654
+    message_id = 12_345
+
+    tmp_path =
+      Path.join(System.tmp_dir!(), "froth-look-#{System.unique_integer([:positive])}.pdf")
+
+    pdf_data = "%PDF-1.4\nlook test\n"
+    File.write!(tmp_path, pdf_data)
+    on_exit(fn -> File.rm(tmp_path) end)
+
+    session_id =
+      start_fake_session(
+        request_handler: fn
+          %{"@type" => "getMessage", "chat_id" => ^chat_id, "message_id" => ^message_id} ->
+            {:ok,
+             %{
+               "content" => %{
+                 "@type" => "messageDocument",
+                 "caption" => %{"text" => "Sample caption"},
+                 "document" => %{
+                   "document" => %{"id" => file_id},
+                   "file_name" => "sample.pdf",
+                   "mime_type" => "application/pdf"
+                 }
+               }
+             }}
+
+          %{"@type" => "downloadFile", "file_id" => ^file_id} ->
+            {:ok, %{"local" => %{"path" => tmp_path}}}
+
+          _ ->
+            :default
+        end
+      )
+
+    assert {:ok,
+            [%{"type" => "text", "text" => metadata}, %{"type" => "document", "source" => source}]} =
+             Tools.execute(
+               "look",
+               %{"message_id" => "tg:#{message_id}"},
+               chat_id,
+               bot_id: "charlie",
+               session_id: session_id
+             )
+
+    assert metadata =~ "Loaded msg:#{message_id}"
+    assert metadata =~ "kind: pdf"
+    assert metadata =~ "media_type: application/pdf"
+    assert metadata =~ "filename: sample.pdf"
+    assert metadata =~ "caption: Sample caption"
+    assert source["type"] == "base64"
+    assert source["media_type"] == "application/pdf"
+    assert Base.decode64!(source["data"]) == pdf_data
+  end
+
   test "read_tool_transcript keeps oversized transcripts bounded" do
     bot_id = "charlie"
     chat_id = unique_chat_id()
