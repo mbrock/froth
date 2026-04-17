@@ -20,7 +20,12 @@ defmodule Froth.Blobs do
   @prefix "blob:"
 
   @doc """
-  Insert a new blob.
+  Insert a new blob, deduplicating on sha256.
+
+  Two `put/2` calls with identical bytes return the same `%Blob{}`
+  (same id, same row). This matters for content that re-renders from
+  the same source on every context build — e.g. analysis bodies —
+  so the blobs table doesn't fill with copies.
 
   Attrs: `:mime` (default `"text/plain"`), `:lines` (computed from the
   body if omitted and the mime looks textual). Size is always computed
@@ -28,6 +33,18 @@ defmodule Froth.Blobs do
   """
   @spec put(binary(), keyword()) :: {:ok, Blob.t()} | {:error, term()}
   def put(body, attrs \\ []) when is_binary(body) and is_list(attrs) do
+    sha256 = :crypto.hash(:sha256, body)
+
+    case Repo.get_by(Blob, [sha256: sha256], log: false) do
+      %Blob{} = existing ->
+        {:ok, existing}
+
+      nil ->
+        insert_new(body, sha256, attrs)
+    end
+  end
+
+  defp insert_new(body, sha256, attrs) do
     mime = Keyword.get(attrs, :mime, "text/plain")
     size = byte_size(body)
 
@@ -37,11 +54,20 @@ defmodule Froth.Blobs do
         _ -> if textual_mime?(mime), do: count_lines(body), else: nil
       end
 
-    blob = %Blob{bytes: body, mime: mime, size: size, lines: lines}
+    blob = %Blob{bytes: body, mime: mime, size: size, lines: lines, sha256: sha256}
 
-    case Repo.insert(blob, log: false) do
-      {:ok, inserted} -> {:ok, inserted}
-      {:error, changeset} -> {:error, changeset}
+    # Racing put/2 calls for the same bytes are rare but possible.
+    # `on_conflict: :nothing` makes the second insert a no-op; we then
+    # re-read by sha256 to get the canonical row.
+    case Repo.insert(blob, on_conflict: :nothing, conflict_target: :sha256, log: false) do
+      {:ok, %Blob{id: nil}} ->
+        {:ok, Repo.get_by!(Blob, [sha256: sha256], log: false)}
+
+      {:ok, inserted} ->
+        {:ok, inserted}
+
+      {:error, changeset} ->
+        {:error, changeset}
     end
   end
 

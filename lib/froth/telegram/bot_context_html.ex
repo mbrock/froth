@@ -24,7 +24,12 @@ defmodule Froth.Telegram.BotContextHTML do
 
     @type chapter :: %{name: String.t(), text: String.t()}
     @type participant :: %{id: integer() | String.t(), label: String.t()}
-    @type analysis :: %{id: integer() | String.t(), type: String.t(), text: String.t()}
+    @type analysis :: %{
+            :id => integer() | String.t(),
+            :type => String.t(),
+            :text => String.t(),
+            optional(:blob_id) => String.t() | nil
+          }
     @type chat_context :: %{
             chat_id: integer() | String.t(),
             chat_name: String.t(),
@@ -168,7 +173,13 @@ defmodule Froth.Telegram.BotContextHTML do
     ~H"""
     <msg message_id={to_string(@message_id)} sender={@sender} time={format_time(@date)} type={@type}>
       {@text}
-      <.analysis :for={a <- @analyses} id={a.id} type={a.type} text={a.text} />
+      <.analysis
+        :for={a <- @analyses}
+        id={a.id}
+        type={a.type}
+        text={a.text}
+        blob_id={Map.get(a, :blob_id)}
+      />
       <.cycle_trace
         :for={cycle <- @cycles}
         cycle_id={cycle.cycle_id}
@@ -182,14 +193,19 @@ defmodule Froth.Telegram.BotContextHTML do
   attr :id, :any, required: true
   attr :type, :string, required: true
   attr :text, :string, required: true
+  attr :blob_id, :string, default: nil
 
   def analysis(assigns) do
     ~H"""
-    <analysis id={to_string(@id)} type={@type}>
+    <analysis id={to_string(@id)} type={@type} blob={analysis_blob_attr(@blob_id)}>
       {@text}
     </analysis>
     """
   end
+
+  defp analysis_blob_attr(nil), do: nil
+  defp analysis_blob_attr(""), do: nil
+  defp analysis_blob_attr(id) when is_binary(id), do: "blob:" <> id
 
   attr :cycle_id, :string, required: true
   attr :inserted_at, :any, required: true

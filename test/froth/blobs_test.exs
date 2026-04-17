@@ -2,6 +2,7 @@ defmodule Froth.BlobsTest do
   use ExUnit.Case, async: true
 
   alias Froth.{Blob, Blobs, Repo}
+  import Ecto.Query
 
   setup do
     pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
@@ -32,6 +33,29 @@ defmodule Froth.BlobsTest do
     test "a blob without a trailing newline still counts the last line" do
       {:ok, blob} = Blobs.put("one\ntwo\nthree")
       assert blob.lines == 3
+    end
+
+    test "identical bytes dedup to the same row" do
+      body = "alpha\nbeta\ngamma\n"
+      {:ok, first} = Blobs.put(body)
+      {:ok, second} = Blobs.put(body)
+
+      assert first.id == second.id
+
+      assert Repo.aggregate(
+               from(b in Blob, where: b.sha256 == ^first.sha256),
+               :count,
+               :id
+             ) == 1
+    end
+
+    test "identical bytes with different mimes still dedup on sha256" do
+      body = "x\ny\nz\n"
+      {:ok, a} = Blobs.put(body, mime: "text/plain")
+      {:ok, b} = Blobs.put(body, mime: "text/markdown")
+
+      assert a.id == b.id
+      assert a.mime == "text/plain"
     end
   end
 

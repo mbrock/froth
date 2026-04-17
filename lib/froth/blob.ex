@@ -32,6 +32,7 @@ defmodule Froth.Blob do
     field(:mime, :string, default: "text/plain")
     field(:size, :integer)
     field(:lines, :integer)
+    field(:sha256, :binary)
     timestamps(type: :utc_datetime_usec, updated_at: false)
   end
 end

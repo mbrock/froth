@@ -222,7 +222,15 @@ defmodule Froth.Telegram.BotContext do
       clean = a.analysis_text |> String.replace(~r/\s+/, " ") |> String.trim()
       snippet = String.slice(clean, 0, 150)
       suffix = if String.length(clean) > 150, do: "…", else: ""
-      %{id: a.id, type: a.type, text: snippet <> suffix}
+      text = snippet <> suffix
+
+      blob_id =
+        case Froth.Blobs.put(a.analysis_text || "", mime: "text/plain") do
+          {:ok, blob} -> blob.id
+          {:error, _} -> nil
+        end
+
+      %{id: a.id, type: a.type, text: text, blob_id: blob_id}
     end)
   end
 
