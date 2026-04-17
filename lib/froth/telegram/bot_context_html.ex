@@ -43,6 +43,7 @@ defmodule Froth.Telegram.BotContextHTML do
     @type cycle_entry ::
             %{kind: :call, tool: String.t(), input_json: String.t()}
             | %{kind: :return, text: String.t()}
+            | %{kind: :intervention, text: String.t()}
     @type cycle_trace :: %{cycle_id: String.t(), inserted_at: any(), entries: [cycle_entry()]}
 
     @type t :: %__MODULE__{
@@ -223,6 +224,14 @@ defmodule Froth.Telegram.BotContextHTML do
     """
   end
 
+  def trace_entry(%{entry: %{kind: :intervention, text: text}} = assigns) do
+    assigns = assign(assigns, text: text)
+
+    ~H"""
+    <.intervention text={@text} />
+    """
+  end
+
   def trace_entry(assigns) do
     fallback = inspect(assigns.entry, limit: 10, printable_limit: 500)
     assigns = assign(assigns, fallback: fallback)
@@ -251,12 +260,34 @@ defmodule Froth.Telegram.BotContextHTML do
 
   attr :text, :string, required: true
 
-  def cycle_return(assigns) do
+  def intervention(assigns) do
     ~H"""
-    <return>
-      {String.slice(@text, 0, 500)}
-    </return>
+    <intervention>
+      {Froth.Blobs.Render.trace_return(@text)}
+    </intervention>
     """
+  end
+
+  attr :text, :string, required: true
+
+  def cycle_return(assigns) do
+    # A tool return that's already a structured `<output>` frame
+    # renders as-is — no need to wrap it in `<return>` and escape the
+    # nested tags into `&lt;…&gt;`. Legacy untagged text still goes
+    # through `<return>` with the head/tail fold.
+    if Froth.Blobs.Render.output_frame?(assigns.text) do
+      assigns = Map.put(assigns, :raw, Phoenix.HTML.raw(String.trim(assigns.text)))
+
+      ~H"""
+      {@raw}
+      """
+    else
+      ~H"""
+      <return>
+        {Froth.Blobs.Render.trace_return(@text)}
+      </return>
+      """
+    end
   end
 
   # ── rendering ──────────────────────────────────────────────────────

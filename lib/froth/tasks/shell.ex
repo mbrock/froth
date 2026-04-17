@@ -78,7 +78,8 @@ defmodule Froth.Tasks.Shell do
     {:ok, pid} =
       DynamicSupervisor.start_child(
         Froth.Tasks.Supervisor,
-        {__MODULE__, [task_id: task_id, command: command, working_dir: working_dir, parent: self()]}
+        {__MODULE__,
+         [task_id: task_id, command: command, working_dir: working_dir, parent: self()]}
       )
 
     case await(pid, @shell_await_ms) do
@@ -236,14 +237,12 @@ defmodule Froth.Tasks.Shell do
     {:via, Registry, {Froth.Tasks.Registry, task_id}}
   end
 
-  defp format_completed(task_id, command, exit_code, output) do
+  defp format_completed(task_id, _command, exit_code, output) do
     trimmed = String.trim(output)
-    exit_str = if exit_code in [0, nil], do: "", else: " (exit code: #{exit_code})"
 
-    if String.length(trimmed) > 4000 do
-      "Shell #{task_id}: `#{command}`#{exit_str}\n#{String.slice(trimmed, 0, 4000)}\n... (truncated, use task_output for full output)"
-    else
-      "Shell #{task_id}: `#{command}`#{exit_str}\n#{trimmed}"
-    end
+    attrs = [task_id: task_id, exit_code: exit_code]
+
+    {:ok, rendered} = Froth.Blobs.Render.tool_return(trimmed, kind: "shell", attrs: attrs)
+    rendered
   end
 end

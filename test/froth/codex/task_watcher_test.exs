@@ -29,7 +29,11 @@ defmodule Froth.Codex.TaskWatcherTest do
 
     watcher =
       start_supervised!(
-        {TaskWatcher, task_id: task_id, session_id: session_id, session_module: FakeCodexSession, caller: self()}
+        {TaskWatcher,
+         task_id: task_id,
+         session_id: session_id,
+         session_module: FakeCodexSession,
+         caller: self()}
       )
 
     ref = Process.monitor(watcher)
@@ -63,7 +67,11 @@ defmodule Froth.Codex.TaskWatcherTest do
 
     watcher =
       start_supervised!(
-        {TaskWatcher, task_id: task_id, session_id: session_id, session_module: FakeCodexSession, caller: self()}
+        {TaskWatcher,
+         task_id: task_id,
+         session_id: session_id,
+         session_module: FakeCodexSession,
+         caller: self()}
       )
 
     ref = Process.monitor(watcher)

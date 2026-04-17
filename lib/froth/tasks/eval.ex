@@ -251,22 +251,33 @@ defmodule Froth.Tasks.Eval do
   end
 
   defp format_result_parts(result, io_output, session_id) do
-    session_part = "Session: #{session_id}\n\n"
+    io_trimmed = String.trim(io_output || "")
 
-    io_part =
-      case String.trim(io_output || "") do
-        "" -> ""
-        trimmed -> "IO output:\n#{trimmed}\n\n"
+    {body, status} =
+      case result do
+        {:ok, value} ->
+          inspected = inspect(value, pretty: true, limit: 500, printable_limit: :infinity)
+
+          combined =
+            if io_trimmed == "",
+              do: inspected,
+              else: "=== io ===\n" <> io_trimmed <> "\n\n=== value ===\n" <> inspected
+
+          {combined, "ok"}
+
+        {:error, msg} ->
+          combined =
+            if io_trimmed == "",
+              do: msg,
+              else: "=== io ===\n" <> io_trimmed <> "\n\n=== error ===\n" <> msg
+
+          {combined, "error"}
       end
 
-    case result do
-      {:ok, value} ->
-        inspected = inspect(value, pretty: true, limit: 500, printable_limit: :infinity)
-        "#{session_part}#{io_part}#{inspected}"
+    attrs = [session: session_id, status: status]
 
-      {:error, msg} ->
-        "#{session_part}#{io_part}#{msg}"
-    end
+    {:ok, rendered} = Froth.Blobs.Render.tool_return(body, kind: "eval", attrs: attrs)
+    rendered
   end
 
   defp reply_to_waiters(state) do

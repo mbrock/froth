@@ -20,7 +20,8 @@ defmodule Froth.Telegram.AskFlowTest do
 
     FakeLLM.reply(
       turn_1,
-      {:ok, tool_use_response("toolu_ask_flow_1", "ask", %{
+      {:ok,
+       tool_use_response("toolu_ask_flow_1", "ask", %{
          "question" => "Which option do you want?",
          "alternatives" => ["Alpha", "Beta"]
        })}
@@ -128,7 +129,8 @@ defmodule Froth.Telegram.AskFlowTest do
 
     FakeLLM.reply(
       turn_1,
-      {:ok, tool_use_response("toolu_ask_flow_callback_1", "ask", %{
+      {:ok,
+       tool_use_response("toolu_ask_flow_callback_1", "ask", %{
          "question" => "Which option do you want?",
          "alternatives" => ["Alpha", "Beta"]
        })}
@@ -347,7 +349,8 @@ defmodule Froth.Telegram.AskFlowTest do
 
     FakeLLM.reply(
       turn_1,
-      {:ok, tool_use_response("toolu_await_shell_1", "run_shell", %{
+      {:ok,
+       tool_use_response("toolu_await_shell_1", "run_shell", %{
          "command" => "sleep 30",
          "description" => %{
            "action" => "Starting a long-running shell task",
@@ -379,7 +382,8 @@ defmodule Froth.Telegram.AskFlowTest do
 
     FakeLLM.reply(
       turn_2,
-      {:ok, tool_use_response("toolu_await_wait_1", "await", %{
+      {:ok,
+       tool_use_response("toolu_await_wait_1", "await", %{
          "reason" => "The shell task is still running."
        })}
     )
@@ -506,7 +510,8 @@ defmodule Froth.Telegram.AskFlowTest do
 
     FakeLLM.reply(
       report_turn,
-      {:ok, tool_use_response("toolu_failure_report_1", "deliver_failure_report", %{
+      {:ok,
+       tool_use_response("toolu_failure_report_1", "deliver_failure_report", %{
          "intention" => "Inspect the current directory.",
          "situation" => "The agent tried one shell command and it failed immediately.",
          "invocation" => "run_shell command=\"false\"",
@@ -639,7 +644,8 @@ defmodule Froth.Telegram.AskFlowTest do
 
     FakeLLM.reply(
       report_turn,
-      {:ok, tool_use_response("toolu_failure_report_2", "deliver_failure_report", %{
+      {:ok,
+       tool_use_response("toolu_failure_report_2", "deliver_failure_report", %{
          "intention" => "Run a shell command.",
          "situation" => "The first shell command failed and the cycle stopped for review.",
          "invocation" => "run_shell command=\"false\"",
@@ -663,6 +669,7 @@ defmodule Froth.Telegram.AskFlowTest do
     assert_receive {:message_send_succeeded, _temp_id, report_message_id, ^chat_id,
                     "Failure intervention" <> _},
                    5_000
+
     assert_pending_ask_message_id(report_message_id)
 
     send(

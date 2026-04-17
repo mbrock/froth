@@ -447,8 +447,11 @@ defmodule Froth.Inference.ToolsTest do
         []
       )
 
-    assert [_, task_id, working_dir] =
-             Regex.run(~r/^Shell (.+?): `pwd`\n(.+)$/s, result)
+    assert [_, task_id] =
+             Regex.run(~r/task_id="(shell:[a-z0-9]+)"/, result)
+
+    assert [_, working_dir] =
+             Regex.run(~r/<output [^>]*>\s*\n?([^\n<]+)/, result)
 
     task = Repo.get!(Task, task_id)
 

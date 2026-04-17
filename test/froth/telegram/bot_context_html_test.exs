@@ -58,12 +58,23 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       assert html =~ "</cycle>"
     end
 
-    test "return text truncates to 500 chars" do
-      html = render(BotContextHTML.cycle_return(%{text: String.duplicate("x", 600)}))
+    test "return passes through a structured output frame unchanged" do
+      frame = ~s(<output kind="shell" size="11" lines="1">\nhello world\n</output>)
+      html = render(BotContextHTML.cycle_return(%{text: frame}))
 
-      [_, inner] = String.split(html, "<return>", parts: 2)
-      [inner, _] = String.split(inner, "</return>", parts: 2)
-      assert String.length(String.trim(inner)) == 500
+      assert html =~ ~s(<output kind="shell")
+      assert html =~ "hello world"
+    end
+
+    test "return folds long legacy text into head/tail with an omitted note" do
+      body = Enum.map_join(1..50, "\n", &"row #{&1}")
+      html = render(BotContextHTML.cycle_return(%{text: body}))
+
+      assert html =~ "row 1"
+      assert html =~ "row 50"
+      refute html =~ "row 25"
+      assert html =~ "lines omitted"
+      assert html =~ "read_tool_transcript"
     end
   end
 

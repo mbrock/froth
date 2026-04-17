@@ -213,9 +213,14 @@ defmodule Froth.Telegram.Bot do
   def snapshot(bot_ref) do
     pid =
       case bot_ref do
-        pid when is_pid(pid) -> pid
-        name when is_atom(name) -> Process.whereis(name) || raise "bot not running: #{inspect(name)}"
-        {:via, _, _} = via -> GenServer.whereis(via) || raise "bot not running: #{inspect(via)}"
+        pid when is_pid(pid) ->
+          pid
+
+        name when is_atom(name) ->
+          Process.whereis(name) || raise "bot not running: #{inspect(name)}"
+
+        {:via, _, _} = via ->
+          GenServer.whereis(via) || raise "bot not running: #{inspect(via)}"
       end
 
     {pid, GenServer.call(pid, :snapshot)}

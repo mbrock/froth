@@ -1407,13 +1407,19 @@ defmodule FrothWeb.ToolLive do
   defp tool_exit_code(_), do: nil
 
   defp extract_exit_code(text) when is_binary(text) do
-    case Regex.run(~r/\bexit(?:\s+code)?[:\s\)]*(\d+)\b/i, text, capture: :all_but_first) do
-      [value] ->
-        String.to_integer(value)
+    # New structured form: <output kind="shell" exit_code="N" ...>
+    # Legacy form: "exit code: N" / "exit N" / "(exit code: N)"
+    patterns = [
+      ~r/\bexit_code="(\d+)"/,
+      ~r/\bexit(?:\s+code)?[:\s\)]*(\d+)\b/i
+    ]
 
-      _ ->
-        nil
-    end
+    Enum.find_value(patterns, fn re ->
+      case Regex.run(re, text, capture: :all_but_first) do
+        [value] -> String.to_integer(value)
+        _ -> nil
+      end
+    end)
   end
 
   defp extract_exit_code(_), do: nil

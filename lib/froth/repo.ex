@@ -1,5 +1,6 @@
 defmodule Froth.Repo do
   require Logger
+
   use Ecto.Repo,
     otp_app: :froth,
     adapter: Ecto.Adapters.Postgres
@@ -30,7 +31,9 @@ defmodule Froth.Repo do
 
   def allow(parent, label) do
     if sandbox_pool?() and not shared_sandbox?() do
-      pid = resolve_pid(parent) || raise "failed to resolve parent pid #{inspect(parent)} (label: #{inspect(label)})"
+      pid =
+        resolve_pid(parent) ||
+          raise "failed to resolve parent pid #{inspect(parent)} (label: #{inspect(label)})"
 
       case Ecto.Adapters.SQL.Sandbox.allow(__MODULE__, pid, self()) do
         :ok ->

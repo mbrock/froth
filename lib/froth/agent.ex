@@ -302,14 +302,29 @@ defmodule Froth.Agent do
 
       %{"role" => "user", "content" => content} when is_list(content) ->
         Enum.flat_map(content, fn
-          %{"type" => type, "content" => result_content, "tool_use_id" => _id}
+          %{"type" => type, "content" => result_content, "tool_use_id" => _id} = block
           when type in ["tool_result", "mcp_tool_result"] ->
             text = tool_result_text(result_content)
+            is_error? = block["is_error"] == true
 
-            if String.trim(text) == "sent" do
-              []
-            else
-              [%{kind: :return, text: String.slice(text, 0, 500)}]
+            cond do
+              String.trim(text) == "sent" ->
+                []
+
+              # A failure-intervention resumption looks like an errored
+              # tool_result whose content starts with the human-readable
+              # failure report. Classify it as its own kind so the trace
+              # doesn't conflate "tool returned X" with "intervention
+              # replaced the tool's output with X".
+              is_error? and failure_report?(text) ->
+                [%{kind: :intervention, text: text}]
+
+              true ->
+                # Text is passed verbatim; BotContextHTML.cycle_return
+                # folds it through Froth.Blobs.Render.trace_return so
+                # output-frame tool returns pass through unchanged and
+                # legacy long strings get head/tail with an explicit note.
+                [%{kind: :return, text: text}]
             end
 
           _ ->
@@ -322,6 +337,13 @@ defmodule Froth.Agent do
   end
 
   def extract_trace_entries(_), do: []
+
+  defp failure_report?(text) when is_binary(text) do
+    trimmed = String.trim_leading(text)
+    String.starts_with?(trimmed, "Failure report")
+  end
+
+  defp failure_report?(_), do: false
 
   defp format_trace_tool_name(%{"server_name" => server_name, "name" => name})
        when is_binary(server_name) and server_name != "" and is_binary(name) do
