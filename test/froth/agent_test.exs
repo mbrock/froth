@@ -1145,63 +1145,33 @@ defmodule Froth.Agent.WorkerTest do
     end
   end
 
-  describe "run_adhoc/2" do
-    test "creates a completed cycle and returns the final output" do
-      model = FakeLLM.claim()
-
-      run_task =
-        Task.async(fn ->
-          Agent.run_adhoc("say hello",
-            provider: :fakeai,
-            model: model,
-            effort: "low"
-          )
-        end)
-
-      assert_receive {FakeLLM, turn, %Request{model: ^model} = request}, 5_000
-
-      assert [%LLMMessage{role: :user, content: [%{"type" => "text", "text" => "say hello"}]}] =
-               request.messages
-
-      assert request.provider_options["reasoning_effort"] == "low"
-
-      FakeLLM.reply(
-        turn,
-        {:ok,
-         %{
-           text: "hello from fake",
-           content: [%{"type" => "text", "text" => "hello from fake"}],
-           stop_reason: "stop"
-         }}
-      )
-
-      {cycle, output} = Task.await(run_task, 10_000)
-
-      assert output == "hello from fake"
-
-      cycle = Repo.get!(Cycle, cycle.id)
-      assert cycle.status == :completed
-      assert cycle.provider == "fakeai"
-
-      messages = cycle_messages(cycle.id)
-      assert Enum.map(messages, & &1.role) == [:user, :agent]
-      assert hd(messages).role == :user
-      assert List.last(messages).role == :agent
-    end
-
+  describe "CycleRuntime.run_to_completion/1" do
     test "threads previous_response_id across tool-result turns in a stateful cycle" do
       model = FakeLLM.claim()
 
       run_shell_spec =
         Enum.find(Froth.Inference.Tools.specs_for_api(), &(&1["name"] == "run_shell"))
 
+      config = %Config{
+        provider: :fakeai,
+        model: model,
+        system: "You are a helpful assistant.",
+        tools: [run_shell_spec],
+        tool_executor: nil,
+        context: %{},
+        effort: "high"
+      }
+
+      prompt = "run a quick shell command and summarize it"
+      user_message = Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
+      cycle = Agent.begin_cycle(user_message, config)
+
       run_task =
         Task.async(fn ->
-          Agent.run_adhoc("run a quick shell command and summarize it",
-            provider: :fakeai,
-            model: model,
-            effort: "high",
-            tools: [run_shell_spec]
+          Froth.Agent.CycleRuntime.run_to_completion(
+            cycle_id: cycle.id,
+            cycle: cycle,
+            worker_config: config
           )
         end)
 
@@ -1267,15 +1237,15 @@ defmodule Froth.Agent.WorkerTest do
          }}
       )
 
-      {cycle, output} = Task.await(run_task, 10_000)
+      {completed_cycle, output} = Task.await(run_task, 10_000)
 
       assert output == "shell finished"
 
-      cycle = Repo.get!(Cycle, cycle.id)
-      assert cycle.status == :completed
-      assert cycle.provider == "fakeai"
+      completed_cycle = Repo.get!(Cycle, completed_cycle.id)
+      assert completed_cycle.status == :completed
+      assert completed_cycle.provider == "fakeai"
 
-      messages = cycle_messages(cycle.id)
+      messages = cycle_messages(completed_cycle.id)
       assert Enum.map(messages, & &1.role) == [:user, :agent, :user, :agent]
       assert Enum.at(messages, 1).metadata["response_id"] == "resp_adhoc_tool_1"
     end

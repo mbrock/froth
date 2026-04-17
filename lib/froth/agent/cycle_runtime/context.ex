@@ -25,7 +25,8 @@ defmodule Froth.Agent.CycleRuntime.Context do
     * `:cycle_id` — the cycle's DB id (also the registry key).
     * `:cycle` — the `%Froth.Agent.Cycle{}` row (carries `:provider`).
     * `:bot_config` — a `%Froth.Telegram.Bot.Config{}` snapshot, or
-      `nil` in fully headless mode (run_adhoc without chat_id).
+      `nil` in fully headless mode (a cycle started directly via
+      `CycleRuntime.run_to_completion/1` without `:chat_id`).
     * `:surface` — a `%Froth.Agent.Surface{}` (session/chat/reply_to).
     * `:view` — a `%Froth.Agent.CycleRuntime.View{}` (narration,
       last_sent, active_task_ids, awaiting_user_input?).

@@ -11,9 +11,10 @@ defmodule Froth.Agent.Surface do
   message id the cycle's replies hang off (threads, anchors for
   pending-ask routing).
 
-  In headless contexts (e.g. `Agent.run_adhoc/2` from a cron job),
-  `chat_id` may be `nil` — tools that need a real chat refuse to
-  operate; tools that don't (run_shell, elixir_eval) run unaffected.
+  In headless contexts (e.g. a cycle started directly via
+  `CycleRuntime.run_to_completion/1` from a cron job), `chat_id` may
+  be `nil` — tools that need a real chat refuse to operate; tools that
+  don't (run_shell, elixir_eval) run unaffected.
   """
 
   defstruct [:session_id, :chat_id, :reply_to]

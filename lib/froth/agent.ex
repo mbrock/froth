@@ -23,64 +23,6 @@ defmodule Froth.Agent do
     {cycle, cycle_stream(cycle, config)}
   end
 
-  @spec run_adhoc(String.t(), keyword()) :: {Cycle.t(), term()}
-  def run_adhoc(prompt, opts \\ []) when is_binary(prompt) and is_list(opts) do
-    config = build_adhoc_config(opts)
-
-    user_message =
-      Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
-
-    cycle = begin_cycle(user_message, config)
-
-    runtime_opts =
-      [cycle_id: cycle.id, cycle: cycle, worker_config: config]
-      |> maybe_put_runtime_opt(:chat_id, opts[:chat_id])
-      |> maybe_put_runtime_opt(:reply_to, opts[:reply_to])
-      |> maybe_put_runtime_opt(:bot_id, opts[:bot_id])
-      |> maybe_put_runtime_opt(:spam, opts[:spam])
-
-    Froth.Agent.CycleRuntime.run_to_completion(runtime_opts)
-  end
-
-  defp build_adhoc_config(opts) when is_list(opts) do
-    %Config{
-      provider: Keyword.get(opts, :provider),
-      system:
-        Keyword.get(opts, :system) ||
-          "You are a helpful assistant. Use the available tools when needed.",
-      model: Keyword.get(opts, :model),
-      tools: normalize_adhoc_tools(Keyword.get(opts, :tools)),
-      tool_executor: nil,
-      context: adhoc_context(opts),
-      parent_span_id: Keyword.get(opts, :parent_span_id),
-      thinking: Keyword.get(opts, :thinking),
-      effort: Keyword.get(opts, :effort),
-      reasoning_summary: Keyword.get(opts, :reasoning_summary),
-      tool_timeout_ms: Keyword.get(opts, :tool_timeout_ms)
-    }
-  end
-
-  defp normalize_adhoc_tools(tools) when is_list(tools), do: tools
-  defp normalize_adhoc_tools(_tools), do: []
-
-  defp adhoc_context(opts) when is_list(opts) do
-    base = Keyword.get(opts, :context, %{})
-    base = if is_map(base), do: base, else: %{}
-
-    base
-    |> maybe_put_context_entry(:chat_id, opts[:chat_id])
-    |> maybe_put_context_entry(:reply_to, opts[:reply_to])
-    |> maybe_put_context_entry(:bot_id, opts[:bot_id])
-    |> maybe_put_context_entry(:session_id, opts[:session_id])
-    |> maybe_put_context_entry(:bot_username, opts[:bot_username])
-  end
-
-  defp maybe_put_context_entry(map, _key, nil), do: map
-  defp maybe_put_context_entry(map, key, value), do: Map.put(map, key, value)
-
-  defp maybe_put_runtime_opt(list, _key, nil), do: list
-  defp maybe_put_runtime_opt(list, key, value), do: Keyword.put(list, key, value)
-
   @spec begin_cycle(Message.t(), Config.t()) :: Cycle.t()
   def begin_cycle(%Message{id: id} = message, %Config{} = config) when not is_nil(id) do
     cycle =

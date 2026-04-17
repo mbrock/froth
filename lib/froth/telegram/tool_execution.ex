@@ -53,9 +53,10 @@ defmodule Froth.Telegram.ToolExecution do
     end
   end
 
-  # Headless fallback for paths without a Telegram chat (e.g.
-  # `Agent.run_adhoc/2` from a cron or script). Skip narration and
-  # Telegram-side effects entirely; invoke the tool directly.
+  # Headless fallback for paths without a Telegram chat (e.g. a cycle
+  # started directly via `CycleRuntime.run_to_completion/1` from a cron
+  # or script). Skip narration and Telegram-side effects entirely;
+  # invoke the tool directly.
   def execute(%Context{} = ctx, %ToolUse{name: name, input: input} = tool_call)
       when is_binary(name) and is_map(input) do
     result =
