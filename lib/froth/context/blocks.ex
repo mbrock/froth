@@ -46,7 +46,7 @@ defmodule Froth.Context.Blocks do
     Enum.map(blocks, &materialize_one/1)
   end
 
-  defp materialize_one(%Block{body: nil} = block), do: block
+  defp materialize_one(%Block{body: nil} = block), do: materialize_children(block)
 
   defp materialize_one(%Block{body: body, attrs: attrs} = block) when is_binary(body) do
     trimmed = String.trim_trailing(body, "\n")
@@ -54,7 +54,10 @@ defmodule Froth.Context.Blocks do
     line_count = count_lines(trimmed)
 
     if size <= @inline_max_bytes and line_count <= @inline_max_lines do
-      %Block{block | body: trimmed, attrs: put_facts(attrs, size, line_count)}
+      block
+      |> Map.put(:body, trimmed)
+      |> Map.put(:attrs, put_facts(attrs, size, line_count))
+      |> materialize_children()
     else
       {:ok, blob} = Blobs.put(trimmed, mime: Keyword.get(attrs, :mime, "text/plain"))
 
@@ -72,8 +75,15 @@ defmodule Froth.Context.Blocks do
         |> Keyword.put(:tail, tail)
         |> Keyword.put(:omitted, omitted)
 
-      %Block{block | body: nil, attrs: new_attrs}
+      block
+      |> Map.put(:body, nil)
+      |> Map.put(:attrs, new_attrs)
+      |> materialize_children()
     end
+  end
+
+  defp materialize_children(%Block{children: children} = block) when is_list(children) do
+    %Block{block | children: Enum.map(children, &materialize_one/1)}
   end
 
   defp put_facts(attrs, size, lines) do

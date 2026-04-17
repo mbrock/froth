@@ -217,7 +217,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
 
       # cycle traces follow their messages as siblings
       assert html =~ ~s(<cycle id=01JNWXYZ)
-      assert html =~ ~s(<call tool=search>)
+      assert html =~ ~s(<call tool=timeline)
       assert html =~ "<query>"
       assert html =~ "context"
       assert html =~ "builder"

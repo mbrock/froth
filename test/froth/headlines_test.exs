@@ -85,10 +85,13 @@ defmodule Froth.HeadlinesTest do
              "Only include items that are genuinely worth headlining, but include ALL of them once they clear that bar."
 
     assert prompt =~
-             "Use read_log and search to investigate details and find an approximate UTC time range for each headline before registering it."
+             "Use timeline to investigate details and find an approximate UTC time range for each headline before registering it."
 
     assert prompt =~
-             "Prefer targeted searches and narrow log windows. Avoid repeatedly pulling large log spans once you already have enough evidence for that day."
+             "Omit query to browse a date window. Add query plus before/after when you need targeted phrase search with surrounding context."
+
+    assert prompt =~
+             "Prefer focused queries and narrow date windows. Avoid repeatedly pulling large spans once you already have enough evidence for that day."
 
     assert prompt =~
              "You do not need to finish all research before you start registering. As soon as one day is sufficiently researched and complete, call register_headlines for that day and then continue to the next unfinished day."
@@ -121,7 +124,7 @@ defmodule Froth.HeadlinesTest do
     assert request.system == "You are a tabloid editor."
     assert request.provider_options["reasoning_effort"] == "medium"
     assert request.provider_options["reasoning_summary"] == "auto"
-    assert Enum.map(request.tools, & &1["name"]) == ["read_log", "search", "register_headlines"]
+    assert Enum.map(request.tools, & &1["name"]) == ["timeline", "register_headlines"]
 
     register_headlines_tool = Enum.find(request.tools, &(&1["name"] == "register_headlines"))
 
@@ -179,7 +182,7 @@ defmodule Froth.HeadlinesTest do
              "Only include items that are genuinely worth headlining, but include ALL of them once they clear that bar."
 
     assert prompt =~
-             "Prefer targeted searches and narrow log windows. Avoid repeatedly pulling large log spans once you already have enough evidence for that day."
+             "Prefer focused queries and narrow date windows. Avoid repeatedly pulling large spans once you already have enough evidence for that day."
 
     assert prompt =~
              "You do not need to finish all research before you start registering. As soon as one day is sufficiently researched and complete, call register_headlines for that day and then continue to the next unfinished day."
@@ -514,7 +517,7 @@ defmodule Froth.HeadlinesTest do
 
   defp headlines_request?(%Request{system: system, tools: tools}) do
     system == "You are a tabloid editor." and
-      Enum.map(tools || [], & &1["name"]) == ["read_log", "search", "register_headlines"]
+      Enum.map(tools || [], & &1["name"]) == ["timeline", "register_headlines"]
   end
 
   defp utf16_length(text) when is_binary(text) do

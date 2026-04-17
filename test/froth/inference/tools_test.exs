@@ -3,17 +3,17 @@ defmodule Froth.Inference.ToolsTest do
 
   alias Froth.Analysis
   alias Froth.ApiKey
-  alias Froth.Agent
-  alias Froth.Agent.{Cycle, Message}
+  alias Froth.Agent.Cycle
   alias Froth.Context.Block
   alias Froth.Inference.Tools
   alias Froth.LLM.Message, as: LLMMessage
   alias Froth.LLM.Request
   alias Froth.Task
-  alias Froth.TaskEvent
-  alias Froth.TaskTelegramLink
   alias Froth.Telegram.CycleLink
+  alias Froth.Telegram.Message, as: TelegramMessage
   alias Froth.Telegram.PendingAsk
+  alias Froth.Telegram.SessionConfig
+  alias Froth.Telegram.Username
 
   test "specs_for_api does not expose MCP endpoints even when a Wolfram key is available" do
     Repo.insert!(%ApiKey{name: "wolfram", provider: "wolfram", key: "wolfram-token"})
@@ -21,135 +21,18 @@ defmodule Froth.Inference.ToolsTest do
     refute Enum.any?(Tools.specs_for_api(), &(&1["type"] == "mcp_endpoint"))
   end
 
-  test "read_tool_transcript includes prior cycle transcript and linked task output" do
-    bot_id = "charlie"
-    chat_id = unique_chat_id()
-    task_id = "eval:test:#{System.unique_integer([:positive])}"
-
-    user_msg =
-      Repo.insert!(%Message{
-        role: :user,
-        content:
-          Message.wrap([
-            %{"type" => "text", "text" => "<new_messages>hello</new_messages>"}
-          ])
-      })
-
-    agent_msg =
-      Repo.insert!(%Message{
-        role: :agent,
-        content:
-          Message.wrap([
-            %{
-              "type" => "tool_use",
-              "id" => "toolu_1",
-              "name" => "elixir_eval",
-              "input" => %{"code" => "IO.puts(\"hi\")"}
-            }
-          ]),
-        parent_id: user_msg.id
-      })
-
-    result_msg =
-      Repo.insert!(%Message{
-        role: :user,
-        content:
-          Message.wrap([
-            %{
-              "type" => "tool_result",
-              "tool_use_id" => "toolu_1",
-              "content" => "Session: eval_session_test\n\n:ok"
-            }
-          ]),
-        parent_id: agent_msg.id
-      })
-
-    final_agent_msg =
-      Repo.insert!(%Message{
-        role: :agent,
-        content: Message.wrap([%{"type" => "text", "text" => "Eval says hi"}]),
-        parent_id: result_msg.id
-      })
-
-    cycle = Repo.insert!(%Cycle{})
-    Agent.append_event(cycle, %{head_id: final_agent_msg.id, message_id: final_agent_msg.id})
-
-    Repo.insert!(%CycleLink{
-      cycle_id: cycle.id,
-      bot_id: bot_id,
-      chat_id: chat_id,
-      reply_to: 123
-    })
-
-    Repo.insert!(
-      Task.changeset(%Task{}, %{
-        task_id: task_id,
-        type: "eval",
-        status: "completed",
-        label: "IO.puts(\"hi\")",
-        metadata: %{"session_id" => "eval_session_test"}
-      })
-    )
-
-    Repo.insert!(
-      TaskTelegramLink.changeset(%TaskTelegramLink{}, %{
-        task_id: task_id,
-        bot_id: bot_id,
-        chat_id: chat_id
-      })
-    )
-
-    Repo.insert!(
-      TaskEvent.changeset(%TaskEvent{}, %{
-        task_id: task_id,
-        sequence: 1,
-        kind: "stdout",
-        content: "hello from eval\n",
-        emitted_at: DateTime.utc_now()
-      })
-    )
-
-    {:ok, transcript} =
-      Tools.execute(
-        "read_tool_transcript",
-        %{
-          "cycle_id" => cycle.id,
-          "task_output_lines" => 20,
-          "include_messages" => true
-        },
-        chat_id,
-        bot_id: bot_id,
-        session_id: "charlie"
-      )
-
-    assert transcript =~ "cycle #{cycle.id}"
-    assert transcript =~ "Final reply:"
-    assert transcript =~ "Eval says hi"
-    assert transcript =~ "tool_use elixir_eval"
-    assert transcript =~ "[#{task_id}] type=eval"
-    assert transcript =~ "hello from eval"
-  end
-
-  test "read_tool_transcript returns not found message for unknown cycle id" do
-    chat_id = unique_chat_id()
-
-    {:ok, result} =
-      Tools.execute(
-        "read_tool_transcript",
-        %{"cycle_id" => Ecto.ULID.generate()},
-        chat_id,
-        bot_id: "charlie",
-        session_id: "charlie"
-      )
-
-    assert result =~ "No cycle found"
-  end
-
   test "look is exposed in tool specs" do
     spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "look"))
 
     refute is_nil(spec)
     assert get_in(spec, ["input_schema", "required"]) == ["message_id"]
+  end
+
+  test "timeline is exposed in tool specs" do
+    spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "timeline"))
+
+    refute is_nil(spec)
+    assert get_in(spec, ["input_schema", "properties", "query", "type"]) == "array"
   end
 
   test "view_analysis is exposed in tool specs" do
@@ -202,6 +85,71 @@ defmodule Froth.Inference.ToolsTest do
     assert blocks_by_id[second.id].body == "second analysis text"
   end
 
+  test "timeline browse mode renders messages and attached analyses through bot context" do
+    chat_id = unique_chat_id()
+    session_id = "timeline-browse-#{System.unique_integer([:positive])}"
+
+    insert_telegram_message(session_id, chat_id, 101, 7, 1_700_000_100, "older context")
+    insert_telegram_message(session_id, chat_id, 102, 8, 1_700_000_200, "photo caption")
+
+    analysis =
+      Repo.insert!(
+        Analysis.changeset(%Analysis{}, %{
+          type: "image",
+          chat_id: chat_id,
+          message_id: 102,
+          agent: "vision",
+          analysis_text: "the image shows a red notebook on a table",
+          generated_at: DateTime.utc_now()
+        })
+      )
+
+    assert {:ok, timeline} =
+             Tools.execute(
+               "timeline",
+               %{"limit" => 10},
+               chat_id,
+               bot_id: "charlie",
+               session_id: session_id
+             )
+
+    assert timeline =~ ~s(<text id=tg:101)
+    assert timeline =~ "older context"
+    assert timeline =~ ~s(<text id=tg:102)
+    assert timeline =~ "photo caption"
+    assert timeline =~ ~s(<analysis id=#{analysis.id})
+    assert timeline =~ "the image shows a red notebook on a table"
+    assert timeline =~ "<info>"
+  end
+
+  test "timeline search mode includes surrounding context in chronological order" do
+    chat_id = unique_chat_id()
+    session_id = "timeline-search-#{System.unique_integer([:positive])}"
+
+    insert_telegram_message(session_id, chat_id, 201, 7, 1_700_001_100, "before context")
+    insert_telegram_message(session_id, chat_id, 202, 8, 1_700_001_200, "needle phrase here")
+    insert_telegram_message(session_id, chat_id, 203, 9, 1_700_001_300, "after context")
+
+    assert {:ok, timeline} =
+             Tools.execute(
+               "timeline",
+               %{"query" => ["needle phrase"], "before" => 1, "after" => 1, "limit" => 5},
+               chat_id,
+               bot_id: "charlie",
+               session_id: session_id
+             )
+
+    before_pos = :binary.match(timeline, "before context") |> elem(0)
+    hit_pos = :binary.match(timeline, "needle phrase here") |> elem(0)
+    after_pos = :binary.match(timeline, "after context") |> elem(0)
+
+    assert before_pos < hit_pos
+    assert hit_pos < after_pos
+    assert timeline =~ ~s(<text id=tg:201)
+    assert timeline =~ ~s(<text id=tg:202)
+    assert timeline =~ ~s(<text id=tg:203)
+  end
+
   test "ask is exposed in tool specs" do
     spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "ask"))
 
@@ -216,10 +164,12 @@ defmodule Froth.Inference.ToolsTest do
              "one paragraph or one finished thought at a time"
 
     assert specs["ask"]["description"] =~ "pause the current agent cycle"
-    assert specs["read_log"]["description"] =~ "msg:ID references"
-    assert specs["search"]["description"] =~ "matched literally as written"
+    refute Map.has_key?(specs, "read_log")
+    refute Map.has_key?(specs, "search")
+    refute Map.has_key?(specs, "read_tool_transcript")
+    assert specs["timeline"]["description"] =~ "same context renderer"
+    assert specs["timeline"]["description"] =~ "literal phrase matches"
     assert specs["look"]["description"] =~ "supports images and PDFs only"
-    assert specs["read_tool_transcript"]["description"] =~ "delegated sub-agent"
     assert get_in(specs, ["elixir_eval", "input_schema", "required"]) == ["code", "description"]
     assert get_in(specs, ["run_shell", "input_schema", "required"]) == ["command", "description"]
 
@@ -260,13 +210,10 @@ defmodule Froth.Inference.ToolsTest do
     assert result["task_id"] == "agent:#{result["cycle_id"]}"
     assert result["model"] == model
     assert result["tools"] == ["run_shell", "elixir_eval"]
-    assert result["check_tool"] == "read_tool_transcript"
     assert result["open_url"] =~ result["cycle_id"]
-
-    assert result["check_input"] == %{
-             "cycle_id" => result["cycle_id"],
-             "include_messages" => true
-           }
+    assert result["check_hint"] =~ result["task_id"]
+    refute Map.has_key?(result, "check_tool")
+    refute Map.has_key?(result, "check_input")
 
     assert_receive {FakeLLM, from, %Request{} = request}, 5_000
 
@@ -304,20 +251,6 @@ defmodule Froth.Inference.ToolsTest do
              bot_id: bot_id,
              chat_id: chat_id
            )
-
-    assert {:ok, transcript} =
-             Tools.execute(
-               "read_tool_transcript",
-               %{"cycle_id" => result["cycle_id"], "include_messages" => true},
-               chat_id,
-               bot_id: bot_id,
-               session_id: session_id
-             )
-
-    assert transcript =~ result["cycle_id"]
-    assert transcript =~ "Final reply:"
-    assert transcript =~ "delegated answer"
-    assert transcript =~ "[#{result["task_id"]}] type=agent"
   end
 
   test "ask sends an inline-keyboard question and persists a pending ask" do
@@ -456,97 +389,6 @@ defmodule Froth.Inference.ToolsTest do
     assert Base.decode64!(source["data"]) == pdf_data
   end
 
-  test "read_tool_transcript keeps oversized transcripts bounded" do
-    bot_id = "charlie"
-    chat_id = unique_chat_id()
-    task_id = "shell:test:#{System.unique_integer([:positive])}"
-    huge_chunk = String.duplicate("abcdefghij", 4_000)
-
-    user_msg =
-      Repo.insert!(%Message{
-        role: :user,
-        content: Message.wrap([%{"type" => "text", "text" => huge_chunk}])
-      })
-
-    agent_msg =
-      Repo.insert!(%Message{
-        role: :agent,
-        content:
-          Message.wrap([
-            %{
-              "type" => "tool_use",
-              "id" => "toolu_huge",
-              "name" => "run_shell",
-              "input" => %{"command" => "printf huge"}
-            }
-          ]),
-        parent_id: user_msg.id
-      })
-
-    result_msg =
-      Repo.insert!(%Message{
-        role: :user,
-        content:
-          Message.wrap([
-            %{
-              "type" => "tool_result",
-              "tool_use_id" => "toolu_huge",
-              "content" => huge_chunk
-            }
-          ]),
-        parent_id: agent_msg.id
-      })
-
-    cycle = Repo.insert!(%Cycle{})
-    Agent.append_event(cycle, %{head_id: result_msg.id, message_id: result_msg.id})
-
-    Repo.insert!(%CycleLink{
-      cycle_id: cycle.id,
-      bot_id: bot_id,
-      chat_id: chat_id,
-      reply_to: 789
-    })
-
-    Repo.insert!(
-      Task.changeset(%Task{}, %{
-        task_id: task_id,
-        type: "shell",
-        status: "completed",
-        label: "printf huge"
-      })
-    )
-
-    Repo.insert!(
-      TaskTelegramLink.changeset(%TaskTelegramLink{}, %{
-        task_id: task_id,
-        bot_id: bot_id,
-        chat_id: chat_id
-      })
-    )
-
-    Repo.insert!(
-      TaskEvent.changeset(%TaskEvent{}, %{
-        task_id: task_id,
-        sequence: 1,
-        kind: "stdout",
-        content: huge_chunk,
-        emitted_at: DateTime.utc_now()
-      })
-    )
-
-    {:ok, transcript} =
-      Tools.execute(
-        "read_tool_transcript",
-        %{"cycle_id" => cycle.id, "include_messages" => true, "task_output_lines" => 200},
-        chat_id,
-        bot_id: bot_id,
-        session_id: "charlie"
-      )
-
-    assert String.length(transcript) <= 20_080
-    refute transcript =~ huge_chunk
-  end
-
   test "run_shell falls back to the current working directory for an empty working_dir" do
     {:ok, [%Froth.Context.Block{} = block]} =
       Tools.execute(
@@ -580,6 +422,72 @@ defmodule Froth.Inference.ToolsTest do
   defp unique_chat_id do
     9_000_000_000 + System.unique_integer([:positive])
   end
+
+  defp insert_telegram_message(session_id, chat_id, message_id, sender_id, date, text) do
+    ensure_session(session_id)
+    ensure_username(sender_id, session_id)
+
+    raw = %{
+      "id" => message_id,
+      "chat_id" => chat_id,
+      "sender_id" => %{"user_id" => sender_id},
+      "date" => date,
+      "content" => %{
+        "@type" => "messageText",
+        "text" => %{"text" => text}
+      }
+    }
+
+    %TelegramMessage{}
+    |> TelegramMessage.changeset(%{
+      telegram_session_id: session_id,
+      chat_id: chat_id,
+      message_id: message_id,
+      sender_id: sender_id,
+      date: date,
+      raw: raw
+    })
+    |> Repo.insert!()
+  end
+
+  defp ensure_session(session_id) do
+    case Repo.get(SessionConfig, session_id) do
+      nil ->
+        Repo.insert!(
+          SessionConfig.changeset(%SessionConfig{}, %{
+            id: session_id,
+            api_id: 1234,
+            api_hash: "test-hash",
+            bot_token: "test-token",
+            enabled: true
+          })
+        )
+
+      _session ->
+        :ok
+    end
+  end
+
+  defp ensure_username(sender_id, session_id) when is_integer(sender_id) and sender_id > 0 do
+    %Username{}
+    |> Username.changeset(%{
+      user_id: sender_id,
+      label: "@user#{sender_id}",
+      source_session_id: session_id
+    })
+    |> Repo.insert(
+      on_conflict: [
+        set: [
+          label: "@user#{sender_id}",
+          source_session_id: session_id,
+          updated_at: DateTime.utc_now()
+        ]
+      ],
+      conflict_target: :user_id
+    )
+  end
+
+  defp ensure_username(_sender_id, _session_id), do: :ok
 
   defp wait_for_cycle_status(cycle_id, status, attempts \\ 100)
 

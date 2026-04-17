@@ -22,7 +22,7 @@ defmodule Froth.Tools.ViewAnalysis do
     %{
       "name" => name(),
       "description" =>
-        "Read the full analysis text for one or more analysis IDs. Use this when read_log or search shows an analysis:N snippet and you want the complete analysis behind it. This is the right tool for media that has already been interpreted by other agents, such as photos, voice notes, videos, PDFs, YouTube links, or X posts. If you need the original image or PDF content block itself rather than the generated analysis text, use look instead.",
+        "Read the full analysis text for one or more analysis IDs. Use this when timeline shows an analysis:N snippet and you want the complete analysis behind it. This is the right tool for media that has already been interpreted by other agents, such as photos, voice notes, videos, PDFs, YouTube links, or X posts. If you need the original image or PDF content block itself rather than the generated analysis text, use look instead.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{

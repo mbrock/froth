@@ -815,7 +815,8 @@ defmodule Froth.Agent.Worker do
     %Froth.Context.Block{
       block
       | attrs: Enum.map(block.attrs, fn {k, v} -> {k, sanitize_utf8(v)} end),
-        body: sanitize_utf8(block.body)
+        body: sanitize_utf8(block.body),
+        children: Enum.map(block.children, &sanitize_utf8/1)
     }
   end
 

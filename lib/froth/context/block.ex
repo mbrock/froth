@@ -2,10 +2,11 @@ defmodule Froth.Context.Block do
   @moduledoc """
   One part of a tool's return value.
 
-  Tools emit a list of blocks. A block is just a keyword list of
-  attributes (headers, like MIME parts) plus an optional binary body
-  of any length. The tool does not measure the body, does not decide
-  whether to blob it, and does not render anything.
+  Tools emit a list of blocks. A block is a keyword list of
+  attributes (headers, like MIME parts), an optional binary body, and
+  optional child blocks. The tool does not measure bodies, does not
+  decide whether content should be blobbed, and does not render
+  anything.
 
   Downstream, `Froth.Context.Blocks.materialize/1` decides storage
   form (inline vs blob-backed), and `Froth.Context.BlockHTML`
@@ -21,14 +22,16 @@ defmodule Froth.Context.Block do
 
   @type t :: %__MODULE__{
           attrs: attrs(),
-          body: binary() | nil
+          body: binary() | nil,
+          children: [t()]
         }
 
-  defstruct attrs: [], body: nil
+  defstruct attrs: [], body: nil, children: []
 
   @doc "Convenience constructor."
-  @spec new(attrs(), binary() | nil) :: t()
-  def new(attrs \\ [], body \\ nil), do: %__MODULE__{attrs: attrs, body: body}
+  @spec new(attrs(), binary() | nil, [t()]) :: t()
+  def new(attrs \\ [], body \\ nil, children \\ []),
+    do: %__MODULE__{attrs: attrs, body: body, children: children}
 
   @doc "Look up an attribute value."
   @spec attr(t(), atom(), term()) :: term()
@@ -45,11 +48,12 @@ defmodule Froth.Context.Block do
   shouldn't end up in JSONB.
   """
   @spec to_map(t()) :: map()
-  def to_map(%__MODULE__{attrs: attrs, body: body}) do
+  def to_map(%__MODULE__{attrs: attrs, body: body, children: children}) do
     %{
       "shape" => "block",
       "attrs" => encode_attrs(attrs),
-      "body" => body
+      "body" => body,
+      "children" => Enum.map(children, &to_map/1)
     }
   end
 
@@ -62,7 +66,12 @@ defmodule Froth.Context.Block do
   def from_map(%{"shape" => "block"} = map) do
     %__MODULE__{
       attrs: decode_attrs(Map.get(map, "attrs", [])),
-      body: Map.get(map, "body")
+      body: Map.get(map, "body"),
+      children:
+        map
+        |> Map.get("children", [])
+        |> Enum.map(&from_map/1)
+        |> Enum.reject(&is_nil/1)
     }
   end
 

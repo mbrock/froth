@@ -594,13 +594,13 @@ defmodule Froth.Telegram.BotContextHTML do
               entries: [
                 %{
                   kind: :call,
-                  tool: "search",
-                  input: %{"query" => ["context", "builder"]}
+                  tool: "timeline",
+                  input: %{"query" => ["context", "builder"], "before" => 2, "after" => 2}
                 },
                 %{kind: :return, outcome: {:ok, "found 3 relevant log entries"}},
                 %{
                   kind: :call,
-                  tool: "read_log",
+                  tool: "timeline",
                   input: %{"from_date" => "2026-03-06", "to_date" => "2026-03-06"}
                 },
                 %{

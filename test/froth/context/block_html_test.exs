@@ -93,6 +93,26 @@ defmodule Froth.Context.BlockHTMLTest do
       assert html =~ ~s(status="running")
       assert html =~ ~s(label="tail -f")
     end
+
+    test "nested child blocks render inside their parent block" do
+      html =
+        BlockHTML.live_to_string([
+          Block.new(
+            [kind: "timeline", id: "window-1"],
+            nil,
+            [
+              Block.new([kind: "text", id: "tg:1"], "hello"),
+              Block.new([kind: "analysis", id: 12], "short summary")
+            ]
+          )
+        ])
+
+      assert html =~ ~s(<timeline id="window-1")
+      assert html =~ ~s(<text id="tg:1")
+      assert html =~ "hello"
+      assert html =~ ~s(<analysis id="12")
+      assert html =~ "short summary"
+    end
   end
 
   describe "trace/1" do
@@ -125,6 +145,27 @@ defmodule Froth.Context.BlockHTMLTest do
         |> IO.iodata_to_binary()
 
       refute html =~ "more stuff"
+    end
+
+    test "renders nested child blocks in trace output" do
+      blocks =
+        Blocks.materialize([
+          Block.new(
+            [kind: "timeline", id: "window-1"],
+            nil,
+            [Block.new([kind: "text", id: "tg:1"], "hello world")]
+          )
+        ])
+
+      html =
+        %{blocks: blocks}
+        |> BlockHTML.trace()
+        |> Phoenix.HTML.Safe.to_iodata()
+        |> IO.iodata_to_binary()
+
+      assert html =~ ~s(<timeline id="window-1")
+      assert html =~ ~s(<text id="tg:1")
+      assert html =~ "hello world"
     end
   end
 

@@ -53,6 +53,18 @@ defmodule Froth.Telegram.BotContext do
     |> render()
   end
 
+  @doc """
+  Render a pre-fetched list of DB message rows to the canonical bot-context string.
+  """
+  def render_for_messages(chat_id, messages, opts \\ [])
+      when is_integer(chat_id) and is_list(messages) do
+    recent = build_recent(chat_id, messages, opts)
+
+    %Context{chat_context: recent.chat_context, recent_messages: recent.recent_messages}
+    |> then(&BotContextHTML.context(%{ctx: &1}))
+    |> BotContextHTML.render_to_string()
+  end
+
   # ── building the view model ────────────────────────────────────
 
   defp build(chat_id, opts) when is_integer(chat_id) and is_list(opts) do

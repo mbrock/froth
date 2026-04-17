@@ -95,7 +95,7 @@ defmodule FrothWeb.ToolLiveTest do
           %{
             "type" => "tool_use",
             "id" => "call_active",
-            "name" => "read_log",
+            "name" => "timeline",
             "input" => %{"narration" => "Checking the current logs."}
           }
         ])

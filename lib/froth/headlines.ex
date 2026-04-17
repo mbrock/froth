@@ -24,6 +24,7 @@ defmodule Froth.Headlines do
   alias Froth.Inference.Tools
   alias Froth.Repo
   alias Froth.Telegram.Bot
+  alias Froth.Tools.RegisterHeadlines, as: RegisterHeadlinesTool
 
   @default_chat_id -1_003_690_254_489
   @model "gpt-5.4"
@@ -135,8 +136,9 @@ defmodule Froth.Headlines do
     </headline_selection>
 
     <research_workflow>
-    Use read_log and search to investigate details and find an approximate UTC time range for each headline before registering it.
-    Prefer targeted searches and narrow log windows. Avoid repeatedly pulling large log spans once you already have enough evidence for that day.
+    Use timeline to investigate details and find an approximate UTC time range for each headline before registering it.
+    Omit query to browse a date window. Add query plus before/after when you need targeted phrase search with surrounding context.
+    Prefer focused queries and narrow date windows. Avoid repeatedly pulling large spans once you already have enough evidence for that day.
     You do not need to finish all research before you start registering. As soon as one day is sufficiently researched and complete, call register_headlines for that day and then continue to the next unfinished day.
     After you register a date, stop researching that date unless you uncover a clear miss.
     </research_workflow>
@@ -227,55 +229,7 @@ defmodule Froth.Headlines do
   defp render_registered_headline(_headline), do: "<headline />"
 
   defp headline_tools do
-    Tools.specs_for_names(["read_log", "search"]) ++ [register_headlines_spec()]
-  end
-
-  defp register_headlines_spec do
-    %{
-      "name" => "register_headlines",
-      "description" =>
-        "Submit the complete final set of headlines for one date after investigating the evidence. The headlines array must contain every item worth headlining for that date, not just one example.",
-      "input_schema" => %{
-        "type" => "object",
-        "properties" => %{
-          "date" => %{
-            "type" => "string",
-            "description" => "The date being summarized, YYYY-MM-DD"
-          },
-          "headlines" => %{
-            "type" => "array",
-            "description" =>
-              "The complete set of headlines worth keeping for this date. Include every worthy same-day headline in this array.",
-            "items" => %{
-              "type" => "object",
-              "properties" => %{
-                "emoji" => %{
-                  "type" => "string",
-                  "description" => "A single relevant emoji for the headline"
-                },
-                "title" => %{"type" => "string", "description" => "Short headline title"},
-                "sentence" => %{
-                  "type" => "string",
-                  "description" => "One sentence expanding on the headline"
-                },
-                "from_time" => %{
-                  "type" => "string",
-                  "description" => "Approximate event start time, ISO 8601 UTC datetime string"
-                },
-                "to_time" => %{
-                  "type" => "string",
-                  "description" => "Approximate event end time, ISO 8601 UTC datetime string"
-                }
-              },
-              "required" => ["emoji", "title", "sentence", "from_time", "to_time"],
-              "additionalProperties" => false
-            }
-          }
-        },
-        "required" => ["date", "headlines"],
-        "additionalProperties" => false
-      }
-    }
+    Tools.specs_for_names(["timeline"]) ++ [RegisterHeadlinesTool.spec()]
   end
 
   defp summary_date(from_ts) when is_integer(from_ts) do

@@ -54,6 +54,7 @@ defmodule Froth.Context.BlockHTML do
           </tail>
         <% true -> %>
       <% end %>
+      <.live_block :for={child <- @block.children} block={child} />
     </.block_tag>
     """
   end
@@ -76,6 +77,7 @@ defmodule Froth.Context.BlockHTML do
     ~H"""
     <.block_tag kind={kind(@block)} attrs={structural_attrs(@block)}>
       {@preview}
+      <.trace_block :for={child <- @block.children} block={child} />
     </.block_tag>
     """
   end

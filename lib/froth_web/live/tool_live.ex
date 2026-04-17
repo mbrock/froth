@@ -1200,8 +1200,7 @@ defmodule FrothWeb.ToolLive do
   defp loop_status_badge_text(:stopped), do: "stopped"
   defp loop_status_badge_text(_), do: "waiting"
 
-  defp tool_label("read_log"), do: "Read log"
-  defp tool_label("search"), do: "Search history"
+  defp tool_label("timeline"), do: "Timeline"
   defp tool_label("view_analysis"), do: "Read analysis"
   defp tool_label("look"), do: "Look at media"
   defp tool_label("send_message"), do: "Send message"
