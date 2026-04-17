@@ -8,6 +8,7 @@ defmodule Froth.Inference.Tools do
   alias Froth.Telegram.Bot.Config, as: BotConfig
   alias Froth.{ChatSummary, Event, Repo}
   alias Froth.Telegram.BotAdapter
+  alias Froth.Telegram.Bots
   alias Froth.Telegram.MessageIdSync
   alias Froth.Telegram.PendingAsks
   alias Froth.Telemetry.Span
@@ -819,6 +820,7 @@ defmodule Froth.Inference.Tools do
           chat_id: chat_id,
           reply_to: reply_to,
           bot_id: bot_id,
+          bot_pid: bot_id && GenServer.whereis(Bots.via(bot_id)),
           parent_cycle_id: parent_cycle_id,
           bot_config: bc,
           spam: ctx.spam

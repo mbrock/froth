@@ -1,38 +1,16 @@
 defmodule Froth.Telegram.AskFlowTest do
-  use ExUnit.Case, async: true
+  use Froth.TelegramBotCase, async: true
 
   import Ecto.Query
 
   alias Froth.Agent.Message
-  alias Froth.LLM.Fake, as: FakeLLM
   alias Froth.LLM.Message, as: LLMMessage
   alias Froth.LLM.Request
-  alias Froth.Repo
-  alias Froth.Telegram.Bot
   alias Froth.Telegram.PendingAsk
-
-  setup do
-    # Each test gets a fresh per-test sandbox owner; descendants that
-    # need DB access (FakeTelegramSession, Bot, CycleRuntime, Worker)
-    # opt in via Froth.Repo.allow/1 or allow_child/1 at their own
-    # natural parents. `Froth.Telegram.Registry` is a node-wide
-    # singleton started by the application supervisor — different
-    # tests use unique session_ids and bot_ids so there's no collision.
-    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
-    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
-
-    :ok
-  end
 
   test "ask pauses a cycle, waits for a free-form answer, and resumes with a real tool result" do
     chat_id = 362_441_422
-    model = FakeLLM.claim()
-
-    start_supervised!(
-      {Froth.FakeTelegramSession, session_id: "ask-flow-session", test_pid: self()}
-    )
-
-    bot = start_charlie_bot(id: "charlie-ask-flow-freeform", session_id: "ask-flow-session", model: model)
+    %{bot: bot} = start_charlie_bot()
 
     send(bot, user_update("help", message_id: 10, chat_id: chat_id))
 
@@ -142,18 +120,7 @@ defmodule Froth.Telegram.AskFlowTest do
 
   test "ask resumes when an inline callback query uses a TDLib string id" do
     chat_id = 362_441_422
-    model = FakeLLM.claim()
-
-    start_supervised!(
-      {Froth.FakeTelegramSession, session_id: "ask-callback-session", test_pid: self()}
-    )
-
-    bot =
-      start_charlie_bot(
-        id: "charlie-ask-flow-callback",
-        session_id: "ask-callback-session",
-        model: model
-      )
+    %{bot: bot} = start_charlie_bot()
 
     send(bot, user_update("help", message_id: 10, chat_id: chat_id))
 
@@ -244,18 +211,7 @@ defmodule Froth.Telegram.AskFlowTest do
 
   test "a parallel ask batch stays atomic and resumes on the same worker" do
     chat_id = 362_441_422
-    model = FakeLLM.claim()
-
-    start_supervised!(
-      {Froth.FakeTelegramSession, session_id: "ask-flow-parallel-session", test_pid: self()}
-    )
-
-    bot =
-      start_charlie_bot(
-        id: "charlie-ask-flow-parallel",
-        session_id: "ask-flow-parallel-session",
-        model: model
-      )
+    %{bot: bot} = start_charlie_bot()
 
     send(bot, user_update("help", message_id: 10, chat_id: chat_id))
 
@@ -367,7 +323,6 @@ defmodule Froth.Telegram.AskFlowTest do
 
   test "await pauses the live worker with button choices and resumes in place" do
     chat_id = 362_441_422
-    model = FakeLLM.claim()
     {:ok, task_holder} = Agent.start_link(fn -> nil end)
 
     on_exit(fn ->
@@ -383,16 +338,7 @@ defmodule Froth.Telegram.AskFlowTest do
       end
     end)
 
-    start_supervised!(
-      {Froth.FakeTelegramSession, session_id: "await-flow-session", test_pid: self()}
-    )
-
-    bot =
-      start_charlie_bot(
-        id: "charlie-await-flow",
-        session_id: "await-flow-session",
-        model: model
-      )
+    %{bot: bot} = start_charlie_bot()
 
     send(bot, user_update("help", message_id: 10, chat_id: chat_id))
 
@@ -537,21 +483,8 @@ defmodule Froth.Telegram.AskFlowTest do
 
   test "failure intervention posts a report, edits it after a callback choice, and resumes with the injected report" do
     chat_id = 362_441_422
-    main_model = FakeLLM.claim()
     report_model = FakeLLM.claim()
-
-    start_supervised!(
-      {Froth.FakeTelegramSession,
-       session_id: "failure-flow-callback-session", test_pid: self()}
-    )
-
-    bot =
-      start_charlie_bot(
-        id: "charlie-failure-flow-callback",
-        session_id: "failure-flow-callback-session",
-        model: main_model,
-        failure_report_model: report_model
-      )
+    %{bot: bot} = start_charlie_bot(failure_report_model: report_model)
 
     send(bot, user_update("help", message_id: 10, chat_id: chat_id))
 
@@ -685,21 +618,8 @@ defmodule Froth.Telegram.AskFlowTest do
 
   test "failure intervention accepts a direct reply as a custom intervention" do
     chat_id = 362_441_422
-    main_model = FakeLLM.claim()
     report_model = FakeLLM.claim()
-
-    start_supervised!(
-      {Froth.FakeTelegramSession,
-       session_id: "failure-flow-reply-session", test_pid: self()}
-    )
-
-    bot =
-      start_charlie_bot(
-        id: "charlie-failure-flow-reply",
-        session_id: "failure-flow-reply-session",
-        model: main_model,
-        failure_report_model: report_model
-      )
+    %{bot: bot} = start_charlie_bot(failure_report_model: report_model)
 
     send(bot, user_update("help", message_id: 10, chat_id: chat_id))
 
@@ -798,19 +718,6 @@ defmodule Froth.Telegram.AskFlowTest do
   end
 
   # -- test helpers --
-
-  defp start_charlie_bot(opts) do
-    defaults = [
-      bot_username: "charliebuddybot",
-      bot_user_id: 1,
-      owner_user_id: 1,
-      system_prompt: "You are Charlie.",
-      debounce_ms: 0,
-      tools_module: Froth.Telegram.Toolsets.Charlie
-    ]
-
-    start_supervised!({Bot, Keyword.merge(defaults, opts)})
-  end
 
   defp tool_use_response(id, name, input) do
     %{

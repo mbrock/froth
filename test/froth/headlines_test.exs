@@ -1,47 +1,15 @@
 defmodule Froth.HeadlinesTest do
-  use ExUnit.Case, async: false
+  use Froth.TelegramBotCase, async: true
 
   import Ecto.Query
 
   alias Froth.Agent.Message, as: AgentMessage
   alias Froth.ChatSummary
   alias Froth.Event
-  alias Froth.FakeTelegramSession
   alias Froth.Headlines
   alias Froth.Inference.Tools
-  alias Froth.LLM.Fake, as: FakeLLM
   alias Froth.LLM.Message, as: LLMMessage
   alias Froth.LLM.Request
-  alias Froth.Repo
-  alias Froth.Telegram.Bot
-
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
-    :ok
-  end
-
-  # Start a fake telegram session + real Bot GenServer for tests that
-  # exercise Headlines — Headlines runs cycles under a real Bot, so
-  # tests need one.
-  defp start_headlines_bot do
-    session_id = "headlines-test-#{System.unique_integer([:positive])}"
-    bot_id = "headlines-test-#{System.unique_integer([:positive])}"
-
-    start_supervised!({FakeTelegramSession, session_id: session_id, test_pid: self()})
-
-    start_supervised!(
-      {Bot,
-       id: bot_id,
-       session_id: session_id,
-       bot_username: "charliebuddybot",
-       bot_user_id: 1,
-       owner_user_id: 1,
-       model: "claude-opus-4-7",
-       system_prompt: "You are Charlie.",
-       tools_module: Froth.Telegram.Toolsets.Charlie}
-    )
-  end
 
   test "extract builds the summary prompt and passes the expected tools to adhoc" do
     chat_id = unique_chat_id()
@@ -70,7 +38,7 @@ defmodule Froth.HeadlinesTest do
     })
     |> Repo.insert!()
 
-    bot = start_headlines_bot()
+    %{bot: bot} = start_charlie_bot()
 
     extract_task =
       Task.async(fn ->
@@ -178,7 +146,7 @@ defmodule Froth.HeadlinesTest do
     insert_summary(chat_id, ~D[2026-03-20], "The group launched a new project.")
     insert_summary(chat_id, ~D[2026-03-21], "A long debugging session fixed the outage.")
 
-    bot = start_headlines_bot()
+    %{bot: bot} = start_charlie_bot()
 
     extract_task =
       Task.async(fn ->
@@ -234,7 +202,7 @@ defmodule Froth.HeadlinesTest do
 
     insert_summary(chat_id, ~D[2026-03-20], "The group launched a new project.")
 
-    bot = start_headlines_bot()
+    %{bot: bot} = start_charlie_bot()
 
     {cycle, stream} = Headlines.start(bot: bot, chat_id: chat_id, provider: :fakeai, model: model)
     collector = Task.async(fn -> Enum.to_list(stream) end)

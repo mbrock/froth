@@ -1,25 +1,17 @@
 defmodule Froth.Inference.ToolsTest do
-  use ExUnit.Case, async: false
+  use Froth.TelegramBotCase, async: true
 
   alias Froth.ApiKey
   alias Froth.Agent
   alias Froth.Agent.{Cycle, Message}
   alias Froth.Inference.Tools
-  alias Froth.LLM.Fake, as: FakeLLM
   alias Froth.LLM.Message, as: LLMMessage
   alias Froth.LLM.Request
-  alias Froth.Repo
   alias Froth.Task
   alias Froth.TaskEvent
   alias Froth.TaskTelegramLink
   alias Froth.Telegram.CycleLink
   alias Froth.Telegram.PendingAsk
-
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
-    :ok
-  end
 
   test "specs_for_api does not expose MCP endpoints even when a Wolfram key is available" do
     Repo.insert!(%ApiKey{name: "wolfram", provider: "wolfram", key: "wolfram-token"})
@@ -195,7 +187,7 @@ defmodule Froth.Inference.ToolsTest do
   end
 
   test "spawn_agent starts an adhoc cycle with default tools, links it to the chat, and tracks it as a task" do
-    bot_id = "spawn-agent-test-bot"
+    %{bot_id: bot_id, session_id: session_id} = start_charlie_bot()
     chat_id = unique_chat_id()
     model = FakeLLM.claim()
 
@@ -209,7 +201,7 @@ defmodule Froth.Inference.ToolsTest do
                chat_id,
                bot_id: bot_id,
                bot_username: "charliebuddybot",
-               session_id: "charlie"
+               session_id: session_id
              )
 
     assert result["status"] == "started"
@@ -267,7 +259,7 @@ defmodule Froth.Inference.ToolsTest do
                %{"cycle_id" => result["cycle_id"], "include_messages" => true},
                chat_id,
                bot_id: bot_id,
-               session_id: "charlie"
+               session_id: session_id
              )
 
     assert transcript =~ result["cycle_id"]
