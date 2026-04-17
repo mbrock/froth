@@ -365,21 +365,21 @@ defmodule Froth.Agent.FailureIntervention do
 
   defp deliver_failure_report_tool_use(_content), do: nil
 
-  defp normalize_report(input, rpt) when is_map(input) and is_map(rpt) do
-    interventions =
-      input
-      |> Map.get("intervention", [])
-      |> normalize_interventions()
-
+  # The `deliver_failure_report` tool schema declares intention, situation,
+  # invocation, expectation, irritation, and designation as required
+  # string fields, so a well-formed LLM call will supply all of them. We
+  # only cap per-field length so Telegram rendering stays sane; any
+  # missing required field will just come through as nil and render
+  # blank, which is a louder signal than substituting a canned fallback.
+  defp normalize_report(input, _rpt) when is_map(input) do
     %{
-      "intention" => normalized_field(input["intention"], rpt.initial_intention),
-      "situation" => normalized_field(input["situation"], fallback_situation(rpt)),
-      "invocation" => normalized_field(input["invocation"], fallback_invocation(rpt)),
-      "expectation" => normalized_field(input["expectation"], fallback_expectation(rpt)),
-      "irritation" => normalized_field(input["irritation"], fallback_irritation(rpt)),
-      "designation" => normalized_field(input["designation"], fallback_designation(rpt)),
-      "intervention" =>
-        if(interventions == [], do: fallback_interventions(rpt), else: interventions)
+      "intention" => cap_field(input["intention"]),
+      "situation" => cap_field(input["situation"]),
+      "invocation" => cap_field(input["invocation"]),
+      "expectation" => cap_field(input["expectation"]),
+      "irritation" => cap_field(input["irritation"]),
+      "designation" => cap_field(input["designation"]),
+      "intervention" => input |> Map.get("intervention", []) |> normalize_interventions()
     }
   end
 
@@ -598,73 +598,7 @@ defmodule Froth.Agent.FailureIntervention do
       %AgentMessage{role: :user} = message -> AgentMessage.extract_text(message)
       _ -> nil
     end)
-    |> normalized_field("Resolve the current task.")
-  end
-
-  defp fallback_situation(rpt) do
-    %ToolUse{name: name} = rpt.tool_call
-    tool_turns = count_tool_turns(rpt.messages)
-
-    "The cycle reached a failed #{name} call after #{length(rpt.messages)} messages and #{tool_turns} tool turns."
-  end
-
-  defp fallback_invocation(rpt) do
-    %ToolUse{name: name, input: input} = rpt.tool_call
-    format_invocation(name, input)
-  end
-
-  defp fallback_expectation(rpt) do
-    case rpt.tool_call.name do
-      "run_shell" -> "The shell command would succeed and return usable output."
-      "elixir_eval" -> "The Elixir code would evaluate cleanly on the live node."
-      _ -> "The tool call would succeed."
-    end
-  end
-
-  defp fallback_irritation(rpt) do
-    "The tool failed with #{truncate(rpt.error_text, @max_field_chars)}"
-  end
-
-  defp fallback_designation(rpt) do
-    if repeated_invocation?(rpt.messages, rpt.tool_call.name) do
-      "stubborn retry"
-    else
-      "ordinary tool failure"
-    end
-  end
-
-  defp fallback_interventions(rpt) do
-    name = rpt.tool_call.name
-
-    suggestions =
-      case name do
-        "run_shell" ->
-          [
-            "Check the exact working directory and path before retrying.",
-            "Inspect the target file or command availability directly.",
-            "State the constraint plainly instead of improvising around it."
-          ]
-
-        "elixir_eval" ->
-          [
-            "Reduce the eval to the smallest expression that tests the assumption.",
-            "Inspect the module or data shape before making another call.",
-            "Restate the live-node constraint instead of inventing APIs."
-          ]
-
-        _ ->
-          [
-            "Pause and restate the real constraint before retrying.",
-            "Inspect the concrete state instead of guessing."
-          ]
-      end
-
-    if repeated_invocation?(rpt.messages, name) do
-      ["Break the current retry loop and choose a new diagnostic step." | suggestions]
-    else
-      suggestions
-    end
-    |> Enum.take(@max_interventions)
+    |> cap_field()
   end
 
   defp reply_target(
@@ -714,36 +648,6 @@ defmodule Froth.Agent.FailureIntervention do
       _ -> truncate(inspect(value), 260)
     end
   end
-
-  defp count_tool_turns(messages) when is_list(messages) do
-    messages
-    |> Enum.flat_map(fn
-      %AgentMessage{content: blocks} when is_list(blocks) -> blocks
-      _ -> []
-    end)
-    |> Enum.count(fn
-      %{"type" => "tool_use"} -> true
-      _ -> false
-    end)
-  end
-
-  defp repeated_invocation?(messages, tool_name)
-       when is_list(messages) and is_binary(tool_name) do
-    count =
-      messages
-      |> Enum.flat_map(fn
-        %AgentMessage{content: blocks} when is_list(blocks) -> blocks
-        _ -> []
-      end)
-      |> Enum.count(fn
-        %{"type" => "tool_use", "name" => ^tool_name} -> true
-        _ -> false
-      end)
-
-    count > 1
-  end
-
-  defp repeated_invocation?(_messages, _tool_name), do: false
 
   defp resume_note(%PendingAsk{} = pending_ask) do
     report = get_in(pending_ask.config, ["report"]) || %{}
@@ -824,17 +728,14 @@ defmodule Froth.Agent.FailureIntervention do
   defp join_actor(label, nil), do: label
   defp join_actor(label, actor), do: "#{label} by #{actor}"
 
-  defp normalized_field(value, fallback) when is_binary(value) do
-    value
-    |> String.trim()
-    |> truncate(@max_field_chars)
-    |> case do
-      "" -> fallback
+  defp cap_field(value) when is_binary(value) do
+    case value |> String.trim() |> truncate(@max_field_chars) do
+      "" -> nil
       text -> text
     end
   end
 
-  defp normalized_field(_value, fallback), do: truncate(fallback, @max_field_chars)
+  defp cap_field(_value), do: nil
 
   defp resolution_source(value) when value in ["callback", "message"], do: value
   defp resolution_source(value) when value in [:callback, :message], do: Atom.to_string(value)
