@@ -25,6 +25,7 @@ defmodule Froth.Telegram.Bot do
 
   alias Froth.Repo
   alias Froth.Telegram.Bot.Config, as: BotConfig
+  alias Froth.Telegram.Bot.CycleState
   alias Froth.Telegram.BotAdapter
   alias Froth.Telegram.BotContext
   alias Froth.Telegram.CostFooter
@@ -40,18 +41,10 @@ defmodule Froth.Telegram.Bot do
 
   defstruct [
     :bot_config,
-    :cycle,
-    :worker_pid,
-    :worker_ref,
-    :chat_id,
-    :reply_to,
-    :last_sent,
-    :narration,
+    :cycle_state,
     active_tasks: %{},
-    awaiting_user_input?: false,
     debounce_timer: nil,
     debounce_msg: nil,
-    mid_cycle_messages: [],
     pending_ask_resumes: []
   ]
 
@@ -175,10 +168,10 @@ defmodule Froth.Telegram.Bot do
 
   def handle_info(
         {:DOWN, ref, :process, pid, _reason},
-        %{worker_ref: ref, worker_pid: pid} = state
+        %{cycle_state: %CycleState{worker_ref: ref, worker_pid: pid} = cs} = state
       ) do
-    buffered_messages = state.mid_cycle_messages
-    finished_cycle_id = state.cycle && state.cycle.id
+    buffered_messages = cs.mid_cycle_messages
+    finished_cycle_id = cs.cycle.id
 
     state = maybe_append_cycle_footer(state)
 
@@ -203,8 +196,8 @@ defmodule Froth.Telegram.Bot do
 
   def handle_cast({:stop_loop, _inference_session_id}, state) do
     state =
-      case state.cycle do
-        %Cycle{id: cycle_id} -> stop_cycle(state, cycle_id, notify?: true)
+      case state.cycle_state do
+        %CycleState{cycle: %Cycle{id: cycle_id}} -> stop_cycle(state, cycle_id, notify?: true)
         _ -> state
       end
 
@@ -258,8 +251,8 @@ defmodule Froth.Telegram.Bot do
   defp dispatch_update_action(state, {:callback_stop_active, query_id}) do
     BotAdapter.answer_callback(state.bot_config.session_id, query_id)
 
-    case state.cycle do
-      %Cycle{id: cycle_id} -> stop_cycle(state, cycle_id, notify?: true)
+    case state.cycle_state do
+      %CycleState{cycle: %Cycle{id: cycle_id}} -> stop_cycle(state, cycle_id, notify?: true)
       _ -> state
     end
   end
@@ -516,7 +509,7 @@ defmodule Froth.Telegram.Bot do
   defp debounce_or_start(state, msg) do
     debounce_ms = state.bot_config.debounce_ms
 
-    if debounce_ms > 0 and is_nil(state.worker_pid) do
+    if debounce_ms > 0 and is_nil(state.cycle_state) do
       # Cancel existing timer if any
       if state.debounce_timer, do: Process.cancel_timer(state.debounce_timer)
 
@@ -549,19 +542,18 @@ defmodule Froth.Telegram.Bot do
               is_binary(text) and is_binary(system_prompt) do
     bc = state.bot_config
 
-    if state.worker_pid do
+    if cs = state.cycle_state do
       session_span = Froth.Telegram.Session.span_id(bc.session_id)
 
       Span.execute([:froth, :telegram, :bot, :busy], session_span, %{
         bot_id: bc.id,
         chat_id: chat_id,
-        active_cycle_id: state.cycle && state.cycle.id
+        active_cycle_id: cs.cycle.id
       })
 
       # Buffer the message for mid-loop injection
-      mid = Map.get(state, :mid_cycle_messages, [])
       buffered = %{chat_id: chat_id, reply_to: reply_to, text: text, time: DateTime.utc_now()}
-      %{state | mid_cycle_messages: mid ++ [buffered]}
+      put_in(state.cycle_state.mid_cycle_messages, cs.mid_cycle_messages ++ [buffered])
     else
       BotAdapter.send_typing(bc.session_id, chat_id)
 
@@ -632,15 +624,16 @@ defmodule Froth.Telegram.Bot do
     {:ok, pid} = Worker.start_link({cycle, config})
     ref = Process.monitor(pid)
 
-    state
-    |> reset_cycle_state()
-    |> Map.merge(%{
-      cycle: cycle,
-      worker_pid: pid,
-      worker_ref: ref,
-      chat_id: chat_id,
-      reply_to: reply_to
-    })
+    %{
+      state
+      | cycle_state: %CycleState{
+          cycle: cycle,
+          worker_pid: pid,
+          worker_ref: ref,
+          chat_id: chat_id,
+          reply_to: reply_to
+        }
+    }
   end
 
   @response_instruction "\n\nNow reply using the send_message tool."
@@ -668,24 +661,15 @@ defmodule Froth.Telegram.Bot do
 
   defp stop_cycle(state, cycle_id, opts) when is_binary(cycle_id) do
     notify? = Keyword.get(opts, :notify?, false)
+    cs = state.cycle_state
+
+    if notify? and match?(%CycleState{cycle: %Cycle{id: ^cycle_id}}, cs) do
+      BotAdapter.send_italic(state.bot_config.session_id, cs.chat_id, cs.reply_to, "stopped")
+    end
 
     state =
-      if ((notify? and state.cycle) && state.cycle.id == cycle_id) and is_integer(state.chat_id) do
-        BotAdapter.send_italic(
-          state.bot_config.session_id,
-          state.chat_id,
-          state.reply_to,
-          "stopped"
-        )
-
-        state
-      else
-        state
-      end
-
-    state =
-      if (state.cycle && state.cycle.id == cycle_id) and is_pid(state.worker_pid) do
-        Process.exit(state.worker_pid, {:shutdown, :cancelled})
+      if match?(%CycleState{cycle: %Cycle{id: ^cycle_id}}, cs) do
+        Process.exit(cs.worker_pid, {:shutdown, :cancelled})
         reset_cycle_state(state)
       else
         state
@@ -697,22 +681,9 @@ defmodule Froth.Telegram.Bot do
     prune_cycle_indexes(state, cycle_id)
   end
 
-  # Clear all per-cycle fields back to their struct defaults. Does not touch
-  # `active_tasks` (keyed by cycle_id) — use `prune_cycle_indexes/2` for that.
-  defp reset_cycle_state(state) do
-    %{
-      state
-      | cycle: nil,
-        worker_pid: nil,
-        worker_ref: nil,
-        chat_id: nil,
-        reply_to: nil,
-        awaiting_user_input?: false,
-        last_sent: nil,
-        narration: nil,
-        mid_cycle_messages: []
-    }
-  end
+  # Clear `cycle_state` — back to "idle". Does not touch `active_tasks`
+  # (keyed by cycle_id; use `prune_cycle_indexes/2` for that).
+  defp reset_cycle_state(state), do: %{state | cycle_state: nil}
 
   defp prune_cycle_indexes(state, cycle_id) when is_binary(cycle_id) do
     %{state | active_tasks: Map.delete(state.active_tasks, cycle_id)}
@@ -722,8 +693,9 @@ defmodule Froth.Telegram.Bot do
 
   defp prepare_tool_call(state, %ToolUse{name: name, input: input} = tool_use, context)
        when is_map(input) do
-    chat_id = context[:chat_id] || state.chat_id
-    reply_to = context[:reply_to] || state.reply_to
+    cs = state.cycle_state
+    chat_id = context[:chat_id] || (cs && cs.chat_id)
+    reply_to = context[:reply_to] || (cs && cs.reply_to)
     cycle_id = context[:cycle_id]
     bc = state.bot_config
 
@@ -731,6 +703,7 @@ defmodule Froth.Telegram.Bot do
       {{:error, "missing chat_id in tool context"}, state}
     else
       task_ids = state.active_tasks |> Map.get(cycle_id, MapSet.new()) |> Enum.sort()
+      narration = cs && cs.narration
 
       execution_base = %{
         tool_use_id: tool_use.id,
@@ -740,11 +713,11 @@ defmodule Froth.Telegram.Bot do
         chat_id: chat_id,
         reply_to: reply_to,
         cycle_id: cycle_id,
-        provider: state.cycle && state.cycle.provider,
-        current_narration_message_id: state.narration && state.narration.message_id,
-        current_narration_text: state.narration && state.narration.text,
-        current_narration_mode: state.narration && state.narration.mode,
-        last_agent_message_id: state.last_sent && state.last_sent.id,
+        provider: cs && cs.cycle.provider,
+        current_narration_message_id: narration && narration.message_id,
+        current_narration_text: narration && narration.text,
+        current_narration_mode: narration && narration.mode,
+        last_agent_message_id: (cs && cs.last_sent && cs.last_sent.id) || nil,
         system_prompt: resolve_system_prompt(chat_id, nil, bc),
         model: bc.model,
         tools: resolve_tool_specs(bc),
@@ -818,7 +791,10 @@ defmodule Froth.Telegram.Bot do
   defp extract_cycle_id(%{cycle_id: cycle_id}) when is_binary(cycle_id), do: cycle_id
   defp extract_cycle_id(_), do: nil
 
-  defp maybe_inject_mid_cycle_messages(result, %{mid_cycle_messages: [_ | _] = msgs} = state) do
+  defp maybe_inject_mid_cycle_messages(
+         result,
+         %{cycle_state: %CycleState{mid_cycle_messages: [_ | _] = msgs}} = state
+       ) do
     injection =
       msgs
       |> Enum.map(fn %{text: text} ->
@@ -838,7 +814,7 @@ defmodule Froth.Telegram.Bot do
           other
       end
 
-    {new_result, %{state | mid_cycle_messages: []}}
+    {new_result, put_in(state.cycle_state.mid_cycle_messages, [])}
   end
 
   defp maybe_inject_mid_cycle_messages(result, state), do: {result, state}
@@ -901,7 +877,7 @@ defmodule Froth.Telegram.Bot do
       live_pending_ask_cycle?(state, pending_ask) ->
         resolve_pending_ask_live(state, resume)
 
-      is_pid(state.worker_pid) ->
+      state.cycle_state ->
         %{state | pending_ask_resumes: state.pending_ask_resumes ++ [resume]}
 
       true ->
@@ -944,7 +920,7 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp resolve_pending_ask_live(state, %{pending_ask: pending_ask} = _resume)
+  defp resolve_pending_ask_live(%{cycle_state: %CycleState{worker_pid: wp}} = state, %{pending_ask: pending_ask})
        when is_map(pending_ask) do
     case pending_ask_resolution(pending_ask) do
       {:stop_cycle, mode} ->
@@ -952,13 +928,7 @@ defmodule Froth.Telegram.Bot do
         state = clear_pending_ask_wait(state)
 
         try do
-          _ =
-            Worker.resolve_pending_ask(
-              state.worker_pid,
-              pending_ask.id,
-              {:stop, {:shutdown, mode}}
-            )
-
+          _ = Worker.resolve_pending_ask(wp, pending_ask.id, {:stop, {:shutdown, mode}})
           state
         catch
           :exit, _reason ->
@@ -971,7 +941,7 @@ defmodule Froth.Telegram.Bot do
 
         try do
           case Worker.resolve_pending_ask(
-                 state.worker_pid,
+                 wp,
                  pending_ask.id,
                  {:tool_result, tool_result}
                ) do
@@ -991,11 +961,8 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp live_pending_ask_cycle?(
-         %{cycle: %Cycle{id: cycle_id}, worker_pid: worker_pid},
-         pending_ask
-       )
-       when is_binary(cycle_id) and is_pid(worker_pid) do
+  defp live_pending_ask_cycle?(%{cycle_state: %CycleState{cycle: %Cycle{id: cycle_id}}}, pending_ask)
+       when is_binary(cycle_id) do
     pending_ask.cycle_id == cycle_id
   end
 
@@ -1083,8 +1050,10 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
+  defp clear_pending_ask_wait(%{cycle_state: nil} = state), do: state
+
   defp clear_pending_ask_wait(state) do
-    %{state | awaiting_user_input?: false}
+    put_in(state.cycle_state.awaiting_user_input?, false)
   end
 
   defp resolution_config_for_message(msg, bot_config, pending_ask, answer)
@@ -1245,7 +1214,7 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp send_agent_response(
-         %{chat_id: chat_id, reply_to: reply_to, bot_config: bc} = state,
+         %{cycle_state: %CycleState{chat_id: chat_id, reply_to: reply_to}, bot_config: bc} = state,
          content
        )
        when is_integer(chat_id) do
@@ -1303,23 +1272,45 @@ defmodule Froth.Telegram.Bot do
 
   defp resolve_tool_specs(_), do: []
 
-  defp track_sent_message(state, sent, text) when is_map(state) and is_binary(text) do
+  defp track_sent_message(%{cycle_state: nil} = state, _sent, _text), do: state
+
+  defp track_sent_message(state, sent, text) when is_binary(text) do
     last_sent =
       case sent_message_id(sent) do
         id when is_integer(id) -> %{id: id, text: text}
         _ -> %{id: nil, text: text}
       end
 
-    %{state | narration: nil, awaiting_user_input?: false, last_sent: last_sent}
+    %{
+      state
+      | cycle_state: %{
+          state.cycle_state
+          | narration: nil,
+            awaiting_user_input?: false,
+            last_sent: last_sent
+        }
+    }
   end
 
+  defp track_awaiting_user_input(%{cycle_state: nil} = state, _sent, _text), do: state
+
   defp track_awaiting_user_input(state, _sent, _text) do
-    %{state | narration: nil, awaiting_user_input?: true, last_sent: nil}
+    %{
+      state
+      | cycle_state: %{
+          state.cycle_state
+          | narration: nil,
+            awaiting_user_input?: true,
+            last_sent: nil
+        }
+    }
   end
+
+  defp track_narration_message(%{cycle_state: nil} = state, _narration), do: state
 
   defp track_narration_message(state, %{message_id: message_id, text: text, mode: mode})
        when is_integer(message_id) and is_binary(text) and mode in [:italic, :markdown] do
-    %{state | narration: %{message_id: message_id, text: text, mode: mode}}
+    put_in(state.cycle_state.narration, %{message_id: message_id, text: text, mode: mode})
   end
 
   defp track_narration_message(state, _), do: state
@@ -1345,11 +1336,19 @@ defmodule Froth.Telegram.Bot do
     }
   end
 
+  defp sync_sent_message_id(%{cycle_state: nil} = state, _old_id, _new_id), do: state
+
   defp sync_sent_message_id(state, old_id, new_id)
        when is_integer(old_id) and is_integer(new_id) do
     state
-    |> update_in([Access.key(:last_sent)], &swap_id(&1, :id, old_id, new_id))
-    |> update_in([Access.key(:narration)], &swap_id(&1, :message_id, old_id, new_id))
+    |> update_in(
+      [Access.key(:cycle_state), Access.key(:last_sent)],
+      &swap_id(&1, :id, old_id, new_id)
+    )
+    |> update_in(
+      [Access.key(:cycle_state), Access.key(:narration)],
+      &swap_id(&1, :message_id, old_id, new_id)
+    )
   end
 
   defp sync_sent_message_id(state, _old_id, _new_id), do: state
@@ -1376,10 +1375,13 @@ defmodule Froth.Telegram.Bot do
 
   defp maybe_append_cycle_footer(
          %{
-           cycle: %Cycle{id: cycle_id},
-           last_sent: %{id: msg_id, text: text},
-           awaiting_user_input?: false,
-           chat_id: chat_id,
+           cycle_state: %CycleState{
+             cycle: %Cycle{id: cycle_id},
+             last_sent: %{id: msg_id, text: text},
+             awaiting_user_input?: false,
+             chat_id: chat_id,
+             reply_to: reply_to
+           },
            bot_config: bc
          } = state
        )
@@ -1396,7 +1398,7 @@ defmodule Froth.Telegram.Bot do
             last_sent_message_id: msg_id,
             last_sent_message_text: text,
             footer: footer,
-            reply_to: state.reply_to
+            reply_to: reply_to
           )
 
         state

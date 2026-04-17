@@ -5,6 +5,7 @@ defmodule Froth.Telegram.BotTest do
   alias Froth.Agent.ToolUse
   alias Froth.Repo
   alias Froth.Telegram.Bot
+  alias Froth.Telegram.Bot.CycleState
 
   setup do
     if is_nil(Process.whereis(Froth.Telegram.Registry)) do
@@ -17,12 +18,14 @@ defmodule Froth.Telegram.BotTest do
     :ok
   end
 
-  test "struct includes mid-cycle message buffer" do
-    assert %Bot{mid_cycle_messages: []} = %Bot{}
+  test "idle struct has no cycle_state" do
+    assert %Bot{cycle_state: nil} = %Bot{}
   end
 
   test "commit_tool tracks narration message state" do
     bot = start_bot()
+    stub_cycle_state(bot)
+
     tool_use = %ToolUse{id: "call_1", name: "run_shell", input: %{"command" => "pwd"}}
     context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
 
@@ -37,24 +40,22 @@ defmodule Froth.Telegram.BotTest do
              )
 
     state = :sys.get_state(bot)
-    assert state.narration == %{message_id: 77, text: "Checking X", mode: :italic}
+    assert state.cycle_state.narration == %{message_id: 77, text: "Checking X", mode: :italic}
   end
 
   test "commit_tool clears active narration when a normal message is sent" do
     bot = start_bot()
+
+    stub_cycle_state(bot, fn cs ->
+      %{cs | narration: %{message_id: 77, text: "Checking X\nAlso checking Y", mode: :italic}}
+    end)
+
     tool_use = %ToolUse{id: "call_1", name: "send_message", input: %{"text" => "hello"}}
     context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
 
-    :sys.replace_state(bot, fn state ->
-      %{state | narration: %{message_id: 77, text: "Checking X\nAlso checking Y", mode: :italic}}
-    end)
-
     outcome = %{
       result: {:ok, "sent"},
-      sent_message: %{
-        sent: %{"id" => 42},
-        text: "hello"
-      }
+      sent_message: %{sent: %{"id" => 42}, text: "hello"}
     }
 
     assert {:ok, "sent"} =
@@ -64,25 +65,23 @@ defmodule Froth.Telegram.BotTest do
              )
 
     state = :sys.get_state(bot)
-    assert state.last_sent == %{id: 42, text: "hello"}
-    assert state.narration == nil
+    assert state.cycle_state.last_sent == %{id: 42, text: "hello"}
+    assert state.cycle_state.narration == nil
   end
 
   test "commit_tool tracks sent messages and injects buffered mid-cycle messages" do
     bot = start_bot()
+
+    stub_cycle_state(bot, fn cs ->
+      %{cs | mid_cycle_messages: [%{text: "new incoming"}]}
+    end)
+
     tool_use = %ToolUse{id: "call_1", name: "send_message", input: %{"text" => "hello"}}
     context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
 
-    :sys.replace_state(bot, fn state ->
-      %{state | mid_cycle_messages: [%{text: "new incoming"}]}
-    end)
-
     outcome = %{
       result: {:ok, "sent"},
-      sent_message: %{
-        sent: %{"id" => 42},
-        text: "hello"
-      }
+      sent_message: %{sent: %{"id" => 42}, text: "hello"}
     }
 
     assert {:ok, result_text} =
@@ -95,8 +94,8 @@ defmodule Froth.Telegram.BotTest do
     assert result_text =~ "Message received during tool execution: new incoming"
 
     state = :sys.get_state(bot)
-    assert state.last_sent == %{id: 42, text: "hello"}
-    assert state.mid_cycle_messages == []
+    assert state.cycle_state.last_sent == %{id: 42, text: "hello"}
+    assert state.cycle_state.mid_cycle_messages == []
   end
 
   test "telegram error updates do not crash the bot" do
@@ -115,9 +114,9 @@ defmodule Froth.Telegram.BotTest do
   test "send-succeeded updates replace tracked temporary ids" do
     bot = start_bot()
 
-    :sys.replace_state(bot, fn state ->
+    stub_cycle_state(bot, fn cs ->
       %{
-        state
+        cs
         | last_sent: %{id: 101, text: "hello"},
           narration: %{message_id: 202, text: "Checking X", mode: :italic}
       }
@@ -133,8 +132,8 @@ defmodule Froth.Telegram.BotTest do
        }}
     )
 
-    assert :sys.get_state(bot).narration.message_id == 303
-    assert :sys.get_state(bot).last_sent.id == 101
+    assert :sys.get_state(bot).cycle_state.narration.message_id == 303
+    assert :sys.get_state(bot).cycle_state.last_sent.id == 101
 
     send(
       bot,
@@ -147,8 +146,8 @@ defmodule Froth.Telegram.BotTest do
     )
 
     state = :sys.get_state(bot)
-    assert state.last_sent.id == 404
-    assert state.narration.message_id == 303
+    assert state.cycle_state.last_sent.id == 404
+    assert state.cycle_state.narration.message_id == 303
   end
 
   test "cycle footer edits the final message with cache stats when a cycle finishes" do
@@ -180,11 +179,13 @@ defmodule Froth.Telegram.BotTest do
     :sys.replace_state(bot, fn state ->
       %{
         state
-        | cycle: cycle,
-          worker_pid: worker_pid,
-          worker_ref: worker_ref,
-          chat_id: 123,
-          last_sent: %{id: 42, text: "hello"}
+        | cycle_state: %CycleState{
+            cycle: cycle,
+            worker_pid: worker_pid,
+            worker_ref: worker_ref,
+            chat_id: 123,
+            last_sent: %{id: 42, text: "hello"}
+          }
       }
     end)
 
@@ -222,6 +223,23 @@ defmodule Froth.Telegram.BotTest do
        system_prompt_fun: fn _chat_id -> "" end,
        tools_module: Froth.Telegram.Toolsets.Charlie}
     )
+  end
+
+  # Install a minimal %CycleState{} on an otherwise-idle bot so that
+  # tests exercising tool-execution paths don't short-circuit on
+  # `cycle_state: nil`.
+  defp stub_cycle_state(bot, fun \\ fn cs -> cs end) do
+    :sys.replace_state(bot, fn state ->
+      base = %CycleState{
+        cycle: %Cycle{id: "cycle_1"},
+        worker_pid: self(),
+        worker_ref: make_ref(),
+        chat_id: 123,
+        reply_to: 456
+      }
+
+      %{state | cycle_state: fun.(base)}
+    end)
   end
 
   defmodule FakeTelegramSession do
