@@ -3,7 +3,9 @@ defmodule Froth.Inference.Tools do
   Tool catalog and execution for inference sessions.
   """
 
-  alias Froth.Agent.{AwaitControl, Config, CycleRuntime, Message, TaskBridge}
+  alias Froth.Agent.{AwaitControl, Config, CycleRuntime, Message, Surface, TaskBridge, ToolUse}
+  alias Froth.Agent.CycleRuntime.{Context, View}
+  alias Froth.Telegram.Bot.Config, as: BotConfig
   alias Froth.{ChatSummary, Event, Repo}
   alias Froth.Search, as: WebSearch
   alias Froth.Telegram.BotAdapter
@@ -491,15 +493,23 @@ defmodule Froth.Inference.Tools do
   def label(name) when is_binary(name), do: name
   def label(_), do: "tool"
 
-  def execute(name, input, chat_id, opts) do
-    session_id = opts[:session_id] || @default_session_id
+  @doc """
+  Primary entry point. Takes a cycle-level `%Context{}` and the
+  per-call `%ToolUse{}`; `hooks` carries optional test-only overrides
+  (currently just `:send_message_fun`).
+  """
+  def execute(%Context{} = ctx, %ToolUse{name: name, input: input} = tool_call, hooks \\ [])
+      when is_list(hooks) do
+    chat_id = ctx_chat_id(ctx)
+    session_id = ctx_session_id(ctx)
+    bot_id = ctx_bot_id(ctx)
 
     case name do
       "read_log" ->
         {:ok, read_log(chat_id, input, session_id)}
 
       "ask" ->
-        ask(chat_id, input, opts)
+        ask(ctx, tool_call, hooks)
 
       "search" ->
         {:ok, search(chat_id, input, session_id)}
@@ -522,39 +532,15 @@ defmodule Froth.Inference.Tools do
         look(chat_id, input, session_id)
 
       "read_tool_transcript" ->
-        bot_id = opts[:bot_id] || "charlie"
         {:ok, read_tool_transcript(chat_id, bot_id, input)}
 
       "elixir_eval" ->
-        topic =
-          cond do
-            is_binary(opts[:topic]) and opts[:topic] != "" ->
-              opts[:topic]
-
-            opts[:ref] ->
-              "tool:#{opts[:ref]}"
-
-            true ->
-              nil
-          end
-
-        requested_eval_session_id = eval_session_id(input)
-
-        eval_opts = [session_id: requested_eval_session_id]
-        eval_opts = if topic, do: Keyword.put(eval_opts, :topic, topic), else: eval_opts
-
-        eval_opts =
-          if opts[:bot_id] do
-            Keyword.put(eval_opts, :telegram, %{bot_id: opts[:bot_id], chat_id: chat_id})
-          else
-            eval_opts
-          end
-
+        eval_opts = [session_id: eval_session_id(input)]
+        eval_opts = maybe_put_eval_topic(eval_opts, ctx)
+        eval_opts = maybe_put_eval_telegram(eval_opts, ctx)
         Froth.Tasks.Eval.run_eval(input["code"], eval_opts)
 
       "run_shell" ->
-        command = input["command"]
-
         working_dir =
           case input["working_dir"] do
             dir when is_binary(dir) and dir != "" -> dir
@@ -564,16 +550,15 @@ defmodule Froth.Inference.Tools do
         shell_opts = [working_dir: working_dir]
 
         shell_opts =
-          if opts[:bot_id] do
-            Keyword.put(shell_opts, :telegram, %{
-              bot_id: opts[:bot_id],
-              chat_id: chat_id
-            })
-          else
-            shell_opts
+          case ctx.bot_config do
+            %BotConfig{id: bid} when is_binary(bid) ->
+              Keyword.put(shell_opts, :telegram, %{bot_id: bid, chat_id: chat_id})
+
+            _ ->
+              shell_opts
           end
 
-        Froth.Tasks.Shell.run_shell(command, shell_opts)
+        Froth.Tasks.Shell.run_shell(input["command"], shell_opts)
 
       "send_input" ->
         task_id = input["task_id"]
@@ -587,7 +572,6 @@ defmodule Froth.Inference.Tools do
         end
 
       "list_tasks" ->
-        bot_id = opts[:bot_id] || "charlie"
         tasks = Froth.Tasks.list_recent(bot_id)
 
         if tasks == [] do
@@ -648,8 +632,7 @@ defmodule Froth.Inference.Tools do
       "subscribe_task" ->
         task_id = input["task_id"]
         expect_minutes = input["expect_minutes"]
-        bot_id = opts[:bot_id] || "charlie"
-
+        reply_to = ctx_reply_to(ctx)
         task = Froth.Tasks.get(task_id)
 
         cond do
@@ -662,7 +645,7 @@ defmodule Froth.Inference.Tools do
           true ->
             Froth.Tasks.subscribe_telegram(task_id, bot_id, chat_id,
               expect_minutes: expect_minutes,
-              message_id: opts[:reply_to]
+              message_id: reply_to
             )
 
             msg =
@@ -674,7 +657,7 @@ defmodule Froth.Inference.Tools do
         end
 
       "await" ->
-        await_background_tasks(chat_id, input, opts)
+        await_background_tasks(ctx, tool_call, hooks)
 
       "spawn_engineer" ->
         case input["prompt"] do
@@ -693,47 +676,155 @@ defmodule Froth.Inference.Tools do
         end
 
       "spawn_agent" ->
-        spawn_agent(input, chat_id, opts)
+        spawn_agent(ctx, tool_call)
 
       "register_headlines" ->
-        register_headlines(input, chat_id, session_id, opts)
+        register_headlines(ctx, tool_call, hooks)
 
       _ ->
         {:error, "unknown tool: #{name}"}
     end
   end
 
-  defp spawn_agent(input, chat_id, opts) when is_map(input) and is_integer(chat_id) do
-    reply_to = spawn_agent_reply_to(input)
+  @doc """
+  Legacy 4-ary signature: `execute(name, input, chat_id, opts)`. Tests
+  and ad-hoc callers that don't hold a full `%Context{}` use this
+  shim; it synthesizes a Context from flat opts and delegates to the
+  primary `execute/3`.
+  """
+  def execute(name, input, chat_id, opts)
+      when is_binary(name) and is_map(input) and is_list(opts) do
+    ctx = context_from_opts(chat_id, opts)
 
-    with {:ok, prompt} <- required_trimmed_string(input, "prompt"),
-         {:ok, model} <- optional_trimmed_string(input, "model"),
-         {:ok, system_prompt} <- optional_trimmed_string(input, "system_prompt"),
-         {:ok, tool_names, tool_specs} <- resolve_spawn_agent_tools(input),
-         {:ok, {cycle, task_id, _pid}} <-
-           start_spawn_agent_cycle(
-             prompt,
-             tool_specs,
-             chat_id,
-             opts,
-             model: model || @spawn_agent_default_model,
-             system_prompt: system_prompt,
-             reply_to: reply_to
-           ) do
-      {:ok, spawn_agent_result(cycle, tool_names, task_id, opts)}
+    tool_call = %ToolUse{
+      id: opts[:tool_use_id] || "ad-hoc:#{name}",
+      name: name,
+      input: input
+    }
+
+    hooks = Keyword.take(opts, [:send_message_fun])
+
+    execute(ctx, tool_call, hooks)
+  end
+
+  # --- Context-field accessors (keep callers terse) ---
+
+  defp ctx_chat_id(%Context{surface: %Surface{chat_id: id}}) when is_integer(id), do: id
+  defp ctx_chat_id(_ctx), do: 0
+
+  defp ctx_session_id(%Context{surface: %Surface{session_id: id}}) when is_binary(id), do: id
+  defp ctx_session_id(_ctx), do: @default_session_id
+
+  defp ctx_bot_id(%Context{bot_config: %BotConfig{id: id}}) when is_binary(id), do: id
+  defp ctx_bot_id(_ctx), do: "charlie"
+
+  defp ctx_reply_to(%Context{surface: %Surface{reply_to: r}}) when is_integer(r), do: r
+  defp ctx_reply_to(_ctx), do: nil
+
+  # Build a `%Context{}` from the legacy flat opts format. Used by the
+  # 4-ary shim so tests and ad-hoc callers don't need to construct a
+  # full Context themselves.
+  defp context_from_opts(chat_id, opts) when is_list(opts) do
+    %Context{
+      cycle_id: opts[:cycle_id],
+      cycle: nil,
+      bot_config: bot_config_from_opts(opts),
+      surface: %Surface{
+        session_id: opts[:session_id],
+        chat_id: chat_id,
+        reply_to: opts[:reply_to]
+      },
+      view: %View{active_task_ids: opts[:active_task_ids] || []},
+      spam: Keyword.get(opts, :spam, true),
+      system_prompt: opts[:system_prompt],
+      tool_specs: opts[:tools] || []
+    }
+  end
+
+  # Synthetic BotConfig for the legacy shim path. Fills in minimal
+  # required fields (bot_user_id/owner_user_id are not used by any
+  # tool). Returns nil when there's not even a bot_id.
+  defp bot_config_from_opts(opts) do
+    case opts[:bot_id] do
+      bid when is_binary(bid) ->
+        %BotConfig{
+          id: bid,
+          session_id: opts[:session_id] || "",
+          bot_username: opts[:bot_username] || "",
+          bot_user_id: 0,
+          owner_user_id: 0,
+          model: opts[:model] || "",
+          thinking: opts[:thinking],
+          effort: opts[:effort],
+          tools: opts[:tools],
+          system_prompt: opts[:system_prompt]
+        }
+
+      _ ->
+        nil
     end
   end
 
-  defp spawn_agent(_input, _chat_id, _opts), do: {:error, "spawn_agent requires a valid chat_id"}
+  defp maybe_put_eval_topic(eval_opts, %Context{cycle_id: cycle_id})
+       when is_binary(cycle_id) and cycle_id != "" do
+    Keyword.put(eval_opts, :topic, "cycle:#{cycle_id}")
+  end
 
-  defp start_spawn_agent_cycle(prompt, tool_specs, chat_id, opts, extra_opts)
-       when is_binary(prompt) and is_list(tool_specs) and is_integer(chat_id) and is_list(opts) and
+  defp maybe_put_eval_topic(eval_opts, _ctx), do: eval_opts
+
+  defp maybe_put_eval_telegram(eval_opts, %Context{
+         bot_config: %BotConfig{id: bid},
+         surface: %Surface{chat_id: chat_id}
+       })
+       when is_binary(bid) and is_integer(chat_id) do
+    Keyword.put(eval_opts, :telegram, %{bot_id: bid, chat_id: chat_id})
+  end
+
+  defp maybe_put_eval_telegram(eval_opts, _ctx), do: eval_opts
+
+  defp spawn_agent(%Context{} = ctx, %ToolUse{input: input}) when is_map(input) do
+    chat_id = ctx_chat_id(ctx)
+
+    if chat_id == 0 do
+      {:error, "spawn_agent requires a valid chat_id"}
+    else
+      input_reply_to = spawn_agent_reply_to_from_input(input)
+      reply_to = input_reply_to || ctx_reply_to(ctx)
+
+      with {:ok, prompt} <- required_trimmed_string(input, "prompt"),
+           {:ok, model} <- optional_trimmed_string(input, "model"),
+           {:ok, system_prompt} <- optional_trimmed_string(input, "system_prompt"),
+           {:ok, tool_names, tool_specs} <- resolve_spawn_agent_tools(input),
+           {:ok, {cycle, task_id, _pid}} <-
+             start_spawn_agent_cycle(
+               ctx,
+               prompt,
+               tool_specs,
+               chat_id,
+               reply_to,
+               model: model || @spawn_agent_default_model,
+               system_prompt: system_prompt
+             ) do
+        {:ok, spawn_agent_result(ctx, cycle, tool_names, task_id)}
+      end
+    end
+  end
+
+  defp start_spawn_agent_cycle(
+         %Context{} = ctx,
+         prompt,
+         tool_specs,
+         chat_id,
+         reply_to,
+         extra_opts
+       )
+       when is_binary(prompt) and is_list(tool_specs) and is_integer(chat_id) and
               is_list(extra_opts) do
-    reply_to = spawn_agent_reply_to(extra_opts, opts)
-    parent_cycle_id = opts[:cycle_id]
-    bot_id = opts[:bot_id]
+    parent_cycle_id = ctx.cycle_id
+    bc = ctx.bot_config
+    bot_id = bc && bc.id
 
-    config = build_spawn_agent_config(chat_id, reply_to, tool_specs, opts, extra_opts)
+    config = build_spawn_agent_config(ctx, chat_id, reply_to, tool_specs, extra_opts)
 
     user_message =
       Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
@@ -758,15 +849,10 @@ defmodule Froth.Inference.Tools do
           reply_to: reply_to,
           bot_id: bot_id,
           parent_cycle_id: parent_cycle_id,
-          bot_config: parent_bot_config_snapshot(parent_cycle_id)
+          bot_config: bc,
+          spam: ctx.spam
         ]
         |> Keyword.reject(fn {_k, v} -> is_nil(v) end)
-
-      spawn_opts =
-        case opts[:spam] do
-          nil -> spawn_opts
-          spam -> Keyword.put(spawn_opts, :spam, spam)
-        end
 
       # `spawn_agent` is fire-and-forget: the parent cycle does not
       # await the subagent's result (it reads the transcript later via
@@ -791,16 +877,9 @@ defmodule Froth.Inference.Tools do
     end
   end
 
-  defp parent_bot_config_snapshot(parent_cycle_id) when is_binary(parent_cycle_id) do
-    case CycleRuntime.whereis(parent_cycle_id) do
-      pid when is_pid(pid) -> GenServer.call(pid, :get_state).bot_config
-      nil -> nil
-    end
-  end
+  defp build_spawn_agent_config(%Context{} = ctx, chat_id, reply_to, tool_specs, extra_opts) do
+    bc = ctx.bot_config
 
-  defp parent_bot_config_snapshot(_), do: nil
-
-  defp build_spawn_agent_config(chat_id, reply_to, tool_specs, opts, extra_opts) do
     %Config{
       provider: nil,
       system:
@@ -813,9 +892,9 @@ defmodule Froth.Inference.Tools do
         %{}
         |> maybe_put_context(:chat_id, chat_id)
         |> maybe_put_context(:reply_to, reply_to)
-        |> maybe_put_context(:bot_id, opts[:bot_id])
-        |> maybe_put_context(:session_id, opts[:session_id])
-        |> maybe_put_context(:bot_username, opts[:bot_username]),
+        |> maybe_put_context(:bot_id, bc && bc.id)
+        |> maybe_put_context(:session_id, bc && bc.session_id)
+        |> maybe_put_context(:bot_username, bc && bc.bot_username),
       parent_span_id: nil,
       thinking: nil,
       effort: nil,
@@ -842,7 +921,8 @@ defmodule Froth.Inference.Tools do
 
   defp maybe_link_spawned_cycle(_cycle, _chat_id, _bot_id, _reply_to), do: :ok
 
-  defp spawn_agent_result(cycle, tool_names, task_id, opts) when is_list(tool_names) do
+  defp spawn_agent_result(%Context{bot_config: bc}, cycle, tool_names, task_id)
+       when is_list(tool_names) do
     %{
       "status" => "started",
       "cycle_id" => cycle.id,
@@ -854,31 +934,20 @@ defmodule Froth.Inference.Tools do
       "check_hint" =>
         "Call read_tool_transcript with cycle_id=#{cycle.id} and include_messages=true to inspect the delegated agent's transcript and final reply."
     }
-    |> maybe_put_spawn_agent_result("open_url", spawn_agent_open_url(opts, cycle.id))
+    |> maybe_put_spawn_agent_result("open_url", spawn_agent_open_url(bc, cycle.id))
   end
 
-  defp spawn_agent_open_url(opts, cycle_id) when is_binary(cycle_id) do
-    bot_id = opts[:bot_id]
-    bot_username = opts[:bot_username]
-
-    if is_binary(bot_id) and bot_id != "" and is_binary(bot_username) and bot_username != "" do
-      "https://t.me/#{bot_username}/tool?startapp=cycle_#{bot_id}_#{cycle_id}"
-    end
+  defp spawn_agent_open_url(%BotConfig{id: bid, bot_username: un}, cycle_id)
+       when is_binary(cycle_id) and is_binary(bid) and bid != "" and is_binary(un) and un != "" do
+    "https://t.me/#{un}/tool?startapp=cycle_#{bid}_#{cycle_id}"
   end
 
-  defp spawn_agent_open_url(_opts, _cycle_id), do: nil
+  defp spawn_agent_open_url(_bot_config, _cycle_id), do: nil
 
   defp maybe_put_spawn_agent_result(map, _key, nil), do: map
   defp maybe_put_spawn_agent_result(map, key, value), do: Map.put(map, key, value)
 
-  defp spawn_agent_reply_to(extra_opts, _opts) when is_list(extra_opts) do
-    case Keyword.get(extra_opts, :reply_to) do
-      reply_to when is_integer(reply_to) -> reply_to
-      _ -> nil
-    end
-  end
-
-  defp spawn_agent_reply_to(input) when is_map(input) do
+  defp spawn_agent_reply_to_from_input(input) when is_map(input) do
     case Map.get(input, "reply_to") do
       reply_to when is_integer(reply_to) -> reply_to
       _ -> nil
@@ -974,18 +1043,29 @@ defmodule Froth.Inference.Tools do
     end
   end
 
-  defp register_headlines(%{"date" => date, "headlines" => headlines}, chat_id, session_id, opts)
-       when is_binary(date) and is_list(headlines) and is_binary(session_id) and
-              is_integer(chat_id) do
+  defp register_headlines(
+         %Context{} = ctx,
+         %ToolUse{input: %{"date" => date, "headlines" => headlines}},
+         hooks
+       )
+       when is_binary(date) and is_list(headlines) do
+    chat_id = ctx_chat_id(ctx)
+    session_id = ctx_session_id(ctx)
+
     with {:ok, normalized_headlines} <- normalize_headlines(headlines) do
-      case maybe_send_headlines_message(date, normalized_headlines, chat_id, session_id, opts) do
+      case maybe_send_headlines_message(ctx, date, normalized_headlines, hooks) do
         {:ok, _sent} ->
           store_headlines_registered_event(date, chat_id, normalized_headlines)
 
           Span.execute(
             [:froth, :headlines, :registered],
             nil,
-            %{date: date, chat_id: chat_id, headlines: normalized_headlines},
+            %{
+              date: date,
+              chat_id: chat_id,
+              headlines: normalized_headlines,
+              session_id: session_id
+            },
             %{count: length(normalized_headlines)}
           )
 
@@ -1002,17 +1082,18 @@ defmodule Froth.Inference.Tools do
     end
   end
 
-  defp register_headlines(_input, _chat_id, _session_id, _opts) do
+  defp register_headlines(_ctx, _tool_call, _hooks) do
     {:error, "register_headlines requires date and headlines"}
   end
 
-  defp maybe_send_headlines_message(date, normalized_headlines, chat_id, session_id, opts)
-       when is_binary(date) and is_list(normalized_headlines) and is_integer(chat_id) and
-              is_binary(session_id) do
-    if Keyword.get(opts, :spam, true) do
+  defp maybe_send_headlines_message(%Context{} = ctx, date, normalized_headlines, hooks)
+       when is_binary(date) and is_list(normalized_headlines) do
+    if ctx.spam do
+      chat_id = ctx_chat_id(ctx)
+      session_id = ctx_session_id(ctx)
       {text, entities} = format_headlines_message(date, normalized_headlines)
-      send_message_fun = Keyword.get(opts, :send_message_fun, &BotAdapter.send_message/4)
-      reply_markup = headlines_reply_markup(opts)
+      send_message_fun = Keyword.get(hooks, :send_message_fun, &BotAdapter.send_message/4)
+      reply_markup = headlines_reply_markup(ctx)
 
       send_message_opts =
         [entities: entities]
@@ -1255,24 +1336,31 @@ defmodule Froth.Inference.Tools do
   defp maybe_put_send_message_opt(keyword, _key, nil), do: keyword
   defp maybe_put_send_message_opt(keyword, key, value), do: Keyword.put(keyword, key, value)
 
-  defp ask(chat_id, input, opts) when is_integer(chat_id) and is_map(input) and is_list(opts) do
+  defp ask(
+         %Context{
+           surface: %Surface{session_id: session_id, chat_id: chat_id, reply_to: reply_to},
+           bot_config: %BotConfig{id: bot_id},
+           cycle_id: cycle_id,
+           system_prompt: system_prompt
+         } = ctx,
+         %ToolUse{id: tool_use_id, input: input},
+         hooks
+       )
+       when is_binary(session_id) and is_integer(chat_id) and is_binary(bot_id) and
+              is_binary(cycle_id) and is_binary(tool_use_id) and is_binary(system_prompt) and
+              is_map(input) do
     with {:ok, question} <- required_trimmed_string(input, "question"),
-         {:ok, alternatives} <- normalize_ask_alternatives(Map.get(input, "alternatives")),
-         {:ok, session_id} <- required_opt_string(opts, :session_id),
-         {:ok, bot_id} <- required_opt_string(opts, :bot_id),
-         {:ok, cycle_id} <- required_opt_string(opts, :cycle_id),
-         {:ok, tool_use_id} <- required_opt_string(opts, :tool_use_id),
-         {:ok, system_prompt} <- required_opt_string(opts, :system_prompt) do
-      send_message_fun = Keyword.get(opts, :send_message_fun, &BotAdapter.send_message/4)
+         {:ok, alternatives} <- normalize_ask_alternatives(Map.get(input, "alternatives")) do
+      send_message_fun = Keyword.get(hooks, :send_message_fun, &BotAdapter.send_message/4)
       reply_markup = ask_reply_markup(alternatives)
 
       send_opts =
-        [reply_to: opts[:reply_to]]
+        [reply_to: reply_to]
         |> maybe_put_send_message_opt(:reply_markup, reply_markup)
 
       case send_message_fun.(session_id, chat_id, question, send_opts) do
         {:ok, sent} ->
-          config = ask_config(opts, system_prompt)
+          config = pending_ask_session_config(ctx)
 
           with {:ok, message_id} <- ask_message_id(sent),
                resolved_message_id = MessageIdSync.resolve(bot_id, chat_id, message_id),
@@ -1288,12 +1376,7 @@ defmodule Froth.Inference.Tools do
                    config: config
                  }) do
             pending_ask =
-              maybe_refresh_pending_ask_message_id(
-                pending_ask,
-                bot_id,
-                chat_id,
-                message_id
-              )
+              maybe_refresh_pending_ask_message_id(pending_ask, bot_id, chat_id, message_id)
 
             {:await,
              %{
@@ -1317,103 +1400,102 @@ defmodule Froth.Inference.Tools do
     end
   end
 
-  defp ask(_chat_id, _input, _opts), do: {:error, "ask requires a valid chat_id"}
+  defp ask(_ctx, _tool_call, _hooks), do: {:error, "ask requires a full Telegram context"}
 
-  defp ask_config(opts, system_prompt) when is_list(opts) and is_binary(system_prompt) do
-    pending_ask_session_config(opts, system_prompt)
-  end
+  defp await_background_tasks(
+         %Context{
+           surface: %Surface{session_id: session_id, chat_id: chat_id, reply_to: reply_to},
+           bot_config: %BotConfig{id: bot_id},
+           cycle_id: cycle_id,
+           system_prompt: system_prompt,
+           view: %View{active_task_ids: active_task_ids}
+         } = ctx,
+         %ToolUse{id: tool_use_id, input: input},
+         hooks
+       )
+       when is_binary(session_id) and is_integer(chat_id) and is_binary(bot_id) and
+              is_binary(cycle_id) and is_binary(tool_use_id) and is_binary(system_prompt) and
+              is_map(input) do
+    task_ids = Enum.filter(active_task_ids, &is_binary/1)
 
-  defp await_background_tasks(chat_id, input, opts)
-       when is_integer(chat_id) and is_map(input) and is_list(opts) do
-    with {:ok, session_id} <- required_opt_string(opts, :session_id),
-         {:ok, bot_id} <- required_opt_string(opts, :bot_id),
-         {:ok, cycle_id} <- required_opt_string(opts, :cycle_id),
-         {:ok, tool_use_id} <- required_opt_string(opts, :tool_use_id),
-         {:ok, system_prompt} <- required_opt_string(opts, :system_prompt) do
-      task_ids =
-        case opts[:active_task_ids] do
-          values when is_list(values) -> Enum.filter(values, &is_binary/1)
-          _ -> []
+    if task_ids == [] do
+      {:ok, "No tracked background tasks are currently running."}
+    else
+      reason =
+        case String.trim(to_string(input["reason"] || "")) do
+          "" -> "Waiting for background tasks to settle."
+          text -> text
         end
 
-      if task_ids == [] do
-        {:ok, "No tracked background tasks are currently running."}
-      else
-        reason =
-          case String.trim(to_string(input["reason"] || "")) do
-            "" -> "Waiting for background tasks to settle."
-            text -> text
+      message_text = AwaitControl.render_message(reason, task_ids)
+      send_message_fun = Keyword.get(hooks, :send_message_fun, &BotAdapter.send_message/4)
+
+      case send_message_fun.(session_id, chat_id, message_text,
+             reply_to: reply_to,
+             reply_markup: AwaitControl.reply_markup()
+           ) do
+        {:ok, sent} ->
+          config =
+            ctx
+            |> pending_ask_session_config()
+            |> Map.put("kind", "await")
+            |> Map.put("reason", reason)
+            |> Map.put("reply_to", reply_to)
+            |> Map.put("task_ids", task_ids)
+
+          with {:ok, message_id} <- ask_message_id(sent),
+               resolved_message_id = MessageIdSync.resolve(bot_id, chat_id, message_id),
+               {:ok, pending_ask} <-
+                 PendingAsks.create(%{
+                   cycle_id: cycle_id,
+                   bot_id: bot_id,
+                   chat_id: chat_id,
+                   message_id: resolved_message_id,
+                   tool_use_id: tool_use_id,
+                   question: message_text,
+                   alternatives: AwaitControl.alternatives(),
+                   config: config
+                 }) do
+            pending_ask =
+              maybe_refresh_pending_ask_message_id(pending_ask, bot_id, chat_id, message_id)
+
+            {:await,
+             %{
+               "kind" => "await",
+               "reason" => reason,
+               "pending_ask_id" => pending_ask.id,
+               "question_message_id" => pending_ask.message_id,
+               "task_ids" => task_ids,
+               "message_text" => message_text,
+               "sent_message" => sent
+             }}
+          else
+            {:error, %Ecto.Changeset{} = changeset} ->
+              {:error, format_changeset_errors(changeset)}
+
+            {:error, reason} ->
+              {:error, format_reason(reason)}
           end
 
-        message_text = AwaitControl.render_message(reason, task_ids)
-        send_message_fun = Keyword.get(opts, :send_message_fun, &BotAdapter.send_message/4)
-
-        case send_message_fun.(session_id, chat_id, message_text,
-               reply_to: opts[:reply_to],
-               reply_markup: AwaitControl.reply_markup()
-             ) do
-          {:ok, sent} ->
-            config =
-              opts
-              |> pending_ask_session_config(system_prompt)
-              |> Map.put("kind", "await")
-              |> Map.put("reason", reason)
-              |> Map.put("reply_to", opts[:reply_to])
-              |> Map.put("task_ids", task_ids)
-
-            with {:ok, message_id} <- ask_message_id(sent),
-                 resolved_message_id = MessageIdSync.resolve(bot_id, chat_id, message_id),
-                 {:ok, pending_ask} <-
-                   PendingAsks.create(%{
-                     cycle_id: cycle_id,
-                     bot_id: bot_id,
-                     chat_id: chat_id,
-                     message_id: resolved_message_id,
-                     tool_use_id: tool_use_id,
-                     question: message_text,
-                     alternatives: AwaitControl.alternatives(),
-                     config: config
-                   }) do
-              pending_ask =
-                maybe_refresh_pending_ask_message_id(pending_ask, bot_id, chat_id, message_id)
-
-              {:await,
-               %{
-                 "kind" => "await",
-                 "reason" => reason,
-                 "pending_ask_id" => pending_ask.id,
-                 "question_message_id" => pending_ask.message_id,
-                 "task_ids" => task_ids,
-                 "message_text" => message_text,
-                 "sent_message" => sent
-               }}
-            else
-              {:error, %Ecto.Changeset{} = changeset} ->
-                {:error, format_changeset_errors(changeset)}
-
-              {:error, reason} ->
-                {:error, format_reason(reason)}
-            end
-
-          {:error, reason} ->
-            {:error, format_reason(reason)}
-        end
+        {:error, reason} ->
+          {:error, format_reason(reason)}
       end
     end
   end
 
-  defp await_background_tasks(_chat_id, _input, _opts),
-    do: {:error, "await requires a valid chat_id"}
+  defp await_background_tasks(_ctx, _tool_call, _hooks),
+    do: {:error, "await requires a full Telegram context"}
 
-  defp pending_ask_session_config(opts, system_prompt)
-       when is_list(opts) and is_binary(system_prompt) do
+  defp pending_ask_session_config(%Context{} = ctx) do
+    bc = ctx.bot_config || %{}
+
     %{
-      "system" => system_prompt,
-      "model" => opts[:model],
-      "tools" => opts[:tools] || [],
-      "thinking" => opts[:thinking] || %{},
-      "effort" => opts[:effort],
-      "tool_timeout_ms" => opts[:tool_timeout_ms]
+      "system" => ctx.system_prompt,
+      "model" => Map.get(bc, :model),
+      "tools" => ctx.tool_specs || [],
+      "thinking" => Map.get(bc, :thinking) || %{},
+      "effort" => Map.get(bc, :effort),
+      "tool_timeout_ms" => nil
     }
   end
 
@@ -1493,22 +1575,6 @@ defmodule Froth.Inference.Tools do
 
   defp ask_message_id(_sent), do: {:error, "telegram send_message did not return a message id"}
 
-  defp required_opt_string(opts, key) when is_list(opts) and is_atom(key) do
-    case Keyword.get(opts, key) do
-      value when is_binary(value) ->
-        trimmed = String.trim(value)
-
-        if trimmed == "" do
-          {:error, "#{key} is required"}
-        else
-          {:ok, trimmed}
-        end
-
-      _ ->
-        {:error, "#{key} is required"}
-    end
-  end
-
   defp format_changeset_errors(%Ecto.Changeset{} = changeset) do
     changeset
     |> Ecto.Changeset.traverse_errors(fn {message, opts} ->
@@ -1524,32 +1590,30 @@ defmodule Froth.Inference.Tools do
   defp format_reason(reason) when is_binary(reason), do: reason
   defp format_reason(reason), do: inspect(reason)
 
-  defp headlines_reply_markup(opts) when is_list(opts) do
-    cycle_id = opts[:cycle_id]
-    bot_id = opts[:bot_id]
-    bot_username = opts[:bot_username]
-
-    if is_binary(cycle_id) and cycle_id != "" and is_binary(bot_id) and bot_id != "" and
-         is_binary(bot_username) and bot_username != "" do
-      %{
-        "@type" => "replyMarkupInlineKeyboard",
-        "rows" => [
-          [
-            %{
-              "@type" => "inlineKeyboardButton",
-              "text" => "Open",
-              "type" => %{
-                "@type" => "inlineKeyboardButtonTypeUrl",
-                "url" => "https://t.me/#{bot_username}/tool?startapp=cycle_#{bot_id}_#{cycle_id}"
-              }
+  defp headlines_reply_markup(%Context{
+         cycle_id: cycle_id,
+         bot_config: %BotConfig{id: bot_id, bot_username: bot_username}
+       })
+       when is_binary(cycle_id) and cycle_id != "" and is_binary(bot_id) and bot_id != "" and
+              is_binary(bot_username) and bot_username != "" do
+    %{
+      "@type" => "replyMarkupInlineKeyboard",
+      "rows" => [
+        [
+          %{
+            "@type" => "inlineKeyboardButton",
+            "text" => "Open",
+            "type" => %{
+              "@type" => "inlineKeyboardButtonTypeUrl",
+              "url" => "https://t.me/#{bot_username}/tool?startapp=cycle_#{bot_id}_#{cycle_id}"
             }
-          ]
+          }
         ]
-      }
-    end
+      ]
+    }
   end
 
-  defp headlines_reply_markup(_opts), do: nil
+  defp headlines_reply_markup(_ctx), do: nil
 
   defp bold_entity(offset, length) when is_integer(offset) and is_integer(length) do
     %{

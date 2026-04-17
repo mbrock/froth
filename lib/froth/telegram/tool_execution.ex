@@ -30,7 +30,7 @@ defmodule Froth.Telegram.ToolExecution do
   end
 
   # Generic tool execution with a real Telegram chat: narrate to chat
-  # and dispatch through `Tools.execute/4`.
+  # and dispatch through `Tools.execute/3`.
   def execute(
         %Context{
           bot_config: %BotConfig{},
@@ -42,8 +42,7 @@ defmodule Froth.Telegram.ToolExecution do
     reply_to = Map.get(input, "reply_to") || Map.get(input, :reply_to) || ctx_reply_to
     narration_message = maybe_send_narration(ctx, tool_call, reply_to)
 
-    tool_opts = tool_opts_from(ctx, tool_call)
-    result = Tools.execute(name, input, chat_id, tool_opts)
+    result = Tools.execute(ctx, tool_call)
 
     case FailureIntervention.maybe_intervene(result, ctx, tool_call) do
       %{result: _} = outcome ->
@@ -56,21 +55,12 @@ defmodule Froth.Telegram.ToolExecution do
 
   # Headless fallback for paths without a Telegram chat (e.g.
   # `Agent.run_adhoc/2` from a cron or script). Skip narration and
-  # Telegram-side effects entirely; invoke the tool directly with
-  # chat_id=0 (tools that require a real chat_id return errors).
+  # Telegram-side effects entirely; invoke the tool directly.
   def execute(%Context{} = ctx, %ToolUse{name: name, input: input} = tool_call)
       when is_binary(name) and is_map(input) do
-    chat_id =
-      case ctx.surface do
-        %Surface{chat_id: id} when is_integer(id) -> id
-        _ -> 0
-      end
-
-    tool_opts = tool_opts_from(ctx, tool_call)
-
     result =
-      name
-      |> Tools.execute(input, chat_id, tool_opts)
+      ctx
+      |> Tools.execute(tool_call)
       |> FailureIntervention.maybe_intervene(ctx, tool_call)
 
     case result do
@@ -81,32 +71,6 @@ defmodule Froth.Telegram.ToolExecution do
 
   def execute(_ctx, _tool_call),
     do: %{result: {:error, "invalid tool execution context"}}
-
-  # --- Tool opts projection ---
-
-  # Build the `Keyword.t()` of opts `Tools.execute/4` expects, drawing
-  # from the Context's structured sub-parts plus the per-call ToolUse.
-  # Nil-skips are centralised via `maybe_put_tool_opt/3` so the two
-  # clauses above share one projection.
-  defp tool_opts_from(%Context{} = ctx, %ToolUse{} = tool_call) do
-    %Context{bot_config: bc, surface: surface, view: view} = ctx
-
-    []
-    |> maybe_put_tool_opt(:cycle_id, ctx.cycle_id)
-    |> maybe_put_tool_opt(:tool_use_id, tool_call.id)
-    |> maybe_put_tool_opt(:bot_id, bc && bc.id)
-    |> maybe_put_tool_opt(:bot_username, bc && bc.bot_username)
-    |> maybe_put_tool_opt(:session_id, surface && surface.session_id)
-    |> maybe_put_tool_opt(:reply_to, surface && surface.reply_to)
-    |> maybe_put_tool_opt(:spam, ctx.spam)
-    |> maybe_put_tool_opt(:topic, Map.get(tool_call.input, "topic"))
-    |> maybe_put_tool_opt(:active_task_ids, view && view.active_task_ids)
-    |> maybe_put_tool_opt(:system_prompt, ctx.system_prompt)
-    |> maybe_put_tool_opt(:tools, ctx.tool_specs)
-    |> maybe_put_tool_opt(:model, bc && bc.model)
-    |> maybe_put_tool_opt(:thinking, bc && bc.thinking)
-    |> maybe_put_tool_opt(:effort, bc && bc.effort)
-  end
 
   # --- Narration ---
 
@@ -277,7 +241,4 @@ defmodule Froth.Telegram.ToolExecution do
   defp normalize_result({:await, data}), do: {:await, data}
   defp normalize_result({:yield, reason}), do: {:yield, reason}
   defp normalize_result(result), do: result
-
-  defp maybe_put_tool_opt(keyword, _key, nil), do: keyword
-  defp maybe_put_tool_opt(keyword, key, value), do: Keyword.put(keyword, key, value)
 end
