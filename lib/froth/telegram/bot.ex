@@ -730,7 +730,6 @@ defmodule Froth.Telegram.Bot do
     if not is_integer(chat_id) do
       {{:error, "missing chat_id in tool context"}, state}
     else
-      cycle_config = (state.cycle && state.cycle.config) || %{}
       task_ids = state.active_tasks |> Map.get(cycle_id, MapSet.new()) |> Enum.sort()
 
       execution_base = %{
@@ -747,12 +746,12 @@ defmodule Froth.Telegram.Bot do
         current_narration_mode: state.narration && state.narration.mode,
         last_agent_message_id: state.last_sent && state.last_sent.id,
         system_prompt: resolve_system_prompt(chat_id, nil, bc),
-        model: cycle_config["model"] || bc.model,
-        tools: cycle_config["tool_specs"] || resolve_tool_specs(bc),
+        model: bc.model,
+        tools: resolve_tool_specs(bc),
         active_task_ids: task_ids,
-        thinking: cycle_config["thinking"] || bc.thinking,
-        effort: cycle_config["effort"] || bc.effort,
-        tool_timeout_ms: cycle_config["tool_timeout_ms"]
+        thinking: bc.thinking,
+        effort: bc.effort,
+        tool_timeout_ms: nil
       }
 
       input =
@@ -1327,13 +1326,12 @@ defmodule Froth.Telegram.Bot do
 
   defp pending_ask_worker_config(state, pending_ask, reply_to)
        when is_map(pending_ask) do
-    config = pending_ask.config || %{}
     bc = state.bot_config
 
     %Config{
-      system: config["system"] || bc.system_prompt || "",
-      model: config["model"] || bc.model,
-      tools: config["tools"] || resolve_tool_specs(bc),
+      system: resolve_system_prompt(pending_ask.chat_id, nil, bc),
+      model: bc.model,
+      tools: resolve_tool_specs(bc),
       tool_executor: self(),
       context: %{
         chat_id: pending_ask.chat_id,
@@ -1342,9 +1340,8 @@ defmodule Froth.Telegram.Bot do
         session_id: bc.session_id,
         bot_username: bc.bot_username
       },
-      thinking: config["thinking"] || bc.thinking,
-      effort: config["effort"] || bc.effort,
-      tool_timeout_ms: config["tool_timeout_ms"]
+      thinking: bc.thinking,
+      effort: bc.effort
     }
   end
 
