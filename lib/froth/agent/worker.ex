@@ -15,7 +15,7 @@ defmodule Froth.Agent.Worker do
   alias Froth.Telemetry.Span
 
   @default_tool_timeout_ms 30_000
-  @default_tool_timeout_overrides %{"web_search" => 90_000}
+  @default_tool_timeout_overrides %{}
   @utf8_replacement <<0xEF, 0xBF, 0xBD>>
 
   @type invocation :: %{

@@ -75,10 +75,10 @@ defmodule Froth.Agent.WorkerTest do
     }
   end
 
-  defp web_search_tool_spec do
+  defp slow_tool_spec do
     %{
-      "name" => "web_search",
-      "description" => "Search the web.",
+      "name" => "slow_tool",
+      "description" => "A tool that takes a long time.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{"query" => %{"type" => "string"}},
@@ -88,18 +88,14 @@ defmodule Froth.Agent.WorkerTest do
   end
 
   defp start_worker(messages, fixture, opts) do
-    provider = Keyword.get(opts, :provider, :anthropic)
-    model = Keyword.get(opts, :model, "claude-opus-4-6")
-
-    if fixture do
-      notify_pid = Keyword.get(opts, :notify, self())
-
-      Application.put_env(
-        :froth,
-        :llm_stream_fun,
-        Froth.SSEReplay.recording_stream_fun(fixture, notify_pid)
-      )
-    end
+    {provider, model} =
+      if fixture do
+        notify_pid = Keyword.get(opts, :notify, self())
+        replayer = start_supervised!({Froth.SSEReplay, fixture: fixture, notify_pid: notify_pid})
+        {:fakeai, Froth.SSEReplay.model(replayer)}
+      else
+        {Keyword.get(opts, :provider, :anthropic), Keyword.get(opts, :model, "claude-opus-4-6")}
+      end
 
     tools = Keyword.get(opts, :tools, [echo_tool_spec()])
     executor = Keyword.fetch!(opts, :executor)
@@ -352,15 +348,15 @@ defmodule Froth.Agent.WorkerTest do
       cycle = Repo.get!(Cycle, cycle.id)
 
       assert cycle.status == :completed
-      assert cycle.provider == "anthropic"
-      assert cycle.model == "claude-opus-4-6"
+      assert cycle.provider == "fakeai"
+      assert String.starts_with?(cycle.model, "fakeai-slop-")
       assert is_binary(cycle.root_span_id)
       assert %DateTime{} = cycle.started_at
       assert %DateTime{} = cycle.finished_at
       assert is_binary(cycle.system_prompt_hash)
       assert is_binary(cycle.toolset_hash)
-      assert cycle.config["model"] == "claude-opus-4-6"
-      assert cycle.config["provider"] == "anthropic"
+      assert String.starts_with?(cycle.config["model"], "fakeai-slop-")
+      assert cycle.config["provider"] == "fakeai"
 
       kinds = Enum.map(cycle_events(cycle.id), &event_kind/1)
 
@@ -817,7 +813,7 @@ defmodule Froth.Agent.WorkerTest do
         end
       end)
 
-      Application.put_env(:froth, :tool_timeout_overrides, %{"web_search" => 10})
+      Application.put_env(:froth, :tool_timeout_overrides, %{"slow_tool" => 10})
 
       executor =
         start_executor(fn %ToolUse{}, _context ->
@@ -827,12 +823,12 @@ defmodule Froth.Agent.WorkerTest do
 
       {pid, _cycle} =
         start_worker(
-          [Message.user("search the web")],
+          [Message.user("run the slow tool")],
           nil,
           provider: :fakeai,
           model: model,
           executor: executor,
-          tools: [web_search_tool_spec()]
+          tools: [slow_tool_spec()]
         )
 
       assert_receive {FakeLLM, turn_1, %Request{}}, 5000
@@ -845,8 +841,8 @@ defmodule Froth.Agent.WorkerTest do
              %{
                "type" => "tool_use",
                "id" => "call_1",
-               "name" => "web_search",
-               "input" => %{"query" => "North Korea military capabilities"}
+               "name" => "slow_tool",
+               "input" => %{"query" => "what is slow"}
              }
            ],
            stop_reason: "tool_use"
@@ -856,7 +852,7 @@ defmodule Froth.Agent.WorkerTest do
       assert_receive {:telemetry_event, [:froth, :agent, :tool, :timed_out], measurements,
                       %{
                         timeout_ms: 10,
-                        tool_name: "web_search",
+                        tool_name: "slow_tool",
                         tool_use_id: "call_1"
                       }},
                      5000
@@ -1063,16 +1059,11 @@ defmodule Froth.Agent.WorkerTest do
   describe "Agent.run/2" do
     test "returns a cycle and streams events" do
       executor = start_executor(fn _, _ -> "ok" end)
-
-      Application.put_env(
-        :froth,
-        :llm_stream_fun,
-        Froth.SSEReplay.recording_stream_fun("simple_reply", self())
-      )
+      replayer = start_supervised!({Froth.SSEReplay, fixture: "simple_reply", notify_pid: self()})
 
       config = %Config{
-        provider: :anthropic,
-        model: "claude-opus-4-6",
+        provider: :fakeai,
+        model: Froth.SSEReplay.model(replayer),
         tools: [],
         tool_executor: executor
       }
@@ -1095,15 +1086,12 @@ defmodule Froth.Agent.WorkerTest do
       executor =
         start_executor(fn %ToolUse{input: %{"text" => text}}, _context -> "echoed: #{text}" end)
 
-      Application.put_env(
-        :froth,
-        :llm_stream_fun,
-        Froth.SSEReplay.recording_stream_fun("tool_use_echo", self())
-      )
+      replayer =
+        start_supervised!({Froth.SSEReplay, fixture: "tool_use_echo", notify_pid: self()})
 
       config = %Config{
-        provider: :anthropic,
-        model: "claude-opus-4-6",
+        provider: :fakeai,
+        model: Froth.SSEReplay.model(replayer),
         tools: [echo_tool_spec()],
         tool_executor: executor
       }

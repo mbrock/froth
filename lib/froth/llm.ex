@@ -174,7 +174,16 @@ defmodule Froth.LLM do
 
   # -- Request building --
 
-  defp build_request(api_messages, opts) do
+  @doc """
+  Build a `%Request{}` from a list of API messages and caller opts.
+
+  Public so test suites can verify the defaulting / opt-resolution
+  logic directly without routing through `stream_single/3` and a
+  provider fake. Production code should prefer `stream_single/3`.
+  """
+  @spec build_request(list(map() | Message.t()), keyword()) ::
+          {:ok, Request.t()} | {:error, term()}
+  def build_request(api_messages, opts) do
     provider_name = resolve_provider_name(Keyword.get(opts, :provider), Keyword.get(opts, :model))
 
     case Map.get(@providers, provider_name) do
@@ -366,60 +375,54 @@ defmodule Froth.LLM do
   end
 
   def stream(%Request{} = request, on_event, opts) when is_function(on_event, 1) do
-    case Application.get_env(:froth, :llm_stream_fun) do
-      fun when is_function(fun, 3) ->
-        fun.(request, on_event, opts)
+    provider = request.provider
+    telemetry_provider = Keyword.get(opts, :provider_name, provider)
+    on_edit = Keyword.get(opts, :on_edit, fn _edit -> :ok end)
+    parent_id = request.parent_id || Keyword.get(opts, :parent_id)
 
-      _ ->
-        provider = request.provider
-        telemetry_provider = Keyword.get(opts, :provider_name, provider)
-        on_edit = Keyword.get(opts, :on_edit, fn _edit -> :ok end)
-        parent_id = request.parent_id || Keyword.get(opts, :parent_id)
+    with true <- provider_module?(provider),
+         {:ok, transport_request} <- provider.build_request(request) do
+      initial = Store.new()
 
-        with true <- provider_module?(provider),
-             {:ok, transport_request} <- provider.build_request(request) do
-          initial = Store.new()
+      SSE.stream(
+        transport_request.url,
+        transport_request.headers,
+        transport_request.body,
+        initial,
+        fn payload, _raw, store ->
+          {edits, done?} = provider.decode_payload(payload, store)
+          store = Store.apply_edits(store, edits)
 
-          SSE.stream(
-            transport_request.url,
-            transport_request.headers,
-            transport_request.body,
-            initial,
-            fn payload, _raw, store ->
-              {edits, done?} = provider.decode_payload(payload, store)
-              store = Store.apply_edits(store, edits)
+          Enum.each(edits, fn edit ->
+            emit_edit(telemetry_provider, edit, parent_id)
+            on_edit.(edit)
 
-              Enum.each(edits, fn edit ->
-                emit_edit(telemetry_provider, edit, parent_id)
-                on_edit.(edit)
+            case Edit.project_event(edit) do
+              nil -> :ok
+              event -> on_event.(event)
+            end
+          end)
 
-                case Edit.project_event(edit) do
-                  nil -> :ok
-                  event -> on_event.(event)
-                end
-              end)
+          if done?, do: {:halt, store}, else: {:cont, store}
+        end,
+        Keyword.take(opts, [:receive_timeout, :finch])
+      )
+      |> case do
+        {:ok, %{acc: store, diagnostics: diagnostics}} ->
+          case provider_error_from_store(store) do
+            nil ->
+              {:ok, provider.finalize(store) |> Map.put(:diagnostics, diagnostics)}
 
-              if done?, do: {:halt, store}, else: {:cont, store}
-            end,
-            Keyword.take(opts, [:receive_timeout, :finch])
-          )
-          |> case do
-            {:ok, %{acc: store, diagnostics: diagnostics}} ->
-              case provider_error_from_store(store) do
-                nil ->
-                  {:ok, provider.finalize(store) |> Map.put(:diagnostics, diagnostics)}
-
-                error ->
-                  {:error, {:provider_error, provider_name(provider), error, diagnostics}}
-              end
-
-            {:error, _} = err ->
-              err
+            error ->
+              {:error, {:provider_error, provider_name(provider), error, diagnostics}}
           end
-        else
-          false -> {:error, {:invalid_provider, provider}}
-          {:error, _} = err -> err
-        end
+
+        {:error, _} = err ->
+          err
+      end
+    else
+      false -> {:error, {:invalid_provider, provider}}
+      {:error, _} = err -> err
     end
   end
 

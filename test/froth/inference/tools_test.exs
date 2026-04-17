@@ -187,13 +187,6 @@ defmodule Froth.Inference.ToolsTest do
              ]
   end
 
-  test "web_search is exposed in tool specs" do
-    spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "web_search"))
-
-    refute is_nil(spec)
-    assert get_in(spec, ["input_schema", "required"]) == ["query"]
-  end
-
   test "spawn_agent is exposed in tool specs" do
     spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "spawn_agent"))
 
@@ -345,76 +338,6 @@ defmodule Froth.Inference.ToolsTest do
 
     assert message =~ "unknown tool names: definitely_not_real"
     assert message =~ "run_shell"
-  end
-
-  test "web_search executes triangulated search and returns tool payload" do
-    # web_search fans out to three real provider models (grok / openai /
-    # gemini) and then collates the results via a fourth LLM call on
-    # anthropic. We seed API key rows so `build_request` succeeds for
-    # each real provider, then swap in an `llm_stream_fun` fake that
-    # dispatches on the request's system prompt to return either a
-    # per-provider snippet or the collation JSON.
-    Repo.insert!(%ApiKey{name: "test-grok", provider: "grok", key: "test-grok"})
-    Repo.insert!(%ApiKey{name: "test-openai", provider: "openai", key: "test-openai"})
-    Repo.insert!(%ApiKey{name: "test-gemini", provider: "gemini", key: "test-gemini"})
-    Repo.insert!(%ApiKey{name: "test-anthropic", provider: "anthropic", key: "test-anthropic"})
-
-    original_stream_fun = Application.get_env(:froth, :llm_stream_fun)
-
-    on_exit(fn ->
-      if is_nil(original_stream_fun) do
-        Application.delete_env(:froth, :llm_stream_fun)
-      else
-        Application.put_env(:froth, :llm_stream_fun, original_stream_fun)
-      end
-    end)
-
-    collation_json =
-      ~s({"collated":"All three providers returned a grounded source.","agreement":1.0,"single_source_claims":[]})
-
-    Application.put_env(:froth, :llm_stream_fun, fn request, _on_event, _opts ->
-      text =
-        cond do
-          is_binary(request.system) and String.contains?(request.system, "synthesize research") ->
-            collation_json
-
-          true ->
-            "Provider #{inspect(request.provider)} saw https://example.test/source"
-        end
-
-      {:ok,
-       %{
-         text: text,
-         content: [%{"type" => "text", "text" => text}],
-         stop_reason: "stop",
-         usage: %{},
-         model: request.model,
-         message_id: "resp_test"
-       }}
-    end)
-
-    assert {:ok, payload} =
-             Tools.execute(
-               "web_search",
-               %{"query" => "Kharg Island"},
-               unique_chat_id(),
-               bot_id: "charlie",
-               session_id: "charlie"
-             )
-
-    assert payload["collated"] == "All three providers returned a grounded source."
-    assert payload["agreement"] == 1.0
-    assert payload["single_source_claims"] == []
-    assert Map.keys(payload["providers"]) == ["gemini", "grok", "openai"]
-
-    gemini_cycle =
-      Repo.all(Cycle)
-      |> Enum.find(fn cycle ->
-        cycle.provider == "gemini" and cycle.model == "gemini-3.1-flash-lite-preview"
-      end)
-
-    assert gemini_cycle != nil
-    assert gemini_cycle.config["tool_specs"] == [%{"type" => "web_search"}]
   end
 
   test "look validates message references before trying telegram download" do

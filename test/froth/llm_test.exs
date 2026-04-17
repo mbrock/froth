@@ -32,128 +32,58 @@ defmodule Froth.LLMTest do
     assert LLM.active_api_key(:gemini) == nil
   end
 
-  test "defaults claude-opus-4-7 effort, max tokens, and thinking display" do
-    test_pid = self()
+  describe "build_request/2 defaults for claude-opus-4-7" do
+    test "defaults effort, max tokens, and thinking display" do
+      assert {:ok, request} =
+               LLM.build_request(
+                 [LLM.Message.user("hello")],
+                 api_key: "test-key",
+                 provider: :anthropic,
+                 model: "claude-opus-4-7"
+               )
 
-    Application.put_env(:froth, :llm_stream_fun, fn request, _on_event, _opts ->
-      send(test_pid, {:llm_request, request})
+      assert request.output_config == %{"effort" => "xhigh"}
+      assert request.max_tokens == 65_536
+      assert request.thinking == %{"type" => "adaptive", "display" => "summarized"}
+    end
 
-      {:ok,
-       %{
-         text: "ok",
-         content: [%{"type" => "text", "text" => "ok"}],
-         stop_reason: "end_turn",
-         usage: %{},
-         model: request.model,
-         message_id: "msg_default_effort"
-       }}
-    end)
+    test "explicit effort overrides the default" do
+      assert {:ok, request} =
+               LLM.build_request(
+                 [LLM.Message.user("hello")],
+                 api_key: "test-key",
+                 provider: :anthropic,
+                 model: "claude-opus-4-7",
+                 effort: "high"
+               )
 
-    assert {:ok, %{text: "ok"}} =
-             LLM.stream_single(
-               [LLM.Message.user("hello")],
-               fn _event -> :ok end,
-               api_key: "test-key",
-               provider: :anthropic,
-               model: "claude-opus-4-7"
-             )
+      assert request.output_config == %{"effort" => "high"}
+    end
 
-    assert_receive {:llm_request, request}
-    assert request.output_config == %{"effort" => "xhigh"}
-    assert request.max_tokens == 65_536
-    assert request.thinking == %{"type" => "adaptive", "display" => "summarized"}
-  end
+    test "explicit max effort is preserved" do
+      assert {:ok, request} =
+               LLM.build_request(
+                 [LLM.Message.user("hello")],
+                 api_key: "test-key",
+                 provider: :anthropic,
+                 model: "claude-opus-4-7",
+                 effort: "max"
+               )
 
-  test "explicit claude effort overrides the claude-opus-4-7 default" do
-    test_pid = self()
+      assert request.output_config == %{"effort" => "max"}
+    end
 
-    Application.put_env(:froth, :llm_stream_fun, fn request, _on_event, _opts ->
-      send(test_pid, {:llm_request, request})
+    test "explicit thinking display is preserved" do
+      assert {:ok, request} =
+               LLM.build_request(
+                 [LLM.Message.user("hello")],
+                 api_key: "test-key",
+                 provider: :anthropic,
+                 model: "claude-opus-4-7",
+                 thinking: %{"type" => "adaptive", "display" => "omitted"}
+               )
 
-      {:ok,
-       %{
-         text: "ok",
-         content: [%{"type" => "text", "text" => "ok"}],
-         stop_reason: "end_turn",
-         usage: %{},
-         model: request.model,
-         message_id: "msg_explicit_effort"
-       }}
-    end)
-
-    assert {:ok, %{text: "ok"}} =
-             LLM.stream_single(
-               [LLM.Message.user("hello")],
-               fn _event -> :ok end,
-               api_key: "test-key",
-               provider: :anthropic,
-               model: "claude-opus-4-7",
-               effort: "high"
-             )
-
-    assert_receive {:llm_request, request}
-    assert request.output_config == %{"effort" => "high"}
-  end
-
-  test "explicit max effort is preserved for claude-opus-4-7" do
-    test_pid = self()
-
-    Application.put_env(:froth, :llm_stream_fun, fn request, _on_event, _opts ->
-      send(test_pid, {:llm_request, request})
-
-      {:ok,
-       %{
-         text: "ok",
-         content: [%{"type" => "text", "text" => "ok"}],
-         stop_reason: "end_turn",
-         usage: %{},
-         model: request.model,
-         message_id: "msg_max_effort"
-       }}
-    end)
-
-    assert {:ok, %{text: "ok"}} =
-             LLM.stream_single(
-               [LLM.Message.user("hello")],
-               fn _event -> :ok end,
-               api_key: "test-key",
-               provider: :anthropic,
-               model: "claude-opus-4-7",
-               effort: "max"
-             )
-
-    assert_receive {:llm_request, request}
-    assert request.output_config == %{"effort" => "max"}
-  end
-
-  test "explicit thinking display is preserved for claude-opus-4-7" do
-    test_pid = self()
-
-    Application.put_env(:froth, :llm_stream_fun, fn request, _on_event, _opts ->
-      send(test_pid, {:llm_request, request})
-
-      {:ok,
-       %{
-         text: "ok",
-         content: [%{"type" => "text", "text" => "ok"}],
-         stop_reason: "end_turn",
-         usage: %{},
-         model: request.model,
-         message_id: "msg_thinking_display"
-       }}
-    end)
-
-    assert {:ok, %{text: "ok"}} =
-             LLM.stream_single(
-               [LLM.Message.user("hello")],
-               fn _event -> :ok end,
-               api_key: "test-key",
-               provider: :anthropic,
-               model: "claude-opus-4-7",
-               thinking: %{"type" => "adaptive", "display" => "omitted"}
-             )
-
-    assert_receive {:llm_request, request}
-    assert request.thinking == %{"type" => "adaptive", "display" => "omitted"}
+      assert request.thinking == %{"type" => "adaptive", "display" => "omitted"}
+    end
   end
 end

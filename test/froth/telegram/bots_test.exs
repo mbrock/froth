@@ -35,11 +35,6 @@ defmodule Froth.Telegram.BotsTest do
              Charlie.default_config().tools_module.specs_for_api(),
              &(&1["name"] == "send_message")
            )
-
-    assert Enum.any?(
-             Charlie.default_config().tools_module.specs_for_api(),
-             &(&1["name"] == "web_search")
-           )
   end
 
   test "start_bot honors the configured runtime module" do

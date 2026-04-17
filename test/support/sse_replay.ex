@@ -1,5 +1,29 @@
 defmodule Froth.SSEReplay do
-  @moduledoc false
+  @moduledoc """
+  Test helper that replays recorded Anthropic SSE fixtures through the
+  real Anthropic provider pipeline.
+
+  A replayer is a `GenServer` that claims a `Froth.LLM.Fake` model id
+  and, whenever the cycle makes an LLM call against that model, loads
+  the next turn's SSE fixture from
+  `test/fixtures/sse/<fixture>/turn_N.sse`, runs it through the
+  Anthropic provider's `decode_payload/2` and `finalize/1`, and replies
+  to the caller with the resulting `%{text, content, stop_reason, ...}`
+  map.
+
+  When `:notify_pid` is supplied, the replayer also sends
+  `{:api_call, turn, body}` (with the HTTP body the Anthropic provider
+  would have posted for this request) and `{:replay_done, turn}` to
+  that pid, so tests can assert on request shape.
+
+  Usage:
+
+      replayer = start_supervised!({Froth.SSEReplay, fixture: "simple_reply", notify_pid: self()})
+      model = Froth.SSEReplay.model(replayer)
+      # ... start a worker/cycle with provider: :fakeai, model: model ...
+  """
+
+  use GenServer
 
   alias Froth.LLM.Edit
   alias Froth.LLM.Providers.Anthropic, as: AnthropicProvider
@@ -7,42 +31,75 @@ defmodule Froth.SSEReplay do
 
   @fixtures_dir Path.expand("../fixtures/sse", __DIR__)
 
-  @doc """
-  Returns a function compatible with `:llm_stream_fun` that replays SSE
-  fixtures through the Anthropic provider pipeline, advancing one turn
-  per call.
-  """
-  def stream_fun(session_name) when is_binary(session_name) do
-    counter = :counters.new(1, [:atomics])
-
-    fn _request, on_event, _opts ->
-      turn = :counters.get(counter, 1)
-      :counters.add(counter, 1, 1)
-      path = Path.join([@fixtures_dir, session_name, "turn_#{turn}.sse"])
-      replay_fixture(path, on_event)
-    end
-  end
+  # -- public API --
 
   @doc """
-  Like `stream_fun/1` but also sends `{:api_call, turn, body}` and
-  `{:replay_done, turn}` to `notify_pid` for each API call.
-  """
-  def recording_stream_fun(session_name, notify_pid)
-      when is_binary(session_name) and is_pid(notify_pid) do
-    counter = :counters.new(1, [:atomics])
+  Start a replayer GenServer. Options:
 
-    fn request, on_event, _opts ->
-      turn = :counters.get(counter, 1)
-      :counters.add(counter, 1, 1)
-      {:ok, transport} = request.provider.build_request(request)
-      send(notify_pid, {:api_call, turn, transport.body})
-      path = Path.join([@fixtures_dir, session_name, "turn_#{turn}.sse"])
-      result = replay_fixture(path, on_event)
-      send(notify_pid, {:replay_done, turn})
-      result
-    end
+    * `:fixture` (required) — fixture directory name under
+      `test/fixtures/sse/`.
+    * `:notify_pid` — pid to receive `{:api_call, turn, body}` and
+      `{:replay_done, turn}` messages per replayed turn.
+  """
+  def start_link(opts) when is_list(opts) do
+    GenServer.start_link(__MODULE__, opts)
   end
 
+  @doc "Return the fake model id claimed by this replayer."
+  def model(pid) when is_pid(pid), do: GenServer.call(pid, :model)
+
+  # -- GenServer callbacks --
+
+  @impl true
+  def init(opts) when is_list(opts) do
+    fixture = Keyword.fetch!(opts, :fixture)
+    notify_pid = Keyword.get(opts, :notify_pid)
+    model = Froth.LLM.Fake.claim()
+
+    {:ok,
+     %{
+       fixture: fixture,
+       turn: 0,
+       notify_pid: notify_pid,
+       model: model
+     }}
+  end
+
+  @impl true
+  def handle_call(:model, _from, state), do: {:reply, state.model, state}
+
+  @impl true
+  def handle_info({Froth.LLM.Fake, from, request}, state) do
+    if is_pid(state.notify_pid) do
+      case AnthropicProvider.build_request(request) do
+        {:ok, transport} ->
+          send(state.notify_pid, {:api_call, state.turn, transport.body})
+
+        _ ->
+          :ok
+      end
+    end
+
+    {_pid, _ref, on_event} = from
+
+    path = Path.join([@fixtures_dir, state.fixture, "turn_#{state.turn}.sse"])
+    result = replay_fixture(path, on_event)
+
+    if is_pid(state.notify_pid) do
+      send(state.notify_pid, {:replay_done, state.turn})
+    end
+
+    Froth.LLM.Fake.reply(from, result)
+    {:noreply, %{state | turn: state.turn + 1}}
+  end
+
+  # -- fixture parser (public so ad-hoc callers can reuse it) --
+
+  @doc """
+  Parse an SSE fixture file at `path` and replay its payloads through
+  the Anthropic provider pipeline, invoking `on_event` for each
+  projected event. Returns the provider's `finalize/1` result.
+  """
   def replay_fixture(path, on_event) when is_binary(path) and is_function(on_event, 1) do
     case File.read(path) do
       {:ok, data} ->
