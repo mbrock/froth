@@ -2,8 +2,15 @@ defmodule Froth.Headlines do
   @moduledoc """
   Extract significant daily headlines from stored chat summaries.
 
-      # Froth.Headlines.extract()
-      # Froth.Headlines.extract(chat_id: -1003690254489)
+  Headlines runs as an agent cycle under an existing Bot — the Bot
+  supplies the TDLib session / username / user identity that tool
+  execution needs. Pass the running Bot via the `:bot` option:
+
+      Froth.Headlines.extract(bot: Froth.Telegram.Bot.Charlie,
+                              chat_id: -1003690254489)
+
+  `:bot` accepts a pid, a registered name atom, or a `{:via, ...}`
+  tuple — anything `Froth.Telegram.Bot.snapshot/1` can resolve.
   """
 
   import Ecto.Query
@@ -16,7 +23,7 @@ defmodule Froth.Headlines do
   alias Froth.Event
   alias Froth.Inference.Tools
   alias Froth.Repo
-  alias Froth.Telegram.Charlie
+  alias Froth.Telegram.Bot
 
   @default_chat_id -1_003_690_254_489
   @model "gpt-5.4"
@@ -38,6 +45,9 @@ defmodule Froth.Headlines do
   def extract_all(opts \\ []), do: extract(opts)
 
   defp prepare_cycle(opts) when is_list(opts) do
+    bot_ref = Keyword.fetch!(opts, :bot)
+    {bot_pid, bot_config} = Bot.snapshot(bot_ref)
+
     chat_id = Keyword.get(opts, :chat_id, @default_chat_id)
     model = Keyword.get(opts, :model, @model)
     provider = Keyword.get(opts, :provider, :openai)
@@ -51,19 +61,15 @@ defmodule Froth.Headlines do
 
     cycle = Agent.begin_cycle(user_message, config)
 
-    charlie_defaults = Charlie.default_config()
-
     runtime_opts = [
       cycle_id: cycle.id,
       cycle: cycle,
       worker_config: config,
-      bot_id: "charlie",
+      bot_id: bot_config.id,
+      bot_pid: bot_pid,
       chat_id: chat_id,
       spam: spam,
-      # Headlines run outside a Bot — supply session/bot identity from
-      # the Charlie profile so tool execution (narration, send_message,
-      # etc.) has a real TDLib session + username to post to.
-      bot_config: charlie_bot_config(charlie_defaults, model)
+      bot_config: bot_config
     ]
 
     {cycle, runtime_opts}
@@ -92,23 +98,6 @@ defmodule Froth.Headlines do
       effort: "medium",
       reasoning_summary: "auto"
     }
-  end
-
-  defp charlie_bot_config(%{} = charlie_defaults, model) do
-    # Best-effort `BotConfig` for the background Headlines runtime. We
-    # don't own a live Bot process for this path — this snapshot is
-    # consumed by the runtime's `execution_base` to build the tool
-    # context (bot_id, bot_username, session_id, model, etc.).
-    Froth.Telegram.Bot.Config.build(
-      id: "charlie",
-      session_id: charlie_defaults.session_id,
-      bot_username: charlie_defaults.bot_username,
-      bot_user_id: Map.get(charlie_defaults, :bot_user_id, 0),
-      owner_user_id: Map.get(charlie_defaults, :owner_user_id, 0),
-      model: model,
-      system_prompt: @system_prompt,
-      tools: headline_tools()
-    )
   end
 
   defp list_summaries(chat_id) when is_integer(chat_id) do

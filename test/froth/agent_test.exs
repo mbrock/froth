@@ -34,12 +34,16 @@ defmodule Froth.Agent.WorkerTest do
   defmodule TestExecutor do
     use GenServer
 
-    def start_link(fun), do: GenServer.start_link(__MODULE__, fun)
+    def start_link({fun, parent}), do: GenServer.start_link(__MODULE__, {fun, parent})
+    def start_link(fun), do: GenServer.start_link(__MODULE__, {fun, nil})
 
     def execute(fun, tool_use, context), do: fun.(tool_use, context)
 
     @impl true
-    def init(fun), do: {:ok, fun}
+    def init({fun, parent}) do
+      Froth.Repo.allow(parent, "test executor")
+      {:ok, fun}
+    end
 
     @impl true
     def handle_call({:prepare_tool, tool_use, context}, _from, fun) do
@@ -127,7 +131,7 @@ defmodule Froth.Agent.WorkerTest do
   end
 
   defp start_executor(fun) do
-    start_supervised!({TestExecutor, fun})
+    start_supervised!({TestExecutor, {fun, self()}})
   end
 
   defp append_cycle_message(%Cycle{} = cycle, parent_id, role, content, seq) do

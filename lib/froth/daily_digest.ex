@@ -68,7 +68,12 @@ defmodule Froth.DailyDigest do
 
     extract_headlines_fun =
       Keyword.get(opts, :extract_headlines_fun, fn digest_chat_id, extract_opts ->
-        Headlines.extract(Keyword.merge([chat_id: digest_chat_id], extract_opts))
+        Headlines.extract(
+          Keyword.merge(
+            [bot: Froth.Telegram.Bot.Charlie, chat_id: digest_chat_id],
+            extract_opts
+          )
+        )
       end)
 
     send_document_fun = Keyword.get(opts, :send_document_fun, &Telegram.send_document/4)

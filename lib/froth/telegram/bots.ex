@@ -100,7 +100,7 @@ defmodule Froth.Telegram.Bots do
       |> Keyword.get(:bots, [])
 
     case bots do
-      [] -> [Charlie.default_config()]
+      [] -> []
       list when is_list(list) -> list
     end
   end

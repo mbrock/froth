@@ -11,7 +11,6 @@ defmodule Froth.Agent.FailureIntervention do
   alias Froth.Telegram.Bot.Config, as: BotConfig
   alias Froth.Telegram.{BotAdapter, MessageIdSync, PendingAsk, PendingAsks}
 
-  @default_model "gpt-5.4-mini"
   @default_reason "Waiting for a human failure intervention."
   @carry_on_answer "__failure_intervention_carry_on__"
   @stop_answer "__failure_intervention_stop__"
@@ -45,17 +44,15 @@ defmodule Froth.Agent.FailureIntervention do
   def maybe_intervene({:error, error_text}, %Context{} = ctx, %ToolUse{} = tool_call)
       when is_binary(error_text) do
     if should_intervene?(ctx, tool_call) do
-      with {:ok, rpt} <- build_report_ctx(ctx, tool_call, error_text),
-           report <- build_report(rpt),
-           {:ok, pending_ask, sent, message_text} <- post_report(rpt, report) do
-        %{
-          result: {:await, await_payload(pending_ask, report)},
-          sent_message: %{sent: sent, text: message_text},
-          awaiting_user_input: true
-        }
-      else
-        _ -> {:error, error_text}
-      end
+      rpt = build_report_ctx(ctx, tool_call, error_text)
+      report = build_report(rpt)
+      {:ok, pending_ask, sent, message_text} = post_report(rpt, report)
+
+      %{
+        result: {:await, await_payload(pending_ask, report)},
+        sent_message: %{sent: sent, text: message_text},
+        awaiting_user_input: true
+      }
     else
       {:error, error_text}
     end
@@ -158,31 +155,25 @@ defmodule Froth.Agent.FailureIntervention do
   defp supported_tool?(_name), do: false
 
   defp build_report_ctx(%Context{} = ctx, %ToolUse{} = tool_call, error_text) do
-    with %Cycle{} = cycle <- Repo.get(Cycle, ctx.cycle_id) do
-      head_id = Agent.latest_head_id(cycle)
-      messages = Agent.load_messages(head_id)
+    %Cycle{} = cycle = Repo.get!(Cycle, ctx.cycle_id)
+    head_id = Agent.latest_head_id(cycle)
+    messages = Agent.load_messages(head_id)
 
-      {:ok,
-       %{
-         cycle: cycle,
-         ctx: ctx,
-         tool_call: tool_call,
-         messages: messages,
-         transcript: render_transcript(messages),
-         error_text: error_text,
-         initial_intention: initial_intention(messages),
-         reply_to: reply_target(ctx, tool_call)
-       }}
-    else
-      _ -> {:error, :missing_cycle}
-    end
+    %{
+      cycle: cycle,
+      ctx: ctx,
+      tool_call: tool_call,
+      messages: messages,
+      transcript: render_transcript(messages),
+      error_text: error_text,
+      initial_intention: initial_intention(messages),
+      reply_to: reply_target(ctx, tool_call)
+    }
   end
 
   defp build_report(rpt) when is_map(rpt) do
-    case llm_report(rpt) do
-      {:ok, report} -> report
-      _ -> fallback_report(rpt)
-    end
+    {:ok, report} = llm_report(rpt)
+    report
   end
 
   defp llm_report(rpt) when is_map(rpt) do
@@ -210,8 +201,6 @@ defmodule Froth.Agent.FailureIntervention do
   defp report_model(%{ctx: %Context{bot_config: %BotConfig{failure_report_model: model}}})
        when is_binary(model) and model != "",
        do: model
-
-  defp report_model(_rpt), do: @default_model
 
   defp post_report(rpt, report) when is_map(rpt) and is_map(report) do
     %Context{
@@ -382,18 +371,6 @@ defmodule Froth.Agent.FailureIntervention do
       "designation" => normalized_field(input["designation"], fallback_designation(rpt)),
       "intervention" =>
         if(interventions == [], do: fallback_interventions(rpt), else: interventions)
-    }
-  end
-
-  defp fallback_report(rpt) when is_map(rpt) do
-    %{
-      "intention" => rpt.initial_intention,
-      "situation" => fallback_situation(rpt),
-      "invocation" => fallback_invocation(rpt),
-      "expectation" => fallback_expectation(rpt),
-      "irritation" => fallback_irritation(rpt),
-      "designation" => fallback_designation(rpt),
-      "intervention" => fallback_interventions(rpt)
     }
   end
 

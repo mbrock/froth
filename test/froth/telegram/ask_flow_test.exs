@@ -1,5 +1,5 @@
 defmodule Froth.Telegram.AskFlowTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import Ecto.Query
 
@@ -12,12 +12,14 @@ defmodule Froth.Telegram.AskFlowTest do
   alias Froth.Telegram.PendingAsk
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
-
-    if is_nil(Process.whereis(Froth.Telegram.Registry)) do
-      start_supervised!({Registry, keys: :unique, name: Froth.Telegram.Registry})
-    end
+    # Each test gets a fresh per-test sandbox owner; descendants that
+    # need DB access (FakeTelegramSession, Bot, CycleRuntime, Worker)
+    # opt in via Froth.Repo.allow/1 or allow_child/1 at their own
+    # natural parents. `Froth.Telegram.Registry` is a node-wide
+    # singleton started by the application supervisor — different
+    # tests use unique session_ids and bot_ids so there's no collision.
+    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
 
     :ok
   end
@@ -27,7 +29,7 @@ defmodule Froth.Telegram.AskFlowTest do
     model = FakeLLM.claim()
 
     start_supervised!(
-      {__MODULE__.FakeTelegramSession, session_id: "ask-flow-session", test_pid: self()}
+      {Froth.FakeTelegramSession, session_id: "ask-flow-session", test_pid: self()}
     )
 
     bot = start_charlie_bot(id: "charlie-ask-flow-freeform", session_id: "ask-flow-session", model: model)
@@ -143,7 +145,7 @@ defmodule Froth.Telegram.AskFlowTest do
     model = FakeLLM.claim()
 
     start_supervised!(
-      {__MODULE__.FakeTelegramSession, session_id: "ask-callback-session", test_pid: self()}
+      {Froth.FakeTelegramSession, session_id: "ask-callback-session", test_pid: self()}
     )
 
     bot =
@@ -245,7 +247,7 @@ defmodule Froth.Telegram.AskFlowTest do
     model = FakeLLM.claim()
 
     start_supervised!(
-      {__MODULE__.FakeTelegramSession, session_id: "ask-flow-parallel-session", test_pid: self()}
+      {Froth.FakeTelegramSession, session_id: "ask-flow-parallel-session", test_pid: self()}
     )
 
     bot =
@@ -382,7 +384,7 @@ defmodule Froth.Telegram.AskFlowTest do
     end)
 
     start_supervised!(
-      {__MODULE__.FakeTelegramSession, session_id: "await-flow-session", test_pid: self()}
+      {Froth.FakeTelegramSession, session_id: "await-flow-session", test_pid: self()}
     )
 
     bot =
@@ -539,7 +541,7 @@ defmodule Froth.Telegram.AskFlowTest do
     report_model = FakeLLM.claim()
 
     start_supervised!(
-      {__MODULE__.FakeTelegramSession,
+      {Froth.FakeTelegramSession,
        session_id: "failure-flow-callback-session", test_pid: self()}
     )
 
@@ -687,7 +689,7 @@ defmodule Froth.Telegram.AskFlowTest do
     report_model = FakeLLM.claim()
 
     start_supervised!(
-      {__MODULE__.FakeTelegramSession,
+      {Froth.FakeTelegramSession,
        session_id: "failure-flow-reply-session", test_pid: self()}
     )
 
@@ -702,6 +704,7 @@ defmodule Froth.Telegram.AskFlowTest do
     send(bot, user_update("help", message_id: 10, chat_id: chat_id))
 
     assert_receive {FakeLLM, main_turn_1, %Request{} = main_request_1}, 5_000
+
     main_tool_names = Enum.map(main_request_1.tools, & &1["name"])
     assert "run_shell" in main_tool_names
 
@@ -711,6 +714,7 @@ defmodule Froth.Telegram.AskFlowTest do
     )
 
     assert_receive {FakeLLM, report_turn, %Request{} = report_request}, 5_000
+
     assert report_request.model == report_model
 
     FakeLLM.reply(
@@ -942,84 +946,5 @@ defmodule Froth.Telegram.AskFlowTest do
 
   defp assert_bot_idle(_bot, 0) do
     flunk("bot did not become idle in time")
-  end
-
-  defmodule FakeTelegramSession do
-    use GenServer
-
-    def start_link(opts) when is_list(opts) do
-      session_id = Keyword.fetch!(opts, :session_id)
-      GenServer.start_link(__MODULE__, opts, name: Froth.Telegram.Session.via(session_id))
-    end
-
-    @impl true
-    def init(opts) do
-      {:ok,
-       %{
-         session_id: Keyword.fetch!(opts, :session_id),
-         test_pid: Keyword.fetch!(opts, :test_pid)
-       }}
-    end
-
-    @impl true
-    def handle_call({:call, request}, _from, state) do
-      send(state.test_pid, {:telegram_call, request})
-
-      case request["@type"] do
-        "sendMessage" ->
-          # VM-unique ids shifted well clear of the small fixed ids
-          # tests use for inbound user messages (10, 11, ...). Keeps
-          # concurrent tests from accidentally colliding in any
-          # node-global structure (e.g. the MessageIdSync ETS table).
-          temp_id = 1_000_000 + System.unique_integer([:positive])
-          final_id = temp_id + 10_000
-          chat_id = request["chat_id"]
-          text = get_in(request, ["input_message_content", "text", "text"]) || ""
-          send(self(), {:send_success, temp_id, final_id, chat_id, text})
-
-          {:reply, {:ok, %{"id" => temp_id, "chat_id" => chat_id}}, state}
-
-        "answerCallbackQuery" ->
-          {:reply, {:ok, %{}}, state}
-
-        "editMessageText" ->
-          {:reply, {:ok, %{}}, state}
-
-        "parseTextEntities" ->
-          {:reply,
-           {:ok, %{"@type" => "formattedText", "text" => request["text"], "entities" => []}},
-           state}
-
-        _ ->
-          {:reply, {:ok, %{}}, state}
-      end
-    end
-
-    @impl true
-    def handle_cast({:send, request}, state) do
-      send(state.test_pid, {:telegram_send, request})
-      {:noreply, state}
-    end
-
-    @impl true
-    def handle_info({:send_success, old_id, new_id, chat_id, text}, state) do
-      Phoenix.PubSub.broadcast(
-        Froth.PubSub,
-        Froth.Telegram.Session.topic(state.session_id),
-        {:telegram_update,
-         %{
-           "@type" => "updateMessageSendSucceeded",
-           "old_message_id" => old_id,
-           "message" => %{"id" => new_id, "chat_id" => chat_id}
-         }}
-      )
-
-      # Include the message body in the test-side notification so tests
-      # can pattern-match the specific sendMessage they're awaiting —
-      # otherwise interleaved narration sends contaminate the mailbox
-      # and tests race on whichever notification arrives first.
-      send(state.test_pid, {:message_send_succeeded, old_id, new_id, chat_id, text})
-      {:noreply, state}
-    end
   end
 end

@@ -21,10 +21,11 @@ defmodule Froth.Tasks.Shell do
     task_id = Keyword.fetch!(opts, :task_id)
     command = Keyword.fetch!(opts, :command)
     working_dir = Keyword.get(opts, :working_dir, File.cwd!())
+    parent = Keyword.fetch!(opts, :parent)
 
     GenServer.start_link(
       __MODULE__,
-      %{task_id: task_id, command: command, working_dir: working_dir},
+      %{task_id: task_id, command: command, working_dir: working_dir, parent: parent},
       name: via(task_id)
     )
   end
@@ -77,7 +78,7 @@ defmodule Froth.Tasks.Shell do
     {:ok, pid} =
       DynamicSupervisor.start_child(
         Froth.Tasks.Supervisor,
-        {__MODULE__, [task_id: task_id, command: command, working_dir: working_dir]}
+        {__MODULE__, [task_id: task_id, command: command, working_dir: working_dir, parent: self()]}
       )
 
     case await(pid, @shell_await_ms) do
@@ -99,7 +100,9 @@ defmodule Froth.Tasks.Shell do
   # --- GenServer callbacks ---
 
   @impl true
-  def init(%{task_id: task_id, command: command, working_dir: working_dir}) do
+  def init(%{task_id: task_id, command: command, working_dir: working_dir, parent: parent}) do
+    Froth.Repo.allow(parent, "shell")
+
     port =
       Port.open(
         {:spawn_executable, "/bin/bash"},

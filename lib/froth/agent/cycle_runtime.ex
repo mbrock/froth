@@ -288,6 +288,8 @@ defmodule Froth.Agent.CycleRuntime do
     # messages instead of crashing us linked.
     Process.flag(:trap_exit, true)
 
+    Froth.Repo.allow(Keyword.get(opts, :bot_pid), "cycle_runtime")
+
     cycle = Keyword.get(opts, :cycle)
     worker_config = Keyword.get(opts, :worker_config)
     bc = Keyword.get(opts, :bot_config)

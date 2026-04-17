@@ -96,6 +96,8 @@ defmodule Froth.Agent.Worker do
 
   @impl true
   def init({cycle, config}) do
+    Froth.Repo.allow(config.tool_executor, "worker")
+
     now = System.monotonic_time()
     head_id = Agent.latest_head_id(cycle)
     seq = Agent.next_event_seq(cycle)
@@ -274,6 +276,7 @@ defmodule Froth.Agent.Worker do
 
       invocation = find_invocation(worker.phase, ref) ->
         tool_use_id = invocation.tool_use.id
+        Logger.error("tool task failed: #{Exception.format_exit(reason)}")
         error = "tool task failed: #{Exception.format_exit(reason)}"
         worker = emit_tool_failed_event(worker, invocation, error)
 
@@ -493,9 +496,11 @@ defmodule Froth.Agent.Worker do
         span_id = generate_span_id()
         timeout_ms = tool_timeout_ms(worker.config, tool_use)
         worker = emit_tool_started_event(worker, tool_use, span_id)
+        parent = self()
 
         task =
           Task.Supervisor.async_nolink(Froth.Agent.TaskSupervisor, fn ->
+            Froth.Repo.allow(parent, "tool task")
             result = execute_tool(worker.config.tool_executor, tool_use, context)
             {:tool_result, id, result}
           end)

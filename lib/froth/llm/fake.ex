@@ -139,11 +139,11 @@ defmodule Froth.LLM.Fake do
   end
 
   defp normalize_result({:error, reason}, _request) do
-    {:error, {:fake_llm_error, reason}}
+    {:error, {:error, reason}}
   end
 
   defp normalize_result(other, _request) do
-    {:error, {:fake_llm_error, {:unexpected_reply, other}}}
+    {:error, {:error, {:unexpected_reply, other}}}
   end
 
   defp random_message_id do

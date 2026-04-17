@@ -38,6 +38,7 @@ defmodule Froth.Telegram.Bot do
   defstruct [
     :bot_config,
     :cycle_state,
+    :cycles_sup,
     debounce_timer: nil,
     debounce_msg: nil,
     pending_ask_resumes: []
@@ -69,7 +70,15 @@ defmodule Froth.Telegram.Bot do
   def init(opts) do
     bot_config = BotConfig.build(opts)
 
+    Repo.allow(Froth.Telegram.Session.via(bot_config.session_id), "telegram bot")
+
     :ok = BotAdapter.subscribe(bot_config.session_id)
+
+    # Root CycleRuntimes run under this per-bot DynamicSupervisor so
+    # their lifetime is bounded by the Bot's. When the Bot shuts down,
+    # its cycles shut down in order (terminate callbacks run to
+    # completion), before any linked test/owner process dies.
+    {:ok, cycles_sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
 
     Span.execute(
       [:froth, :telegram, :bot, :listening],
@@ -81,7 +90,7 @@ defmodule Froth.Telegram.Bot do
       }
     )
 
-    {:ok, %__MODULE__{bot_config: bot_config}}
+    {:ok, %__MODULE__{bot_config: bot_config, cycles_sup: cycles_sup}}
   end
 
   @impl true
@@ -188,7 +197,29 @@ defmodule Froth.Telegram.Bot do
   def handle_cast(_, state), do: {:noreply, state}
 
   @impl true
+  def handle_call(:snapshot, _from, state) do
+    {:reply, state.bot_config, state}
+  end
+
   def handle_call(_, _from, state), do: {:reply, {:error, "unsupported"}, state}
+
+  @doc """
+  Look up a running Bot and return `{pid, %Froth.Telegram.Bot.Config{}}`.
+
+  `bot_ref` can be a pid, a registered name (module atom or
+  `{:via, ...}` tuple). Raises if the bot is not running.
+  """
+  @spec snapshot(pid() | atom() | {:via, module(), term()}) :: {pid(), BotConfig.t()}
+  def snapshot(bot_ref) do
+    pid =
+      case bot_ref do
+        pid when is_pid(pid) -> pid
+        name when is_atom(name) -> Process.whereis(name) || raise "bot not running: #{inspect(name)}"
+        {:via, _, _} = via -> GenServer.whereis(via) || raise "bot not running: #{inspect(via)}"
+      end
+
+    {pid, GenServer.call(pid, :snapshot)}
+  end
 
   defp dispatch_update_action(state, {:mention, msg}) do
     debounce_or_start(state, msg)
@@ -568,17 +599,19 @@ defmodule Froth.Telegram.Bot do
 
     Phoenix.PubSub.subscribe(Froth.PubSub, "cycle:#{cycle.id}")
 
+    runtime_opts = [
+      cycle_id: cycle.id,
+      cycle: cycle,
+      worker_config: config,
+      bot_id: bc.id,
+      bot_config: bc,
+      bot_pid: self(),
+      chat_id: chat_id,
+      reply_to: reply_to
+    ]
+
     {:ok, runtime_pid} =
-      CycleRuntime.start_root(
-        cycle_id: cycle.id,
-        cycle: cycle,
-        worker_config: config,
-        bot_id: bc.id,
-        bot_config: bc,
-        bot_pid: self(),
-        chat_id: chat_id,
-        reply_to: reply_to
-      )
+      DynamicSupervisor.start_child(state.cycles_sup, {CycleRuntime, runtime_opts})
 
     ref = Process.monitor(runtime_pid)
 

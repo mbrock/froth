@@ -502,7 +502,7 @@ defmodule Mix.Tasks.Froth.Headlines do
            spawn(fn ->
              try do
                start_opts =
-                 [chat_id: chat_id]
+                 [bot: Froth.Telegram.Bot.Charlie, chat_id: chat_id]
                  |> maybe_put_start_opt(:model, model)
                  |> Keyword.put(:spam, spam)
 
