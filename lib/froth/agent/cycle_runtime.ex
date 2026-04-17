@@ -12,16 +12,29 @@ defmodule Froth.Agent.CycleRuntime do
 
   See `rfc/froth-rfc0021.xml` for the full design.
 
-  Scaffolding stage: this module currently carries only minimal state
-  (ids) so the supervision tree, registry, and lifecycle can be wired up
-  and exercised in isolation. The per-cycle fields that live on
-  `Froth.Telegram.Bot.CycleState` today (worker_pid, narration,
-  last_sent, pending_ask, active_tasks, etc.) move in during step 2 of
-  the rollout, at which point this module takes ownership of the Worker
-  process.
+  ## Current scope (RFC-0021 step 2)
+
+  CycleRuntime owns the Worker. When started with `:cycle` + `:worker_config`
+  opts, `init/1` spawns a `Froth.Agent.Worker` via `start_link/1`, traps
+  exits, and stops itself when the Worker terminates (mirroring the
+  Worker's exit reason). Killing the runtime cascades to the Worker via
+  the link, so `Process.exit(cycle_runtime_pid, reason)` is a single
+  stop-the-cycle operation.
+
+  The Bot is still the Worker's `tool_executor`; prepare/commit/execute
+  tool calls continue to land on the Bot GenServer. That moves in a
+  later step.
+
+  ## Scaffolding mode
+
+  Supplying only the identity opts (`:cycle_id`, `:bot_id`, `:parent_cycle_id`)
+  starts a runtime with no Worker. Used for registry / supervisor
+  wiring tests. Do not rely on this in production code.
   """
 
   use GenServer, restart: :temporary
+
+  alias Froth.Agent.{Config, Cycle, Worker}
 
   @registry Froth.Agent.CycleRegistry
   @supervisor Froth.Agent.CycleSupervisor
@@ -29,7 +42,9 @@ defmodule Froth.Agent.CycleRuntime do
   @type opts :: [
           cycle_id: String.t(),
           bot_id: String.t() | nil,
-          parent_cycle_id: String.t() | nil
+          parent_cycle_id: String.t() | nil,
+          cycle: Cycle.t() | nil,
+          worker_config: Config.t() | nil
         ]
 
   # --- Public API ---
@@ -73,21 +88,84 @@ defmodule Froth.Agent.CycleRuntime do
     DynamicSupervisor.start_child(@supervisor, {__MODULE__, opts})
   end
 
+  @doc """
+  Forward a pending-ask resolution to the Worker owned by this runtime.
+  See `Froth.Agent.Worker.resolve_pending_ask/3`.
+  """
+  @spec resolve_pending_ask(pid(), String.t(), term()) :: term()
+  def resolve_pending_ask(runtime_pid, pending_ask_id, resolution)
+      when is_pid(runtime_pid) and is_binary(pending_ask_id) do
+    GenServer.call(
+      runtime_pid,
+      {:resolve_pending_ask, pending_ask_id, resolution},
+      :infinity
+    )
+  end
+
   # --- GenServer callbacks ---
 
   @impl true
   def init(opts) when is_list(opts) do
+    cycle = Keyword.get(opts, :cycle)
+    worker_config = Keyword.get(opts, :worker_config)
+
     state = %{
       cycle_id: Keyword.fetch!(opts, :cycle_id),
       bot_id: Keyword.get(opts, :bot_id),
-      parent_cycle_id: Keyword.get(opts, :parent_cycle_id)
+      parent_cycle_id: Keyword.get(opts, :parent_cycle_id),
+      cycle: cycle,
+      worker_pid: nil
     }
 
-    {:ok, state}
+    case maybe_start_worker(cycle, worker_config) do
+      {:ok, worker_pid} ->
+        {:ok, %{state | worker_pid: worker_pid}}
+
+      :skip ->
+        {:ok, state}
+
+      {:error, reason} ->
+        {:stop, reason}
+    end
   end
 
   @impl true
   def handle_call(:get_state, _from, state) do
     {:reply, state, state}
   end
+
+  def handle_call({:resolve_pending_ask, pending_ask_id, resolution}, _from, state) do
+    case state.worker_pid do
+      pid when is_pid(pid) ->
+        reply = Worker.resolve_pending_ask(pid, pending_ask_id, resolution)
+        {:reply, reply, state}
+
+      nil ->
+        {:reply, {:error, :no_worker}, state}
+    end
+  end
+
+  @impl true
+  def handle_info({:EXIT, worker_pid, reason}, %{worker_pid: worker_pid} = state) do
+    # Worker terminated. Mirror its reason — a normal Worker finish ends
+    # the cycle runtime normally; a crash propagates the crash reason up
+    # so the Bot's monitor sees it unchanged.
+    {:stop, reason, state}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  # --- Private ---
+
+  defp maybe_start_worker(%Cycle{} = cycle, %Config{} = config) do
+    Process.flag(:trap_exit, true)
+
+    case Worker.start_link({cycle, config}) do
+      {:ok, pid} -> {:ok, pid}
+      error -> error
+    end
+  end
+
+  defp maybe_start_worker(nil, nil), do: :skip
+  defp maybe_start_worker(_cycle, _config), do: {:error, :invalid_worker_args}
 end

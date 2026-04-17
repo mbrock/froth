@@ -173,23 +173,23 @@ defmodule Froth.Telegram.BotTest do
         started_at: started_at
       })
 
-    worker_pid = start_supervised!({Agent, fn -> :ok end})
-    worker_ref = make_ref()
+    runtime_pid = start_supervised!({Agent, fn -> :ok end})
+    runtime_ref = make_ref()
 
     :sys.replace_state(bot, fn state ->
       %{
         state
         | cycle_state: %CycleState{
             cycle: cycle,
-            worker_pid: worker_pid,
-            worker_ref: worker_ref,
+            cycle_runtime_pid: runtime_pid,
+            cycle_runtime_ref: runtime_ref,
             chat_id: 123,
             last_sent: %{id: 42, text: "hello"}
           }
       }
     end)
 
-    send(bot, {:DOWN, worker_ref, :process, worker_pid, :normal})
+    send(bot, {:DOWN, runtime_ref, :process, runtime_pid, :normal})
 
     assert_receive {:telegram_call,
                     %{
@@ -232,8 +232,8 @@ defmodule Froth.Telegram.BotTest do
     :sys.replace_state(bot, fn state ->
       base = %CycleState{
         cycle: %Cycle{id: "cycle_1"},
-        worker_pid: self(),
-        worker_ref: make_ref(),
+        cycle_runtime_pid: self(),
+        cycle_runtime_ref: make_ref(),
         chat_id: 123,
         reply_to: 456
       }

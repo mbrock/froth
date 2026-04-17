@@ -131,8 +131,8 @@ defmodule Froth.Telegram.AskFlowTest do
     assert_pending_ask_message_id(prompt_message_id)
 
     waiting_state = :sys.get_state(bot)
-    assert is_pid(waiting_state.cycle_state.worker_pid)
-    waiting_worker_pid = waiting_state.cycle_state.worker_pid
+    assert is_pid(waiting_state.cycle_state.cycle_runtime_pid)
+    waiting_runtime_pid = waiting_state.cycle_state.cycle_runtime_pid
 
     assert waiting_state.cycle_state.awaiting_user_input? == true
 
@@ -169,7 +169,7 @@ defmodule Froth.Telegram.AskFlowTest do
     assert [%LLMMessage{role: :user}, %LLMMessage{role: :assistant}, %LLMMessage{role: :user}] =
              resumed_messages
 
-    assert :sys.get_state(bot).cycle_state.worker_pid == waiting_worker_pid
+    assert :sys.get_state(bot).cycle_state.cycle_runtime_pid == waiting_runtime_pid
 
     last_message = List.last(resumed_messages)
 
@@ -497,8 +497,8 @@ defmodule Froth.Telegram.AskFlowTest do
     assert_pending_ask_message_id(prompt_message_id)
 
     waiting_state = :sys.get_state(bot)
-    assert is_pid(waiting_state.cycle_state.worker_pid)
-    waiting_worker_pid = waiting_state.cycle_state.worker_pid
+    assert is_pid(waiting_state.cycle_state.cycle_runtime_pid)
+    waiting_runtime_pid = waiting_state.cycle_state.cycle_runtime_pid
 
     waiting_messages = cycle_messages(waiting_state.cycle_state.cycle.id)
 
@@ -527,7 +527,7 @@ defmodule Froth.Telegram.AskFlowTest do
     )
 
     assert_receive {:llm_call, 1, resumed_messages, _opts}, 5_000
-    assert :sys.get_state(bot).cycle_state.worker_pid == waiting_worker_pid
+    assert :sys.get_state(bot).cycle_state.cycle_runtime_pid == waiting_runtime_pid
 
     last_message = List.last(resumed_messages)
 
@@ -724,11 +724,15 @@ defmodule Froth.Telegram.AskFlowTest do
     await_message_id = await_pending_ask.message_id
 
     waiting_state = :sys.get_state(bot)
-    assert is_pid(waiting_state.cycle_state.worker_pid)
-    waiting_worker_pid = waiting_state.cycle_state.worker_pid
+    assert is_pid(waiting_state.cycle_state.cycle_runtime_pid)
+    waiting_runtime_pid = waiting_state.cycle_state.cycle_runtime_pid
 
     assert MapSet.member?(
-             Map.get(waiting_state.active_tasks, waiting_state.cycle_state.cycle.id, MapSet.new()),
+             Map.get(
+               waiting_state.active_tasks,
+               waiting_state.cycle_state.cycle.id,
+               MapSet.new()
+             ),
              task_id
            )
 
@@ -770,7 +774,7 @@ defmodule Froth.Telegram.AskFlowTest do
     assert edited_await_text =~ "→ Continued while waiting"
 
     assert_receive {:llm_call, 2, resumed_messages, _opts}, 5_000
-    assert :sys.get_state(bot).cycle_state.worker_pid == waiting_worker_pid
+    assert :sys.get_state(bot).cycle_state.cycle_runtime_pid == waiting_runtime_pid
 
     last_message = List.last(resumed_messages)
 

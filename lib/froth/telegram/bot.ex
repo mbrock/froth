@@ -16,11 +16,11 @@ defmodule Froth.Telegram.Bot do
     AwaitControl,
     Config,
     Cycle,
+    CycleRuntime,
     FailureIntervention,
     Message,
     ToolResult,
-    ToolUse,
-    Worker
+    ToolUse
   }
 
   alias Froth.Repo
@@ -168,7 +168,7 @@ defmodule Froth.Telegram.Bot do
 
   def handle_info(
         {:DOWN, ref, :process, pid, _reason},
-        %{cycle_state: %CycleState{worker_ref: ref, worker_pid: pid} = cs} = state
+        %{cycle_state: %CycleState{cycle_runtime_ref: ref, cycle_runtime_pid: pid} = cs} = state
       ) do
     buffered_messages = cs.mid_cycle_messages
     finished_cycle_id = cs.cycle.id
@@ -621,15 +621,23 @@ defmodule Froth.Telegram.Bot do
     config = %{config | parent_span_id: session_span}
 
     Phoenix.PubSub.subscribe(Froth.PubSub, "cycle:#{cycle.id}")
-    {:ok, pid} = Worker.start_link({cycle, config})
-    ref = Process.monitor(pid)
+
+    {:ok, runtime_pid} =
+      CycleRuntime.start_root(
+        cycle_id: cycle.id,
+        cycle: cycle,
+        worker_config: config,
+        bot_id: bc.id
+      )
+
+    ref = Process.monitor(runtime_pid)
 
     %{
       state
       | cycle_state: %CycleState{
           cycle: cycle,
-          worker_pid: pid,
-          worker_ref: ref,
+          cycle_runtime_pid: runtime_pid,
+          cycle_runtime_ref: ref,
           chat_id: chat_id,
           reply_to: reply_to
         }
@@ -669,7 +677,7 @@ defmodule Froth.Telegram.Bot do
 
     state =
       if match?(%CycleState{cycle: %Cycle{id: ^cycle_id}}, cs) do
-        Process.exit(cs.worker_pid, {:shutdown, :cancelled})
+        Process.exit(cs.cycle_runtime_pid, {:shutdown, :cancelled})
         reset_cycle_state(state)
       else
         state
@@ -932,7 +940,10 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp resolve_pending_ask_live(%{cycle_state: %CycleState{worker_pid: wp}} = state, %{pending_ask: pending_ask})
+  defp resolve_pending_ask_live(
+         %{cycle_state: %CycleState{cycle_runtime_pid: runtime_pid}} = state,
+         %{pending_ask: pending_ask}
+       )
        when is_map(pending_ask) do
     case pending_ask_resolution(pending_ask) do
       {:stop_cycle, mode} ->
@@ -940,7 +951,13 @@ defmodule Froth.Telegram.Bot do
         state = clear_pending_ask_wait(state)
 
         try do
-          _ = Worker.resolve_pending_ask(wp, pending_ask.id, {:stop, {:shutdown, mode}})
+          _ =
+            CycleRuntime.resolve_pending_ask(
+              runtime_pid,
+              pending_ask.id,
+              {:stop, {:shutdown, mode}}
+            )
+
           state
         catch
           :exit, _reason ->
@@ -952,8 +969,8 @@ defmodule Froth.Telegram.Bot do
         state = clear_pending_ask_wait(state)
 
         try do
-          case Worker.resolve_pending_ask(
-                 wp,
+          case CycleRuntime.resolve_pending_ask(
+                 runtime_pid,
                  pending_ask.id,
                  {:tool_result, tool_result}
                ) do
@@ -973,7 +990,10 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp live_pending_ask_cycle?(%{cycle_state: %CycleState{cycle: %Cycle{id: cycle_id}}}, pending_ask)
+  defp live_pending_ask_cycle?(
+         %{cycle_state: %CycleState{cycle: %Cycle{id: cycle_id}}},
+         pending_ask
+       )
        when is_binary(cycle_id) do
     pending_ask.cycle_id == cycle_id
   end

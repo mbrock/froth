@@ -7,8 +7,10 @@ defmodule Froth.Telegram.Bot.CycleState do
   Fields:
 
     * `:cycle` — the `%Froth.Agent.Cycle{}` DB row.
-    * `:worker_pid` / `:worker_ref` — the `Froth.Agent.Worker` GenServer
-      and its monitor reference.
+    * `:cycle_runtime_pid` / `:cycle_runtime_ref` — the
+      `Froth.Agent.CycleRuntime` GenServer and its monitor reference.
+      The CycleRuntime owns the Worker; terminating the runtime cascades
+      to the Worker via their link. See RFC-0021.
     * `:chat_id` / `:reply_to` — Telegram chat and the message the cycle
       is answering.
     * `:last_sent` — `nil` or `%{id, text}` of the most recent outbound
@@ -24,11 +26,11 @@ defmodule Froth.Telegram.Bot.CycleState do
 
   alias Froth.Agent.Cycle
 
-  @enforce_keys [:cycle, :worker_pid, :worker_ref, :chat_id]
+  @enforce_keys [:cycle, :cycle_runtime_pid, :cycle_runtime_ref, :chat_id]
   defstruct [
     :cycle,
-    :worker_pid,
-    :worker_ref,
+    :cycle_runtime_pid,
+    :cycle_runtime_ref,
     :chat_id,
     :reply_to,
     :last_sent,
@@ -46,8 +48,8 @@ defmodule Froth.Telegram.Bot.CycleState do
 
   @type t :: %__MODULE__{
           cycle: Cycle.t(),
-          worker_pid: pid(),
-          worker_ref: reference(),
+          cycle_runtime_pid: pid(),
+          cycle_runtime_ref: reference(),
           chat_id: integer(),
           reply_to: integer() | nil,
           last_sent: last_sent() | nil,
