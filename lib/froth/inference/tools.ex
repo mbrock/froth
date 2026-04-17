@@ -594,7 +594,7 @@ defmodule Froth.Inference.Tools do
 
         if Froth.Tasks.Shell.alive?(task_id) do
           Froth.Tasks.Shell.send_input(task_id, text)
-          {:ok, "Sent input to #{task_id}."}
+          {:ok, [Froth.Context.Block.new([kind: "input_sent", task_id: task_id], nil)]}
         else
           {:error, "Task #{task_id} is not running."}
         end
@@ -605,13 +605,19 @@ defmodule Froth.Inference.Tools do
         if tasks == [] do
           {:ok, "No tasks."}
         else
-          lines =
-            Enum.map(tasks, fn t ->
-              elapsed = format_task_elapsed(t)
-              "[#{t.task_id}] #{t.label || t.type} — #{t.status} #{elapsed}"
-            end)
-
-          {:ok, Enum.join(lines, "\n")}
+          {:ok,
+           Enum.map(tasks, fn t ->
+             Froth.Context.Block.new(
+               [
+                 kind: "task",
+                 id: t.task_id,
+                 label: t.label || t.type,
+                 status: t.status,
+                 elapsed: format_task_elapsed(t)
+               ],
+               nil
+             )
+           end)}
         end
 
       "task_output" ->
@@ -623,12 +629,20 @@ defmodule Froth.Inference.Tools do
           {:ok, "No output for task #{task_id}."}
         else
           stats = Froth.Tasks.output_stats(task_id)
-
-          header =
-            "Task #{task_id} — #{stats.total} lines total, #{Float.round(stats.rate_per_second, 1)} lines/s\n---\n"
-
           output = Enum.map_join(events, "", & &1.content)
-          {:ok, header <> String.slice(output, 0, 8000)}
+
+          {:ok,
+           [
+             Froth.Context.Block.new(
+               [
+                 kind: "task_output",
+                 task_id: task_id,
+                 total: stats.total,
+                 rate_per_second: Float.round(stats.rate_per_second, 1)
+               ],
+               output
+             )
+           ]}
         end
 
       "stop_task" ->
@@ -637,20 +651,27 @@ defmodule Froth.Inference.Tools do
 
         if Froth.Tasks.Shell.alive?(task_id) do
           Froth.Tasks.Shell.send_signal(task_id, signal)
-          {:ok, "Sent SIG#{signal} to #{task_id}."}
+
+          {:ok,
+           [
+             Froth.Context.Block.new(
+               [kind: "signal_sent", task_id: task_id, signal: signal],
+               nil
+             )
+           ]}
         else
           cond do
             Froth.Tasks.Eval.alive?(task_id) ->
               Froth.Tasks.Eval.stop_eval(task_id)
               Froth.Tasks.stop(task_id)
-              {:ok, "Stopped task #{task_id}."}
+              {:ok, [Froth.Context.Block.new([kind: "task_stopped", task_id: task_id], nil)]}
 
             true ->
               task = Froth.Tasks.get(task_id)
 
               if task && task.status in ["pending", "running"] do
                 Froth.Tasks.stop(task_id)
-                {:ok, "Stopped task #{task_id}."}
+                {:ok, [Froth.Context.Block.new([kind: "task_stopped", task_id: task_id], nil)]}
               else
                 {:error, "Task #{task_id} is not running."}
               end
@@ -676,12 +697,13 @@ defmodule Froth.Inference.Tools do
               message_id: reply_to
             )
 
-            msg =
-              "Subscribed to #{task_id}. You will receive a message when it completes" <>
-                if(expect_minutes, do: " or after #{expect_minutes} minutes", else: "") <>
-                ". You can stop now — no need to poll or check. The system will wake you up."
-
-            {:ok, msg}
+            {:ok,
+             [
+               Froth.Context.Block.new(
+                 [kind: "subscribed", task_id: task_id, expect_minutes: expect_minutes],
+                 nil
+               )
+             ]}
         end
 
       "await" ->
@@ -693,7 +715,14 @@ defmodule Froth.Inference.Tools do
             case Froth.Codex.Task.run(prompt, chat_id: chat_id) do
               {:ok, session_id} ->
                 url = Froth.Codex.Task.url(session_id)
-                {:ok, "Codex task dispatched. Session: #{session_id}\nWatch progress: #{url}"}
+
+                {:ok,
+                 [
+                   Froth.Context.Block.new(
+                     [kind: "engineer_spawned", session_id: session_id, url: url],
+                     nil
+                   )
+                 ]}
 
               {:error, reason} ->
                 {:error, "Failed to start Codex task: #{inspect(reason)}"}
@@ -1104,9 +1133,19 @@ defmodule Froth.Inference.Tools do
           progress = headlines_progress(chat_id, date)
 
           {:ok,
-           "Registered #{length(normalized_headlines)} headlines for #{date}. " <>
-             "Progress: #{progress.done_days}/#{progress.total_days} days done. " <>
-             next_unfinished_text(progress.next_unfinished)}
+           [
+             Froth.Context.Block.new(
+               [
+                 kind: "headlines_registered",
+                 date: date,
+                 count: length(normalized_headlines),
+                 done_days: progress.done_days,
+                 total_days: progress.total_days,
+                 next_unfinished: progress.next_unfinished
+               ],
+               nil
+             )
+           ]}
 
         {:error, reason} ->
           {:error, inspect(reason)}
@@ -1361,9 +1400,6 @@ defmodule Froth.Inference.Tools do
       log: false
     )
   end
-
-  defp next_unfinished_text(nil), do: "Next unfinished: none."
-  defp next_unfinished_text(date), do: "Next unfinished: #{date}."
 
   defp maybe_put_send_message_opt(keyword, _key, nil), do: keyword
   defp maybe_put_send_message_opt(keyword, key, value), do: Keyword.put(keyword, key, value)
@@ -1709,7 +1745,7 @@ defmodule Froth.Inference.Tools do
       "No messages found in the given range."
     else
       analyses_map = fetch_analyses(chat_id, Enum.map(msgs, & &1.message_id))
-      Enum.map_join(msgs, "\n", &format_msg(&1, analyses_map, session_id))
+      Enum.flat_map(msgs, &message_blocks(&1, analyses_map, session_id))
     end
   end
 
@@ -1807,20 +1843,22 @@ defmodule Froth.Inference.Tools do
       analyses_map = fetch_analyses(chat_id, all_msg_ids)
 
       hit_groups
-      |> Enum.map(fn {hit, msgs} ->
-        Enum.map(msgs, fn m ->
-          marker = if m.message_id == hit.message_id, do: ">>> ", else: "    "
-          marker <> format_msg(m, analyses_map, session_id)
+      |> Enum.flat_map(fn {hit, msgs} ->
+        Enum.flat_map(msgs, fn m ->
+          match? = m.message_id == hit.message_id
+          message_blocks(m, analyses_map, session_id, match?: match?)
         end)
-        |> Enum.join("\n")
       end)
-      |> Enum.join("\n\n---\n\n")
     end
   end
 
-  defp format_msg(msg, analyses_map, session_id) do
+  # Produce one <message> block per message, followed by one
+  # <analysis> block per attached analysis. The analysis blocks carry
+  # a short inline snippet plus the `id` the agent can pass to
+  # `view_analysis` for the full text.
+  defp message_blocks(msg, analyses_map, session_id, opts \\ []) do
     time = DateTime.from_unix!(msg.date) |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
-    name = resolve_user(msg.sender_id, session_id)
+    sender = resolve_user(msg.sender_id, session_id)
 
     text =
       get_in(msg.raw, ["content", "text", "text"]) ||
@@ -1828,40 +1866,43 @@ defmodule Froth.Inference.Tools do
 
     type = get_in(msg.raw, ["content", "@type"]) || "unknown"
 
-    media =
-      case type do
-        "messageText" -> ""
-        "messagePhoto" -> "[photo] "
-        "messageVideo" -> "[video] "
-        "messageVoiceNote" -> "[voice] "
-        "messageDocument" -> "[file] "
-        "messageSticker" -> "[sticker] "
-        other -> "[#{String.replace(other, "message", "")}] "
-      end
+    base_attrs = [
+      kind: "msg",
+      message_id: msg.message_id,
+      sender: sender,
+      time: time,
+      type: type
+    ]
 
-    line = "[#{time}] msg:#{msg.message_id} #{name}: #{media}#{text}"
+    attrs =
+      if Keyword.get(opts, :match?, false),
+        do: Keyword.put(base_attrs, :match, true),
+        else: base_attrs
 
-    case Map.get(analyses_map, msg.message_id) do
-      nil ->
-        line
+    message_block = Froth.Context.Block.new(attrs, text)
 
-      [] ->
-        line
+    analyses = Map.get(analyses_map, msg.message_id, []) || []
 
-      analyses ->
-        snippets =
-          Enum.map_join(analyses, "\n", fn a ->
-            snippet =
-              a.analysis_text
-              |> String.slice(0, 150)
-              |> String.replace(~r/\s+/, " ")
-              |> String.trim()
+    analysis_blocks =
+      Enum.map(analyses, fn a ->
+        snippet =
+          a.analysis_text
+          |> String.slice(0, 150)
+          |> String.replace(~r/\s+/, " ")
+          |> String.trim()
 
-            "  → analysis:#{a.id} (#{a.type}): #{snippet}…"
-          end)
+        Froth.Context.Block.new(
+          [
+            kind: "analysis",
+            id: a.id,
+            type: a.type,
+            message_id: msg.message_id
+          ],
+          snippet
+        )
+      end)
 
-        line <> "\n" <> snippets
-    end
+    [message_block | analysis_blocks]
   end
 
   defp fetch_analyses(_chat_id, []), do: %{}
@@ -1896,11 +1937,20 @@ defmodule Froth.Inference.Tools do
   defp pager_dispatch(blob_id, "stat", _input) do
     case Froth.Blobs.stat(blob_id) do
       {:ok, stat} ->
-        size_kb = Float.round(stat.size / 1024, 1)
-        lines_str = if stat.lines, do: "#{stat.lines} lines", else: "n/a lines"
-
         {:ok,
-         "blob:#{blob_id} — #{size_kb} KB, #{lines_str}, mime=#{stat.mime}, inserted_at=#{stat.inserted_at}"}
+         [
+           Froth.Context.Block.new(
+             [
+               kind: "stat",
+               blob: blob_id,
+               size: stat.size,
+               lines: stat.lines,
+               mime: stat.mime,
+               inserted_at: to_string(stat.inserted_at)
+             ],
+             nil
+           )
+         ]}
 
       {:error, :not_found} ->
         {:error, "blob:#{blob_id} not found"}
@@ -1911,8 +1961,17 @@ defmodule Froth.Inference.Tools do
     n = bounded_integer(input["lines"], 40, 1, 1000)
 
     case Froth.Blobs.head(blob_id, n) do
-      {:ok, text} -> {:ok, text}
-      {:error, :not_found} -> {:error, "blob:#{blob_id} not found"}
+      {:ok, text} ->
+        {:ok,
+         [
+           Froth.Context.Block.new(
+             [kind: "head", blob: blob_id, lines_requested: n],
+             text
+           )
+         ]}
+
+      {:error, :not_found} ->
+        {:error, "blob:#{blob_id} not found"}
     end
   end
 
@@ -1920,8 +1979,17 @@ defmodule Froth.Inference.Tools do
     n = bounded_integer(input["lines"], 40, 1, 1000)
 
     case Froth.Blobs.tail(blob_id, n) do
-      {:ok, text} -> {:ok, text}
-      {:error, :not_found} -> {:error, "blob:#{blob_id} not found"}
+      {:ok, text} ->
+        {:ok,
+         [
+           Froth.Context.Block.new(
+             [kind: "tail", blob: blob_id, lines_requested: n],
+             text
+           )
+         ]}
+
+      {:error, :not_found} ->
+        {:error, "blob:#{blob_id} not found"}
     end
   end
 
@@ -1930,9 +1998,31 @@ defmodule Froth.Inference.Tools do
     lines = bounded_integer(input["lines"], 80, 1, 1000)
 
     case Froth.Blobs.page(blob_id, from_line: from_line, lines: lines) do
-      {:ok, ""} -> {:ok, "(empty range — past end of blob)"}
-      {:ok, text} -> {:ok, text}
-      {:error, :not_found} -> {:error, "blob:#{blob_id} not found"}
+      {:ok, ""} ->
+        {:ok,
+         [
+           Froth.Context.Block.new(
+             [kind: "page", blob: blob_id, from_line: from_line, empty: true],
+             nil
+           )
+         ]}
+
+      {:ok, text} ->
+        {:ok,
+         [
+           Froth.Context.Block.new(
+             [
+               kind: "page",
+               blob: blob_id,
+               from_line: from_line,
+               lines_requested: lines
+             ],
+             text
+           )
+         ]}
+
+      {:error, :not_found} ->
+        {:error, "blob:#{blob_id} not found"}
     end
   end
 
@@ -1951,15 +2041,28 @@ defmodule Froth.Inference.Tools do
 
       case Froth.Blobs.grep(blob_id, pattern, opts) do
         {:ok, %{total_matches: 0}} ->
-          {:ok, "(no matches for pattern)"}
+          {:ok,
+           [
+             Froth.Context.Block.new(
+               [kind: "grep", blob: blob_id, pattern: pattern, total: 0],
+               nil
+             )
+           ]}
 
         {:ok, %{total_matches: total, shown: shown, text: text}} ->
-          header =
-            if shown < total,
-              do: "blob:#{blob_id} — #{total} matches total, showing first #{shown}:\n\n",
-              else: "blob:#{blob_id} — #{total} matches:\n\n"
-
-          {:ok, header <> text}
+          {:ok,
+           [
+             Froth.Context.Block.new(
+               [
+                 kind: "grep",
+                 blob: blob_id,
+                 pattern: pattern,
+                 total: total,
+                 shown: shown
+               ],
+               text
+             )
+           ]}
 
         {:error, :not_found} ->
           {:error, "blob:#{blob_id} not found"}
@@ -1995,18 +2098,13 @@ defmodule Froth.Inference.Tools do
     if analyses == [] do
       "No analyses found for the given IDs."
     else
-      Enum.map_join(analyses, "\n\n", fn a ->
-        attrs = [
-          id: a.id,
-          type: a.type,
-          message_id: a.message_id,
-          agent: a.agent
-        ]
-
-        {:ok, rendered} =
-          Froth.Blobs.Render.tool_return(a.analysis_text, kind: "analysis", attrs: attrs)
-
-        rendered
+      # One block per analysis — each carries its own ids/type and
+      # (via materialize) its own pager handle if the body is long.
+      Enum.map(analyses, fn a ->
+        Froth.Context.Block.new(
+          [kind: "analysis", id: a.id, type: a.type, message_id: a.message_id, agent: a.agent],
+          a.analysis_text
+        )
       end)
     end
   end

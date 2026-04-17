@@ -240,9 +240,15 @@ defmodule Froth.Tasks.Shell do
   defp format_completed(task_id, _command, exit_code, output) do
     trimmed = String.trim(output)
 
-    attrs = [task_id: task_id, exit_code: exit_code]
-
-    {:ok, rendered} = Froth.Blobs.Render.tool_return(trimmed, kind: "shell", attrs: attrs)
-    rendered
+    # The shell tool's job ends here: emit a single block with the
+    # observed facts and the raw body. Downstream materialization
+    # decides whether to blob it and how to fold it; the renderers
+    # decide how to display it.
+    [
+      Froth.Context.Block.new(
+        [kind: "shell", task_id: task_id, exit_code: exit_code],
+        trimmed
+      )
+    ]
   end
 end

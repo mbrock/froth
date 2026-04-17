@@ -2,6 +2,7 @@ defmodule Froth.Inference.PagerToolTest do
   use ExUnit.Case, async: true
 
   alias Froth.{Blobs, Repo}
+  alias Froth.Context.Block
   alias Froth.Inference.Tools
 
   setup do
@@ -25,52 +26,78 @@ defmodule Froth.Inference.PagerToolTest do
   end
 
   describe "pager tool execution" do
-    # Use the 4-ary shim (no real chat/ctx needed for pager).
     defp call(input), do: Tools.execute("pager", input, 0, [])
 
-    test "mode=stat returns metadata", %{blob_id: id} do
-      assert {:ok, stat_text} = call(%{"id" => "blob:" <> id, "mode" => "stat"})
-      assert stat_text =~ "blob:#{id}"
-      assert stat_text =~ "60 lines"
-      assert stat_text =~ "mime=text/plain"
+    defp single_block!({:ok, [%Block{} = block]}), do: block
+
+    test "mode=stat returns a metadata-only block", %{blob_id: id} do
+      block = call(%{"id" => "blob:" <> id, "mode" => "stat"}) |> single_block!()
+
+      assert Block.attr(block, :kind) == "stat"
+      assert Block.attr(block, :blob) == id
+      assert Block.attr(block, :lines) == 60
+      assert Block.attr(block, :mime) == "text/plain"
+      assert is_nil(block.body)
     end
 
-    test "mode=head returns the first N lines", %{blob_id: id} do
-      assert {:ok, text} = call(%{"id" => id, "mode" => "head", "lines" => 3})
-      assert text == "line 1\nline 2\nline 3"
+    test "mode=head returns the first N lines in the body", %{blob_id: id} do
+      block = call(%{"id" => id, "mode" => "head", "lines" => 3}) |> single_block!()
+
+      assert Block.attr(block, :kind) == "head"
+      assert block.body == "line 1\nline 2\nline 3"
     end
 
-    test "mode=tail returns the last N lines", %{blob_id: id} do
-      assert {:ok, text} = call(%{"id" => id, "mode" => "tail", "lines" => 3})
-      assert text == "line 58\nline 59\nline 60"
+    test "mode=tail returns the last N lines in the body", %{blob_id: id} do
+      block = call(%{"id" => id, "mode" => "tail", "lines" => 3}) |> single_block!()
+
+      assert Block.attr(block, :kind) == "tail"
+      assert block.body == "line 58\nline 59\nline 60"
     end
 
     test "mode=read returns a 1-indexed line range", %{blob_id: id} do
-      assert {:ok, text} =
-               call(%{"id" => id, "mode" => "read", "from_line" => 10, "lines" => 3})
+      block =
+        call(%{"id" => id, "mode" => "read", "from_line" => 10, "lines" => 3})
+        |> single_block!()
 
-      assert text == "line 10\nline 11\nline 12"
+      assert Block.attr(block, :kind) == "page"
+      assert Block.attr(block, :from_line) == 10
+      assert block.body == "line 10\nline 11\nline 12"
     end
 
     test "mode=read default (no mode) starts from line 1", %{blob_id: id} do
-      assert {:ok, text} = call(%{"id" => id, "lines" => 2})
-      assert text =~ "line 1\nline 2"
+      block = call(%{"id" => id, "lines" => 2}) |> single_block!()
+
+      assert Block.attr(block, :from_line) == 1
+      assert block.body =~ "line 1\nline 2"
     end
 
-    test "mode=read past end returns an explicit marker", %{blob_id: id} do
-      assert {:ok, "(empty range — past end of blob)"} =
-               call(%{"id" => id, "mode" => "read", "from_line" => 999, "lines" => 3})
+    test "mode=read past end marks the block empty", %{blob_id: id} do
+      block =
+        call(%{"id" => id, "mode" => "read", "from_line" => 999, "lines" => 3})
+        |> single_block!()
+
+      assert Block.attr(block, :empty) == true
+      assert is_nil(block.body)
     end
 
-    test "mode=grep returns matches with line numbers", %{blob_id: id} do
-      assert {:ok, text} = call(%{"id" => id, "mode" => "grep", "pattern" => "^line 1$"})
-      assert text =~ "1 matches"
-      assert text =~ "line 1"
+    test "mode=grep returns a block with total/shown attrs and matches body", %{blob_id: id} do
+      block =
+        call(%{"id" => id, "mode" => "grep", "pattern" => "^line 1$"})
+        |> single_block!()
+
+      assert Block.attr(block, :kind) == "grep"
+      assert Block.attr(block, :total) == 1
+      assert Block.attr(block, :pattern) == "^line 1$"
+      assert block.body =~ "line 1"
     end
 
-    test "mode=grep sentinel when no matches", %{blob_id: id} do
-      assert {:ok, "(no matches for pattern)"} =
-               call(%{"id" => id, "mode" => "grep", "pattern" => "unobtanium"})
+    test "mode=grep with no matches returns a metadata-only block", %{blob_id: id} do
+      block =
+        call(%{"id" => id, "mode" => "grep", "pattern" => "unobtanium"})
+        |> single_block!()
+
+      assert Block.attr(block, :total) == 0
+      assert is_nil(block.body)
     end
 
     test "mode=grep rejects empty or missing pattern", %{blob_id: id} do

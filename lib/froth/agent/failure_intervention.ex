@@ -41,6 +41,15 @@ defmodule Froth.Agent.FailureIntervention do
   def stop_answer?(@stop_answer), do: true
   def stop_answer?(_answer), do: false
 
+  def maybe_intervene({:error, [%Froth.Context.Block{} | _] = blocks}, ctx, tool_call) do
+    # Same trick for the block-list flavor of structured errors: the
+    # report builder wants a plain string to quote from. The LLM
+    # still sees the full block-rendered output in tool_result.content.
+    materialized = Froth.Context.Blocks.materialize(blocks)
+    text = Froth.Context.BlockHTML.live_to_string(materialized)
+    maybe_intervene({:error, text}, ctx, tool_call)
+  end
+
   def maybe_intervene({:error, error_text}, %Context{} = ctx, %ToolUse{} = tool_call)
       when is_binary(error_text) do
     if should_intervene?(ctx, tool_call) do

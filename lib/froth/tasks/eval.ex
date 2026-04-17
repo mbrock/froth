@@ -87,8 +87,12 @@ defmodule Froth.Tasks.Eval do
 
       :running ->
         {:ok,
-         "Eval is still running in background (task_id=#{task_id}, session_id=#{session_id}). " <>
-           "Use list_tasks or task_output to check progress, stop_task to cancel."}
+         [
+           Froth.Context.Block.new(
+             [kind: "eval_running", task_id: task_id, session_id: session_id],
+             nil
+           )
+         ]}
     end
   end
 
@@ -169,12 +173,10 @@ defmodule Froth.Tasks.Eval do
       task_id: state.task_id,
       session_id: state.session_id,
       status: status,
-      result_preview:
-        result |> format_result_parts(io_output, state.session_id) |> String.slice(0, 200)
+      result_preview: result |> debug_text(io_output) |> String.slice(0, 200)
     })
 
-    result_text = format_result_parts(result, io_output, state.session_id)
-    Froth.Tasks.append(state.task_id, "stdout", result_text)
+    Froth.Tasks.append(state.task_id, "stdout", debug_text(result, io_output))
 
     if status == "completed" do
       Froth.Tasks.complete(state.task_id)
@@ -247,37 +249,55 @@ defmodule Froth.Tasks.Eval do
   end
 
   defp format_result(state) do
-    format_result_parts(state.result, state.io_output, state.session_id)
+    eval_blocks(state.result, state.io_output, state.session_id)
   end
 
-  defp format_result_parts(result, io_output, session_id) do
+  # The LLM-facing shape: up to two blocks — an optional <io> block
+  # for anything printed to stdout/stderr and a <value> or <error>
+  # block carrying the result. Multi-part lets the model see and
+  # reason about the two parts separately (each has its own attrs and
+  # its own pager handle if it gets big).
+  defp eval_blocks(result, io_output, session_id) do
     io_trimmed = String.trim(io_output || "")
 
-    {body, status} =
+    io_blocks =
+      if io_trimmed == "" do
+        []
+      else
+        [Froth.Context.Block.new([kind: "io", session: session_id], io_trimmed)]
+      end
+
+    result_block =
       case result do
         {:ok, value} ->
           inspected = inspect(value, pretty: true, limit: 500, printable_limit: :infinity)
-
-          combined =
-            if io_trimmed == "",
-              do: inspected,
-              else: "=== io ===\n" <> io_trimmed <> "\n\n=== value ===\n" <> inspected
-
-          {combined, "ok"}
+          Froth.Context.Block.new([kind: "value", session: session_id], inspected)
 
         {:error, msg} ->
-          combined =
-            if io_trimmed == "",
-              do: msg,
-              else: "=== io ===\n" <> io_trimmed <> "\n\n=== error ===\n" <> msg
-
-          {combined, "error"}
+          Froth.Context.Block.new([kind: "error", session: session_id], msg)
       end
 
-    attrs = [session: session_id, status: status]
+    io_blocks ++ [result_block]
+  end
 
-    {:ok, rendered} = Froth.Blobs.Render.tool_return(body, kind: "eval", attrs: attrs)
-    rendered
+  # Debug-readable text for the task output stream (viewed via the
+  # `task_output` tool or the web UI). Not used by the LLM.
+  defp debug_text(result, io_output) do
+    io_trimmed = String.trim(io_output || "")
+
+    case result do
+      {:ok, value} ->
+        inspected = inspect(value, pretty: true, limit: 500, printable_limit: :infinity)
+
+        if io_trimmed == "",
+          do: inspected,
+          else: "=== io ===\n" <> io_trimmed <> "\n\n=== value ===\n" <> inspected
+
+      {:error, msg} ->
+        if io_trimmed == "",
+          do: msg,
+          else: "=== io ===\n" <> io_trimmed <> "\n\n=== error ===\n" <> msg
+    end
   end
 
   defp reply_to_waiters(state) do

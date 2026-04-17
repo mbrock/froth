@@ -41,6 +41,14 @@ defmodule Froth.Agent.ToolResult do
 
   defp normalize_content(content) when is_binary(content), do: content
 
+  # A block list is the canonical tool-output shape. By the time we
+  # get here the worker has already materialized big bodies into
+  # blobs (see `Worker.tool_result_from_execution/2`), so rendering
+  # is a pure function: hand the LLM what our HEEx component says.
+  defp normalize_content([%Froth.Context.Block{} | _] = blocks) do
+    Froth.Context.BlockHTML.live_to_string(blocks)
+  end
+
   defp normalize_content(content) when is_map(content) do
     Map.new(content, fn {key, value} ->
       {to_string(key), normalize_content(value)}

@@ -761,19 +761,30 @@ defmodule Froth.Agent.Worker do
         )
 
       {:ok, content} ->
-        ToolResult.new(tool_use_id, content)
+        ToolResult.new(tool_use_id, materialize_if_blocks(content))
 
       {:error, content} ->
-        ToolResult.new(tool_use_id, content,
+        materialized = materialize_if_blocks(content)
+
+        ToolResult.new(tool_use_id, materialized,
           is_error: true,
           control_outcome: "tool_error",
-          control_data: %{"error" => format_reason(content)}
+          control_data: %{"error" => format_reason(materialized)}
         )
 
       content ->
-        ToolResult.new(tool_use_id, content)
+        ToolResult.new(tool_use_id, materialize_if_blocks(content))
     end
   end
+
+  # Block lists are the new canonical tool-output shape. Materialize
+  # once right here — blob creation, head/tail precompute — so
+  # downstream uses (API rendering, event persistence, trace view)
+  # all see the same shape and we don't re-blob on every call.
+  defp materialize_if_blocks([%Froth.Context.Block{} | _] = blocks),
+    do: Froth.Context.Blocks.materialize(blocks)
+
+  defp materialize_if_blocks(other), do: other
 
   defp format_yield_reason(reason) when is_binary(reason), do: "Yielding: #{reason}"
 
@@ -799,6 +810,14 @@ defmodule Froth.Agent.Worker do
   end
 
   defp sanitize_utf8(value) when is_list(value), do: Enum.map(value, &sanitize_utf8/1)
+
+  defp sanitize_utf8(%Froth.Context.Block{} = block) do
+    %Froth.Context.Block{
+      block
+      | attrs: Enum.map(block.attrs, fn {k, v} -> {k, sanitize_utf8(v)} end),
+        body: sanitize_utf8(block.body)
+    }
+  end
 
   defp sanitize_utf8(value) when is_map(value) do
     Map.new(value, fn {key, inner} ->
@@ -1117,10 +1136,17 @@ defmodule Froth.Agent.Worker do
   defp tool_result_type(content) when is_atom(content), do: Atom.to_string(content)
   defp tool_result_type(_content), do: "value"
 
+  defp normalize_tool_event_result({:ok, [%Froth.Context.Block{} | _] = blocks}),
+    do: %{"blocks" => Enum.map(blocks, &Froth.Context.Block.to_map/1)}
+
   defp normalize_tool_event_result({:ok, content}), do: content
   defp normalize_tool_event_result({:await, data}), do: %{"await" => summarize_value(data)}
   defp normalize_tool_event_result({:yield, reason}), do: %{"yield" => format_reason(reason)}
   defp normalize_tool_event_result({:error, reason}), do: %{"error" => format_reason(reason)}
+
+  defp normalize_tool_event_result([%Froth.Context.Block{} | _] = blocks),
+    do: %{"blocks" => Enum.map(blocks, &Froth.Context.Block.to_map/1)}
+
   defp normalize_tool_event_result(content), do: content
 
   defp tool_succeeded?({:error, _reason}), do: false

@@ -33,7 +33,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
   end
 
   describe "cycle rendering" do
-    test "renders json call input and return blocks inside a cycle" do
+    test "list-valued input renders repeated child tags" do
       html =
         render(
           BotContextHTML.cycle_trace(%{
@@ -43,22 +43,23 @@ defmodule Froth.Telegram.BotContextHTMLTest do
               %{
                 kind: :call,
                 tool: "search",
-                input_json: ~s({"query":["froth"]})
+                input: %{"query" => ["froth"]}
               },
-              %{kind: :return, text: "found signal"}
+              %{kind: :return, outcome: {:ok, "found signal"}}
             ]
           })
         )
 
-      assert html =~ ~s(<cycle cycle_id="abc" at="2026-03-06 09:21:33 UTC">)
+      assert html =~ ~s(<cycle cycle_id="abc" time="2026-03-06 09:21:33 UTC">)
       assert html =~ ~s(<call tool="search">)
-      assert html =~ ~s({"query":["froth"]})
+      assert html =~ "<query>"
+      assert html =~ "froth"
+      assert html =~ "</query>"
       assert html =~ "<return>"
       assert html =~ "found signal"
-      assert html =~ "</cycle>"
     end
 
-    test "run_shell call renders narration + <command>" do
+    test "long scalar values stay as child elements" do
       html =
         render(
           BotContextHTML.cycle_trace(%{
@@ -71,24 +72,24 @@ defmodule Froth.Telegram.BotContextHTMLTest do
                 input: %{
                   "command" => "rg 'foo' lib | head -5",
                   "description" => %{"action" => "searching for foo"}
-                },
-                input_json:
-                  ~s({"command":"rg 'foo' lib | head -5","description":{"action":"searching for foo"}}),
-                narration: "searching for foo"
+                }
               }
             ]
           })
         )
 
-      assert html =~ ~s(<call tool="run_shell">)
-      assert html =~ "<description>"
-      assert html =~ "searching for foo"
-      assert html =~ "<command>"
-      assert html =~ "rg 'foo' lib | head -5"
-      assert html =~ "</command>"
+      # `command` is a safe-enough string (< 60 chars, no newline) so
+      # it becomes an attribute; since <command> is a void tag it falls
+      # back to <field name="command">. The nested description map
+      # collapses its short scalar fields to attrs on <description>.
+      assert html =~ ~s(<call tool="run_shell")
+      assert html =~ "command=\"rg 'foo' lib | head -5\""
+      assert html =~ ~s(<description action="searching for foo")
     end
 
-    test "elixir_eval call renders narration + <code>" do
+    test "multi-line scalar values stay as child element bodies" do
+      code = "Enum.map(1..10, fn n ->\n  n * n\nend)"
+
       html =
         render(
           BotContextHTML.cycle_trace(%{
@@ -98,27 +99,22 @@ defmodule Froth.Telegram.BotContextHTMLTest do
               %{
                 kind: :call,
                 tool: "elixir_eval",
-                input: %{
-                  "code" => "Enum.sum(1..10)",
-                  "topic" => "cycle:abc"
-                },
-                input_json: "{\"code\":\"Enum.sum(1..10)\",\"topic\":\"cycle:abc\"}",
-                narration: nil
+                input: %{"code" => code, "topic" => "cycle:abc"}
               }
             ]
           })
         )
 
-      assert html =~ ~s(<call tool="elixir_eval">)
+      # Multi-line code must not be collapsed into an attribute.
       assert html =~ "<code>"
-      assert html =~ "Enum.sum(1..10)"
+      # HEEx escapes `>` to `&gt;` inside text content — expected.
+      assert html =~ "Enum.map(1..10, fn n -&gt;"
       assert html =~ "</code>"
-      # cycle topic is internal noise; it shouldn't surface in the
-      # rendered call body
-      refute html =~ "cycle:abc"
+      # Short, single-line `topic` goes on the enclosing tag as an attr.
+      assert html =~ ~s(topic="cycle:abc")
     end
 
-    test "unknown tools render pretty JSON inside <args>" do
+    test "short scalar inputs render as attributes on <call>" do
       html =
         render(
           BotContextHTML.cycle_trace(%{
@@ -129,41 +125,79 @@ defmodule Froth.Telegram.BotContextHTMLTest do
                 kind: :call,
                 tool: "pager",
                 input: %{
-                  "id" => "blob:01KP…",
+                  "id" => "blob:01KP",
                   "mode" => "grep",
                   "pattern" => "error"
-                },
-                input_json: ~s({"id":"blob:01KP…","mode":"grep","pattern":"error"}),
-                narration: nil
+                }
               }
             ]
           })
         )
 
-      assert html =~ ~s(<call tool="pager">)
-      assert html =~ "<args>"
-      # Pretty-printed JSON: newlines + indentation inside the body
-      assert html =~ ~s("mode": "grep")
-      assert html =~ "</args>"
+      assert html =~
+               ~s(<call tool="pager" id="blob:01KP" mode="grep" pattern="error">)
     end
 
-    test "return passes through a structured output frame unchanged" do
-      frame = ~s(<output kind="shell" size="11" lines="1">\nhello world\n</output>)
-      html = render(BotContextHTML.cycle_return(%{text: frame}))
+    test "returning a block list uses the compact trace renderer" do
+      blocks = [
+        Froth.Context.Block.new(
+          [kind: "shell", task_id: "shell:abc", size: 11, lines: 1],
+          "hello world"
+        )
+      ]
 
-      assert html =~ ~s(<output kind="shell")
+      html =
+        render(
+          BotContextHTML.cycle_trace(%{
+            cycle_id: "abc",
+            inserted_at: ~U[2026-03-06 09:21:33Z],
+            entries: [%{kind: :return, outcome: {:ok, blocks}}]
+          })
+        )
+
+      assert html =~ "<shell"
+      assert html =~ ~s(task_id="shell:abc")
       assert html =~ "hello world"
     end
 
-    test "return folds long legacy text into head/tail with an omitted note" do
-      body = Enum.map_join(1..50, "\n", &"row #{&1}")
-      html = render(BotContextHTML.cycle_return(%{text: body}))
+    test "errored returns render <return is_error=\"true\">" do
+      html =
+        render(
+          BotContextHTML.cycle_trace(%{
+            cycle_id: "abc",
+            inserted_at: ~U[2026-03-06 09:21:33Z],
+            entries: [%{kind: :return, outcome: {:error, "nope"}}]
+          })
+        )
 
-      assert html =~ "row 1"
-      assert html =~ "row 50"
-      refute html =~ "row 25"
-      assert html =~ "lines omitted"
-      assert html =~ "read_tool_transcript"
+      assert html =~ ~s(<return is_error="true">)
+      assert html =~ "nope"
+    end
+
+    test "failure intervention renders a structured <intervention> element" do
+      html =
+        render(
+          BotContextHTML.cycle_trace(%{
+            cycle_id: "abc",
+            inserted_at: ~U[2026-03-06 09:21:33Z],
+            entries: [
+              %{
+                kind: :intervention,
+                data: %{
+                  "kind" => "failure_intervention",
+                  "designation" => "retry_with_hint",
+                  "reason" => "shell exited 127",
+                  "pending_ask_id" => "ask_42"
+                }
+              }
+            ]
+          })
+        )
+
+      assert html =~ "<intervention"
+      assert html =~ ~s(designation="retry_with_hint")
+      assert html =~ ~s(reason="shell exited 127")
+      assert html =~ ~s(pending_ask="ask_42")
     end
   end
 
@@ -178,9 +212,11 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       # cycle traces are attached to recent messages
       assert html =~ ~s(<cycle cycle_id="01JNWXYZ")
       assert html =~ ~s(<call tool="search">)
-      assert html =~ ~s({"query":["context","builder"]})
+      assert html =~ "<query>"
+      assert html =~ "context"
+      assert html =~ "builder"
       assert html =~ ~s(<cycle cycle_id="01JNWABC")
-      assert html =~ ~s(<call tool="look">)
+      assert html =~ ~s(<call tool="look")
 
       # newest user message is part of the same <msg> stream
       assert html =~ ~s(<msg message_id="4405" sender="user:42")
@@ -229,8 +265,8 @@ defmodule Froth.Telegram.BotContextHTMLTest do
             cycle_id: "abc",
             inserted_at: ~U[2026-03-06 09:21:33Z],
             entries: [
-              %{kind: :call, tool: "look", input_json: ~s({"message_id":"4401"})},
-              %{kind: :return, text: "ok"}
+              %{kind: :call, tool: "look", input: %{"message_id" => "4401"}},
+              %{kind: :return, outcome: {:ok, "ok"}}
             ]
           })
         )

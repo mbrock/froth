@@ -1,0 +1,90 @@
+defmodule Froth.Context.Blocks do
+  @moduledoc """
+  Operations on `Froth.Context.Block` lists.
+
+  `materialize/1` is the only place in the system that decides
+  whether a block's body gets inlined or externalized to a blob.
+  Tools don't care; renderers don't care. This module is where the
+  size threshold lives.
+
+  For bodies that get blobbed, a set of pre-computed attrs is added
+  to the block so renderers don't have to hit the database:
+
+    * `:blob` — `"blob:<ulid>"` handle
+    * `:size` — byte size of the full body
+    * `:lines` — line count of the full body
+    * `:head` — first N lines as a list
+    * `:tail` — last N lines as a list
+    * `:omitted` — lines not shown in head+tail
+
+  `:size` / `:lines` are added even for inline bodies so the live
+  renderer can decide whether to display them.
+  """
+
+  alias Froth.Blobs
+  alias Froth.Context.Block
+
+  @inline_max_bytes 1_200
+  @inline_max_lines 48
+  @head_lines 10
+  @tail_lines 5
+
+  @doc """
+  Materialize a block list for persistence and rendering.
+
+  For each block, either inline the body with size/lines attrs added,
+  or externalize it to a blob and replace the body with nil, adding
+  blob/head/tail attrs.
+
+  Blocks with no body pass through unchanged except for attribute
+  normalization.
+
+  Returns a new list of `%Block{}`.
+  """
+  @spec materialize([Block.t()]) :: [Block.t()]
+  def materialize(blocks) when is_list(blocks) do
+    Enum.map(blocks, &materialize_one/1)
+  end
+
+  defp materialize_one(%Block{body: nil} = block), do: block
+
+  defp materialize_one(%Block{body: body, attrs: attrs} = block) when is_binary(body) do
+    trimmed = String.trim_trailing(body, "\n")
+    size = byte_size(trimmed)
+    line_count = count_lines(trimmed)
+
+    if size <= @inline_max_bytes and line_count <= @inline_max_lines do
+      %Block{block | body: trimmed, attrs: put_facts(attrs, size, line_count)}
+    else
+      {:ok, blob} = Blobs.put(trimmed, mime: Keyword.get(attrs, :mime, "text/plain"))
+
+      all_lines = split_lines(trimmed)
+      head = Enum.take(all_lines, min(@head_lines, line_count))
+      tail_n = min(@tail_lines, max(line_count - length(head), 0))
+      tail = Enum.drop(all_lines, line_count - tail_n)
+      omitted = line_count - length(head) - tail_n
+
+      new_attrs =
+        attrs
+        |> put_facts(size, line_count)
+        |> Keyword.put(:blob, blob.id)
+        |> Keyword.put(:head, head)
+        |> Keyword.put(:tail, tail)
+        |> Keyword.put(:omitted, omitted)
+
+      %Block{block | body: nil, attrs: new_attrs}
+    end
+  end
+
+  defp put_facts(attrs, size, lines) do
+    attrs
+    |> Keyword.put_new(:size, size)
+    |> Keyword.put_new(:lines, lines)
+  end
+
+  defp split_lines(""), do: []
+  defp split_lines(bytes) when is_binary(bytes), do: String.split(bytes, "\n")
+
+  defp count_lines(""), do: 0
+  defp count_lines(bytes) when is_binary(bytes), do: length(split_lines(bytes))
+end

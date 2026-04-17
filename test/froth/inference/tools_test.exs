@@ -439,7 +439,7 @@ defmodule Froth.Inference.ToolsTest do
   end
 
   test "run_shell falls back to the current working directory for an empty working_dir" do
-    {:ok, result} =
+    {:ok, [%Froth.Context.Block{} = block]} =
       Tools.execute(
         "run_shell",
         %{"command" => "pwd", "working_dir" => ""},
@@ -447,11 +447,15 @@ defmodule Froth.Inference.ToolsTest do
         []
       )
 
-    assert [_, task_id] =
-             Regex.run(~r/task_id="(shell:[a-z0-9]+)"/, result)
+    task_id = Keyword.fetch!(block.attrs, :task_id)
+    assert String.starts_with?(task_id, "shell:")
 
-    assert [_, working_dir] =
-             Regex.run(~r/<output [^>]*>\s*\n?([^\n<]+)/, result)
+    working_dir =
+      cond do
+        is_binary(block.body) -> block.body
+        true -> Enum.join(Keyword.get(block.attrs, :head, []), "\n")
+      end
+      |> String.trim()
 
     task = Repo.get!(Task, task_id)
 

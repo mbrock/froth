@@ -443,11 +443,10 @@ defmodule Froth.Telegram.BotContextTest do
     prompt = Enum.join(parts, "")
     assert Regex.match?(~r/<msg message_id="123".*<cycle cycle_id="#{cycle_id}"/s, prompt)
     assert prompt =~ ~s(<call tool="search">)
-    # Input is pretty-printed JSON inside <args> (stripped of noise keys).
-    assert prompt =~ "<args>"
-    assert prompt =~ "\"froth\""
-    assert prompt =~ "\"context\""
-    assert prompt =~ "</args>"
+    # Each input key becomes a nested tag; list values repeat the tag.
+    assert prompt =~ "<query>"
+    assert prompt =~ "froth"
+    assert prompt =~ "context"
     assert prompt =~ "found signal"
     refute prompt =~ ~s(<call tool="send_message">)
   end

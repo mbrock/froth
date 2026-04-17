@@ -273,9 +273,7 @@ defmodule Froth.HeadlinesTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    assert {:ok,
-            "Registered 2 headlines for 2026-03-22. Progress: 2/3 days done. " <>
-              "Next unfinished: 2026-03-21."} =
+    assert {:ok, [%Froth.Context.Block{} = block]} =
              Tools.execute(
                "register_headlines",
                %{
@@ -307,6 +305,11 @@ defmodule Froth.HeadlinesTest do
                  {:ok, %{"id" => 1}}
                end
              )
+
+    assert Froth.Context.Block.attr(block, :kind) == "headlines_registered"
+    assert Froth.Context.Block.attr(block, :date) == "2026-03-22"
+    assert Froth.Context.Block.attr(block, :count) == 2
+    assert Froth.Context.Block.attr(block, :next_unfinished) == "2026-03-21"
 
     assert_receive {:telemetry, [:froth, :headlines, :registered], %{count: 2}, metadata}, 5_000
     assert metadata[:date] == "2026-03-22"
@@ -355,9 +358,7 @@ defmodule Froth.HeadlinesTest do
     insert_summary(chat_id, ~D[2026-03-21], "A middle scandal.")
     insert_summary(chat_id, ~D[2026-03-22], "A fresh scandal.")
 
-    assert {:ok,
-            "Registered 1 headlines for 2026-03-20. Progress: 1/3 days done. " <>
-              "Next unfinished: 2026-03-21."} =
+    assert {:ok, [%Froth.Context.Block{} = block1]} =
              Tools.execute(
                "register_headlines",
                %{
@@ -377,9 +378,12 @@ defmodule Froth.HeadlinesTest do
                send_message_fun: fn _session_id, _chat_id, _text, _opts -> {:ok, %{"id" => 1}} end
              )
 
-    assert {:ok,
-            "Registered 1 headlines for 2026-03-21. Progress: 2/3 days done. " <>
-              "Next unfinished: 2026-03-22."} =
+    assert Froth.Context.Block.attr(block1, :date) == "2026-03-20"
+    assert Froth.Context.Block.attr(block1, :done_days) == 1
+    assert Froth.Context.Block.attr(block1, :total_days) == 3
+    assert Froth.Context.Block.attr(block1, :next_unfinished) == "2026-03-21"
+
+    assert {:ok, [%Froth.Context.Block{} = block2]} =
              Tools.execute(
                "register_headlines",
                %{
@@ -398,6 +402,10 @@ defmodule Froth.HeadlinesTest do
                session_id: "charlie",
                send_message_fun: fn _session_id, _chat_id, _text, _opts -> {:ok, %{"id" => 1}} end
              )
+
+    assert Froth.Context.Block.attr(block2, :date) == "2026-03-21"
+    assert Froth.Context.Block.attr(block2, :done_days) == 2
+    assert Froth.Context.Block.attr(block2, :next_unfinished) == "2026-03-22"
   end
 
   test "register_headlines can skip Telegram sending while still recording progress" do
@@ -406,9 +414,7 @@ defmodule Froth.HeadlinesTest do
     insert_summary(chat_id, ~D[2026-03-20], "An earlier scandal.")
     insert_summary(chat_id, ~D[2026-03-21], "A middle scandal.")
 
-    assert {:ok,
-            "Registered 1 headlines for 2026-03-20. Progress: 1/2 days done. " <>
-              "Next unfinished: 2026-03-21."} =
+    assert {:ok, [%Froth.Context.Block{} = block]} =
              Tools.execute(
                "register_headlines",
                %{
@@ -431,6 +437,9 @@ defmodule Froth.HeadlinesTest do
                  {:ok, %{"id" => 1}}
                end
              )
+
+    assert Froth.Context.Block.attr(block, :done_days) == 1
+    assert Froth.Context.Block.attr(block, :total_days) == 2
 
     refute_receive :sent_message
 

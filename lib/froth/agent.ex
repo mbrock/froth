@@ -206,7 +206,8 @@ defmodule Froth.Agent do
               cycle_id: fragment("?->>'cycle_id'", e.metadata),
               head_id: fragment("?->>'head_id'", e.metadata)
             }
-          )
+          ),
+          log: false
         )
         |> Map.new(fn %{cycle_id: cycle_id, head_id: head_id} -> {cycle_id, head_id} end)
     end
@@ -224,7 +225,7 @@ defmodule Froth.Agent do
     {"chain", Message}
     |> recursive_ctes(true)
     |> with_cte("chain", as: ^chain)
-    |> Repo.all()
+    |> Repo.all(log: false)
     |> Enum.reverse()
   end
 
@@ -262,19 +263,218 @@ defmodule Froth.Agent do
   @doc false
   @spec cycle_traces([String.t()]) :: %{optional(String.t()) => [map()]}
   def cycle_traces(cycle_ids) when is_list(cycle_ids) do
-    latest_head_ids(cycle_ids)
-    |> Map.new(fn {cycle_id, head_id} ->
-      entries =
-        head_id
-        |> load_messages()
-        |> Enum.map(&Message.to_api/1)
-        |> extract_trace_entries()
+    from_events = cycle_traces_from_events(cycle_ids)
 
-      {cycle_id, entries}
-    end)
+    # Fall back to the message-based extract for cycles that have no
+    # `tool.completed` events yet — either because they pre-date the
+    # events-driven trace renderer or because a test set up the cycle
+    # by inserting messages directly.
+    missing =
+      Enum.filter(cycle_ids, fn id -> Map.get(from_events, id, []) == [] end)
+
+    if missing == [] do
+      from_events
+    else
+      legacy =
+        missing
+        |> latest_head_ids()
+        |> Map.new(fn {cycle_id, head_id} ->
+          entries =
+            head_id
+            |> load_messages()
+            |> Enum.map(&Message.to_api/1)
+            |> extract_trace_entries()
+
+          {cycle_id, entries}
+        end)
+
+      Map.merge(from_events, legacy, fn _k, events_entries, legacy_entries ->
+        if events_entries == [], do: legacy_entries, else: events_entries
+      end)
+    end
   end
 
-  @doc false
+  @doc """
+  Build per-cycle trace entries directly from the `events` table's
+  `tool.completed` events.
+
+  Each `tool.completed` event carries both the tool-call input
+  (`metadata.input`) and the tool result (`metadata.result`) — enough
+  to produce both a `:call` and a `:return` entry from a single event.
+  When `metadata.result` is a structured `%Froth.Context.Frame{}`
+  (stored as a map with `"shape" => "frame"`), it's rehydrated to a
+  Frame struct for rendering via `Froth.Context.FrameHTML.output_frame/1`.
+
+  Preferred over `extract_trace_entries/1` because it doesn't read
+  from the message transcript and doesn't depend on the stringified
+  tool_result.content.
+  """
+  @spec cycle_traces_from_events([String.t()]) :: %{optional(String.t()) => [map()]}
+  def cycle_traces_from_events(cycle_ids) when is_list(cycle_ids) do
+    cycle_ids = normalize_cycle_ids(cycle_ids)
+
+    if cycle_ids == [] do
+      %{}
+    else
+      events =
+        Repo.all(
+          from(e in Event,
+            # Telemetry-persisted events share this event name (see
+            # `Froth.Telemetry.Store`) but only carry metric-shaped
+            # metadata — no `input`, no `result`. The canonical
+            # tool-completion rows are the ones `Agent.append_event`
+            # writes, which always set `kind` and `seq`.
+            where:
+              e.event == "froth.agent.tool.completed" and
+                fragment("?->>'kind' = 'tool.completed'", e.metadata) and
+                fragment(
+                  "?->>'cycle_id' = ANY(?)",
+                  e.metadata,
+                  type(^cycle_ids, {:array, :string})
+                ),
+            order_by: [
+              fragment("?->>'cycle_id'", e.metadata),
+              fragment("(?->>'seq')::bigint", e.metadata),
+              e.inserted_at
+            ],
+            select: e.metadata
+          ),
+          log: false
+        )
+
+      base = Map.new(cycle_ids, &{&1, []})
+
+      events
+      |> Enum.reduce(base, fn meta, acc ->
+        cycle_id = meta["cycle_id"]
+        entries = Map.get(acc, cycle_id, [])
+
+        case trace_entries_for_event(meta) do
+          [] -> acc
+          new_entries -> Map.put(acc, cycle_id, entries ++ new_entries)
+        end
+      end)
+    end
+  end
+
+  defp trace_entries_for_event(%{"tool_name" => "send_message"}), do: []
+
+  defp trace_entries_for_event(%{"tool_name" => tool_name} = meta) when is_binary(tool_name) do
+    input = meta["input"] || %{}
+
+    call_entry = %{
+      kind: :call,
+      tool: tool_name,
+      input: input,
+      narration: ToolDescription.text_from_input(input)
+    }
+
+    [call_entry | return_entries(meta)]
+  end
+
+  defp trace_entries_for_event(_), do: []
+
+  defp return_entries(%{"result" => result, "result_type" => result_type}) do
+    case decode_event_result(result) do
+      {:blocks, blocks} ->
+        [%{kind: :return, outcome: {:ok, blocks}}]
+
+      {:error, message} ->
+        [%{kind: :return, outcome: {:error, message}}]
+
+      {:await, %{"kind" => "failure_intervention"} = data} ->
+        [%{kind: :intervention, data: data}]
+
+      {:await, data} ->
+        [%{kind: :return, outcome: {:await, data}}]
+
+      {:yield, reason} ->
+        [%{kind: :return, outcome: {:yield, reason}}]
+
+      {:string, text} when is_binary(text) ->
+        # Legacy: an `<output …>…</output>` pseudo-XML string, or a
+        # failure-report text, or a plain string. Classify interventions
+        # by the leading "Failure report" marker; everything else is
+        # a return.
+        if result_type in ["error", :error] and failure_report?(text) do
+          [%{kind: :intervention, text: text}]
+        else
+          [%{kind: :return, outcome: {:ok, text}}]
+        end
+
+      {:other, value} ->
+        [%{kind: :return, outcome: {:ok, value}}]
+    end
+  end
+
+  defp return_entries(_), do: []
+
+  # Legacy: events from before the block refactor stored results as a
+  # `%Froth.Context.Frame{}`-shaped map. Convert to a synthetic one-block
+  # list so past cycles render through the same Block components.
+  defp decode_event_result(%{"shape" => "frame"} = map) do
+    {:blocks, [frame_map_to_block(map)]}
+  end
+
+  defp decode_event_result(%{"blocks" => block_maps}) when is_list(block_maps) do
+    blocks =
+      block_maps
+      |> Enum.map(&Froth.Context.Block.from_map/1)
+      |> Enum.reject(&is_nil/1)
+
+    {:blocks, blocks}
+  end
+
+  defp decode_event_result(%{"error" => message}), do: {:error, message}
+  defp decode_event_result(%{"await" => data}), do: {:await, data}
+  defp decode_event_result(%{"yield" => reason}), do: {:yield, reason}
+  defp decode_event_result(value) when is_binary(value), do: {:string, value}
+  defp decode_event_result(value), do: {:other, value}
+
+  defp frame_map_to_block(%{"shape" => "frame"} = map) do
+    frame_attrs = Map.get(map, "attrs", %{}) || %{}
+
+    user_attrs =
+      Enum.map(frame_attrs, fn {k, v} -> {String.to_atom(to_string(k)), v} end)
+
+    kind = Map.get(map, "kind") || "output"
+    size = Map.get(map, "size")
+    lines = Map.get(map, "lines")
+    blob_id = Map.get(map, "blob_id")
+    head = Map.get(map, "head") || []
+    tail = Map.get(map, "tail") || []
+    omitted = Map.get(map, "omitted") || 0
+    inline_body = Map.get(map, "inline_body")
+
+    attrs =
+      [kind: kind]
+      |> Kernel.++(user_attrs)
+      |> maybe_put_attr(:size, size)
+      |> maybe_put_attr(:lines, lines)
+      |> maybe_put_attr(:blob, blob_id)
+      |> maybe_put_attr(:head, head != [] && head)
+      |> maybe_put_attr(:tail, tail != [] && tail)
+      |> maybe_put_attr(:omitted, omitted > 0 && omitted)
+
+    Froth.Context.Block.new(attrs, inline_body)
+  end
+
+  defp maybe_put_attr(attrs, _k, nil), do: attrs
+  defp maybe_put_attr(attrs, _k, false), do: attrs
+  defp maybe_put_attr(attrs, _k, ""), do: attrs
+  defp maybe_put_attr(attrs, _k, []), do: attrs
+  defp maybe_put_attr(attrs, k, v), do: Keyword.put(attrs, k, v)
+
+  @doc """
+  Legacy message-based trace extractor. Kept as a fallback for cycles
+  that don't have `tool.completed` events yet (pre-refactor cycles
+  or test fixtures that insert messages directly).
+
+  Produces the same entry shape as `cycle_traces_from_events/1`:
+  calls carry `input`, returns carry a structured `outcome`. Legacy
+  tool_result strings land as `{:ok, text}`; errored failure reports
+  surface as `:intervention` entries.
+  """
   def extract_trace_entries(api_messages) when is_list(api_messages) do
     Enum.flat_map(api_messages, fn
       %{"role" => "assistant", "content" => content} when is_list(content) ->
@@ -292,7 +492,6 @@ defmodule Froth.Agent do
                 kind: :call,
                 tool: tool,
                 input: input,
-                input_json: encode_tool_input(input),
                 narration: narration
               }
             ]
@@ -312,20 +511,14 @@ defmodule Froth.Agent do
               String.trim(text) == "sent" ->
                 []
 
-              # A failure-intervention resumption looks like an errored
-              # tool_result whose content starts with the human-readable
-              # failure report. Classify it as its own kind so the trace
-              # doesn't conflate "tool returned X" with "intervention
-              # replaced the tool's output with X".
               is_error? and failure_report?(text) ->
                 [%{kind: :intervention, text: text}]
 
+              is_error? ->
+                [%{kind: :return, outcome: {:error, text}}]
+
               true ->
-                # Text is passed verbatim; BotContextHTML.cycle_return
-                # folds it through Froth.Blobs.Render.trace_return so
-                # output-frame tool returns pass through unchanged and
-                # legacy long strings get head/tail with an explicit note.
-                [%{kind: :return, text: text}]
+                [%{kind: :return, outcome: {:ok, text}}]
             end
 
           _ ->
@@ -587,13 +780,6 @@ defmodule Froth.Agent do
       String.downcase(trimmed) in ["grok", "xai"] -> "grok"
       String.downcase(trimmed) in ["gemini", "google"] -> "gemini"
       true -> trimmed
-    end
-  end
-
-  defp encode_tool_input(input) do
-    case Jason.encode(input) do
-      {:ok, json} -> json
-      _ -> inspect(input, limit: 50, printable_limit: 600)
     end
   end
 
