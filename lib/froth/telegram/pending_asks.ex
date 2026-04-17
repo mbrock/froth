@@ -4,13 +4,32 @@ defmodule Froth.Telegram.PendingAsks do
   import Ecto.Query
 
   alias Froth.Repo
+  alias Froth.Telegram.MessageIdSync
   alias Froth.Telegram.PendingAsk
 
   def create(attrs) when is_map(attrs) do
     %PendingAsk{}
-    |> PendingAsk.changeset(attrs)
+    |> PendingAsk.changeset(resolve_message_id(attrs))
     |> Repo.insert()
   end
+
+  # Close the race between inserting a PendingAsk under a tentative
+  # Telegram message_id (the id returned by the sendMessage call) and
+  # the out-of-band `updateMessageSendSucceeded` broadcast that rewrites
+  # that id to the final one. If the broadcast arrived first the
+  # MessageIdSync ETS table already has the mapping; substitute the
+  # final id at insert time so the row lands in its final state.
+  defp resolve_message_id(%{bot_id: bid, chat_id: cid, message_id: mid} = attrs)
+       when is_binary(bid) and is_integer(cid) and is_integer(mid) do
+    %{attrs | message_id: MessageIdSync.resolve(bid, cid, mid)}
+  end
+
+  defp resolve_message_id(%{"bot_id" => bid, "chat_id" => cid, "message_id" => mid} = attrs)
+       when is_binary(bid) and is_integer(cid) and is_integer(mid) do
+    %{attrs | "message_id" => MessageIdSync.resolve(bid, cid, mid)}
+  end
+
+  defp resolve_message_id(attrs), do: attrs
 
   def get(id) when is_binary(id), do: Repo.get(PendingAsk, id)
   def get(_id), do: nil

@@ -58,7 +58,10 @@ defmodule Froth.Telegram.AskFlowTest do
                     }},
                    5_000
 
-    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id, ^chat_id}, 5_000
+    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id, ^chat_id,
+                    "Which option do you want?"},
+                   5_000
+
     assert_pending_ask_message_id(prompt_message_id)
 
     waiting_state = :sys.get_state(bot)
@@ -173,7 +176,10 @@ defmodule Froth.Telegram.AskFlowTest do
                     }},
                    5_000
 
-    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id, ^chat_id}, 5_000
+    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id, ^chat_id,
+                    "Which option do you want?"},
+                   5_000
+
     assert_pending_ask_message_id(prompt_message_id)
 
     callback_query_id = "1234567890123456789"
@@ -287,7 +293,9 @@ defmodule Froth.Telegram.AskFlowTest do
                     }},
                    5_000
 
-    assert_receive {:message_send_succeeded, _temp_id, _visible_message_id, ^chat_id}, 5_000
+    assert_receive {:message_send_succeeded, _temp_id, _visible_message_id, ^chat_id,
+                    "Working on it."},
+                   5_000
 
     assert_receive {:telegram_call,
                     %{
@@ -297,7 +305,10 @@ defmodule Froth.Telegram.AskFlowTest do
                     }},
                    5_000
 
-    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id, ^chat_id}, 5_000
+    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id, ^chat_id,
+                    "Choose a lane."},
+                   5_000
+
     assert_pending_ask_message_id(prompt_message_id)
 
     waiting_state = :sys.get_state(bot)
@@ -442,9 +453,12 @@ defmodule Froth.Telegram.AskFlowTest do
     assert get_in(rows, [Access.at(0), Access.at(2), "text"]) == "⏹️"
     assert get_in(rows, [Access.at(0), Access.at(3), "text"]) == "🧐"
 
-    assert_receive {:message_send_succeeded, _temp_id, _await_message_id, ^chat_id}, 5_000
-    await_pending_ask = fetch_pending_ask_by_question("Awaiting background work")
-    await_message_id = await_pending_ask.message_id
+    assert_receive {:message_send_succeeded, _temp_id, await_message_id, ^chat_id,
+                    "Awaiting background work" <> _},
+                   5_000
+
+    _await_pending_ask =
+      fetch_pending_ask_by_question("Awaiting background work", await_message_id)
 
     waiting_state = :sys.get_state(bot)
     assert is_pid(waiting_state.cycle_state.cycle_runtime_pid)
@@ -590,7 +604,10 @@ defmodule Froth.Telegram.AskFlowTest do
     assert get_in(rows, [Access.at(1), Access.at(1), "text"]) == "🔍"
     assert get_in(rows, [Access.at(1), Access.at(2), "text"]) == "🙅"
 
-    assert_receive {:message_send_succeeded, _temp_id, report_message_id, ^chat_id}, 5_000
+    assert_receive {:message_send_succeeded, _temp_id, report_message_id, ^chat_id,
+                    "Failure intervention" <> _},
+                   5_000
+
     assert_pending_ask_message_id(report_message_id)
 
     callback_query_id = "2234567890123456789"
@@ -719,7 +736,9 @@ defmodule Froth.Telegram.AskFlowTest do
 
     assert report_text =~ "Failure intervention"
 
-    assert_receive {:message_send_succeeded, _temp_id, report_message_id, ^chat_id}, 5_000
+    assert_receive {:message_send_succeeded, _temp_id, report_message_id, ^chat_id,
+                    "Failure intervention" <> _},
+                   5_000
     assert_pending_ask_message_id(report_message_id)
 
     send(
@@ -871,31 +890,33 @@ defmodule Froth.Telegram.AskFlowTest do
     flunk("pending ask did not sync to message_id #{message_id}")
   end
 
-  defp fetch_pending_ask_by_question(question_prefix, attempts \\ 300)
+  defp fetch_pending_ask_by_question(question_prefix, expected_message_id, attempts \\ 300)
 
-  defp fetch_pending_ask_by_question(question_prefix, attempts)
-       when is_binary(question_prefix) and attempts > 0 do
+  defp fetch_pending_ask_by_question(question_prefix, expected_message_id, attempts)
+       when is_binary(question_prefix) and is_integer(expected_message_id) and attempts > 0 do
     query =
       from(p in PendingAsk,
-        where: like(p.question, ^"#{question_prefix}%"),
+        where: like(p.question, ^"#{question_prefix}%") and p.message_id == ^expected_message_id,
         limit: 1
       )
 
     case Repo.one(query, log: false) do
-      %PendingAsk{} = pending_ask
-      when is_integer(pending_ask.message_id) and pending_ask.message_id >= 10_000 ->
+      %PendingAsk{} = pending_ask ->
         pending_ask
 
       _other ->
         receive do
         after
-          20 -> fetch_pending_ask_by_question(question_prefix, attempts - 1)
+          20 ->
+            fetch_pending_ask_by_question(question_prefix, expected_message_id, attempts - 1)
         end
     end
   end
 
-  defp fetch_pending_ask_by_question(question_prefix, 0) do
-    flunk("pending ask did not appear for question #{inspect(question_prefix)}")
+  defp fetch_pending_ask_by_question(question_prefix, expected_message_id, 0) do
+    flunk(
+      "pending ask did not appear for question #{inspect(question_prefix)} with message_id #{expected_message_id}"
+    )
   end
 
   defp cycle_messages(cycle_id) do
@@ -936,8 +957,7 @@ defmodule Froth.Telegram.AskFlowTest do
       {:ok,
        %{
          session_id: Keyword.fetch!(opts, :session_id),
-         test_pid: Keyword.fetch!(opts, :test_pid),
-         next_temp_id: 1_000
+         test_pid: Keyword.fetch!(opts, :test_pid)
        }}
     end
 
@@ -947,13 +967,17 @@ defmodule Froth.Telegram.AskFlowTest do
 
       case request["@type"] do
         "sendMessage" ->
-          temp_id = state.next_temp_id
+          # VM-unique ids shifted well clear of the small fixed ids
+          # tests use for inbound user messages (10, 11, ...). Keeps
+          # concurrent tests from accidentally colliding in any
+          # node-global structure (e.g. the MessageIdSync ETS table).
+          temp_id = 1_000_000 + System.unique_integer([:positive])
           final_id = temp_id + 10_000
           chat_id = request["chat_id"]
-          send(self(), {:send_success, temp_id, final_id, chat_id})
+          text = get_in(request, ["input_message_content", "text", "text"]) || ""
+          send(self(), {:send_success, temp_id, final_id, chat_id, text})
 
-          {:reply, {:ok, %{"id" => temp_id, "chat_id" => chat_id}},
-           %{state | next_temp_id: temp_id + 1}}
+          {:reply, {:ok, %{"id" => temp_id, "chat_id" => chat_id}}, state}
 
         "answerCallbackQuery" ->
           {:reply, {:ok, %{}}, state}
@@ -978,7 +1002,7 @@ defmodule Froth.Telegram.AskFlowTest do
     end
 
     @impl true
-    def handle_info({:send_success, old_id, new_id, chat_id}, state) do
+    def handle_info({:send_success, old_id, new_id, chat_id, text}, state) do
       Phoenix.PubSub.broadcast(
         Froth.PubSub,
         Froth.Telegram.Session.topic(state.session_id),
@@ -990,7 +1014,11 @@ defmodule Froth.Telegram.AskFlowTest do
          }}
       )
 
-      send(state.test_pid, {:message_send_succeeded, old_id, new_id, chat_id})
+      # Include the message body in the test-side notification so tests
+      # can pattern-match the specific sendMessage they're awaiting —
+      # otherwise interleaved narration sends contaminate the mailbox
+      # and tests race on whichever notification arrives first.
+      send(state.test_pid, {:message_send_succeeded, old_id, new_id, chat_id, text})
       {:noreply, state}
     end
   end
