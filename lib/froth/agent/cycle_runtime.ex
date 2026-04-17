@@ -225,6 +225,73 @@ defmodule Froth.Agent.CycleRuntime do
     end
   end
 
+  @doc """
+  Lazily start a root runtime and return an `Enumerable` of events it
+  publishes on `"cycle:<cycle_id>"`. The runtime is *not* started
+  until the stream is consumed — matching the old `Agent.cycle_stream/2`
+  semantics — so PubSub subscription and the runtime start are
+  guaranteed to happen in that order, with no events lost.
+
+  The stream halts when the runtime exits `:normal`; an abnormal exit
+  raises through `exit/1`.
+
+  `opts` are passed through to `start_root/1` and must include at
+  least `:cycle_id`, `:cycle`, and `:worker_config`.
+  """
+  @spec event_stream_for(opts()) :: Enumerable.t()
+  def event_stream_for(opts) when is_list(opts) do
+    cycle_id = Keyword.fetch!(opts, :cycle_id)
+
+    Stream.resource(
+      fn ->
+        :ok = Phoenix.PubSub.subscribe(Froth.PubSub, "cycle:#{cycle_id}")
+        {:ok, runtime_pid} = start_root(opts)
+        ref = Process.monitor(runtime_pid)
+        {runtime_pid, ref, cycle_id}
+      end,
+      fn {pid, ref, _cid} = acc ->
+        receive do
+          {:stream, event} ->
+            {[{:stream, event}], acc}
+
+          {:event, event, msg} ->
+            {[{:event, event, msg}], acc}
+
+          {:DOWN, ^ref, :process, ^pid, :normal} ->
+            {:halt, acc}
+
+          {:DOWN, ^ref, :process, ^pid, reason} ->
+            exit(reason)
+        end
+      end,
+      fn {_pid, _ref, cid} ->
+        Phoenix.PubSub.unsubscribe(Froth.PubSub, "cycle:#{cid}")
+      end
+    )
+  end
+
+  @doc """
+  Run a top-level cycle to completion and return the final agent
+  message text. Convenience wrapper around `event_stream_for/1` +
+  reducing over the stream for the last agent message.
+  """
+  @spec run_to_completion(opts()) :: {Cycle.t(), String.t() | nil}
+  def run_to_completion(opts) when is_list(opts) do
+    cycle_id = Keyword.fetch!(opts, :cycle_id)
+
+    last_message =
+      opts
+      |> event_stream_for()
+      |> Enum.reduce(nil, fn
+        {:event, _event, %Froth.Agent.Message{role: :agent} = message}, _acc -> message
+        _other, acc -> acc
+      end)
+
+    refreshed = Froth.Repo.get!(Cycle, cycle_id)
+    output = last_message && Froth.Agent.Message.extract_text(last_message)
+    {refreshed, output}
+  end
+
   # --- GenServer callbacks ---
 
   @impl true

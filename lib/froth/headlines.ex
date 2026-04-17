@@ -8,11 +8,15 @@ defmodule Froth.Headlines do
 
   import Ecto.Query
 
-  alias Froth.Agent.Adhoc
+  alias Froth.Agent
+  alias Froth.Agent.Config
+  alias Froth.Agent.CycleRuntime
+  alias Froth.Agent.Message, as: AgentMessage
   alias Froth.ChatSummary
   alias Froth.Event
   alias Froth.Inference.Tools
   alias Froth.Repo
+  alias Froth.Telegram.Charlie
 
   @default_chat_id -1_003_690_254_489
   @model "gpt-5.4"
@@ -20,28 +24,49 @@ defmodule Froth.Headlines do
 
   @spec start(keyword()) :: {Froth.Agent.Cycle.t(), Enumerable.t()}
   def start(opts \\ []) when is_list(opts) do
-    chat_id = Keyword.get(opts, :chat_id, @default_chat_id)
-    model = Keyword.get(opts, :model, @model)
-    spam = Keyword.get(opts, :spam, true)
-
-    chat_id
-    |> build_prompt_for_chat()
-    |> run_headlines(&Adhoc.start/2, chat_id, model, spam)
+    {cycle, runtime_opts} = prepare_cycle(opts)
+    {cycle, CycleRuntime.event_stream_for(runtime_opts)}
   end
 
   @spec extract(keyword()) :: {Froth.Agent.Cycle.t(), term()}
   def extract(opts \\ []) when is_list(opts) do
-    chat_id = Keyword.get(opts, :chat_id, @default_chat_id)
-    model = Keyword.get(opts, :model, @model)
-    spam = Keyword.get(opts, :spam, true)
-
-    chat_id
-    |> build_prompt_for_chat()
-    |> run_headlines(&Adhoc.run/2, chat_id, model, spam)
+    {_cycle, runtime_opts} = prepare_cycle(opts)
+    CycleRuntime.run_to_completion(runtime_opts)
   end
 
   @spec extract_all(keyword()) :: {Froth.Agent.Cycle.t(), term()}
   def extract_all(opts \\ []), do: extract(opts)
+
+  defp prepare_cycle(opts) when is_list(opts) do
+    chat_id = Keyword.get(opts, :chat_id, @default_chat_id)
+    model = Keyword.get(opts, :model, @model)
+    spam = Keyword.get(opts, :spam, true)
+
+    prompt = build_prompt_for_chat(chat_id)
+    config = build_headlines_config(chat_id, model)
+
+    user_message =
+      Repo.insert!(%AgentMessage{role: :user, content: AgentMessage.wrap(prompt)})
+
+    cycle = Agent.begin_cycle(user_message, config)
+
+    charlie_defaults = Charlie.default_config()
+
+    runtime_opts = [
+      cycle_id: cycle.id,
+      cycle: cycle,
+      worker_config: config,
+      bot_id: "charlie",
+      chat_id: chat_id,
+      spam: spam,
+      # Headlines run outside a Bot — supply session/bot identity from
+      # the Charlie profile so tool execution (narration, send_message,
+      # etc.) has a real TDLib session + username to post to.
+      bot_config: charlie_bot_config(charlie_defaults, model)
+    ]
+
+    {cycle, runtime_opts}
+  end
 
   defp build_prompt_for_chat(chat_id) when is_integer(chat_id) do
     summaries = list_summaries(chat_id)
@@ -52,17 +77,34 @@ defmodule Froth.Headlines do
     |> build_prompt(render_registered_headlines_context(registered_headlines))
   end
 
-  defp run_headlines(prompt, runner, chat_id, model, spam)
-       when is_binary(prompt) and is_function(runner, 2) and is_integer(chat_id) and
-              is_binary(model) and is_boolean(spam) do
-    runner.(prompt,
+  defp build_headlines_config(chat_id, model) when is_integer(chat_id) and is_binary(model) do
+    %Config{
       provider: :openai,
-      model: model,
-      effort: "medium",
-      reasoning_summary: "auto",
       system: @system_prompt,
-      chat_id: chat_id,
-      spam: spam,
+      model: model,
+      tools: headline_tools(),
+      tool_executor: nil,
+      context: %{chat_id: chat_id},
+      parent_span_id: nil,
+      thinking: nil,
+      effort: "medium",
+      reasoning_summary: "auto"
+    }
+  end
+
+  defp charlie_bot_config(%{} = charlie_defaults, model) do
+    # Best-effort `BotConfig` for the background Headlines runtime. We
+    # don't own a live Bot process for this path — this snapshot is
+    # consumed by the runtime's `execution_base` to build the tool
+    # context (bot_id, bot_username, session_id, model, etc.).
+    Froth.Telegram.Bot.Config.build(
+      id: "charlie",
+      session_id: charlie_defaults.session_id,
+      bot_username: charlie_defaults.bot_username,
+      bot_user_id: Map.get(charlie_defaults, :bot_user_id, 0),
+      owner_user_id: Map.get(charlie_defaults, :owner_user_id, 0),
+      model: model,
+      system_prompt: @system_prompt,
       tools: headline_tools()
     )
   end
