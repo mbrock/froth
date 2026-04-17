@@ -102,6 +102,35 @@ defmodule Froth.Agent.CycleRuntime do
     )
   end
 
+  @doc """
+  Register a background task id (e.g. `"shell:abc"`, `"eval:xyz"`) as
+  spawned by this cycle. Idempotent. Silently no-ops if no live runtime
+  is registered for `cycle_id`.
+  """
+  @spec register_task(String.t(), String.t()) :: :ok
+  def register_task(cycle_id, task_id)
+      when is_binary(cycle_id) and is_binary(task_id) do
+    case whereis(cycle_id) do
+      pid when is_pid(pid) -> GenServer.cast(pid, {:register_task, task_id})
+      nil -> :ok
+    end
+  end
+
+  @doc """
+  Return the sorted list of background task ids currently tracked by
+  the runtime for `cycle_id`. Returns `[]` when `cycle_id` is nil or
+  no runtime is live for that id.
+  """
+  @spec active_task_ids(String.t() | nil) :: [String.t()]
+  def active_task_ids(cycle_id) when is_binary(cycle_id) do
+    case whereis(cycle_id) do
+      pid when is_pid(pid) -> GenServer.call(pid, :active_task_ids)
+      nil -> []
+    end
+  end
+
+  def active_task_ids(nil), do: []
+
   # --- GenServer callbacks ---
 
   @impl true
@@ -114,7 +143,8 @@ defmodule Froth.Agent.CycleRuntime do
       bot_id: Keyword.get(opts, :bot_id),
       parent_cycle_id: Keyword.get(opts, :parent_cycle_id),
       cycle: cycle,
-      worker_pid: nil
+      worker_pid: nil,
+      active_tasks: MapSet.new()
     }
 
     case maybe_start_worker(cycle, worker_config) do
@@ -134,6 +164,10 @@ defmodule Froth.Agent.CycleRuntime do
     {:reply, state, state}
   end
 
+  def handle_call(:active_task_ids, _from, state) do
+    {:reply, state.active_tasks |> Enum.sort(), state}
+  end
+
   def handle_call({:resolve_pending_ask, pending_ask_id, resolution}, _from, state) do
     case state.worker_pid do
       pid when is_pid(pid) ->
@@ -143,6 +177,11 @@ defmodule Froth.Agent.CycleRuntime do
       nil ->
         {:reply, {:error, :no_worker}, state}
     end
+  end
+
+  @impl true
+  def handle_cast({:register_task, task_id}, state) when is_binary(task_id) do
+    {:noreply, %{state | active_tasks: MapSet.put(state.active_tasks, task_id)}}
   end
 
   @impl true

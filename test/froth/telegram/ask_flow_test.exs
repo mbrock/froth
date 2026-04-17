@@ -727,14 +727,7 @@ defmodule Froth.Telegram.AskFlowTest do
     assert is_pid(waiting_state.cycle_state.cycle_runtime_pid)
     waiting_runtime_pid = waiting_state.cycle_state.cycle_runtime_pid
 
-    assert MapSet.member?(
-             Map.get(
-               waiting_state.active_tasks,
-               waiting_state.cycle_state.cycle.id,
-               MapSet.new()
-             ),
-             task_id
-           )
+    assert task_id in Froth.Agent.CycleRuntime.active_task_ids(waiting_state.cycle_state.cycle.id)
 
     callback_query_id = "3234567890123456789"
 

@@ -42,7 +42,6 @@ defmodule Froth.Telegram.Bot do
   defstruct [
     :bot_config,
     :cycle_state,
-    active_tasks: %{},
     debounce_timer: nil,
     debounce_msg: nil,
     pending_ask_resumes: []
@@ -160,10 +159,8 @@ defmodule Froth.Telegram.Bot do
 
   def handle_info({:register_cycle_task, cycle_id, task_id}, state)
       when is_binary(cycle_id) and is_binary(task_id) do
-    tasks =
-      Map.update(state.active_tasks, cycle_id, MapSet.new([task_id]), &MapSet.put(&1, task_id))
-
-    {:noreply, %{state | active_tasks: tasks}}
+    :ok = CycleRuntime.register_task(cycle_id, task_id)
+    {:noreply, state}
   end
 
   def handle_info(
@@ -171,14 +168,12 @@ defmodule Froth.Telegram.Bot do
         %{cycle_state: %CycleState{cycle_runtime_ref: ref, cycle_runtime_pid: pid} = cs} = state
       ) do
     buffered_messages = cs.mid_cycle_messages
-    finished_cycle_id = cs.cycle.id
 
     state = maybe_append_cycle_footer(state)
 
     {:noreply,
      state
      |> reset_cycle_state()
-     |> prune_cycle_indexes(finished_cycle_id)
      |> maybe_resume_pending_ask()
      |> maybe_resume_buffered_cycle(buffered_messages)}
   end
@@ -675,6 +670,15 @@ defmodule Froth.Telegram.Bot do
       BotAdapter.send_italic(state.bot_config.session_id, cs.chat_id, cs.reply_to, "stopped")
     end
 
+    # Capture task ids before terminating the runtime; once it's dead,
+    # its `active_tasks` state is gone along with its Registry entry.
+    task_ids =
+      if match?(%CycleState{cycle: %Cycle{id: ^cycle_id}}, cs) do
+        CycleRuntime.active_task_ids(cycle_id)
+      else
+        []
+      end
+
     state =
       if match?(%CycleState{cycle: %Cycle{id: ^cycle_id}}, cs) do
         Process.exit(cs.cycle_runtime_pid, {:shutdown, :cancelled})
@@ -683,21 +687,14 @@ defmodule Froth.Telegram.Bot do
         state
       end
 
-    task_ids = Map.get(state.active_tasks, cycle_id, MapSet.new())
     Enum.each(task_ids, &stop_background_task/1)
-
-    prune_cycle_indexes(state, cycle_id)
+    state
   end
 
-  # Clear `cycle_state` — back to "idle". Does not touch `active_tasks`
-  # (keyed by cycle_id; use `prune_cycle_indexes/2` for that).
+  # Clear `cycle_state` — back to "idle". The runtime process is assumed
+  # to be terminating or already gone; background task bookkeeping lived
+  # on it and goes with it.
   defp reset_cycle_state(state), do: %{state | cycle_state: nil}
-
-  defp prune_cycle_indexes(state, cycle_id) when is_binary(cycle_id) do
-    %{state | active_tasks: Map.delete(state.active_tasks, cycle_id)}
-  end
-
-  defp prune_cycle_indexes(state, _cycle_id), do: state
 
   defp prepare_tool_call(state, %ToolUse{name: name, input: input} = tool_use, context)
        when is_map(input) do
@@ -738,7 +735,7 @@ defmodule Froth.Telegram.Bot do
     cs = state.cycle_state
     narration = cs && cs.narration
     last_sent = cs && cs.last_sent
-    task_ids = state.active_tasks |> Map.get(cycle_id, MapSet.new()) |> Enum.sort()
+    task_ids = CycleRuntime.active_task_ids(cycle_id)
 
     %{
       bot_id: bc.id,
@@ -1055,13 +1052,13 @@ defmodule Froth.Telegram.Bot do
           nil
       end
 
-    %{state | active_tasks: Map.delete(state.active_tasks, cycle_id)}
+    state
   end
 
   defp stop_pending_ask_cycle(state, _pending_ask, _mode), do: state
 
   defp stop_pending_ask_tasks(state, pending_ask, mode) do
-    task_ids = Map.get(state.active_tasks, pending_ask.cycle_id, MapSet.new()) |> Enum.to_list()
+    task_ids = CycleRuntime.active_task_ids(pending_ask.cycle_id)
 
     case mode do
       :cancel ->
