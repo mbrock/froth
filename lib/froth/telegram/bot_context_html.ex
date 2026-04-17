@@ -46,7 +46,13 @@ defmodule Froth.Telegram.BotContextHTML do
             cycles: [cycle_trace()]
           }
     @type cycle_entry ::
-            %{kind: :call, tool: String.t(), input_json: String.t()}
+            %{
+              :kind => :call,
+              :tool => String.t(),
+              :input_json => String.t(),
+              optional(:input) => map(),
+              optional(:narration) => String.t() | nil
+            }
             | %{kind: :return, text: String.t()}
             | %{kind: :intervention, text: String.t()}
     @type cycle_trace :: %{cycle_id: String.t(), inserted_at: any(), entries: [cycle_entry()]}
@@ -222,13 +228,21 @@ defmodule Froth.Telegram.BotContextHTML do
   attr :entry, :map, required: true
 
   def trace_entry(%{entry: %{kind: :call, tool: tool, input_json: input_json} = entry} = assigns) do
-    narration =
-      Map.get(entry, :narration) || ToolDescription.text_from_input(Map.get(entry, :input))
+    input = Map.get(entry, :input, %{})
 
-    assigns = assign(assigns, tool: tool, input_json: input_json, narration: narration)
+    narration =
+      Map.get(entry, :narration) || ToolDescription.text_from_input(input)
+
+    assigns =
+      assign(assigns,
+        tool: tool,
+        input: input,
+        input_json: input_json,
+        narration: narration
+      )
 
     ~H"""
-    <.call tool={@tool} input_json={@input_json} narration={@narration} />
+    <.call tool={@tool} input={@input} input_json={@input_json} narration={@narration} />
     """
   end
 
@@ -260,18 +274,112 @@ defmodule Froth.Telegram.BotContextHTML do
   end
 
   attr :tool, :string, required: true
+  attr :input, :map, default: %{}
   attr :input_json, :string, required: true
   attr :narration, :string, default: nil
 
   def call(assigns) do
-    truncated = String.slice(assigns.input_json, 0, 300)
-    assigns = assign(assigns, truncated: truncated)
-
     ~H"""
     <call tool={@tool}>
-      {if @narration, do: @narration, else: @truncated}
+      <description :if={@narration}>{@narration}</description>
+      {Phoenix.HTML.raw(render_call_input(@tool, @input, @input_json))}
     </call>
     """
+  end
+
+  # --- per-tool call-input rendering ---------------------------------
+
+  # Known tools get a field-specific tag (<command>, <code>) so the
+  # actual command or code is immediately legible and not buried in a
+  # JSON blob. Everything else falls back to pretty-printed JSON with
+  # noise keys stripped.
+  #
+  # Long bodies fold through `Froth.Blobs.Render.trace_return/1` —
+  # same head/omitted/tail shape as returns, so a 200-line script
+  # doesn't eat the whole trace.
+  defp render_call_input("run_shell", input, _json) when is_map(input) do
+    wrap_call_element("command", Map.get(input, "command"), extras(input, ["command"]))
+  end
+
+  defp render_call_input("elixir_eval", input, _json) when is_map(input) do
+    wrap_call_element("code", Map.get(input, "code"), extras(input, ["code"]))
+  end
+
+  defp render_call_input(_tool, input, input_json) when is_map(input) do
+    cleaned = Map.drop(input, ["description", "narration", "reply_to", "topic"])
+
+    body =
+      cond do
+        map_size(cleaned) == 0 ->
+          # Nothing interesting after stripping — show the raw encoded
+          # input as a last resort so we never render an empty call.
+          input_json
+
+        true ->
+          case Jason.encode(cleaned, pretty: true) do
+            {:ok, pretty} -> pretty
+            _ -> input_json
+          end
+      end
+
+    "<args>\n" <> escape_call_body(Froth.Blobs.Render.trace_return(body)) <> "\n</args>"
+  end
+
+  defp render_call_input(_tool, _input, input_json) do
+    "<args>\n" <>
+      escape_call_body(Froth.Blobs.Render.trace_return(input_json || "")) <> "\n</args>"
+  end
+
+  defp wrap_call_element(tag, primary, extras) when is_binary(primary) do
+    escaped_primary = escape_call_body(Froth.Blobs.Render.trace_return(primary))
+
+    extras_block =
+      case extras do
+        empty when empty == %{} ->
+          ""
+
+        map ->
+          case Jason.encode(map, pretty: true) do
+            {:ok, pretty} -> "\n<opts>\n" <> escape_call_body(pretty) <> "\n</opts>"
+            _ -> ""
+          end
+      end
+
+    "<#{tag}>\n" <> escaped_primary <> "\n</#{tag}>" <> extras_block
+  end
+
+  # Defensive: a known tool without its primary field (shouldn't
+  # happen but don't crash the whole transcript render if it does).
+  defp wrap_call_element(_tag, _other, extras) do
+    case extras do
+      empty when empty == %{} ->
+        ""
+
+      map ->
+        case Jason.encode(map, pretty: true) do
+          {:ok, pretty} -> "<input>\n" <> escape_call_body(pretty) <> "\n</input>"
+          _ -> ""
+        end
+    end
+  end
+
+  # Inputs are rendered via `Phoenix.HTML.raw` so nested tags like
+  # `<command>` survive HEEx's `{…}` escaping. That means we're
+  # responsible for escaping the body ourselves — we only want our
+  # wrapper tags to be tags, not random angle brackets from shell
+  # commands or Elixir source.
+  defp escape_call_body(text) when is_binary(text) do
+    text
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+  end
+
+  defp escape_call_body(_), do: ""
+
+  defp extras(input, primary_keys) do
+    drop_keys = primary_keys ++ ["description", "narration", "reply_to", "topic"]
+    Map.drop(input, drop_keys)
   end
 
   attr :text, :string, required: true

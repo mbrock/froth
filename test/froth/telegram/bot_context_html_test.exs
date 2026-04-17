@@ -58,6 +58,95 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       assert html =~ "</cycle>"
     end
 
+    test "run_shell call renders narration + <command>" do
+      html =
+        render(
+          BotContextHTML.cycle_trace(%{
+            cycle_id: "abc",
+            inserted_at: ~U[2026-03-06 09:21:33Z],
+            entries: [
+              %{
+                kind: :call,
+                tool: "run_shell",
+                input: %{
+                  "command" => "rg 'foo' lib | head -5",
+                  "description" => %{"action" => "searching for foo"}
+                },
+                input_json:
+                  ~s({"command":"rg 'foo' lib | head -5","description":{"action":"searching for foo"}}),
+                narration: "searching for foo"
+              }
+            ]
+          })
+        )
+
+      assert html =~ ~s(<call tool="run_shell">)
+      assert html =~ "<description>"
+      assert html =~ "searching for foo"
+      assert html =~ "<command>"
+      assert html =~ "rg 'foo' lib | head -5"
+      assert html =~ "</command>"
+    end
+
+    test "elixir_eval call renders narration + <code>" do
+      html =
+        render(
+          BotContextHTML.cycle_trace(%{
+            cycle_id: "def",
+            inserted_at: ~U[2026-03-06 09:22:00Z],
+            entries: [
+              %{
+                kind: :call,
+                tool: "elixir_eval",
+                input: %{
+                  "code" => "Enum.sum(1..10)",
+                  "topic" => "cycle:abc"
+                },
+                input_json: "{\"code\":\"Enum.sum(1..10)\",\"topic\":\"cycle:abc\"}",
+                narration: nil
+              }
+            ]
+          })
+        )
+
+      assert html =~ ~s(<call tool="elixir_eval">)
+      assert html =~ "<code>"
+      assert html =~ "Enum.sum(1..10)"
+      assert html =~ "</code>"
+      # cycle topic is internal noise; it shouldn't surface in the
+      # rendered call body
+      refute html =~ "cycle:abc"
+    end
+
+    test "unknown tools render pretty JSON inside <args>" do
+      html =
+        render(
+          BotContextHTML.cycle_trace(%{
+            cycle_id: "ghi",
+            inserted_at: ~U[2026-03-06 09:23:00Z],
+            entries: [
+              %{
+                kind: :call,
+                tool: "pager",
+                input: %{
+                  "id" => "blob:01KP…",
+                  "mode" => "grep",
+                  "pattern" => "error"
+                },
+                input_json: ~s({"id":"blob:01KP…","mode":"grep","pattern":"error"}),
+                narration: nil
+              }
+            ]
+          })
+        )
+
+      assert html =~ ~s(<call tool="pager">)
+      assert html =~ "<args>"
+      # Pretty-printed JSON: newlines + indentation inside the body
+      assert html =~ ~s("mode": "grep")
+      assert html =~ "</args>"
+    end
+
     test "return passes through a structured output frame unchanged" do
       frame = ~s(<output kind="shell" size="11" lines="1">\nhello world\n</output>)
       html = render(BotContextHTML.cycle_return(%{text: frame}))

@@ -291,6 +291,7 @@ defmodule Froth.Agent do
               %{
                 kind: :call,
                 tool: tool,
+                input: input,
                 input_json: encode_tool_input(input),
                 narration: narration
               }
