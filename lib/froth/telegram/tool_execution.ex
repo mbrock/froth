@@ -92,6 +92,43 @@ defmodule Froth.Telegram.ToolExecution do
     end
   end
 
+  # Headless fallback for paths without a Telegram chat (e.g.
+  # `Agent.run_adhoc/2` from a cron or script). Skip narration and
+  # send_message entirely; invoke the tool directly via `Tools.execute/4`
+  # with chat_id=0 (tools that require a real chat_id return errors).
+  def execute(%{name: name, input: input} = execution)
+      when is_binary(name) and is_map(input) do
+    chat_id = execution[:chat_id] || 0
+    spam = Map.get(execution, :spam, true)
+
+    tool_opts =
+      [cycle_id: execution[:cycle_id]]
+      |> maybe_put_tool_opt(:tool_use_id, execution[:tool_use_id])
+      |> maybe_put_tool_opt(:bot_id, execution[:bot_id])
+      |> maybe_put_tool_opt(:bot_username, execution[:bot_username])
+      |> maybe_put_tool_opt(:session_id, execution[:session_id])
+      |> maybe_put_tool_opt(:spam, spam)
+      |> maybe_put_tool_opt(:topic, input["topic"])
+      |> maybe_put_tool_opt(:active_task_ids, execution[:active_task_ids])
+      |> maybe_put_tool_opt(:system_prompt, execution[:system_prompt])
+      |> maybe_put_tool_opt(:model, execution[:model])
+      |> maybe_put_tool_opt(:tools, execution[:tools])
+      |> maybe_put_tool_opt(:thinking, execution[:thinking])
+      |> maybe_put_tool_opt(:effort, execution[:effort])
+      |> maybe_put_tool_opt(:tool_timeout_ms, execution[:tool_timeout_ms])
+      |> maybe_put_tool_opt(:reply_to, execution[:reply_to])
+
+    result =
+      name
+      |> Tools.execute(input, chat_id, tool_opts)
+      |> FailureIntervention.maybe_intervene(execution)
+
+    case result do
+      %{result: _} = outcome -> outcome
+      other -> %{result: other}
+    end
+  end
+
   def execute(_prepared), do: %{result: {:error, "invalid tool execution context"}}
 
   defp maybe_send_narration(_input, _execution, _reply_to, false), do: nil

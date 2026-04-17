@@ -473,25 +473,21 @@ defmodule Froth.Agent.CycleRuntime do
     reply_to = context[:reply_to] || state.reply_to
     cycle_id = context[:cycle_id] || state.cycle_id
 
-    if not is_integer(chat_id) do
-      {{:error, "missing chat_id in tool context"}, state}
-    else
-      execution =
-        state
-        |> execution_base(cycle_id, chat_id, reply_to)
-        |> Map.merge(%{
-          tool_use_id: tool_use.id,
-          name: name,
-          input: shape_tool_input(name, input, cycle_id, reply_to)
-        })
+    execution =
+      state
+      |> execution_base(cycle_id, chat_id, reply_to)
+      |> Map.merge(%{
+        tool_use_id: tool_use.id,
+        name: name,
+        input: shape_tool_input(name, input, cycle_id, reply_to)
+      })
 
-      prepared = %{
-        execution: execution,
-        execute: {ToolExecution, :execute, [execution]}
-      }
+    prepared = %{
+      execution: execution,
+      execute: {ToolExecution, :execute, [execution]}
+    }
 
-      {{:ok, prepared}, state}
-    end
+    {{:ok, prepared}, state}
   end
 
   defp prepare_tool_call(state, _tool_use, _context),
