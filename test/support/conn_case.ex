@@ -32,11 +32,13 @@ defmodule FrothWeb.ConnCase do
   end
 
   setup tags do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Froth.Repo)
+    pid =
+      Ecto.Adapters.SQL.Sandbox.start_owner!(
+        Froth.Repo,
+        shared: not tags[:async]
+      )
 
-    unless tags[:async] do
-      Ecto.Adapters.SQL.Sandbox.mode(Froth.Repo, {:shared, self()})
-    end
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
 
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end

@@ -241,7 +241,13 @@ defmodule Froth.Codex.Task do
        when is_binary(task_id) and is_binary(session_id) do
     DynamicSupervisor.start_child(
       Froth.Tasks.Supervisor,
-      {TaskWatcher, [task_id: task_id, session_id: session_id, session_module: session_module]}
+      {TaskWatcher,
+       [
+         task_id: task_id,
+         session_id: session_id,
+         session_module: session_module,
+         caller: self()
+       ]}
     )
   end
 

@@ -1,5 +1,5 @@
 defmodule Froth.Telegram.BotContextSessionScopeTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Froth.Repo
   alias Froth.Telegram.BotContext
@@ -7,8 +7,8 @@ defmodule Froth.Telegram.BotContextSessionScopeTest do
   alias Froth.Telegram.SessionConfig
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
+    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
     :ok
   end
 

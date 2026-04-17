@@ -1,5 +1,5 @@
 defmodule Froth.SummarizerTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Froth.ChatSummary
   alias Froth.Repo
@@ -10,8 +10,8 @@ defmodule Froth.SummarizerTest do
   alias Froth.Telegram.Username
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
+    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
     :ok
   end
 

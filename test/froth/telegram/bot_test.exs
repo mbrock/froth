@@ -1,27 +1,15 @@
 defmodule Froth.Telegram.BotTest do
-  use ExUnit.Case, async: false
+  use Froth.TelegramBotCase, async: true
 
   alias Froth.Agent.Cycle
-  alias Froth.Repo
   alias Froth.Telegram.Bot
-
-  setup do
-    if is_nil(Process.whereis(Froth.Telegram.Registry)) do
-      start_supervised!({Registry, keys: :unique, name: Froth.Telegram.Registry})
-    end
-
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
-
-    :ok
-  end
 
   test "idle struct has no cycle_state" do
     assert %Bot{cycle_state: nil} = %Bot{}
   end
 
   test "telegram error updates do not crash the bot" do
-    bot = start_bot()
+    %{bot: bot} = start_charlie_bot()
     ref = Process.monitor(bot)
 
     send(
@@ -34,13 +22,7 @@ defmodule Froth.Telegram.BotTest do
   end
 
   test "cycle footer edits the final message with cache stats when a cycle finishes" do
-    test_pid = self()
-    session_id = "test-session-#{System.unique_integer([:positive])}"
-    bot = start_bot(session_id: session_id)
-
-    start_supervised!(
-      {__MODULE__.FakeTelegramSession, session_id: session_id, test_pid: test_pid}
-    )
+    %{bot: bot} = start_charlie_bot()
 
     started_at = DateTime.utc_now() |> DateTime.add(-12, :second)
 
@@ -94,51 +76,5 @@ defmodule Froth.Telegram.BotTest do
     assert edited_text =~ "0.4k cw"
     assert edited_text =~ "2.5k cr"
     assert edited_text =~ "$"
-  end
-
-  defp start_bot(opts \\ []) do
-    id = "bot-#{System.unique_integer([:positive])}"
-    session_id = Keyword.get(opts, :session_id, "test-session")
-
-    start_supervised!(
-      {Bot,
-       id: id,
-       session_id: session_id,
-       bot_username: "#{id}_username",
-       bot_user_id: 1,
-       owner_user_id: 1,
-       model: "claude-opus-4-6",
-       system_prompt_fun: fn _chat_id -> "" end,
-       tools_module: Froth.Telegram.Toolsets.Charlie}
-    )
-  end
-
-  defmodule FakeTelegramSession do
-    use GenServer
-
-    def start_link(opts) when is_list(opts) do
-      session_id = Keyword.fetch!(opts, :session_id)
-      GenServer.start_link(__MODULE__, opts, name: Froth.Telegram.Session.via(session_id))
-    end
-
-    @impl true
-    def init(opts) do
-      {:ok,
-       %{
-         test_pid: Keyword.fetch!(opts, :test_pid)
-       }}
-    end
-
-    @impl true
-    def handle_call({:call, request}, _from, state) do
-      send(state.test_pid, {:telegram_call, request})
-      {:reply, {:ok, %{}}, state}
-    end
-
-    @impl true
-    def handle_cast({:send, request}, state) do
-      send(state.test_pid, {:telegram_send, request})
-      {:noreply, state}
-    end
   end
 end

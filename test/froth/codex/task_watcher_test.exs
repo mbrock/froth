@@ -1,13 +1,13 @@
 defmodule Froth.Codex.TaskWatcherTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Froth.{Repo, Tasks}
   alias Froth.Codex.TaskWatcher
   alias Froth.TestSupport.FakeCodexSession
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
+    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
     :ok
   end
 
@@ -29,7 +29,7 @@ defmodule Froth.Codex.TaskWatcherTest do
 
     watcher =
       start_supervised!(
-        {TaskWatcher, task_id: task_id, session_id: session_id, session_module: FakeCodexSession}
+        {TaskWatcher, task_id: task_id, session_id: session_id, session_module: FakeCodexSession, caller: self()}
       )
 
     ref = Process.monitor(watcher)
@@ -63,7 +63,7 @@ defmodule Froth.Codex.TaskWatcherTest do
 
     watcher =
       start_supervised!(
-        {TaskWatcher, task_id: task_id, session_id: session_id, session_module: FakeCodexSession}
+        {TaskWatcher, task_id: task_id, session_id: session_id, session_module: FakeCodexSession, caller: self()}
       )
 
     ref = Process.monitor(watcher)

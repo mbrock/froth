@@ -22,16 +22,20 @@ defmodule Froth.Codex.TaskWatcher do
     task_id = Keyword.fetch!(opts, :task_id)
     session_id = Keyword.fetch!(opts, :session_id)
     session_module = Keyword.get(opts, :session_module, CodexSession)
+    caller = Keyword.get(opts, :caller)
 
     GenServer.start_link(__MODULE__, %{
       task_id: task_id,
       session_id: session_id,
-      session_module: session_module
+      session_module: session_module,
+      caller: caller
     })
   end
 
   @impl true
-  def init(%{task_id: task_id, session_id: session_id, session_module: session_module}) do
+  def init(%{task_id: task_id, session_id: session_id, session_module: session_module} = args) do
+    Froth.Repo.allow(args[:caller], "codex task watcher")
+
     with :ok <- session_module.subscribe(session_id),
          {:ok, snapshot} <- session_module.snapshot(session_id) do
       {session_pid, session_ref} = monitor_session(session_module, session_id)

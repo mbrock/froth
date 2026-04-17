@@ -1,13 +1,13 @@
 defmodule Froth.Codex.TaskTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Froth.{Repo, Task, Tasks}
   alias Froth.Codex.Task, as: CodexTask
   alias Froth.TestSupport.FakeCodexSession
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
+    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
     :ok
   end
 
