@@ -198,7 +198,16 @@ defmodule Froth.Agent.FailureIntervention do
     end
   end
 
+  # Prefer an explicitly-configured diagnostic model if the bot sets one;
+  # otherwise fall back to whatever model the cycle itself is running on.
+  # That way failure intervention works out of the box for every bot,
+  # and you can still opt into a cheaper / differently-tuned report
+  # model via `Bot.Config{failure_report_model: "..."}`.
   defp report_model(%{ctx: %Context{bot_config: %BotConfig{failure_report_model: model}}})
+       when is_binary(model) and model != "",
+       do: model
+
+  defp report_model(%{ctx: %Context{bot_config: %BotConfig{model: model}}})
        when is_binary(model) and model != "",
        do: model
 
