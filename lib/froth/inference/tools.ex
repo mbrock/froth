@@ -3,7 +3,7 @@ defmodule Froth.Inference.Tools do
   Tool catalog and execution for inference sessions.
   """
 
-  alias Froth.Agent.{Adhoc, AwaitControl, TaskBridge}
+  alias Froth.Agent.{AwaitControl, Config, CycleRuntime, Message, TaskBridge}
   alias Froth.{ChatSummary, Event, Repo}
   alias Froth.Search, as: WebSearch
   alias Froth.Telegram.BotAdapter
@@ -730,57 +730,90 @@ defmodule Froth.Inference.Tools do
        when is_binary(prompt) and is_list(tool_specs) and is_integer(chat_id) and is_list(opts) and
               is_list(extra_opts) do
     reply_to = spawn_agent_reply_to(extra_opts, opts)
+    parent_cycle_id = opts[:cycle_id]
+    bot_id = opts[:bot_id]
 
-    adhoc_opts =
-      [
-        chat_id: chat_id,
-        reply_to: reply_to,
-        bot_id: opts[:bot_id],
-        bot_username: opts[:bot_username],
-        session_id: opts[:session_id],
-        model: Keyword.fetch!(extra_opts, :model),
-        tools: tool_specs
-      ]
-      |> maybe_put_spawn_agent_opt(:system, Keyword.get(extra_opts, :system_prompt))
-      |> maybe_put_spawn_agent_opt(:spam, opts[:spam])
+    config = build_spawn_agent_config(chat_id, reply_to, tool_specs, opts, extra_opts)
 
-    {cycle, stream} = Adhoc.start(prompt, adhoc_opts)
-    maybe_link_spawned_cycle(cycle, chat_id, opts[:bot_id], reply_to)
+    user_message =
+      Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
+
+    cycle = Froth.Agent.begin_cycle(user_message, config)
+
+    maybe_link_spawned_cycle(cycle, chat_id, bot_id, reply_to)
 
     with {:ok, task_id} <-
            TaskBridge.create_spawned_agent_task(cycle, prompt,
-             bot_id: opts[:bot_id],
+             bot_id: bot_id,
              chat_id: chat_id,
              reply_to: reply_to,
-             parent_cycle_id: opts[:cycle_id]
+             parent_cycle_id: parent_cycle_id
            ) do
-      case start_spawn_agent_stream(stream) do
-        {:ok, pid} ->
-          {:ok, {cycle, task_id, pid}}
+      spawn_opts = [
+        cycle_id: cycle.id,
+        cycle: cycle,
+        worker_config: config,
+        chat_id: chat_id,
+        reply_to: reply_to
+      ]
+
+      spawn_opts =
+        case opts[:spam] do
+          nil -> spawn_opts
+          spam -> Keyword.put(spawn_opts, :spam, spam)
+        end
+
+      case spawn_under_parent(parent_cycle_id, spawn_opts) do
+        {:ok, runtime_pid} ->
+          {:ok, {cycle, task_id, runtime_pid}}
 
         {:error, reason} ->
           :ok =
             Froth.Tasks.fail(
               task_id,
-              "failed to start sub-agent stream: #{inspect(reason)}",
+              "failed to start sub-agent runtime: #{inspect(reason)}",
               %{"cycle_id" => cycle.id, "cycle_status" => "failed"}
             )
 
-          {:error, "failed to start sub-agent stream: #{inspect(reason)}"}
+          {:error, "failed to start sub-agent runtime: #{inspect(reason)}"}
       end
     end
   end
 
-  defp start_spawn_agent_stream(stream) do
-    runner = fn -> Enum.each(stream, fn _item -> :ok end) end
+  defp build_spawn_agent_config(chat_id, reply_to, tool_specs, opts, extra_opts) do
+    %Config{
+      provider: nil,
+      system:
+        Keyword.get(extra_opts, :system_prompt) ||
+          "You are a helpful assistant. Use the available tools when needed.",
+      model: Keyword.fetch!(extra_opts, :model),
+      tools: tool_specs,
+      tool_executor: nil,
+      context:
+        %{}
+        |> maybe_put_context(:chat_id, chat_id)
+        |> maybe_put_context(:reply_to, reply_to)
+        |> maybe_put_context(:bot_id, opts[:bot_id])
+        |> maybe_put_context(:session_id, opts[:session_id])
+        |> maybe_put_context(:bot_username, opts[:bot_username]),
+      parent_span_id: nil,
+      thinking: nil,
+      effort: nil,
+      reasoning_summary: nil
+    }
+  end
 
-    case Process.whereis(Froth.Agent.TaskSupervisor) do
-      pid when is_pid(pid) ->
-        Task.Supervisor.start_child(Froth.Agent.TaskSupervisor, runner)
+  defp maybe_put_context(map, _key, nil), do: map
+  defp maybe_put_context(map, key, value), do: Map.put(map, key, value)
 
-      _ ->
-        {:ok, spawn(runner)}
-    end
+  defp spawn_under_parent(parent_cycle_id, spawn_opts) when is_binary(parent_cycle_id) do
+    CycleRuntime.spawn_subagent_by_cycle_id(parent_cycle_id, spawn_opts)
+  end
+
+  defp spawn_under_parent(_parent_cycle_id, spawn_opts) do
+    # No parent cycle (e.g. the `spawn_agent` tool invoked outside a
+    # regular cycle); start as a root under CycleSupervisor.
+    CycleRuntime.start_root(spawn_opts)
   end
 
   defp maybe_link_spawned_cycle(%{id: cycle_id}, chat_id, bot_id, reply_to)
@@ -827,9 +860,6 @@ defmodule Froth.Inference.Tools do
 
   defp maybe_put_spawn_agent_result(map, _key, nil), do: map
   defp maybe_put_spawn_agent_result(map, key, value), do: Map.put(map, key, value)
-
-  defp maybe_put_spawn_agent_opt(keyword, _key, nil), do: keyword
-  defp maybe_put_spawn_agent_opt(keyword, key, value), do: Keyword.put(keyword, key, value)
 
   defp spawn_agent_reply_to(extra_opts, _opts) when is_list(extra_opts) do
     case Keyword.get(extra_opts, :reply_to) do

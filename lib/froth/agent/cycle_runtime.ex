@@ -46,7 +46,8 @@ defmodule Froth.Agent.CycleRuntime do
           bot_config: BotConfig.t() | nil,
           bot_pid: pid() | nil,
           chat_id: integer() | nil,
-          reply_to: integer() | nil
+          reply_to: integer() | nil,
+          spam: boolean()
         ]
 
   # --- Public API ---
@@ -249,6 +250,7 @@ defmodule Froth.Agent.CycleRuntime do
       bot_pid: Keyword.get(opts, :bot_pid),
       chat_id: Keyword.get(opts, :chat_id),
       reply_to: Keyword.get(opts, :reply_to),
+      spam: Keyword.get(opts, :spam, true),
       narration: nil,
       last_sent: nil,
       awaiting_user_input?: false,
@@ -309,6 +311,7 @@ defmodule Froth.Agent.CycleRuntime do
       |> Keyword.put_new(:bot_pid, state.bot_pid)
       |> Keyword.put_new(:chat_id, state.chat_id)
       |> Keyword.put_new(:reply_to, state.reply_to)
+      |> Keyword.put_new(:spam, state.spam)
 
     reply = DynamicSupervisor.start_child(state.children_sup, {__MODULE__, child_opts})
     {:reply, reply, state}
@@ -454,6 +457,7 @@ defmodule Froth.Agent.CycleRuntime do
       current_narration_mode: narration && narration.mode,
       last_agent_message_id: last_sent && last_sent.id,
       active_task_ids: task_ids,
+      spam: state.spam,
       tool_timeout_ms: nil
     }
   end
