@@ -12,6 +12,7 @@ defmodule Froth.Inference.Tools do
   alias Froth.Telegram.MessageIdSync
   alias Froth.Telegram.PendingAsks
   alias Froth.Telemetry.Span
+  alias Froth.Tools.Pager, as: PagerTool
   import Ecto.Query
 
   @default_session_id "charlie"
@@ -21,6 +22,7 @@ defmodule Froth.Inference.Tools do
   @read_tool_transcript_max_task_output_chars 3_000
   @spawn_agent_default_model "gpt-5.4-mini"
   @spawn_agent_default_tool_names ["run_shell", "elixir_eval"]
+  @extracted_tool_modules [PagerTool]
   @tool_specs [
     %{
       "name" => "send_message",
@@ -445,66 +447,11 @@ defmodule Froth.Inference.Tools do
         "required" => ["prompt"],
         "additionalProperties" => false
       }
-    },
-    %{
-      "name" => "pager",
-      "description" =>
-        "Page through or search any blob referenced in your context. Blobs appear as `blob:01K…` inside `<output>` frames (shell output, eval output, analyses, summaries, past transcripts, and so on). Use this to see the middle or full contents of anything you only saw head+tail of, or to find specific passages inside a large output without reading all of it. The grep mode returns line-numbered matches with context and is cheaper than reading the whole blob when you know what you're looking for.",
-      "input_schema" => %{
-        "type" => "object",
-        "properties" => %{
-          "id" => %{
-            "type" => "string",
-            "description" =>
-              "Blob id to read. The `blob:` prefix is optional; both `blob:01K…` and the bare ULID are accepted."
-          },
-          "mode" => %{
-            "type" => "string",
-            "enum" => ["read", "head", "tail", "grep", "stat"],
-            "description" =>
-              "What to do with the blob. `read` (default) returns a line range. `head`/`tail` return the first/last N lines. `grep` searches for a regex and returns matches with line numbers and context. `stat` returns just metadata (size, line count, mime)."
-          },
-          "from_line" => %{
-            "type" => "integer",
-            "description" =>
-              "For `read`: 1-indexed start line. Defaults to 1. Ignored by the other modes."
-          },
-          "lines" => %{
-            "type" => "integer",
-            "description" =>
-              "For `read`/`head`/`tail`: number of lines to return. Defaults to 80 for `read`, 40 for `head`/`tail`."
-          },
-          "pattern" => %{
-            "type" => "string",
-            "description" =>
-              "For `grep`: regex to search for. Matching is case-insensitive by default."
-          },
-          "before" => %{
-            "type" => "integer",
-            "description" => "For `grep`: lines of context before each match. Defaults to 0."
-          },
-          "after" => %{
-            "type" => "integer",
-            "description" => "For `grep`: lines of context after each match. Defaults to 3."
-          },
-          "max" => %{
-            "type" => "integer",
-            "description" => "For `grep`: cap on total matches reported. Defaults to 50."
-          },
-          "case_sensitive" => %{
-            "type" => "boolean",
-            "description" =>
-              "For `grep`: set true to make the pattern case-sensitive. Defaults to false."
-          }
-        },
-        "required" => ["id"],
-        "additionalProperties" => false
-      }
     }
   ]
 
   def specs_for_api do
-    @tool_specs
+    @tool_specs ++ Enum.map(@extracted_tool_modules, & &1.spec())
   end
 
   def specs_for_names(names) when is_list(names) do
@@ -528,7 +475,7 @@ defmodule Froth.Inference.Tools do
   def label("await"), do: "await"
   def label("spawn_engineer"), do: "spawn engineer"
   def label("spawn_agent"), do: "spawn agent"
-  def label("pager"), do: "pager"
+  def label("pager"), do: PagerTool.label()
   def label(name) when is_binary(name), do: name
   def label(_), do: "tool"
 
@@ -739,7 +686,7 @@ defmodule Froth.Inference.Tools do
         register_headlines(ctx, tool_call, hooks)
 
       "pager" ->
-        pager(input)
+        PagerTool.execute(ctx, tool_call, hooks)
 
       _ ->
         {:error, "unknown tool: #{name}"}
@@ -1930,160 +1877,6 @@ defmodule Froth.Inference.Tools do
     |> Enum.group_by(& &1.message_id)
   end
 
-  defp pager(input) when is_map(input) do
-    id = input["id"]
-    mode = input["mode"] || "read"
-
-    with {:ok, blob_id} <- Froth.Blobs.normalize_id(id) do
-      pager_dispatch(blob_id, mode, input)
-    else
-      {:error, :invalid_id} -> {:error, "invalid blob id"}
-    end
-  end
-
-  defp pager_dispatch(blob_id, "stat", _input) do
-    case Froth.Blobs.stat(blob_id) do
-      {:ok, stat} ->
-        {:ok,
-         [
-           Froth.Context.Block.new(
-             [
-               kind: "stat",
-               blob: blob_id,
-               size: stat.size,
-               lines: stat.lines,
-               mime: stat.mime,
-               inserted_at: to_string(stat.inserted_at)
-             ],
-             nil
-           )
-         ]}
-
-      {:error, :not_found} ->
-        {:error, "blob:#{blob_id} not found"}
-    end
-  end
-
-  defp pager_dispatch(blob_id, "head", input) do
-    n = bounded_integer(input["lines"], 40, 1, 1000)
-
-    case Froth.Blobs.head(blob_id, n) do
-      {:ok, text} ->
-        {:ok,
-         [
-           Froth.Context.Block.new(
-             [kind: "head", blob: blob_id, lines_requested: n],
-             text
-           )
-         ]}
-
-      {:error, :not_found} ->
-        {:error, "blob:#{blob_id} not found"}
-    end
-  end
-
-  defp pager_dispatch(blob_id, "tail", input) do
-    n = bounded_integer(input["lines"], 40, 1, 1000)
-
-    case Froth.Blobs.tail(blob_id, n) do
-      {:ok, text} ->
-        {:ok,
-         [
-           Froth.Context.Block.new(
-             [kind: "tail", blob: blob_id, lines_requested: n],
-             text
-           )
-         ]}
-
-      {:error, :not_found} ->
-        {:error, "blob:#{blob_id} not found"}
-    end
-  end
-
-  defp pager_dispatch(blob_id, "read", input) do
-    from_line = bounded_integer(input["from_line"], 1, 1, 10_000_000)
-    lines = bounded_integer(input["lines"], 80, 1, 1000)
-
-    case Froth.Blobs.page(blob_id, from_line: from_line, lines: lines) do
-      {:ok, ""} ->
-        {:ok,
-         [
-           Froth.Context.Block.new(
-             [kind: "page", blob: blob_id, from_line: from_line, empty: true],
-             nil
-           )
-         ]}
-
-      {:ok, text} ->
-        {:ok,
-         [
-           Froth.Context.Block.new(
-             [
-               kind: "page",
-               blob: blob_id,
-               from_line: from_line,
-               lines_requested: lines
-             ],
-             text
-           )
-         ]}
-
-      {:error, :not_found} ->
-        {:error, "blob:#{blob_id} not found"}
-    end
-  end
-
-  defp pager_dispatch(blob_id, "grep", input) do
-    pattern = input["pattern"]
-
-    if not is_binary(pattern) or pattern == "" do
-      {:error, "grep requires a non-empty `pattern`"}
-    else
-      opts = [
-        before: bounded_integer(input["before"], 0, 0, 50),
-        after: bounded_integer(input["after"], 3, 0, 50),
-        max: bounded_integer(input["max"], 50, 1, 500),
-        ignore_case: not parse_boolean(input["case_sensitive"], false)
-      ]
-
-      case Froth.Blobs.grep(blob_id, pattern, opts) do
-        {:ok, %{total_matches: 0}} ->
-          {:ok,
-           [
-             Froth.Context.Block.new(
-               [kind: "grep", blob: blob_id, pattern: pattern, total: 0],
-               nil
-             )
-           ]}
-
-        {:ok, %{total_matches: total, shown: shown, text: text}} ->
-          {:ok,
-           [
-             Froth.Context.Block.new(
-               [
-                 kind: "grep",
-                 blob: blob_id,
-                 pattern: pattern,
-                 total: total,
-                 shown: shown
-               ],
-               text
-             )
-           ]}
-
-        {:error, :not_found} ->
-          {:error, "blob:#{blob_id} not found"}
-
-        {:error, {:invalid_pattern, reason}} ->
-          {:error, "invalid regex pattern: #{inspect(reason)}"}
-      end
-    end
-  end
-
-  defp pager_dispatch(_blob_id, mode, _input) do
-    {:error, "unknown pager mode: #{inspect(mode)}"}
-  end
-
   defp view_analysis(input) do
     ids = input["ids"] || []
 
@@ -2140,6 +1933,7 @@ defmodule Froth.Inference.Tools do
       value
       |> String.trim()
       |> String.replace_prefix("msg:", "")
+      |> String.replace_prefix("tg:", "")
 
     case Integer.parse(normalized) do
       {message_id, ""} when message_id > 0 ->
