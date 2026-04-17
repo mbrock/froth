@@ -6,45 +6,47 @@ defmodule Froth.Agent.CycleRuntime do
   Root cycles are started under `Froth.Agent.CycleSupervisor`; subagent
   cycles are started under their parent runtime's own child
   DynamicSupervisor. Runtimes are registered in `Froth.Agent.CycleRegistry`
-  keyed by `cycle_id` (globally unique), so any caller can address a live
-  cycle via `Registry.lookup/2` or the `via/1` helper without going
-  through the Bot.
+  keyed by `cycle_id` (globally unique), so any caller can address a
+  live cycle via `Registry.lookup/2` or the `via/1` helper without
+  going through the Bot.
 
   See `rfc/froth-rfc0021.xml` for the full design.
 
-  ## Current scope (RFC-0021 step 2)
+  ## Responsibilities
 
-  CycleRuntime owns the Worker. When started with `:cycle` + `:worker_config`
-  opts, `init/1` spawns a `Froth.Agent.Worker` via `start_link/1`, traps
-  exits, and stops itself when the Worker terminates (mirroring the
-  Worker's exit reason). Killing the runtime cascades to the Worker via
-  the link, so `Process.exit(cycle_runtime_pid, reason)` is a single
-  stop-the-cycle operation.
-
-  The Bot is still the Worker's `tool_executor`; prepare/commit/execute
-  tool calls continue to land on the Bot GenServer. That moves in a
-  later step.
-
-  ## Scaffolding mode
-
-  Supplying only the identity opts (`:cycle_id`, `:bot_id`, `:parent_cycle_id`)
-  starts a runtime with no Worker. Used for registry / supervisor
-  wiring tests. Do not rely on this in production code.
+  * Own the `Froth.Agent.Worker` for this cycle. Worker is started with
+    `tool_executor: self()` so prepare/commit/execute tool calls land
+    here, not on the Bot.
+  * Hold per-cycle live state: `bot_config` (a snapshot), `chat_id`,
+    `reply_to`, `narration`, `last_sent`, `awaiting_user_input?`,
+    `active_tasks`, `mid_cycle_messages`.
+  * Drive tool execution, narration edits, and last-sent bookkeeping.
+  * On finish, append the per-cycle cost footer and hand back any
+    buffered user messages so the Bot can start a follow-up cycle.
   """
 
   use GenServer, restart: :temporary
 
-  alias Froth.Agent.{Config, Cycle, Worker}
+  alias Froth.Agent.{Config, Cycle, ToolUse, Worker}
+  alias Froth.Telegram.Bot.Config, as: BotConfig
+  alias Froth.Telegram.{CostFooter, ToolExecution}
 
   @registry Froth.Agent.CycleRegistry
   @supervisor Froth.Agent.CycleSupervisor
+
+  @type last_sent :: %{id: integer() | nil, text: binary()}
+  @type narration :: %{message_id: integer(), text: binary(), mode: :italic | :markdown}
 
   @type opts :: [
           cycle_id: String.t(),
           bot_id: String.t() | nil,
           parent_cycle_id: String.t() | nil,
           cycle: Cycle.t() | nil,
-          worker_config: Config.t() | nil
+          worker_config: Config.t() | nil,
+          bot_config: BotConfig.t() | nil,
+          bot_pid: pid() | nil,
+          chat_id: integer() | nil,
+          reply_to: integer() | nil
         ]
 
   # --- Public API ---
@@ -131,10 +133,75 @@ defmodule Froth.Agent.CycleRuntime do
 
   def active_task_ids(nil), do: []
 
+  @doc """
+  Fan out a TDLib `updateMessageSendSucceeded` to every live cycle
+  runtime so each can swap old temp ids for final ids on its
+  `narration` and `last_sent` fields. Called from the Bot's PubSub
+  handler.
+  """
+  @spec sync_sent_message_id(integer(), integer()) :: :ok
+  def sync_sent_message_id(old_id, new_id)
+      when is_integer(old_id) and is_integer(new_id) do
+    # Broadcast the id swap to every live cycle runtime. A cycle's
+    # `swap_id` is a no-op if neither its `:last_sent` nor its
+    # `:narration` references `old_id`, so fan-out is cheap and
+    # correct even across cycles that don't own this temp id.
+    for pid <- Registry.select(@registry, [{{:_, :"$1", :_}, [], [:"$1"]}]) do
+      GenServer.cast(pid, {:sync_sent_message_id, old_id, new_id})
+    end
+
+    :ok
+  end
+
+  @doc """
+  Buffer a user message received while this cycle is running. The
+  runtime drains its buffer into the next tool result (so the LLM sees
+  the interim messages) and hands anything left over back to the Bot
+  at cycle finish so the Bot can start a follow-up cycle.
+  """
+  @spec buffer_user_message(String.t(), map()) :: :ok
+  def buffer_user_message(cycle_id, msg) when is_binary(cycle_id) and is_map(msg) do
+    case whereis(cycle_id) do
+      pid when is_pid(pid) -> GenServer.cast(pid, {:buffer_user_message, msg})
+      nil -> :ok
+    end
+  end
+
+  @doc """
+  Clear the `awaiting_user_input?` flag — called by the Bot when a
+  pending ask is resolved.
+  """
+  @spec clear_awaiting_user_input(String.t()) :: :ok
+  def clear_awaiting_user_input(cycle_id) when is_binary(cycle_id) do
+    case whereis(cycle_id) do
+      pid when is_pid(pid) -> GenServer.cast(pid, :clear_awaiting_user_input)
+      nil -> :ok
+    end
+  end
+
+  @doc """
+  Record a message sent outside the tool-execution path (e.g. the
+  Bot's fallback when an agent produces a bare text response instead
+  of calling `send_message`). Updates `last_sent` and clears narration.
+  """
+  @spec track_sent_message(String.t(), map(), String.t()) :: :ok
+  def track_sent_message(cycle_id, sent, text)
+      when is_binary(cycle_id) and is_map(sent) and is_binary(text) do
+    case whereis(cycle_id) do
+      pid when is_pid(pid) -> GenServer.cast(pid, {:track_sent_message, sent, text})
+      nil -> :ok
+    end
+  end
+
   # --- GenServer callbacks ---
 
   @impl true
   def init(opts) when is_list(opts) do
+    # Trap exits so that (a) terminate/2 runs on supervised shutdown
+    # (for cycle-footer cleanup) and (b) Worker exits arrive as EXIT
+    # messages instead of crashing us linked.
+    Process.flag(:trap_exit, true)
+
     cycle = Keyword.get(opts, :cycle)
     worker_config = Keyword.get(opts, :worker_config)
 
@@ -144,7 +211,15 @@ defmodule Froth.Agent.CycleRuntime do
       parent_cycle_id: Keyword.get(opts, :parent_cycle_id),
       cycle: cycle,
       worker_pid: nil,
-      active_tasks: MapSet.new()
+      active_tasks: MapSet.new(),
+      bot_config: Keyword.get(opts, :bot_config),
+      bot_pid: Keyword.get(opts, :bot_pid),
+      chat_id: Keyword.get(opts, :chat_id),
+      reply_to: Keyword.get(opts, :reply_to),
+      narration: nil,
+      last_sent: nil,
+      awaiting_user_input?: false,
+      mid_cycle_messages: []
     }
 
     case maybe_start_worker(cycle, worker_config) do
@@ -160,9 +235,7 @@ defmodule Froth.Agent.CycleRuntime do
   end
 
   @impl true
-  def handle_call(:get_state, _from, state) do
-    {:reply, state, state}
-  end
+  def handle_call(:get_state, _from, state), do: {:reply, state, state}
 
   def handle_call(:active_task_ids, _from, state) do
     {:reply, state.active_tasks |> Enum.sort(), state}
@@ -179,25 +252,90 @@ defmodule Froth.Agent.CycleRuntime do
     end
   end
 
+  def handle_call({:prepare_tool, %ToolUse{} = tool_use, context}, _from, state) do
+    {reply, state} = prepare_tool_call(state, tool_use, context)
+    {:reply, reply, state}
+  end
+
+  def handle_call(
+        {:commit_tool, %ToolUse{} = tool_use, context, prepared, outcome},
+        _from,
+        state
+      ) do
+    {reply, state} = commit_tool_call(state, tool_use, context, prepared, outcome)
+    {:reply, reply, state}
+  end
+
+  def handle_call({:execute, %ToolUse{} = tool_use, context}, _from, state) do
+    {reply, state} = prepare_tool_call(state, tool_use, context)
+
+    {result, state} =
+      case reply do
+        {:ok, prepared} ->
+          outcome = ToolExecution.execute(prepared.execution)
+          commit_tool_call(state, tool_use, context, prepared, outcome)
+
+        {:error, reason} ->
+          {{:error, reason}, state}
+      end
+
+    {:reply, result, state}
+  end
+
   @impl true
   def handle_cast({:register_task, task_id}, state) when is_binary(task_id) do
     {:noreply, %{state | active_tasks: MapSet.put(state.active_tasks, task_id)}}
   end
 
+  def handle_cast({:sync_sent_message_id, old_id, new_id}, state)
+      when is_integer(old_id) and is_integer(new_id) do
+    {:noreply,
+     %{
+       state
+       | last_sent: swap_id(state.last_sent, :id, old_id, new_id),
+         narration: swap_id(state.narration, :message_id, old_id, new_id)
+     }}
+  end
+
+  def handle_cast({:buffer_user_message, msg}, state) when is_map(msg) do
+    {:noreply, %{state | mid_cycle_messages: state.mid_cycle_messages ++ [msg]}}
+  end
+
+  def handle_cast(:clear_awaiting_user_input, state) do
+    {:noreply, %{state | awaiting_user_input?: false}}
+  end
+
+  def handle_cast({:track_sent_message, sent, text}, state) when is_binary(text) do
+    {:noreply, apply_sent_message(state, sent, text)}
+  end
+
   @impl true
   def handle_info({:EXIT, worker_pid, reason}, %{worker_pid: worker_pid} = state) do
-    # Worker terminated. Mirror its reason — a normal Worker finish ends
-    # the cycle runtime normally; a crash propagates the crash reason up
-    # so the Bot's monitor sees it unchanged.
+    # Worker terminated. Mirror its reason — a normal Worker finish
+    # ends the cycle runtime normally; a crash propagates the reason
+    # up so the Bot's monitor sees it unchanged.
     {:stop, reason, state}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
 
-  # --- Private ---
+  @impl true
+  def terminate(_reason, state) do
+    _ = maybe_append_cycle_footer(state)
+
+    if state.mid_cycle_messages != [] and is_pid(state.bot_pid) do
+      send(state.bot_pid, {:resume_buffered_cycle, state.cycle_id, state.mid_cycle_messages})
+    end
+
+    :ok
+  end
+
+  # --- Worker lifecycle ---
 
   defp maybe_start_worker(%Cycle{} = cycle, %Config{} = config) do
-    Process.flag(:trap_exit, true)
+    # Point the Worker's tool_executor at this runtime so prepare /
+    # commit / execute tool calls land here instead of the Bot.
+    config = %{config | tool_executor: self()}
 
     case Worker.start_link({cycle, config}) do
       {:ok, pid} -> {:ok, pid}
@@ -205,6 +343,266 @@ defmodule Froth.Agent.CycleRuntime do
     end
   end
 
-  defp maybe_start_worker(nil, nil), do: :skip
-  defp maybe_start_worker(_cycle, _config), do: {:error, :invalid_worker_args}
+  # Any combination without a Worker config is "scaffolding mode" — no
+  # Worker, just the state shell. Production paths always pass both.
+  defp maybe_start_worker(_cycle, nil), do: :skip
+
+  # --- Tool execution ---
+
+  defp prepare_tool_call(state, %ToolUse{name: name, input: input} = tool_use, context)
+       when is_map(input) do
+    chat_id = context[:chat_id] || state.chat_id
+    reply_to = context[:reply_to] || state.reply_to
+    cycle_id = context[:cycle_id] || state.cycle_id
+
+    if not is_integer(chat_id) do
+      {{:error, "missing chat_id in tool context"}, state}
+    else
+      execution =
+        state
+        |> execution_base(cycle_id, chat_id, reply_to)
+        |> Map.merge(%{
+          tool_use_id: tool_use.id,
+          name: name,
+          input: shape_tool_input(name, input, cycle_id, reply_to)
+        })
+
+      prepared = %{
+        execution: execution,
+        execute: {ToolExecution, :execute, [execution]}
+      }
+
+      {{:ok, prepared}, state}
+    end
+  end
+
+  defp prepare_tool_call(state, _tool_use, _context),
+    do: {{:error, "invalid tool input"}, state}
+
+  # Flat map of fields consumed by `ToolExecution`, `FailureIntervention`,
+  # and downstream tools. Projects out of `bot_config` (configuration)
+  # and the live runtime state.
+  defp execution_base(state, cycle_id, chat_id, reply_to) do
+    bc = state.bot_config
+    narration = state.narration
+    last_sent = state.last_sent
+    task_ids = state.active_tasks |> Enum.sort()
+
+    %{
+      bot_id: bc && bc.id,
+      bot_username: bc && bc.bot_username,
+      session_id: bc && bc.session_id,
+      model: bc && bc.model,
+      thinking: bc && bc.thinking,
+      effort: bc && bc.effort,
+      tools: BotConfig.resolve_tool_specs(bc),
+      system_prompt: bc && BotConfig.resolve_system_prompt(chat_id, nil, bc),
+      chat_id: chat_id,
+      reply_to: reply_to,
+      cycle_id: cycle_id,
+      provider: state.cycle && state.cycle.provider,
+      current_narration_message_id: narration && narration.message_id,
+      current_narration_text: narration && narration.text,
+      current_narration_mode: narration && narration.mode,
+      last_agent_message_id: last_sent && last_sent.id,
+      active_task_ids: task_ids,
+      tool_timeout_ms: nil
+    }
+  end
+
+  defp shape_tool_input("elixir_eval", input, cycle_id, reply_to) do
+    input
+    |> Map.put("reply_to", reply_to)
+    |> Map.put("topic", "cycle:#{cycle_id}")
+  end
+
+  defp shape_tool_input(name, input, _cycle_id, reply_to)
+       when name in ["run_shell", "spawn_agent"] do
+    Map.put(input, "reply_to", reply_to)
+  end
+
+  defp shape_tool_input(_name, input, _cycle_id, _reply_to), do: input
+
+  defp commit_tool_call(state, _tool_use, context, prepared, outcome) do
+    {result, sent_message, narration_message, awaiting_user_input?} =
+      case outcome do
+        %{result: result} = o ->
+          {result, o[:sent_message], o[:narration_message], o[:awaiting_user_input] == true}
+
+        result ->
+          {result, nil, nil, false}
+      end
+
+    cycle_id =
+      extract_cycle_id(prepared) || extract_cycle_id(context) || extract_cycle_id(outcome)
+
+    state =
+      case narration_message do
+        %{message_id: _, text: _, mode: _} -> track_narration_message(state, narration_message)
+        _ -> state
+      end
+
+    state =
+      case {sent_message, awaiting_user_input?} do
+        {%{sent: sent, text: text}, true} -> apply_awaiting_user_input(state, sent, text)
+        {%{sent: sent, text: text}, false} -> apply_sent_message(state, sent, text)
+        _ -> state
+      end
+
+    state = maybe_track_task_from_result(state, cycle_id, result)
+    maybe_inject_mid_cycle_messages(result, state)
+  end
+
+  defp extract_cycle_id(%{execution: %{cycle_id: cycle_id}}) when is_binary(cycle_id),
+    do: cycle_id
+
+  defp extract_cycle_id(%{cycle_id: cycle_id}) when is_binary(cycle_id), do: cycle_id
+  defp extract_cycle_id(_), do: nil
+
+  defp maybe_inject_mid_cycle_messages(result, %{mid_cycle_messages: [_ | _] = msgs} = state) do
+    injection =
+      msgs
+      |> Enum.map(fn %{text: text} ->
+        "[Message received during tool execution: " <> text <> "]"
+      end)
+      |> Enum.join("\n")
+
+    new_result =
+      case result do
+        {:ok, text} when is_binary(text) ->
+          {:ok, text <> "\n\n" <> injection}
+
+        {:ok, blocks} when is_list(blocks) ->
+          {:ok, blocks ++ [%{"type" => "text", "text" => injection}]}
+
+        other ->
+          other
+      end
+
+    {new_result, %{state | mid_cycle_messages: []}}
+  end
+
+  defp maybe_inject_mid_cycle_messages(result, state), do: {result, state}
+
+  defp maybe_track_task_from_result(state, cycle_id, {:ok, result}) when is_binary(cycle_id) do
+    case extract_task_id(result) do
+      task_id when is_binary(task_id) ->
+        %{state | active_tasks: MapSet.put(state.active_tasks, task_id)}
+
+      _ ->
+        state
+    end
+  end
+
+  defp maybe_track_task_from_result(state, _cycle_id, _result), do: state
+
+  defp extract_task_id(text) when is_binary(text) do
+    case Regex.run(~r/\btask_id=([a-z]+:[a-zA-Z0-9:_-]+)/, text, capture: :all_but_first) do
+      [task_id] -> task_id
+      _ -> extract_shell_task_id(text)
+    end
+  end
+
+  defp extract_task_id(_), do: nil
+
+  defp extract_shell_task_id(text) when is_binary(text) do
+    case Regex.run(~r/\bshell task ([a-z]+:[a-zA-Z0-9:_-]+)/, text, capture: :all_but_first) do
+      [task_id] -> task_id
+      _ -> nil
+    end
+  end
+
+  # --- Narration / last-sent tracking ---
+
+  defp track_narration_message(state, %{message_id: message_id, text: text, mode: mode})
+       when is_integer(message_id) and is_binary(text) and mode in [:italic, :markdown] do
+    %{state | narration: %{message_id: message_id, text: text, mode: mode}}
+  end
+
+  defp track_narration_message(state, _), do: state
+
+  defp apply_sent_message(state, sent, text) when is_binary(text) do
+    last_sent =
+      case sent_message_id(sent) do
+        id when is_integer(id) -> %{id: id, text: text}
+        _ -> %{id: nil, text: text}
+      end
+
+    %{state | narration: nil, awaiting_user_input?: false, last_sent: last_sent}
+  end
+
+  defp apply_sent_message(state, _sent, _text), do: state
+
+  defp apply_awaiting_user_input(state, sent, text) when is_binary(text) do
+    last_sent =
+      case sent_message_id(sent) do
+        id when is_integer(id) -> %{id: id, text: text}
+        _ -> %{id: nil, text: text}
+      end
+
+    %{state | narration: nil, awaiting_user_input?: true, last_sent: last_sent}
+  end
+
+  defp apply_awaiting_user_input(state, _sent, _text), do: state
+
+  defp sent_message_id(%{"id" => id}) when is_integer(id), do: id
+
+  defp sent_message_id(%{"id" => id}) when is_binary(id) do
+    case Integer.parse(id) do
+      {n, ""} -> n
+      _ -> nil
+    end
+  end
+
+  defp sent_message_id(_), do: nil
+
+  # --- Cycle footer on finish ---
+
+  defp maybe_append_cycle_footer(%{
+         cycle_id: cycle_id,
+         cycle: %Cycle{id: cycle_id},
+         last_sent: %{id: msg_id, text: text},
+         awaiting_user_input?: false,
+         chat_id: chat_id,
+         reply_to: reply_to,
+         bot_config: %BotConfig{} = bc
+       })
+       when is_binary(cycle_id) and is_integer(msg_id) and is_binary(text) and is_integer(chat_id) do
+    # Tolerate a bad `cycle_id` (e.g. a non-ULID test fixture) so
+    # terminate/2 doesn't log a confusing Ecto cast error.
+    footer =
+      try do
+        CostFooter.render_for_cycle_id(cycle_id)
+      rescue
+        _ -> nil
+      end
+
+    case footer do
+      nil ->
+        :ok
+
+      footer ->
+        CostFooter.apply(
+          session_id: bc.session_id,
+          chat_id: chat_id,
+          last_sent_message_id: msg_id,
+          last_sent_message_text: text,
+          footer: footer,
+          reply_to: reply_to
+        )
+    end
+  end
+
+  defp maybe_append_cycle_footer(_state), do: :ok
+
+  # --- Misc helpers ---
+
+  defp swap_id(%{} = map, key, old_id, new_id) do
+    case Map.get(map, key) do
+      ^old_id -> Map.put(map, key, new_id)
+      _ -> map
+    end
+  end
+
+  defp swap_id(other, _key, _old_id, _new_id), do: other
 end
