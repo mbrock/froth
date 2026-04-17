@@ -10,15 +10,15 @@ defmodule Froth.Telegram.ToolExecution do
   @telegram_text_limit 4096
 
   # Spam suppressed — send_message is a no-op.
-  def execute(%Context{spam: false, tool_call: %ToolUse{name: "send_message"}}) do
+  def execute(%Context{spam: false}, %ToolUse{name: "send_message"}) do
     %{result: {:ok, "suppressed"}}
   end
 
   # Telegram-side send_message with real surface.
-  def execute(%Context{
-        tool_call: %ToolUse{name: "send_message", input: %{"text" => text}},
-        surface: %Surface{session_id: session_id, chat_id: chat_id, reply_to: reply_to}
-      })
+  def execute(
+        %Context{surface: %Surface{session_id: session_id, chat_id: chat_id, reply_to: reply_to}},
+        %ToolUse{name: "send_message", input: %{"text" => text}}
+      )
       when is_binary(text) and is_binary(session_id) and is_integer(chat_id) do
     case BotAdapter.send_message(session_id, chat_id, text, reply_to: reply_to) do
       {:ok, sent} ->
@@ -33,24 +33,24 @@ defmodule Froth.Telegram.ToolExecution do
   # and dispatch through `Tools.execute/4`.
   def execute(
         %Context{
-          tool_call: %ToolUse{name: name, input: input} = tool_call,
           bot_config: %BotConfig{},
           surface: %Surface{session_id: session_id, chat_id: chat_id, reply_to: ctx_reply_to}
-        } = ctx
+        } = ctx,
+        %ToolUse{name: name, input: input} = tool_call
       )
       when is_binary(name) and is_map(input) and is_binary(session_id) and is_integer(chat_id) do
     reply_to = Map.get(input, "reply_to") || Map.get(input, :reply_to) || ctx_reply_to
-    narration_message = maybe_send_narration(ctx, reply_to)
+    narration_message = maybe_send_narration(ctx, tool_call, reply_to)
 
-    tool_opts = tool_opts_from(ctx)
+    tool_opts = tool_opts_from(ctx, tool_call)
     result = Tools.execute(name, input, chat_id, tool_opts)
 
-    case FailureIntervention.maybe_intervene(result, ctx) do
+    case FailureIntervention.maybe_intervene(result, ctx, tool_call) do
       %{result: _} = outcome ->
         Map.put(outcome, :narration_message, narration_message)
 
       updated_result ->
-        build_tool_outcome(updated_result, narration_message, tool_call.input)
+        build_tool_outcome(updated_result, narration_message, input)
     end
   end
 
@@ -58,7 +58,7 @@ defmodule Froth.Telegram.ToolExecution do
   # `Agent.run_adhoc/2` from a cron or script). Skip narration and
   # Telegram-side effects entirely; invoke the tool directly with
   # chat_id=0 (tools that require a real chat_id return errors).
-  def execute(%Context{tool_call: %ToolUse{name: name, input: input}} = ctx)
+  def execute(%Context{} = ctx, %ToolUse{name: name, input: input} = tool_call)
       when is_binary(name) and is_map(input) do
     chat_id =
       case ctx.surface do
@@ -66,12 +66,12 @@ defmodule Froth.Telegram.ToolExecution do
         _ -> 0
       end
 
-    tool_opts = tool_opts_from(ctx)
+    tool_opts = tool_opts_from(ctx, tool_call)
 
     result =
       name
       |> Tools.execute(input, chat_id, tool_opts)
-      |> FailureIntervention.maybe_intervene(ctx)
+      |> FailureIntervention.maybe_intervene(ctx, tool_call)
 
     case result do
       %{result: _} = outcome -> outcome
@@ -79,29 +79,27 @@ defmodule Froth.Telegram.ToolExecution do
     end
   end
 
-  def execute(_ctx), do: %{result: {:error, "invalid tool execution context"}}
+  def execute(_ctx, _tool_call),
+    do: %{result: {:error, "invalid tool execution context"}}
 
   # --- Tool opts projection ---
 
   # Build the `Keyword.t()` of opts `Tools.execute/4` expects, drawing
-  # from the Context's structured sub-parts. Nil-skips are centralised
-  # via `maybe_put_tool_opt/3` so the two clauses above share one
-  # projection instead of duplicating 15 `maybe_put` lines each.
-  defp tool_opts_from(%Context{} = ctx) do
-    bc = ctx.bot_config
-    surface = ctx.surface
-    view = ctx.view
-    tool_call = ctx.tool_call
+  # from the Context's structured sub-parts plus the per-call ToolUse.
+  # Nil-skips are centralised via `maybe_put_tool_opt/3` so the two
+  # clauses above share one projection.
+  defp tool_opts_from(%Context{} = ctx, %ToolUse{} = tool_call) do
+    %Context{bot_config: bc, surface: surface, view: view} = ctx
 
     []
     |> maybe_put_tool_opt(:cycle_id, ctx.cycle_id)
-    |> maybe_put_tool_opt(:tool_use_id, tool_call && tool_call.id)
+    |> maybe_put_tool_opt(:tool_use_id, tool_call.id)
     |> maybe_put_tool_opt(:bot_id, bc && bc.id)
     |> maybe_put_tool_opt(:bot_username, bc && bc.bot_username)
     |> maybe_put_tool_opt(:session_id, surface && surface.session_id)
     |> maybe_put_tool_opt(:reply_to, surface && surface.reply_to)
     |> maybe_put_tool_opt(:spam, ctx.spam)
-    |> maybe_put_tool_opt(:topic, tool_call && Map.get(tool_call.input, "topic"))
+    |> maybe_put_tool_opt(:topic, Map.get(tool_call.input, "topic"))
     |> maybe_put_tool_opt(:active_task_ids, view && view.active_task_ids)
     |> maybe_put_tool_opt(:system_prompt, ctx.system_prompt)
     |> maybe_put_tool_opt(:tools, ctx.tool_specs)
@@ -112,9 +110,9 @@ defmodule Froth.Telegram.ToolExecution do
 
   # --- Narration ---
 
-  defp maybe_send_narration(%Context{spam: false}, _reply_to), do: nil
+  defp maybe_send_narration(%Context{spam: false}, _tool_call, _reply_to), do: nil
 
-  defp maybe_send_narration(%Context{tool_call: %ToolUse{input: input}} = ctx, reply_to)
+  defp maybe_send_narration(%Context{} = ctx, %ToolUse{input: input}, reply_to)
        when is_map(input) do
     case ToolDescription.text_from_input(input) do
       narration when is_binary(narration) and narration != "" ->

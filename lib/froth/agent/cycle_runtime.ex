@@ -305,7 +305,6 @@ defmodule Froth.Agent.CycleRuntime do
         reply_to: Keyword.get(opts, :reply_to)
       },
       view: %View{},
-      tool_call: nil,
       spam: Keyword.get(opts, :spam, true),
       system_prompt: bc && BotConfig.resolve_system_prompt(chat_id || 0, nil, bc),
       tool_specs: BotConfig.resolve_tool_specs(bc)
@@ -391,7 +390,7 @@ defmodule Froth.Agent.CycleRuntime do
     {result, state} =
       case reply do
         {:ok, prepared} ->
-          outcome = ToolExecution.execute(prepared.context)
+          outcome = ToolExecution.execute(prepared.context, prepared.tool_call)
           commit_tool_call(state, tool_use, invocation, prepared, outcome)
 
         {:error, reason} ->
@@ -468,10 +467,11 @@ defmodule Froth.Agent.CycleRuntime do
 
   # --- Tool execution ---
 
-  # Produce a per-call `%Context{}` from `state.context` by filling in
-  # `:tool_call` (with input shape-tweaks applied) and optionally
-  # overriding `:surface.{chat_id,reply_to}` from the Worker's
-  # `invocation` kwlist. Everything else passes through unchanged.
+  # Produce a per-call `%Context{}` from `state.context` (with surface
+  # overrides from the Worker's `invocation` kwlist applied) and the
+  # per-call `%ToolUse{}` with its input shape-tweaked. `ToolExecution`
+  # takes them as two arguments — cycle-level context + per-call tool
+  # call — so the nullable-tool_call kludge goes away.
   defp prepare_tool_call(state, %ToolUse{name: name, input: input} = tool_use, invocation)
        when is_map(input) do
     %Context{} = base = state.context
@@ -479,11 +479,12 @@ defmodule Froth.Agent.CycleRuntime do
     shaped_input = shape_tool_input(name, input, base.cycle_id, surface.reply_to)
     tool_call = %ToolUse{tool_use | input: shaped_input}
 
-    ctx = %Context{base | surface: surface, tool_call: tool_call}
+    ctx = %Context{base | surface: surface}
 
     prepared = %{
       context: ctx,
-      execute: {ToolExecution, :execute, [ctx]}
+      tool_call: tool_call,
+      execute: {ToolExecution, :execute, [ctx, tool_call]}
     }
 
     {{:ok, prepared}, state}

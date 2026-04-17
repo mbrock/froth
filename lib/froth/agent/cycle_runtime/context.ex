@@ -8,11 +8,17 @@ defmodule Froth.Agent.CycleRuntime.Context do
   keys, Context just references the actual structs the runtime already
   holds and lets downstream readers pattern-match on them.
 
-  The runtime keeps its *cycle-level* state as a `%Context{}` with
-  `:tool_call` nil. On each prepare/commit/execute, the runtime
-  produces a per-call variant with `:tool_call` set (and optionally
-  an overridden `:surface`) to hand to `Telegram.ToolExecution` and
-  `Agent.FailureIntervention`.
+  Purely cycle-level state. A `%Context{}` describes what's true
+  about the cycle at some moment — identity, surface, view — and does
+  *not* carry any per-tool-call data. Tool execution functions take a
+  `%Context{}` plus a separately-passed `%Froth.Agent.ToolUse{}`:
+
+      ToolExecution.execute(ctx, tool_call)
+      FailureIntervention.maybe_intervene(result, ctx, tool_call)
+
+  The runtime holds exactly one of these on its state and overlays the
+  `:surface` field per-call when the Worker's invocation kwlist
+  supplies overrides.
 
   Slots:
 
@@ -23,8 +29,6 @@ defmodule Froth.Agent.CycleRuntime.Context do
     * `:surface` — a `%Froth.Agent.Surface{}` (session/chat/reply_to).
     * `:view` — a `%Froth.Agent.CycleRuntime.View{}` (narration,
       last_sent, active_task_ids, awaiting_user_input?).
-    * `:tool_call` — the `%Froth.Agent.ToolUse{}` being prepared /
-      committed / executed. Nil on the cycle-level state variant.
     * `:spam` — boolean; when false, Telegram-facing tools no-op.
     * `:system_prompt` — resolved at cycle start from
       `bot_config.system_prompt_fun` with the current chat_id.
@@ -32,18 +36,17 @@ defmodule Froth.Agent.CycleRuntime.Context do
       or `tools_module.specs_for_api/0`.
   """
 
-  alias Froth.Agent.{Cycle, Surface, ToolUse}
+  alias Froth.Agent.{Cycle, Surface}
   alias Froth.Agent.CycleRuntime.View
   alias Froth.Telegram.Bot.Config, as: BotConfig
 
-  @enforce_keys [:cycle_id]
+  @enforce_keys [:cycle_id, :surface, :view]
   defstruct [
     :cycle_id,
     :cycle,
     :bot_config,
     :surface,
     :view,
-    :tool_call,
     :system_prompt,
     :tool_specs,
     spam: true
@@ -53,9 +56,8 @@ defmodule Froth.Agent.CycleRuntime.Context do
           cycle_id: String.t(),
           cycle: Cycle.t() | nil,
           bot_config: BotConfig.t() | nil,
-          surface: Surface.t() | nil,
-          view: View.t() | nil,
-          tool_call: ToolUse.t() | nil,
+          surface: Surface.t(),
+          view: View.t(),
           system_prompt: String.t() | nil,
           tool_specs: [map()],
           spam: boolean()

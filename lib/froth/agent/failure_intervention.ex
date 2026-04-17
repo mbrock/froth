@@ -42,12 +42,12 @@ defmodule Froth.Agent.FailureIntervention do
   def stop_answer?(@stop_answer), do: true
   def stop_answer?(_answer), do: false
 
-  def maybe_intervene({:error, error_text}, %Context{} = ctx)
+  def maybe_intervene({:error, error_text}, %Context{} = ctx, %ToolUse{} = tool_call)
       when is_binary(error_text) do
-    if should_intervene?(ctx) do
-      with {:ok, context} <- build_context(ctx, error_text),
-           report <- build_report(context),
-           {:ok, pending_ask, sent, message_text} <- post_report(context, report) do
+    if should_intervene?(ctx, tool_call) do
+      with {:ok, rpt} <- build_report_ctx(ctx, tool_call, error_text),
+           report <- build_report(rpt),
+           {:ok, pending_ask, sent, message_text} <- post_report(rpt, report) do
         %{
           result: {:await, await_payload(pending_ask, report)},
           sent_message: %{sent: sent, text: message_text},
@@ -61,7 +61,7 @@ defmodule Froth.Agent.FailureIntervention do
     end
   end
 
-  def maybe_intervene(result, _ctx), do: result
+  def maybe_intervene(result, _ctx, _tool_call), do: result
 
   def resolution_config(answer, opts \\ []) when is_binary(answer) and is_list(opts) do
     kind =
@@ -127,18 +127,20 @@ defmodule Froth.Agent.FailureIntervention do
     end
   end
 
-  defp should_intervene?(%Context{
-         cycle_id: cycle_id,
-         bot_config: %BotConfig{id: bot_id, session_id: session_id},
-         surface: %Surface{chat_id: chat_id},
-         tool_call: %ToolUse{id: tool_use_id, name: name}
-       })
+  defp should_intervene?(
+         %Context{
+           cycle_id: cycle_id,
+           bot_config: %BotConfig{id: bot_id, session_id: session_id},
+           surface: %Surface{chat_id: chat_id}
+         },
+         %ToolUse{id: tool_use_id, name: name}
+       )
        when is_binary(cycle_id) and is_binary(tool_use_id) and is_binary(session_id) and
               is_binary(bot_id) and is_integer(chat_id) do
     enabled?() and supported_tool?(name)
   end
 
-  defp should_intervene?(_ctx), do: false
+  defp should_intervene?(_ctx, _tool_call), do: false
 
   defp enabled? do
     Application.get_env(:froth, __MODULE__, [])
@@ -155,7 +157,7 @@ defmodule Froth.Agent.FailureIntervention do
 
   defp supported_tool?(_name), do: false
 
-  defp build_context(%Context{} = ctx, error_text) do
+  defp build_report_ctx(%Context{} = ctx, %ToolUse{} = tool_call, error_text) do
     with %Cycle{} = cycle <- Repo.get(Cycle, ctx.cycle_id) do
       head_id = Agent.latest_head_id(cycle)
       messages = Agent.load_messages(head_id)
@@ -164,11 +166,12 @@ defmodule Froth.Agent.FailureIntervention do
        %{
          cycle: cycle,
          ctx: ctx,
+         tool_call: tool_call,
          messages: messages,
          transcript: render_transcript(messages),
          error_text: error_text,
          initial_intention: initial_intention(messages),
-         reply_to: reply_target(ctx)
+         reply_to: reply_target(ctx, tool_call)
        }}
     else
       _ -> {:error, :missing_cycle}
@@ -204,9 +207,10 @@ defmodule Froth.Agent.FailureIntervention do
   defp post_report(rpt, report) when is_map(rpt) and is_map(report) do
     %Context{
       bot_config: %BotConfig{id: bot_id} = bc,
-      surface: %Surface{session_id: session_id, chat_id: chat_id},
-      tool_call: %ToolUse{id: tool_use_id}
+      surface: %Surface{session_id: session_id, chat_id: chat_id}
     } = rpt.ctx
+
+    %ToolUse{id: tool_use_id} = rpt.tool_call
 
     message_text = render_report_message(report)
     reply_markup = report_reply_markup(report, rpt.ctx)
@@ -251,7 +255,8 @@ defmodule Froth.Agent.FailureIntervention do
   end
 
   defp report_config(rpt, report, %BotConfig{} = bc) do
-    %Context{tool_call: %ToolUse{name: tool_name}, tool_specs: tool_specs, cycle: cycle} = rpt.ctx
+    %Context{tool_specs: tool_specs, cycle: cycle} = rpt.ctx
+    %ToolUse{name: tool_name} = rpt.tool_call
 
     %{}
     |> Map.put("kind", "failure_intervention")
@@ -285,7 +290,7 @@ defmodule Froth.Agent.FailureIntervention do
   end
 
   defp report_prompt(rpt) when is_map(rpt) do
-    %Context{tool_call: %ToolUse{name: name, input: input}} = rpt.ctx
+    %ToolUse{name: name, input: input} = rpt.tool_call
 
     """
     Assess this failed cycle and call deliver_failure_report once.
@@ -602,19 +607,19 @@ defmodule Froth.Agent.FailureIntervention do
   end
 
   defp fallback_situation(rpt) do
-    %Context{tool_call: %ToolUse{name: name}} = rpt.ctx
+    %ToolUse{name: name} = rpt.tool_call
     tool_turns = count_tool_turns(rpt.messages)
 
     "The cycle reached a failed #{name} call after #{length(rpt.messages)} messages and #{tool_turns} tool turns."
   end
 
   defp fallback_invocation(rpt) do
-    %Context{tool_call: %ToolUse{name: name, input: input}} = rpt.ctx
+    %ToolUse{name: name, input: input} = rpt.tool_call
     format_invocation(name, input)
   end
 
   defp fallback_expectation(rpt) do
-    case rpt.ctx.tool_call.name do
+    case rpt.tool_call.name do
       "run_shell" -> "The shell command would succeed and return usable output."
       "elixir_eval" -> "The Elixir code would evaluate cleanly on the live node."
       _ -> "The tool call would succeed."
@@ -626,7 +631,7 @@ defmodule Froth.Agent.FailureIntervention do
   end
 
   defp fallback_designation(rpt) do
-    if repeated_invocation?(rpt.messages, rpt.ctx.tool_call.name) do
+    if repeated_invocation?(rpt.messages, rpt.tool_call.name) do
       "stubborn retry"
     else
       "ordinary tool failure"
@@ -634,7 +639,7 @@ defmodule Froth.Agent.FailureIntervention do
   end
 
   defp fallback_interventions(rpt) do
-    name = rpt.ctx.tool_call.name
+    name = rpt.tool_call.name
 
     suggestions =
       case name do
@@ -667,11 +672,14 @@ defmodule Froth.Agent.FailureIntervention do
     |> Enum.take(@max_interventions)
   end
 
-  defp reply_target(%Context{
-         bot_config: %BotConfig{id: bot_id},
-         surface: %Surface{chat_id: chat_id, reply_to: reply_to},
-         view: view
-       })
+  defp reply_target(
+         %Context{
+           bot_config: %BotConfig{id: bot_id},
+           surface: %Surface{chat_id: chat_id, reply_to: reply_to},
+           view: view
+         },
+         _tool_call
+       )
        when is_binary(bot_id) and is_integer(chat_id) do
     last_agent_message_id =
       case view do
@@ -688,7 +696,7 @@ defmodule Froth.Agent.FailureIntervention do
     end
   end
 
-  defp reply_target(_ctx), do: nil
+  defp reply_target(_ctx, _tool_call), do: nil
 
   defp format_invocation("run_shell", %{"command" => command}) when is_binary(command) do
     "run_shell command=#{inspect(command)}"

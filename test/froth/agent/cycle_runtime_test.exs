@@ -58,7 +58,7 @@ defmodule Froth.Agent.CycleRuntimeTest do
       tool_use = %ToolUse{id: "call_1", name: "run_shell", input: %{"command" => "pwd"}}
       invocation = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
 
-      prepared = %{context: sample_context(runtime, tool_use)}
+      prepared = sample_prepared(runtime, tool_use)
 
       assert {:ok, "ok"} =
                GenServer.call(
@@ -92,7 +92,7 @@ defmodule Froth.Agent.CycleRuntimeTest do
         sent_message: %{sent: %{"id" => 42}, text: "hello"}
       }
 
-      prepared = %{context: sample_context(runtime, tool_use)}
+      prepared = sample_prepared(runtime, tool_use)
 
       assert {:ok, "sent"} =
                GenServer.call(
@@ -200,9 +200,9 @@ defmodule Froth.Agent.CycleRuntimeTest do
     pid
   end
 
-  defp sample_context(runtime, tool_use) do
+  defp sample_prepared(runtime, tool_use) do
     %Context{} = ctx = :sys.get_state(runtime).context
-    %Context{ctx | tool_call: tool_use}
+    %{context: ctx, tool_call: tool_use}
   end
 
   defp minimal_bot_config do
