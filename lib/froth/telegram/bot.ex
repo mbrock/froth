@@ -1222,25 +1222,7 @@ defmodule Froth.Telegram.Bot do
 
   defp stop_background_task(_), do: :ok
 
-  defp resolve_system_prompt(chat_id, msg, bot_config)
-       when is_integer(chat_id) and (is_map(msg) or is_nil(msg)) and is_map(bot_config) do
-    case bot_config.system_prompt_fun do
-      prompt_fun when is_function(prompt_fun, 3) ->
-        prompt_fun.(chat_id, bot_config, msg)
-
-      prompt_fun when is_function(prompt_fun, 2) ->
-        prompt_fun.(chat_id, bot_config)
-
-      prompt_fun when is_function(prompt_fun, 1) ->
-        prompt_fun.(chat_id)
-
-      prompt when is_binary(prompt) and prompt != "" ->
-        prompt
-
-      _ ->
-        bot_config.system_prompt || ""
-    end
-  end
+  defdelegate resolve_system_prompt(chat_id, msg, bot_config), to: BotConfig
 
   defp send_agent_response(
          %{cycle_state: %CycleState{chat_id: chat_id, reply_to: reply_to}, bot_config: bc} = state,
@@ -1278,28 +1260,7 @@ defmodule Froth.Telegram.Bot do
 
   defp send_message_tool_enabled?(_), do: false
 
-  defp resolve_tool_specs(bot_config) when is_map(bot_config) do
-    bot_config
-    |> case do
-      %{tools: tools} when is_list(tools) ->
-        tools
-
-      _ ->
-        case Map.get(bot_config, :tools_module) do
-          module when is_atom(module) ->
-            if Code.ensure_loaded?(module) and function_exported?(module, :specs_for_api, 0) do
-              module.specs_for_api()
-            else
-              []
-            end
-
-          _ ->
-            []
-        end
-    end
-  end
-
-  defp resolve_tool_specs(_), do: []
+  defdelegate resolve_tool_specs(bot_config), to: BotConfig
 
   defp track_sent_message(%{cycle_state: nil} = state, _sent, _text), do: state
 

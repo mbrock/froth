@@ -110,4 +110,58 @@ defmodule Froth.Telegram.Bot.Config do
   end
 
   defp coerce_int(_value), do: 0
+
+  @doc """
+  Return the tool specs for this bot, preferring an explicit `:tools`
+  list over looking up `specs_for_api/0` on `:tools_module`.
+  Returns `[]` when neither is available.
+  """
+  @spec resolve_tool_specs(t() | map() | any()) :: [map()]
+  def resolve_tool_specs(bot_config) when is_map(bot_config) do
+    case bot_config do
+      %{tools: tools} when is_list(tools) ->
+        tools
+
+      _ ->
+        case Map.get(bot_config, :tools_module) do
+          module when is_atom(module) ->
+            if Code.ensure_loaded?(module) and function_exported?(module, :specs_for_api, 0) do
+              module.specs_for_api()
+            else
+              []
+            end
+
+          _ ->
+            []
+        end
+    end
+  end
+
+  def resolve_tool_specs(_), do: []
+
+  @doc """
+  Resolve the effective system prompt for a chat. If `:system_prompt_fun`
+  is a 1/2/3-arity function, it wins; otherwise falls back to the
+  static `:system_prompt` binary.
+  """
+  @spec resolve_system_prompt(integer(), map() | nil, t() | map()) :: binary()
+  def resolve_system_prompt(chat_id, msg, bot_config)
+      when is_integer(chat_id) and (is_map(msg) or is_nil(msg)) and is_map(bot_config) do
+    case bot_config.system_prompt_fun do
+      prompt_fun when is_function(prompt_fun, 3) ->
+        prompt_fun.(chat_id, bot_config, msg)
+
+      prompt_fun when is_function(prompt_fun, 2) ->
+        prompt_fun.(chat_id, bot_config)
+
+      prompt_fun when is_function(prompt_fun, 1) ->
+        prompt_fun.(chat_id)
+
+      prompt when is_binary(prompt) and prompt != "" ->
+        prompt
+
+      _ ->
+        bot_config.system_prompt || ""
+    end
+  end
 end
