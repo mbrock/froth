@@ -187,13 +187,16 @@ defmodule Froth.Agent.FailureIntervention do
 
   defp llm_report(rpt) when is_map(rpt) do
     prompt = report_prompt(rpt)
+    model = report_model(rpt)
+    provider = LLM.provider_name_for_model(model)
 
     response =
       LLM.stream_single(
         [LLMMessage.user(prompt)],
         fn _event -> :ok end,
-        model: @default_model,
-        provider: LLM.provider_name_for_model(@default_model),
+        model: model,
+        provider: provider,
+        api_key: LLM.api_key_for_provider(provider),
         tools: [deliver_failure_report_spec()],
         system: report_system_prompt()
       )
@@ -203,6 +206,12 @@ defmodule Froth.Agent.FailureIntervention do
       {:ok, normalize_report(input, rpt)}
     end
   end
+
+  defp report_model(%{ctx: %Context{bot_config: %BotConfig{failure_report_model: model}}})
+       when is_binary(model) and model != "",
+       do: model
+
+  defp report_model(_rpt), do: @default_model
 
   defp post_report(rpt, report) when is_map(rpt) and is_map(report) do
     %Context{

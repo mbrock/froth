@@ -69,10 +69,19 @@ defmodule Froth.LLM do
       endpoint: "https://generativelanguage.googleapis.com/v1beta/interactions",
       auth: :query_key,
       config_key: Froth.Gemini
+    },
+    fakeai: %{
+      key_providers: ["fakeai"],
+      provider_module: Froth.LLM.Providers.Fake,
+      endpoint: "fake://",
+      auth: :none,
+      config_key: nil
     }
   }
 
   @doc "Look up the API key for a provider name (e.g. :anthropic, :grok)."
+  def api_key_for_provider(:fakeai), do: "fake"
+
   def api_key_for_provider(provider_name) when is_atom(provider_name) do
     case Map.get(@providers, provider_name) do
       %{key_providers: key_providers} -> active_api_key(key_providers)
@@ -86,15 +95,9 @@ defmodule Froth.LLM do
           {:ok, map()} | {:error, term()}
   def stream_single(api_messages, on_event, opts \\ [])
       when is_list(api_messages) and is_function(on_event, 1) and is_list(opts) do
-    case Application.get_env(:froth, :llm_stream_single_fun) do
-      fun when is_function(fun, 3) ->
-        fun.(api_messages, on_event, opts)
-
-      _ ->
-        with {:ok, request} <- build_request(api_messages, opts) do
-          provider_name = resolve_provider_name(opts[:provider], opts[:model])
-          stream_with_retries(provider_name, request, on_event, opts, 0)
-        end
+    with {:ok, request} <- build_request(api_messages, opts) do
+      provider_name = resolve_provider_name(opts[:provider], opts[:model])
+      stream_with_retries(provider_name, request, on_event, opts, 0)
     end
   end
 
@@ -329,6 +332,8 @@ defmodule Froth.LLM do
 
   defp build_headers(%{auth: :query_key}, _api_key, _tools), do: []
 
+  defp build_headers(%{auth: :none}, _api_key, _tools), do: []
+
   defp mcp_tool?(%{"type" => "mcp_endpoint"}), do: true
   defp mcp_tool?(_), do: false
 
@@ -344,6 +349,7 @@ defmodule Froth.LLM do
 
   defp provider_app_config(provider_name) do
     case Map.get(@providers, provider_name) do
+      %{config_key: nil} -> []
       %{config_key: key} -> Application.get_env(:froth, key, [])
       _ -> []
     end
@@ -352,7 +358,14 @@ defmodule Froth.LLM do
   # -- stream (low-level, used by Client) --
 
   @spec stream(Request.t(), on_event(), keyword()) :: {:ok, map()} | {:error, term()}
-  def stream(%Request{} = request, on_event, opts \\ []) when is_function(on_event, 1) do
+  def stream(request, on_event, opts \\ [])
+
+  def stream(%Request{provider: Froth.LLM.Providers.Fake} = request, on_event, _opts)
+      when is_function(on_event, 1) do
+    Froth.LLM.Fake.stream(request, on_event)
+  end
+
+  def stream(%Request{} = request, on_event, opts) when is_function(on_event, 1) do
     case Application.get_env(:froth, :llm_stream_fun) do
       fun when is_function(fun, 3) ->
         fun.(request, on_event, opts)
@@ -461,6 +474,7 @@ defmodule Froth.LLM do
       String.starts_with?(model, "gpt") -> :openai
       String.starts_with?(model, "chatgpt") -> :openai
       String.starts_with?(model, "o") -> :openai
+      String.starts_with?(model, "fakeai-") -> :fakeai
       true -> nil
     end
   end

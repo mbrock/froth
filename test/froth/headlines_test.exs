@@ -8,7 +8,9 @@ defmodule Froth.HeadlinesTest do
   alias Froth.Event
   alias Froth.Headlines
   alias Froth.Inference.Tools
+  alias Froth.LLM.Fake, as: FakeLLM
   alias Froth.LLM.Message, as: LLMMessage
+  alias Froth.LLM.Request
   alias Froth.Repo
 
   setup do
@@ -18,9 +20,8 @@ defmodule Froth.HeadlinesTest do
   end
 
   test "extract builds the summary prompt and passes the expected tools to adhoc" do
-    test_pid = self()
-    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
     chat_id = unique_chat_id()
+    model = FakeLLM.claim()
 
     insert_summary(chat_id, ~D[2026-03-20], "The group launched a new project.")
     insert_summary(chat_id, ~D[2026-03-21], "A long debugging session fixed the outage.")
@@ -45,39 +46,19 @@ defmodule Froth.HeadlinesTest do
     })
     |> Repo.insert!()
 
-    on_exit(fn ->
-      if previous_fun do
-        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
-      else
-        Application.delete_env(:froth, :llm_stream_single_fun)
-      end
-    end)
+    extract_task =
+      Task.async(fn ->
+        Headlines.extract(chat_id: chat_id, provider: :fakeai, model: model)
+      end)
 
-    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
-      send(test_pid, {:llm_call, api_messages, opts})
-
-      {:ok,
-       %{
-         text: "done",
-         content: [%{"type" => "text", "text" => "done"}],
-         stop_reason: "stop",
-         usage: %{},
-         model: opts[:model],
-         message_id: "msg_headlines_1"
-       }}
-    end)
-
-    {_cycle, output} = Headlines.extract(chat_id: chat_id)
-
-    assert output == "done"
-    {api_messages, opts} = receive_headlines_llm_call()
+    {from, request} = receive_headlines_llm_request()
 
     assert [
              %LLMMessage{
                role: :user,
                content: [%{"type" => "text", "text" => prompt}]
              }
-           ] = api_messages
+           ] = request.messages
 
     assert prompt =~ ~s(<summary date="2026-03-20">)
     assert prompt =~ "The group launched a new project."
@@ -142,13 +123,13 @@ defmodule Froth.HeadlinesTest do
     assert prompt =~
              "The tool response will tell you what's left, so keep going until every available summary date is done."
 
-    assert opts[:provider] == :openai
-    assert opts[:model] == "gpt-5.4"
-    assert opts[:effort] == "medium"
-    assert opts[:reasoning_summary] == "auto"
-    assert Enum.map(opts[:tools], & &1["name"]) == ["read_log", "search", "register_headlines"]
+    assert request.model == model
+    assert request.system == "You are a tabloid editor."
+    assert request.provider_options["reasoning_effort"] == "medium"
+    assert request.provider_options["reasoning_summary"] == "auto"
+    assert Enum.map(request.tools, & &1["name"]) == ["read_log", "search", "register_headlines"]
 
-    register_headlines_tool = Enum.find(opts[:tools], &(&1["name"] == "register_headlines"))
+    register_headlines_tool = Enum.find(request.tools, &(&1["name"] == "register_headlines"))
 
     assert get_in(register_headlines_tool, [
              "input_schema",
@@ -157,49 +138,33 @@ defmodule Froth.HeadlinesTest do
              "items",
              "required"
            ]) == ["emoji", "title", "sentence", "from_time", "to_time"]
+
+    FakeLLM.reply(from, {:ok, text_response("done")})
+
+    {_cycle, output} = Task.await(extract_task, 10_000)
+    assert output == "done"
   end
 
   test "extract_all builds the multi-day prompt" do
-    test_pid = self()
-    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
     chat_id = unique_chat_id()
+    model = FakeLLM.claim()
 
     insert_summary(chat_id, ~D[2026-03-20], "The group launched a new project.")
     insert_summary(chat_id, ~D[2026-03-21], "A long debugging session fixed the outage.")
 
-    on_exit(fn ->
-      if previous_fun do
-        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
-      else
-        Application.delete_env(:froth, :llm_stream_single_fun)
-      end
-    end)
+    extract_task =
+      Task.async(fn ->
+        Headlines.extract_all(chat_id: chat_id, provider: :fakeai, model: model)
+      end)
 
-    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
-      send(test_pid, {:llm_call, api_messages, opts})
-
-      {:ok,
-       %{
-         text: "done",
-         content: [%{"type" => "text", "text" => "done"}],
-         stop_reason: "stop",
-         usage: %{},
-         model: opts[:model],
-         message_id: "msg_headlines_all_1"
-       }}
-    end)
-
-    {_cycle, output} = Headlines.extract_all(chat_id: chat_id)
-
-    assert output == "done"
-    {api_messages, _opts} = receive_headlines_llm_call()
+    {from, request} = receive_headlines_llm_request()
 
     assert [
              %LLMMessage{
                role: :user,
                content: [%{"type" => "text", "text" => prompt}]
              }
-           ] = api_messages
+           ] = request.messages
 
     assert prompt =~ "Write tabloid headlines for EVERY summary date in the context."
 
@@ -228,47 +193,34 @@ defmodule Froth.HeadlinesTest do
 
     assert prompt =~
              "The tool response will tell you what's left, so keep going until every available summary date is done."
+
+    FakeLLM.reply(from, {:ok, text_response("done")})
+
+    {_cycle, output} = Task.await(extract_task, 10_000)
+    assert output == "done"
   end
 
   test "start streams deltas and the final agent message" do
-    test_pid = self()
-    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
     chat_id = unique_chat_id()
+    model = FakeLLM.claim()
 
     insert_summary(chat_id, ~D[2026-03-20], "The group launched a new project.")
 
-    on_exit(fn ->
-      if previous_fun do
-        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
-      else
-        Application.delete_env(:froth, :llm_stream_single_fun)
-      end
-    end)
-
-    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, on_event, opts ->
-      send(test_pid, {:llm_call, api_messages, opts})
-      on_event.({:thinking_delta, %{"delta" => "thinking..."}})
-      on_event.({:thinking_stop, %{}})
-      on_event.({:text_delta, "done"})
-
-      {:ok,
-       %{
-         text: "done",
-         content: [%{"type" => "text", "text" => "done"}],
-         stop_reason: "stop",
-         usage: %{},
-         model: opts[:model],
-         message_id: "msg_headlines_stream_1"
-       }}
-    end)
-
-    {cycle, stream} = Headlines.start(chat_id: chat_id, model: "gpt-5.4-mini")
-    items = Enum.to_list(stream)
+    {cycle, stream} = Headlines.start(chat_id: chat_id, provider: :fakeai, model: model)
+    collector = Task.async(fn -> Enum.to_list(stream) end)
 
     assert is_binary(cycle.id)
-    {_api_messages, opts} = receive_headlines_llm_call()
-    assert opts[:model] == "gpt-5.4-mini"
-    assert opts[:reasoning_summary] == "auto"
+
+    {from, request} = receive_headlines_llm_request()
+    assert request.model == model
+    assert request.provider_options["reasoning_summary"] == "auto"
+
+    FakeLLM.emit(from, {:thinking_delta, %{"delta" => "thinking..."}})
+    FakeLLM.emit(from, {:thinking_stop, %{}})
+    FakeLLM.emit(from, {:text_delta, "done"})
+    FakeLLM.reply(from, {:ok, text_response("done")})
+
+    items = Task.await(collector, 10_000)
 
     assert {:stream, {:thinking_delta, %{"delta" => "thinking..."}}} in items
     assert {:stream, {:thinking_stop, %{}}} in items
@@ -519,20 +471,33 @@ defmodule Froth.HeadlinesTest do
     9_100_000_000 + System.unique_integer([:positive])
   end
 
-  defp receive_headlines_llm_call(timeout \\ 5_000) when is_integer(timeout) and timeout > 0 do
-    deadline_ms = System.monotonic_time(:millisecond) + timeout
-    do_receive_headlines_llm_call(deadline_ms)
+  defp text_response(text) do
+    %{
+      text: text,
+      content: [%{"type" => "text", "text" => text}],
+      stop_reason: "stop"
+    }
   end
 
-  defp do_receive_headlines_llm_call(deadline_ms) when is_integer(deadline_ms) do
+  # Returns `{from, request}` for the first LLM call whose request
+  # matches the tabloid-editor shape. Skips (and discards) any calls
+  # that don't match — this is useful because `Headlines.extract/1`
+  # spawns a charlie bot context whose unrelated subsystems may also
+  # issue LLM requests.
+  defp receive_headlines_llm_request(timeout \\ 5_000) when is_integer(timeout) and timeout > 0 do
+    deadline_ms = System.monotonic_time(:millisecond) + timeout
+    do_receive_headlines_llm_request(deadline_ms)
+  end
+
+  defp do_receive_headlines_llm_request(deadline_ms) when is_integer(deadline_ms) do
     remaining_ms = max(deadline_ms - System.monotonic_time(:millisecond), 0)
 
     receive do
-      {:llm_call, api_messages, opts} ->
-        if headlines_llm_call?(opts) do
-          {api_messages, opts}
+      {Froth.LLM.Fake, from, %Request{} = request} ->
+        if headlines_request?(request) do
+          {from, request}
         else
-          do_receive_headlines_llm_call(deadline_ms)
+          do_receive_headlines_llm_request(deadline_ms)
         end
     after
       remaining_ms ->
@@ -540,9 +505,9 @@ defmodule Froth.HeadlinesTest do
     end
   end
 
-  defp headlines_llm_call?(opts) when is_list(opts) do
-    opts[:system] == "You are a tabloid editor." and
-      Enum.map(opts[:tools] || [], & &1["name"]) == ["read_log", "search", "register_headlines"]
+  defp headlines_request?(%Request{system: system, tools: tools}) do
+    system == "You are a tabloid editor." and
+      Enum.map(tools || [], & &1["name"]) == ["read_log", "search", "register_headlines"]
   end
 
   defp utf16_length(text) when is_binary(text) do

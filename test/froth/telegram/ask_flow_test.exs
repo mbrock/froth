@@ -4,7 +4,9 @@ defmodule Froth.Telegram.AskFlowTest do
   import Ecto.Query
 
   alias Froth.Agent.Message
+  alias Froth.LLM.Fake, as: FakeLLM
   alias Froth.LLM.Message, as: LLMMessage
+  alias Froth.LLM.Request
   alias Froth.Repo
   alias Froth.Telegram.Bot
   alias Froth.Telegram.PendingAsk
@@ -21,101 +23,30 @@ defmodule Froth.Telegram.AskFlowTest do
   end
 
   test "ask pauses a cycle, waits for a free-form answer, and resumes with a real tool result" do
-    test_pid = self()
-    bot_id = "charlie-ask-flow-freeform"
-    session_id = "ask-flow-session"
     chat_id = 362_441_422
-    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
-
-    on_exit(fn ->
-      if previous_fun do
-        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
-      else
-        Application.delete_env(:froth, :llm_stream_single_fun)
-      end
-    end)
-
-    counter =
-      start_supervised!(%{id: make_ref(), start: {Agent, :start_link, [fn -> 0 end]}})
-
-    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
-      call =
-        Agent.get_and_update(counter, fn current ->
-          {current, current + 1}
-        end)
-
-      send(test_pid, {:llm_call, call, api_messages, opts})
-
-      case call do
-        0 ->
-          {:ok,
-           %{
-             text: "",
-             content: [
-               %{
-                 "type" => "tool_use",
-                 "id" => "toolu_ask_flow_1",
-                 "name" => "ask",
-                 "input" => %{
-                   "question" => "Which option do you want?",
-                   "alternatives" => ["Alpha", "Beta"]
-                 }
-               }
-             ],
-             stop_reason: "tool_use",
-             usage: %{},
-             model: opts[:model],
-             message_id: "msg_ask_flow_1"
-           }}
-
-        1 ->
-          {:ok,
-           %{
-             text: "Settled.",
-             content: [%{"type" => "text", "text" => "Settled."}],
-             stop_reason: "end_turn",
-             usage: %{},
-             model: opts[:model],
-             message_id: "msg_ask_flow_2"
-           }}
-      end
-    end)
+    model = FakeLLM.claim()
 
     start_supervised!(
-      {__MODULE__.FakeTelegramSession, session_id: session_id, test_pid: test_pid}
+      {__MODULE__.FakeTelegramSession, session_id: "ask-flow-session", test_pid: self()}
     )
 
-    bot =
-      start_supervised!(
-        {Bot,
-         id: bot_id,
-         session_id: session_id,
-         bot_username: "charliebuddybot",
-         bot_user_id: 1,
-         owner_user_id: 1,
-         model: "claude-opus-4-6",
-         system_prompt: "You are Charlie.",
-         debounce_ms: 0,
-         tools_module: Froth.Telegram.Toolsets.Charlie}
-      )
+    bot = start_charlie_bot(id: "charlie-ask-flow-freeform", session_id: "ask-flow-session", model: model)
 
-    send(
-      bot,
-      {:telegram_update,
-       %{
-         "@type" => "updateNewMessage",
-         "message" => %{
-           "id" => 10,
-           "chat_id" => chat_id,
-           "sender_id" => %{"user_id" => 777},
-           "content" => %{"text" => %{"text" => "help"}}
-         }
-       }}
+    send(bot, user_update("help", message_id: 10, chat_id: chat_id))
+
+    # Turn 1: initial user message -> LLM emits the `ask` tool_use.
+    assert_receive {FakeLLM, turn_1, %Request{} = request_1}, 5_000
+    assert [%LLMMessage{role: :user}] = request_1.messages
+
+    FakeLLM.reply(
+      turn_1,
+      {:ok, tool_use_response("toolu_ask_flow_1", "ask", %{
+         "question" => "Which option do you want?",
+         "alternatives" => ["Alpha", "Beta"]
+       })}
     )
 
-    assert_receive {:llm_call, 0, api_messages, _opts}, 5_000
-    assert [%LLMMessage{role: :user}] = api_messages
-
+    # Bot posts the ask prompt with inline buttons.
     assert_receive {:telegram_call,
                     %{
                       "@type" => "sendMessage",
@@ -146,33 +77,23 @@ defmodule Froth.Telegram.AskFlowTest do
 
     refute_receive {:telegram_call, %{"@type" => "sendMessage"}}, 200
 
+    # User replies "Beta" to the ask prompt.
     send(
       bot,
-      {:telegram_update,
-       %{
-         "@type" => "updateNewMessage",
-         "message" => %{
-           "id" => 11,
-           "chat_id" => chat_id,
-           "sender_id" => %{"user_id" => 777},
-           "reply_to" => %{
-             "@type" => "messageReplyToMessage",
-             "message_id" => prompt_message_id,
-             "chat_id" => chat_id
-           },
-           "content" => %{"text" => %{"text" => "Beta"}}
-         }
-       }}
+      user_reply_update("Beta",
+        message_id: 11,
+        reply_to_message_id: prompt_message_id,
+        chat_id: chat_id
+      )
     )
 
-    assert_receive {:llm_call, 1, resumed_messages, _opts}, 5_000
+    # Turn 2: the cycle resumes with tool_result "Beta" and the LLM ends the turn.
+    assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5_000
 
     assert [%LLMMessage{role: :user}, %LLMMessage{role: :assistant}, %LLMMessage{role: :user}] =
-             resumed_messages
+             request_2.messages
 
-    assert :sys.get_state(bot).cycle_state.cycle_runtime_pid == waiting_runtime_pid
-
-    last_message = List.last(resumed_messages)
+    last_message = List.last(request_2.messages)
 
     assert [
              %{
@@ -181,6 +102,10 @@ defmodule Froth.Telegram.AskFlowTest do
                "content" => "Beta"
              }
            ] = last_message.content
+
+    assert :sys.get_state(bot).cycle_state.cycle_runtime_pid == waiting_runtime_pid
+
+    FakeLLM.reply(turn_2, {:ok, text_response("Settled.")})
 
     assert_receive {:telegram_call,
                     %{
@@ -211,100 +136,31 @@ defmodule Froth.Telegram.AskFlowTest do
   end
 
   test "ask resumes when an inline callback query uses a TDLib string id" do
-    test_pid = self()
-    bot_id = "charlie-ask-flow-callback"
-    session_id = "ask-callback-session"
     chat_id = 362_441_422
-    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
-
-    on_exit(fn ->
-      if previous_fun do
-        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
-      else
-        Application.delete_env(:froth, :llm_stream_single_fun)
-      end
-    end)
-
-    counter =
-      start_supervised!(%{id: make_ref(), start: {Agent, :start_link, [fn -> 0 end]}})
-
-    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
-      call =
-        Agent.get_and_update(counter, fn current ->
-          {current, current + 1}
-        end)
-
-      send(test_pid, {:llm_call, call, api_messages, opts})
-
-      case call do
-        0 ->
-          {:ok,
-           %{
-             text: "",
-             content: [
-               %{
-                 "type" => "tool_use",
-                 "id" => "toolu_ask_flow_callback_1",
-                 "name" => "ask",
-                 "input" => %{
-                   "question" => "Which option do you want?",
-                   "alternatives" => ["Alpha", "Beta"]
-                 }
-               }
-             ],
-             stop_reason: "tool_use",
-             usage: %{},
-             model: opts[:model],
-             message_id: "msg_ask_flow_callback_1"
-           }}
-
-        1 ->
-          {:ok,
-           %{
-             text: "Settled.",
-             content: [%{"type" => "text", "text" => "Settled."}],
-             stop_reason: "end_turn",
-             usage: %{},
-             model: opts[:model],
-             message_id: "msg_ask_flow_callback_2"
-           }}
-      end
-    end)
+    model = FakeLLM.claim()
 
     start_supervised!(
-      {__MODULE__.FakeTelegramSession, session_id: session_id, test_pid: test_pid}
+      {__MODULE__.FakeTelegramSession, session_id: "ask-callback-session", test_pid: self()}
     )
 
     bot =
-      start_supervised!(
-        {Bot,
-         id: bot_id,
-         session_id: session_id,
-         bot_username: "charliebuddybot",
-         bot_user_id: 1,
-         owner_user_id: 1,
-         model: "claude-opus-4-6",
-         system_prompt: "You are Charlie.",
-         debounce_ms: 0,
-         tools_module: Froth.Telegram.Toolsets.Charlie}
+      start_charlie_bot(
+        id: "charlie-ask-flow-callback",
+        session_id: "ask-callback-session",
+        model: model
       )
 
-    send(
-      bot,
-      {:telegram_update,
-       %{
-         "@type" => "updateNewMessage",
-         "message" => %{
-           "id" => 10,
-           "chat_id" => chat_id,
-           "sender_id" => %{"user_id" => 777},
-           "content" => %{"text" => %{"text" => "help"}}
-         }
-       }}
-    )
+    send(bot, user_update("help", message_id: 10, chat_id: chat_id))
 
-    assert_receive {:llm_call, 0, api_messages, _opts}, 5_000
-    assert [%LLMMessage{role: :user}] = api_messages
+    assert_receive {FakeLLM, turn_1, %Request{messages: [%LLMMessage{role: :user}]}}, 5_000
+
+    FakeLLM.reply(
+      turn_1,
+      {:ok, tool_use_response("toolu_ask_flow_callback_1", "ask", %{
+         "question" => "Which option do you want?",
+         "alternatives" => ["Alpha", "Beta"]
+       })}
+    )
 
     assert_receive {:telegram_call,
                     %{
@@ -344,12 +200,12 @@ defmodule Froth.Telegram.AskFlowTest do
                     }},
                    5_000
 
-    assert_receive {:llm_call, 1, resumed_messages, _opts}, 5_000
+    assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5_000
 
     assert [%LLMMessage{role: :user}, %LLMMessage{role: :assistant}, %LLMMessage{role: :user}] =
-             resumed_messages
+             request_2.messages
 
-    last_message = List.last(resumed_messages)
+    last_message = List.last(request_2.messages)
 
     assert [
              %{
@@ -358,6 +214,8 @@ defmodule Froth.Telegram.AskFlowTest do
                "content" => "Beta"
              }
            ] = last_message.content
+
+    FakeLLM.reply(turn_2, {:ok, text_response("Settled.")})
 
     assert_receive {:telegram_call,
                     %{
@@ -377,104 +235,49 @@ defmodule Froth.Telegram.AskFlowTest do
   end
 
   test "a parallel ask batch stays atomic and resumes on the same worker" do
-    test_pid = self()
-    bot_id = "charlie-ask-flow-parallel"
-    session_id = "ask-flow-parallel-session"
     chat_id = 362_441_422
-    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
-
-    on_exit(fn ->
-      if previous_fun do
-        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
-      else
-        Application.delete_env(:froth, :llm_stream_single_fun)
-      end
-    end)
-
-    counter = start_supervised!({Agent, fn -> 0 end})
-
-    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
-      call =
-        Agent.get_and_update(counter, fn current ->
-          {current, current + 1}
-        end)
-
-      send(test_pid, {:llm_call, call, api_messages, opts})
-
-      case call do
-        0 ->
-          {:ok,
-           %{
-             text: "",
-             content: [
-               %{
-                 "type" => "tool_use",
-                 "id" => "toolu_parallel_send_1",
-                 "name" => "send_message",
-                 "input" => %{"text" => "Working on it."}
-               },
-               %{
-                 "type" => "tool_use",
-                 "id" => "toolu_parallel_ask_1",
-                 "name" => "ask",
-                 "input" => %{
-                   "question" => "Choose a lane.",
-                   "alternatives" => ["Left", "Right"]
-                 }
-               }
-             ],
-             stop_reason: "tool_use",
-             usage: %{},
-             model: opts[:model],
-             message_id: "msg_parallel_1"
-           }}
-
-        1 ->
-          {:ok,
-           %{
-             text: "Done.",
-             content: [%{"type" => "text", "text" => "Done."}],
-             stop_reason: "end_turn",
-             usage: %{},
-             model: opts[:model],
-             message_id: "msg_parallel_2"
-           }}
-      end
-    end)
+    model = FakeLLM.claim()
 
     start_supervised!(
-      {__MODULE__.FakeTelegramSession, session_id: session_id, test_pid: test_pid}
+      {__MODULE__.FakeTelegramSession, session_id: "ask-flow-parallel-session", test_pid: self()}
     )
 
     bot =
-      start_supervised!(
-        {Bot,
-         id: bot_id,
-         session_id: session_id,
-         bot_username: "charliebuddybot",
-         bot_user_id: 1,
-         owner_user_id: 1,
-         model: "claude-opus-4-6",
-         system_prompt: "You are Charlie.",
-         debounce_ms: 0,
-         tools_module: Froth.Telegram.Toolsets.Charlie}
+      start_charlie_bot(
+        id: "charlie-ask-flow-parallel",
+        session_id: "ask-flow-parallel-session",
+        model: model
       )
 
-    send(
-      bot,
-      {:telegram_update,
+    send(bot, user_update("help", message_id: 10, chat_id: chat_id))
+
+    # Turn 1: the LLM emits BOTH a send_message and an ask in one assistant turn.
+    assert_receive {FakeLLM, turn_1, %Request{}}, 5_000
+
+    FakeLLM.reply(
+      turn_1,
+      {:ok,
        %{
-         "@type" => "updateNewMessage",
-         "message" => %{
-           "id" => 10,
-           "chat_id" => chat_id,
-           "sender_id" => %{"user_id" => 777},
-           "content" => %{"text" => %{"text" => "help"}}
-         }
+         content: [
+           %{
+             "type" => "tool_use",
+             "id" => "toolu_parallel_send_1",
+             "name" => "send_message",
+             "input" => %{"text" => "Working on it."}
+           },
+           %{
+             "type" => "tool_use",
+             "id" => "toolu_parallel_ask_1",
+             "name" => "ask",
+             "input" => %{
+               "question" => "Choose a lane.",
+               "alternatives" => ["Left", "Right"]
+             }
+           }
+         ],
+         stop_reason: "tool_use"
        }}
     )
-
-    assert_receive {:llm_call, 0, _messages, _opts}, 5_000
 
     assert_receive {:telegram_call,
                     %{
@@ -510,27 +313,18 @@ defmodule Froth.Telegram.AskFlowTest do
 
     send(
       bot,
-      {:telegram_update,
-       %{
-         "@type" => "updateNewMessage",
-         "message" => %{
-           "id" => 11,
-           "chat_id" => chat_id,
-           "sender_id" => %{"user_id" => 777},
-           "reply_to" => %{
-             "@type" => "messageReplyToMessage",
-             "message_id" => prompt_message_id,
-             "chat_id" => chat_id
-           },
-           "content" => %{"text" => %{"text" => "Right"}}
-         }
-       }}
+      user_reply_update("Right",
+        message_id: 11,
+        reply_to_message_id: prompt_message_id,
+        chat_id: chat_id
+      )
     )
 
-    assert_receive {:llm_call, 1, resumed_messages, _opts}, 5_000
+    # Turn 2: the resumed request carries BOTH tool_results atomically.
+    assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5_000
     assert :sys.get_state(bot).cycle_state.cycle_runtime_pid == waiting_runtime_pid
 
-    last_message = List.last(resumed_messages)
+    last_message = List.last(request_2.messages)
 
     assert [
              %{
@@ -545,6 +339,8 @@ defmodule Froth.Telegram.AskFlowTest do
              }
            ] = last_message.content
 
+    FakeLLM.reply(turn_2, {:ok, text_response("Done.")})
+
     assert_receive {:telegram_call,
                     %{
                       "@type" => "sendMessage",
@@ -557,20 +353,11 @@ defmodule Froth.Telegram.AskFlowTest do
   end
 
   test "await pauses the live worker with button choices and resumes in place" do
-    test_pid = self()
-    bot_id = "charlie-await-flow"
-    session_id = "await-flow-session"
     chat_id = 362_441_422
-    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
+    model = FakeLLM.claim()
     {:ok, task_holder} = Agent.start_link(fn -> nil end)
 
     on_exit(fn ->
-      if previous_fun do
-        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
-      else
-        Application.delete_env(:froth, :llm_stream_single_fun)
-      end
-
       task_id =
         try do
           Agent.get(task_holder, & &1)
@@ -583,110 +370,38 @@ defmodule Froth.Telegram.AskFlowTest do
       end
     end)
 
-    counter =
-      start_supervised!(%{id: make_ref(), start: {Agent, :start_link, [fn -> 0 end]}})
-
-    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
-      call =
-        Agent.get_and_update(counter, fn current ->
-          {current, current + 1}
-        end)
-
-      send(test_pid, {:llm_call, call, api_messages, opts})
-
-      case call do
-        0 ->
-          {:ok,
-           %{
-             text: "",
-             content: [
-               %{
-                 "type" => "tool_use",
-                 "id" => "toolu_await_shell_1",
-                 "name" => "run_shell",
-                 "input" => %{
-                   "command" => "sleep 30",
-                   "description" => %{
-                     "action" => "Starting a long-running shell task",
-                     "goals" => ["Start the task", "Observe it in the background"],
-                     "assumptions" => ["The command should stay alive past the inline wait"]
-                   }
-                 }
-               }
-             ],
-             stop_reason: "tool_use",
-             usage: %{},
-             model: opts[:model],
-             message_id: "msg_await_1"
-           }}
-
-        1 ->
-          {:ok,
-           %{
-             text: "",
-             content: [
-               %{
-                 "type" => "tool_use",
-                 "id" => "toolu_await_wait_1",
-                 "name" => "await",
-                 "input" => %{"reason" => "The shell task is still running."}
-               }
-             ],
-             stop_reason: "tool_use",
-             usage: %{},
-             model: opts[:model],
-             message_id: "msg_await_2"
-           }}
-
-        2 ->
-          {:ok,
-           %{
-             text: "Still working.",
-             content: [%{"type" => "text", "text" => "Still working."}],
-             stop_reason: "end_turn",
-             usage: %{},
-             model: opts[:model],
-             message_id: "msg_await_3"
-           }}
-      end
-    end)
-
     start_supervised!(
-      {__MODULE__.FakeTelegramSession, session_id: session_id, test_pid: test_pid}
+      {__MODULE__.FakeTelegramSession, session_id: "await-flow-session", test_pid: self()}
     )
 
     bot =
-      start_supervised!(
-        {Bot,
-         id: bot_id,
-         session_id: session_id,
-         bot_username: "charliebuddybot",
-         bot_user_id: 1,
-         owner_user_id: 1,
-         model: "claude-opus-4-6",
-         system_prompt: "You are Charlie.",
-         debounce_ms: 0,
-         tools_module: Froth.Telegram.Toolsets.Charlie}
+      start_charlie_bot(
+        id: "charlie-await-flow",
+        session_id: "await-flow-session",
+        model: model
       )
 
-    send(
-      bot,
-      {:telegram_update,
-       %{
-         "@type" => "updateNewMessage",
-         "message" => %{
-           "id" => 10,
-           "chat_id" => chat_id,
-           "sender_id" => %{"user_id" => 777},
-           "content" => %{"text" => %{"text" => "help"}}
+    send(bot, user_update("help", message_id: 10, chat_id: chat_id))
+
+    # Turn 1: kick off a long-running shell task.
+    assert_receive {FakeLLM, turn_1, %Request{}}, 5_000
+
+    FakeLLM.reply(
+      turn_1,
+      {:ok, tool_use_response("toolu_await_shell_1", "run_shell", %{
+         "command" => "sleep 30",
+         "description" => %{
+           "action" => "Starting a long-running shell task",
+           "goals" => ["Start the task", "Observe it in the background"],
+           "assumptions" => ["The command should stay alive past the inline wait"]
          }
-       }}
+       })}
     )
 
-    assert_receive {:llm_call, 0, _messages, _opts}, 5_000
-    assert_receive {:llm_call, 1, shell_resumed_messages, _opts}, 8_000
+    # Turn 2: after run_shell returns a task id, the LLM calls `await`.
+    assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 8_000
 
-    shell_result_message = List.last(shell_resumed_messages)
+    shell_result_message = List.last(request_2.messages)
 
     assert [
              %{
@@ -702,6 +417,13 @@ defmodule Froth.Telegram.AskFlowTest do
       )
 
     Agent.update(task_holder, fn _ -> task_id end)
+
+    FakeLLM.reply(
+      turn_2,
+      {:ok, tool_use_response("toolu_await_wait_1", "await", %{
+         "reason" => "The shell task is still running."
+       })}
+    )
 
     assert_receive {:telegram_call,
                     %{
@@ -767,10 +489,11 @@ defmodule Froth.Telegram.AskFlowTest do
     assert is_integer(edited_message_id)
     assert edited_await_text =~ "→ Continued while waiting"
 
-    assert_receive {:llm_call, 2, resumed_messages, _opts}, 5_000
+    # Turn 3: the await resolves and the LLM ends the turn.
+    assert_receive {FakeLLM, turn_3, %Request{} = request_3}, 5_000
     assert :sys.get_state(bot).cycle_state.cycle_runtime_pid == waiting_runtime_pid
 
-    last_message = List.last(resumed_messages)
+    last_message = List.last(request_3.messages)
 
     assert [
              %{
@@ -782,6 +505,8 @@ defmodule Froth.Telegram.AskFlowTest do
 
     assert await_resolution =~ "keep working while the background tasks continue"
     assert await_resolution =~ task_id
+
+    FakeLLM.reply(turn_3, {:ok, text_response("Still working.")})
 
     assert_receive {:telegram_call,
                     %{
@@ -795,132 +520,56 @@ defmodule Froth.Telegram.AskFlowTest do
   end
 
   test "failure intervention posts a report, edits it after a callback choice, and resumes with the injected report" do
-    test_pid = self()
-    bot_id = "charlie-failure-flow-callback"
-    session_id = "failure-flow-callback-session"
     chat_id = 362_441_422
-    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
-
-    on_exit(fn ->
-      if previous_fun do
-        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
-      else
-        Application.delete_env(:froth, :llm_stream_single_fun)
-      end
-    end)
-
-    main_counter = start_supervised!({Agent, fn -> 0 end})
-
-    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
-      tool_names = Enum.map(opts[:tools] || [], & &1["name"])
-      send(test_pid, {:llm_call, tool_names, api_messages, opts})
-
-      case tool_names do
-        ["deliver_failure_report"] ->
-          {:ok,
-           %{
-             text: "",
-             content: [
-               %{
-                 "type" => "tool_use",
-                 "id" => "toolu_failure_report_1",
-                 "name" => "deliver_failure_report",
-                 "input" => %{
-                   "intention" => "Inspect the current directory.",
-                   "situation" => "The agent tried one shell command and it failed immediately.",
-                   "invocation" => "run_shell command=\"false\"",
-                   "expectation" => "The shell command would succeed.",
-                   "irritation" => "The shell returned \"exit code: 1\".",
-                   "designation" => "minor shell stumble",
-                   "intervention" => [
-                     "Check the working directory before retrying.",
-                     "Run pwd and then retry with the exact path."
-                   ]
-                 }
-               }
-             ],
-             stop_reason: "tool_use",
-             usage: %{},
-             model: opts[:model],
-             message_id: "msg_failure_report_1"
-           }}
-
-        _ ->
-          call =
-            Agent.get_and_update(main_counter, fn current ->
-              {current, current + 1}
-            end)
-
-          case call do
-            0 ->
-              {:ok,
-               %{
-                 text: "",
-                 content: [
-                   %{
-                     "type" => "tool_use",
-                     "id" => "toolu_failure_1",
-                     "name" => "run_shell",
-                     "input" => %{"command" => "false"}
-                   }
-                 ],
-                 stop_reason: "tool_use",
-                 usage: %{},
-                 model: opts[:model],
-                 message_id: "msg_failure_1"
-               }}
-
-            1 ->
-              {:ok,
-               %{
-                 text: "Settled.",
-                 content: [%{"type" => "text", "text" => "Settled."}],
-                 stop_reason: "end_turn",
-                 usage: %{},
-                 model: opts[:model],
-                 message_id: "msg_failure_2"
-               }}
-          end
-      end
-    end)
+    main_model = FakeLLM.claim()
+    report_model = FakeLLM.claim()
 
     start_supervised!(
-      {__MODULE__.FakeTelegramSession, session_id: session_id, test_pid: test_pid}
+      {__MODULE__.FakeTelegramSession,
+       session_id: "failure-flow-callback-session", test_pid: self()}
     )
 
     bot =
-      start_supervised!(
-        {Bot,
-         id: bot_id,
-         session_id: session_id,
-         bot_username: "charliebuddybot",
-         bot_user_id: 1,
-         owner_user_id: 1,
-         model: "claude-opus-4-6",
-         system_prompt: "You are Charlie.",
-         debounce_ms: 0,
-         tools_module: Froth.Telegram.Toolsets.Charlie}
+      start_charlie_bot(
+        id: "charlie-failure-flow-callback",
+        session_id: "failure-flow-callback-session",
+        model: main_model,
+        failure_report_model: report_model
       )
 
-    send(
-      bot,
-      {:telegram_update,
-       %{
-         "@type" => "updateNewMessage",
-         "message" => %{
-           "id" => 10,
-           "chat_id" => chat_id,
-           "sender_id" => %{"user_id" => 777},
-           "content" => %{"text" => %{"text" => "help"}}
-         }
-       }}
+    send(bot, user_update("help", message_id: 10, chat_id: chat_id))
+
+    # Turn 1: the main LLM decides to run a failing shell command.
+    assert_receive {FakeLLM, main_turn_1, %Request{} = main_request_1}, 5_000
+    main_tool_names = Enum.map(main_request_1.tools, & &1["name"])
+    assert "run_shell" in main_tool_names
+
+    FakeLLM.reply(
+      main_turn_1,
+      {:ok, tool_use_response("toolu_failure_1", "run_shell", %{"command" => "false"})}
     )
 
-    assert_receive {:llm_call, tool_names, _api_messages, _opts}, 5_000
-    assert "run_shell" in tool_names
-    assert_receive {:llm_call, ["deliver_failure_report"], report_messages, report_opts}, 5_000
-    assert report_opts[:model] == "gpt-5.4-mini"
-    assert [%Froth.LLM.Message{role: :user}] = report_messages
+    # The failure-report LLM gets asked to build a structured report.
+    assert_receive {FakeLLM, report_turn, %Request{} = report_request}, 5_000
+    assert report_request.model == report_model
+    assert [%LLMMessage{role: :user}] = report_request.messages
+    assert Enum.map(report_request.tools, & &1["name"]) == ["deliver_failure_report"]
+
+    FakeLLM.reply(
+      report_turn,
+      {:ok, tool_use_response("toolu_failure_report_1", "deliver_failure_report", %{
+         "intention" => "Inspect the current directory.",
+         "situation" => "The agent tried one shell command and it failed immediately.",
+         "invocation" => "run_shell command=\"false\"",
+         "expectation" => "The shell command would succeed.",
+         "irritation" => "The shell returned \"exit code: 1\".",
+         "designation" => "minor shell stumble",
+         "intervention" => [
+           "Check the working directory before retrying.",
+           "Run pwd and then retry with the exact path."
+         ]
+       })}
+    )
 
     assert_receive {:telegram_call,
                     %{
@@ -983,9 +632,10 @@ defmodule Froth.Telegram.AskFlowTest do
 
     assert edited_report_text =~ "→ Intervention #2 chosen"
 
-    assert_receive {:llm_call, _tool_names, resumed_messages, _opts}, 5_000
+    # Turn 2: main cycle resumes with the injected failure report as the tool_result.
+    assert_receive {FakeLLM, main_turn_2, %Request{} = main_request_2}, 5_000
 
-    last_message = List.last(resumed_messages)
+    last_message = List.last(main_request_2.messages)
 
     assert [
              %{
@@ -1001,6 +651,8 @@ defmodule Froth.Telegram.AskFlowTest do
     assert resumed_content =~ "Original error"
     assert resumed_content =~ "exit code: 1"
 
+    FakeLLM.reply(main_turn_2, {:ok, text_response("Settled.")})
+
     assert_receive {:telegram_call,
                     %{
                       "@type" => "sendMessage",
@@ -1013,128 +665,49 @@ defmodule Froth.Telegram.AskFlowTest do
   end
 
   test "failure intervention accepts a direct reply as a custom intervention" do
-    test_pid = self()
-    bot_id = "charlie-failure-flow-reply"
-    session_id = "failure-flow-reply-session"
     chat_id = 362_441_422
-    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
-
-    on_exit(fn ->
-      if previous_fun do
-        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
-      else
-        Application.delete_env(:froth, :llm_stream_single_fun)
-      end
-    end)
-
-    main_counter = start_supervised!({Agent, fn -> 0 end})
-
-    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
-      tool_names = Enum.map(opts[:tools] || [], & &1["name"])
-      send(test_pid, {:llm_call, tool_names, api_messages, opts})
-
-      case tool_names do
-        ["deliver_failure_report"] ->
-          {:ok,
-           %{
-             text: "",
-             content: [
-               %{
-                 "type" => "tool_use",
-                 "id" => "toolu_failure_report_2",
-                 "name" => "deliver_failure_report",
-                 "input" => %{
-                   "intention" => "Run a shell command.",
-                   "situation" =>
-                     "The first shell command failed and the cycle stopped for review.",
-                   "invocation" => "run_shell command=\"false\"",
-                   "expectation" => "The shell command would succeed.",
-                   "irritation" => "The shell returned \"exit code: 1\".",
-                   "designation" => "shell derailment",
-                   "intervention" => ["Check the cwd before retrying."]
-                 }
-               }
-             ],
-             stop_reason: "tool_use",
-             usage: %{},
-             model: opts[:model],
-             message_id: "msg_failure_report_2"
-           }}
-
-        _ ->
-          call =
-            Agent.get_and_update(main_counter, fn current ->
-              {current, current + 1}
-            end)
-
-          case call do
-            0 ->
-              {:ok,
-               %{
-                 text: "",
-                 content: [
-                   %{
-                     "type" => "tool_use",
-                     "id" => "toolu_failure_reply_1",
-                     "name" => "run_shell",
-                     "input" => %{"command" => "false"}
-                   }
-                 ],
-                 stop_reason: "tool_use",
-                 usage: %{},
-                 model: opts[:model],
-                 message_id: "msg_failure_reply_1"
-               }}
-
-            1 ->
-              {:ok,
-               %{
-                 text: "Fixed.",
-                 content: [%{"type" => "text", "text" => "Fixed."}],
-                 stop_reason: "end_turn",
-                 usage: %{},
-                 model: opts[:model],
-                 message_id: "msg_failure_reply_2"
-               }}
-          end
-      end
-    end)
+    main_model = FakeLLM.claim()
+    report_model = FakeLLM.claim()
 
     start_supervised!(
-      {__MODULE__.FakeTelegramSession, session_id: session_id, test_pid: test_pid}
+      {__MODULE__.FakeTelegramSession,
+       session_id: "failure-flow-reply-session", test_pid: self()}
     )
 
     bot =
-      start_supervised!(
-        {Bot,
-         id: bot_id,
-         session_id: session_id,
-         bot_username: "charliebuddybot",
-         bot_user_id: 1,
-         owner_user_id: 1,
-         model: "claude-opus-4-6",
-         system_prompt: "You are Charlie.",
-         debounce_ms: 0,
-         tools_module: Froth.Telegram.Toolsets.Charlie}
+      start_charlie_bot(
+        id: "charlie-failure-flow-reply",
+        session_id: "failure-flow-reply-session",
+        model: main_model,
+        failure_report_model: report_model
       )
 
-    send(
-      bot,
-      {:telegram_update,
-       %{
-         "@type" => "updateNewMessage",
-         "message" => %{
-           "id" => 10,
-           "chat_id" => chat_id,
-           "sender_id" => %{"user_id" => 777},
-           "content" => %{"text" => %{"text" => "help"}}
-         }
-       }}
+    send(bot, user_update("help", message_id: 10, chat_id: chat_id))
+
+    assert_receive {FakeLLM, main_turn_1, %Request{} = main_request_1}, 5_000
+    main_tool_names = Enum.map(main_request_1.tools, & &1["name"])
+    assert "run_shell" in main_tool_names
+
+    FakeLLM.reply(
+      main_turn_1,
+      {:ok, tool_use_response("toolu_failure_reply_1", "run_shell", %{"command" => "false"})}
     )
 
-    assert_receive {:llm_call, tool_names, _api_messages, _opts}, 5_000
-    assert "run_shell" in tool_names
-    assert_receive {:llm_call, ["deliver_failure_report"], _report_messages, _report_opts}, 5_000
+    assert_receive {FakeLLM, report_turn, %Request{} = report_request}, 5_000
+    assert report_request.model == report_model
+
+    FakeLLM.reply(
+      report_turn,
+      {:ok, tool_use_response("toolu_failure_report_2", "deliver_failure_report", %{
+         "intention" => "Run a shell command.",
+         "situation" => "The first shell command failed and the cycle stopped for review.",
+         "invocation" => "run_shell command=\"false\"",
+         "expectation" => "The shell command would succeed.",
+         "irritation" => "The shell returned \"exit code: 1\".",
+         "designation" => "shell derailment",
+         "intervention" => ["Check the cwd before retrying."]
+       })}
+    )
 
     assert_receive {:telegram_call,
                     %{
@@ -1151,23 +724,11 @@ defmodule Froth.Telegram.AskFlowTest do
 
     send(
       bot,
-      {:telegram_update,
-       %{
-         "@type" => "updateNewMessage",
-         "message" => %{
-           "id" => 11,
-           "chat_id" => chat_id,
-           "sender_id" => %{"user_id" => 777},
-           "reply_to" => %{
-             "@type" => "messageReplyToMessage",
-             "message_id" => report_message_id,
-             "chat_id" => chat_id
-           },
-           "content" => %{
-             "text" => %{"text" => "Run pwd first and only retry if the cwd is right."}
-           }
-         }
-       }}
+      user_reply_update("Run pwd first and only retry if the cwd is right.",
+        message_id: 11,
+        reply_to_message_id: report_message_id,
+        chat_id: chat_id
+      )
     )
 
     assert_receive {:telegram_call,
@@ -1183,9 +744,9 @@ defmodule Froth.Telegram.AskFlowTest do
 
     assert edited_report_text =~ "→ Custom intervention recorded"
 
-    assert_receive {:llm_call, _tool_names, resumed_messages, _opts}, 5_000
+    assert_receive {FakeLLM, main_turn_2, %Request{} = main_request_2}, 5_000
 
-    last_message = List.last(resumed_messages)
+    last_message = List.last(main_request_2.messages)
 
     assert [
              %{
@@ -1200,6 +761,8 @@ defmodule Froth.Telegram.AskFlowTest do
     assert resumed_content =~ "Custom intervention from user:777"
     assert resumed_content =~ "Run pwd first and only retry if the cwd is right."
 
+    FakeLLM.reply(main_turn_2, {:ok, text_response("Fixed.")})
+
     assert_receive {:telegram_call,
                     %{
                       "@type" => "sendMessage",
@@ -1209,6 +772,83 @@ defmodule Froth.Telegram.AskFlowTest do
                    5_000
 
     assert_bot_idle(bot)
+  end
+
+  # -- test helpers --
+
+  defp start_charlie_bot(opts) do
+    defaults = [
+      bot_username: "charliebuddybot",
+      bot_user_id: 1,
+      owner_user_id: 1,
+      system_prompt: "You are Charlie.",
+      debounce_ms: 0,
+      tools_module: Froth.Telegram.Toolsets.Charlie
+    ]
+
+    start_supervised!({Bot, Keyword.merge(defaults, opts)})
+  end
+
+  defp tool_use_response(id, name, input) do
+    %{
+      content: [
+        %{
+          "type" => "tool_use",
+          "id" => id,
+          "name" => name,
+          "input" => input
+        }
+      ],
+      stop_reason: "tool_use"
+    }
+  end
+
+  defp text_response(text) do
+    %{
+      text: text,
+      content: [%{"type" => "text", "text" => text}],
+      stop_reason: "end_turn"
+    }
+  end
+
+  defp user_update(text, opts) do
+    chat_id = Keyword.get(opts, :chat_id, 362_441_422)
+    message_id = Keyword.fetch!(opts, :message_id)
+    sender_user_id = Keyword.get(opts, :sender_user_id, 777)
+
+    {:telegram_update,
+     %{
+       "@type" => "updateNewMessage",
+       "message" => %{
+         "id" => message_id,
+         "chat_id" => chat_id,
+         "sender_id" => %{"user_id" => sender_user_id},
+         "content" => %{"text" => %{"text" => text}}
+       }
+     }}
+  end
+
+  defp user_reply_update(text, opts) do
+    chat_id = Keyword.get(opts, :chat_id, 362_441_422)
+    message_id = Keyword.fetch!(opts, :message_id)
+    reply_to_message_id = Keyword.fetch!(opts, :reply_to_message_id)
+    sender_user_id = Keyword.get(opts, :sender_user_id, 777)
+
+    {:telegram_update,
+     %{
+       "@type" => "updateNewMessage",
+       "message" => %{
+         "id" => message_id,
+         "chat_id" => chat_id,
+         "sender_id" => %{"user_id" => sender_user_id},
+         "reply_to" => %{
+           "@type" => "messageReplyToMessage",
+           "message_id" => reply_to_message_id,
+           "chat_id" => chat_id
+         },
+         "content" => %{"text" => %{"text" => text}}
+       }
+     }}
   end
 
   defp assert_pending_ask_message_id(message_id, attempts \\ 300)

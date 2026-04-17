@@ -40,10 +40,11 @@ defmodule Froth.Headlines do
   defp prepare_cycle(opts) when is_list(opts) do
     chat_id = Keyword.get(opts, :chat_id, @default_chat_id)
     model = Keyword.get(opts, :model, @model)
+    provider = Keyword.get(opts, :provider, :openai)
     spam = Keyword.get(opts, :spam, true)
 
     prompt = build_prompt_for_chat(chat_id)
-    config = build_headlines_config(chat_id, model)
+    config = build_headlines_config(chat_id, model, provider)
 
     user_message =
       Repo.insert!(%AgentMessage{role: :user, content: AgentMessage.wrap(prompt)})
@@ -77,9 +78,10 @@ defmodule Froth.Headlines do
     |> build_prompt(render_registered_headlines_context(registered_headlines))
   end
 
-  defp build_headlines_config(chat_id, model) when is_integer(chat_id) and is_binary(model) do
+  defp build_headlines_config(chat_id, model, provider)
+       when is_integer(chat_id) and is_binary(model) and is_atom(provider) do
     %Config{
-      provider: :openai,
+      provider: provider,
       system: @system_prompt,
       model: model,
       tools: headline_tools(),

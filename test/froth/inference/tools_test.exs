@@ -5,7 +5,9 @@ defmodule Froth.Inference.ToolsTest do
   alias Froth.Agent
   alias Froth.Agent.{Cycle, Message}
   alias Froth.Inference.Tools
+  alias Froth.LLM.Fake, as: FakeLLM
   alias Froth.LLM.Message, as: LLMMessage
+  alias Froth.LLM.Request
   alias Froth.Repo
   alias Froth.Task
   alias Froth.TaskEvent
@@ -200,38 +202,17 @@ defmodule Froth.Inference.ToolsTest do
   end
 
   test "spawn_agent starts an adhoc cycle with default tools, links it to the chat, and tracks it as a task" do
-    test_pid = self()
     bot_id = "spawn-agent-test-bot"
-    previous_fun = Application.get_env(:froth, :llm_stream_single_fun)
-
-    on_exit(fn ->
-      if previous_fun do
-        Application.put_env(:froth, :llm_stream_single_fun, previous_fun)
-      else
-        Application.delete_env(:froth, :llm_stream_single_fun)
-      end
-    end)
-
-    Application.put_env(:froth, :llm_stream_single_fun, fn api_messages, _on_event, opts ->
-      send(test_pid, {:spawn_agent_llm_call, api_messages, opts})
-
-      {:ok,
-       %{
-         text: "delegated answer",
-         content: [%{"type" => "text", "text" => "delegated answer"}],
-         stop_reason: "stop",
-         usage: %{},
-         model: opts[:model],
-         message_id: "resp_spawn_agent_1"
-       }}
-    end)
-
     chat_id = unique_chat_id()
+    model = FakeLLM.claim()
 
     assert {:ok, result} =
              Tools.execute(
                "spawn_agent",
-               %{"prompt" => "Say hi from the delegated agent"},
+               %{
+                 "prompt" => "Say hi from the delegated agent",
+                 "model" => model
+               },
                chat_id,
                bot_id: bot_id,
                bot_username: "charliebuddybot",
@@ -240,7 +221,7 @@ defmodule Froth.Inference.ToolsTest do
 
     assert result["status"] == "started"
     assert result["task_id"] == "agent:#{result["cycle_id"]}"
-    assert result["model"] == "gpt-5.4-mini"
+    assert result["model"] == model
     assert result["tools"] == ["run_shell", "elixir_eval"]
     assert result["check_tool"] == "read_tool_transcript"
     assert result["open_url"] =~ result["cycle_id"]
@@ -250,19 +231,29 @@ defmodule Froth.Inference.ToolsTest do
              "include_messages" => true
            }
 
-    assert_receive {:spawn_agent_llm_call, api_messages, opts}, 5_000
+    assert_receive {FakeLLM, from, %Request{} = request}, 5_000
 
     assert [%LLMMessage{role: :user, content: [%{"type" => "text", "text" => prompt}]}] =
-             api_messages
+             request.messages
 
     assert prompt == "Say hi from the delegated agent"
-    assert opts[:model] == "gpt-5.4-mini"
+    assert request.model == model
+
+    FakeLLM.reply(
+      from,
+      {:ok,
+       %{
+         text: "delegated answer",
+         content: [%{"type" => "text", "text" => "delegated answer"}],
+         stop_reason: "stop"
+       }}
+    )
 
     assert :ok = wait_for_cycle_status(result["cycle_id"], :completed)
 
     cycle = Repo.get!(Cycle, result["cycle_id"])
     assert cycle.status == :completed
-    assert cycle.model == "gpt-5.4-mini"
+    assert cycle.model == model
     assert Enum.map(cycle.config["tool_specs"], & &1["name"]) == ["run_shell", "elixir_eval"]
 
     task = Repo.get!(Task, result["task_id"])
@@ -357,36 +348,39 @@ defmodule Froth.Inference.ToolsTest do
   end
 
   test "web_search executes triangulated search and returns tool payload" do
-    original_grok = Application.get_env(:froth, Froth.Grok, [])
-    original_openai = Application.get_env(:froth, Froth.OpenAI, [])
-    original_gemini = Application.get_env(:froth, Froth.Gemini, [])
+    # web_search fans out to three real provider models (grok / openai /
+    # gemini) and then collates the results via a fourth LLM call on
+    # anthropic. We seed API key rows so `build_request` succeeds for
+    # each real provider, then swap in an `llm_stream_fun` fake that
+    # dispatches on the request's system prompt to return either a
+    # per-provider snippet or the collation JSON.
+    Repo.insert!(%ApiKey{name: "test-grok", provider: "grok", key: "test-grok"})
+    Repo.insert!(%ApiKey{name: "test-openai", provider: "openai", key: "test-openai"})
+    Repo.insert!(%ApiKey{name: "test-gemini", provider: "gemini", key: "test-gemini"})
+    Repo.insert!(%ApiKey{name: "test-anthropic", provider: "anthropic", key: "test-anthropic"})
+
     original_stream_fun = Application.get_env(:froth, :llm_stream_fun)
-    original_stream_single_fun = Application.get_env(:froth, :llm_stream_single_fun)
 
     on_exit(fn ->
-      Application.put_env(:froth, Froth.Grok, original_grok)
-      Application.put_env(:froth, Froth.OpenAI, original_openai)
-      Application.put_env(:froth, Froth.Gemini, original_gemini)
-
       if is_nil(original_stream_fun) do
         Application.delete_env(:froth, :llm_stream_fun)
       else
         Application.put_env(:froth, :llm_stream_fun, original_stream_fun)
       end
-
-      if is_nil(original_stream_single_fun) do
-        Application.delete_env(:froth, :llm_stream_single_fun)
-      else
-        Application.put_env(:froth, :llm_stream_single_fun, original_stream_single_fun)
-      end
     end)
 
-    Application.put_env(:froth, Froth.Grok, api_key: "test-grok")
-    Application.put_env(:froth, Froth.OpenAI, api_key: "test-openai")
-    Application.put_env(:froth, Froth.Gemini, api_key: "test-gemini")
+    collation_json =
+      ~s({"collated":"All three providers returned a grounded source.","agreement":1.0,"single_source_claims":[]})
 
     Application.put_env(:froth, :llm_stream_fun, fn request, _on_event, _opts ->
-      text = "Provider #{inspect(request.provider)} saw https://example.test/source"
+      text =
+        cond do
+          is_binary(request.system) and String.contains?(request.system, "synthesize research") ->
+            collation_json
+
+          true ->
+            "Provider #{inspect(request.provider)} saw https://example.test/source"
+        end
 
       {:ok,
        %{
@@ -396,21 +390,6 @@ defmodule Froth.Inference.ToolsTest do
          usage: %{},
          model: request.model,
          message_id: "resp_test"
-       }}
-    end)
-
-    Application.put_env(:froth, :llm_stream_single_fun, fn _messages, _on_event, _opts ->
-      json =
-        ~s({"collated":"All three providers returned a grounded source.","agreement":1.0,"single_source_claims":[]})
-
-      {:ok,
-       %{
-         text: json,
-         content: [%{"type" => "text", "text" => json}],
-         stop_reason: "end_turn",
-         usage: %{},
-         model: "claude-sonnet-4-20250514",
-         message_id: "msg_collate"
        }}
     end)
 

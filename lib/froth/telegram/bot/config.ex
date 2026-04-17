@@ -33,6 +33,7 @@ defmodule Froth.Telegram.Bot.Config do
     :chronicle_dir,
     :recent_message_limit,
     :recent_message_anchor_size,
+    :failure_report_model,
     name_triggers: [],
     debounce_ms: 0
   ]
@@ -53,6 +54,7 @@ defmodule Froth.Telegram.Bot.Config do
           chronicle_dir: String.t() | nil,
           recent_message_limit: pos_integer() | nil,
           recent_message_anchor_size: pos_integer() | nil,
+          failure_report_model: String.t() | nil,
           name_triggers: [String.t()],
           debounce_ms: non_neg_integer()
         }

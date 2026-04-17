@@ -1175,7 +1175,8 @@ defmodule Froth.Agent.Worker do
 
   defp assistant_visible_reply?(_response), do: false
 
-  defp llm_request_messages("openai", messages) when is_list(messages) do
+  defp llm_request_messages(provider, messages)
+       when provider in ["openai", "fakeai"] and is_list(messages) do
     case latest_openai_response_boundary(messages) do
       {response_id, tail_messages}
       when is_binary(response_id) and response_id != "" and is_list(tail_messages) and
