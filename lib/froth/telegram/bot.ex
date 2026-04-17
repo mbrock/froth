@@ -697,51 +697,18 @@ defmodule Froth.Telegram.Bot do
     chat_id = context[:chat_id] || (cs && cs.chat_id)
     reply_to = context[:reply_to] || (cs && cs.reply_to)
     cycle_id = context[:cycle_id]
-    bc = state.bot_config
 
     if not is_integer(chat_id) do
       {{:error, "missing chat_id in tool context"}, state}
     else
-      task_ids = state.active_tasks |> Map.get(cycle_id, MapSet.new()) |> Enum.sort()
-      narration = cs && cs.narration
-
-      execution_base = %{
-        tool_use_id: tool_use.id,
-        bot_id: bc.id,
-        bot_username: bc.bot_username,
-        session_id: bc.session_id,
-        chat_id: chat_id,
-        reply_to: reply_to,
-        cycle_id: cycle_id,
-        provider: cs && cs.cycle.provider,
-        current_narration_message_id: narration && narration.message_id,
-        current_narration_text: narration && narration.text,
-        current_narration_mode: narration && narration.mode,
-        last_agent_message_id: (cs && cs.last_sent && cs.last_sent.id) || nil,
-        system_prompt: resolve_system_prompt(chat_id, nil, bc),
-        model: bc.model,
-        tools: resolve_tool_specs(bc),
-        active_task_ids: task_ids,
-        thinking: bc.thinking,
-        effort: bc.effort,
-        tool_timeout_ms: nil
-      }
-
-      input =
-        case name do
-          "elixir_eval" ->
-            input
-            |> Map.put("reply_to", reply_to)
-            |> Map.put("topic", "cycle:#{cycle_id}")
-
-          name when name in ["run_shell", "spawn_agent"] ->
-            Map.put(input, "reply_to", reply_to)
-
-          _ ->
-            input
-        end
-
-      execution = Map.merge(execution_base, %{name: name, input: input})
+      execution =
+        state
+        |> execution_base(cycle_id, chat_id, reply_to)
+        |> Map.merge(%{
+          tool_use_id: tool_use.id,
+          name: name,
+          input: shape_tool_input(name, input, cycle_id, reply_to)
+        })
 
       prepared = %{
         execution: execution,
@@ -754,6 +721,51 @@ defmodule Froth.Telegram.Bot do
 
   defp prepare_tool_call(state, _tool_use, _context),
     do: {{:error, "invalid tool input"}, state}
+
+  # Flat map of fields consumed by `ToolExecution`, `FailureIntervention`, and
+  # downstream tools. Projects out of `bot_config` (configuration) and
+  # `cycle_state` (per-cycle live state).
+  defp execution_base(state, cycle_id, chat_id, reply_to) do
+    bc = state.bot_config
+    cs = state.cycle_state
+    narration = cs && cs.narration
+    last_sent = cs && cs.last_sent
+    task_ids = state.active_tasks |> Map.get(cycle_id, MapSet.new()) |> Enum.sort()
+
+    %{
+      bot_id: bc.id,
+      bot_username: bc.bot_username,
+      session_id: bc.session_id,
+      model: bc.model,
+      thinking: bc.thinking,
+      effort: bc.effort,
+      tools: resolve_tool_specs(bc),
+      system_prompt: resolve_system_prompt(chat_id, nil, bc),
+      chat_id: chat_id,
+      reply_to: reply_to,
+      cycle_id: cycle_id,
+      provider: cs && cs.cycle.provider,
+      current_narration_message_id: narration && narration.message_id,
+      current_narration_text: narration && narration.text,
+      current_narration_mode: narration && narration.mode,
+      last_agent_message_id: last_sent && last_sent.id,
+      active_task_ids: task_ids,
+      tool_timeout_ms: nil
+    }
+  end
+
+  defp shape_tool_input("elixir_eval", input, cycle_id, reply_to) do
+    input
+    |> Map.put("reply_to", reply_to)
+    |> Map.put("topic", "cycle:#{cycle_id}")
+  end
+
+  defp shape_tool_input(name, input, _cycle_id, reply_to)
+       when name in ["run_shell", "spawn_agent"] do
+    Map.put(input, "reply_to", reply_to)
+  end
+
+  defp shape_tool_input(_name, input, _cycle_id, _reply_to), do: input
 
   defp commit_tool_call(state, _tool_use, context, prepared, outcome) do
     {result, sent_message, narration_message, awaiting_user_input?} =
