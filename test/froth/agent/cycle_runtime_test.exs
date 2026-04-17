@@ -131,6 +131,42 @@ defmodule Froth.Agent.CycleRuntimeTest do
     end
   end
 
+  describe "spawn_subagent" do
+    test "starts a child runtime under the parent and registers it" do
+      parent = start_scaffold_runtime()
+      parent_state = :sys.get_state(parent)
+
+      child_cycle_id = unique_cycle_id()
+
+      {:ok, child_pid} =
+        CycleRuntime.spawn_subagent(parent, cycle_id: child_cycle_id)
+
+      assert is_pid(child_pid)
+      assert CycleRuntime.whereis(child_cycle_id) == child_pid
+
+      child_state = GenServer.call(child_pid, :get_state)
+      assert child_state.parent_cycle_id == parent_state.cycle_id
+      assert child_state.bot_id == parent_state.bot_id
+      assert child_state.bot_config == parent_state.bot_config
+      assert child_state.chat_id == parent_state.chat_id
+      assert child_state.reply_to == parent_state.reply_to
+    end
+
+    test "terminating the parent cascades to children" do
+      parent = start_scaffold_runtime()
+      child_cycle_id = unique_cycle_id()
+      {:ok, child_pid} = CycleRuntime.spawn_subagent(parent, cycle_id: child_cycle_id)
+
+      parent_ref = Process.monitor(parent)
+      child_ref = Process.monitor(child_pid)
+
+      :ok = DynamicSupervisor.terminate_child(Froth.Agent.CycleSupervisor, parent)
+
+      assert_receive {:DOWN, ^parent_ref, :process, ^parent, _}, 500
+      assert_receive {:DOWN, ^child_ref, :process, ^child_pid, _}, 500
+    end
+  end
+
   describe "sync_sent_message_id" do
     test "swaps temporary message ids on narration and last_sent" do
       runtime = start_scaffold_runtime()

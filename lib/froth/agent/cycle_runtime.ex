@@ -193,6 +193,37 @@ defmodule Froth.Agent.CycleRuntime do
     end
   end
 
+  @doc """
+  Spawn a subagent cycle as a child of `parent_pid`'s cycle. The new
+  runtime is started under the parent runtime's own unnamed
+  `DynamicSupervisor`, so parent termination cascades to children via
+  BEAM supervision.
+
+  `opts` must include `:cycle_id`, `:cycle`, and `:worker_config` (the
+  child's own `%Froth.Agent.Config{}` — `tool_executor` is overridden
+  to the child runtime's pid in its `init/1`). Identity and surface
+  default to the parent's when not explicitly provided: `:bot_id`,
+  `:bot_config`, `:bot_pid`, `:chat_id`, `:reply_to`.
+  """
+  @spec spawn_subagent(pid(), opts()) :: DynamicSupervisor.on_start_child()
+  def spawn_subagent(parent_pid, opts) when is_pid(parent_pid) and is_list(opts) do
+    GenServer.call(parent_pid, {:spawn_subagent, opts})
+  end
+
+  @doc """
+  Convenience wrapper that looks up the parent runtime by its
+  `cycle_id` in the registry before calling `spawn_subagent/2`.
+  """
+  @spec spawn_subagent_by_cycle_id(String.t(), opts()) ::
+          DynamicSupervisor.on_start_child() | {:error, :parent_not_found}
+  def spawn_subagent_by_cycle_id(parent_cycle_id, opts)
+      when is_binary(parent_cycle_id) and is_list(opts) do
+    case whereis(parent_cycle_id) do
+      pid when is_pid(pid) -> spawn_subagent(pid, opts)
+      nil -> {:error, :parent_not_found}
+    end
+  end
+
   # --- GenServer callbacks ---
 
   @impl true
@@ -204,6 +235,8 @@ defmodule Froth.Agent.CycleRuntime do
 
     cycle = Keyword.get(opts, :cycle)
     worker_config = Keyword.get(opts, :worker_config)
+
+    {:ok, children_sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
 
     state = %{
       cycle_id: Keyword.fetch!(opts, :cycle_id),
@@ -219,7 +252,8 @@ defmodule Froth.Agent.CycleRuntime do
       narration: nil,
       last_sent: nil,
       awaiting_user_input?: false,
-      mid_cycle_messages: []
+      mid_cycle_messages: [],
+      children_sup: children_sup
     }
 
     case maybe_start_worker(cycle, worker_config) do
@@ -263,6 +297,20 @@ defmodule Froth.Agent.CycleRuntime do
         state
       ) do
     {reply, state} = commit_tool_call(state, tool_use, context, prepared, outcome)
+    {:reply, reply, state}
+  end
+
+  def handle_call({:spawn_subagent, opts}, _from, state) when is_list(opts) do
+    child_opts =
+      opts
+      |> Keyword.put_new(:parent_cycle_id, state.cycle_id)
+      |> Keyword.put_new(:bot_id, state.bot_id)
+      |> Keyword.put_new(:bot_config, state.bot_config)
+      |> Keyword.put_new(:bot_pid, state.bot_pid)
+      |> Keyword.put_new(:chat_id, state.chat_id)
+      |> Keyword.put_new(:reply_to, state.reply_to)
+
+    reply = DynamicSupervisor.start_child(state.children_sup, {__MODULE__, child_opts})
     {:reply, reply, state}
   end
 
