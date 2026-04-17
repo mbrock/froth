@@ -49,18 +49,30 @@
   </section>
 
   <section title="Process Topology" id="topology">
-    <p>Proposed supervision tree, per Bot:</p>
-    <code>Bot                       # the TG session dispatcher
-├── Bot.Cycles             # DynamicSupervisor for root cycles
-│   ├── CycleRuntime A     # GenServer, one per running cycle
-│   │   ├── Worker A       # Froth.Agent.Worker (started by CycleRuntime)
-│   │   └── Cycle.Children # DynamicSupervisor for A's subagents
-│   │       ├── CycleRuntime A.1  # web_search subagent #1
-│   │       │   └── ...              # nested identically
-│   │       └── CycleRuntime A.2
-│   └── CycleRuntime B     # independent root cycle, parallel user turn</code>
-    <p>Every cycle — root or subagent — is a <tt>CycleRuntime</tt> GenServer. A root cycle is started under <tt>Bot.Cycles</tt>. A subagent cycle is started under its parent's <tt>Cycle.Children</tt> supervisor.</p>
-    <p>Each <tt>CycleRuntime</tt> starts its Worker and its child supervisor as part of <tt>init/1</tt>. When the CycleRuntime terminates — for any reason — BEAM shuts down both the Worker and the entire subagent subtree.</p>
+    <p>Proposed supervision tree (app-wide, not per-Bot):</p>
+    <code>app_sup
+├── Froth.Agent.CycleRegistry      # Registry, keys: :unique — all live cycles
+├── Froth.Agent.CycleSupervisor    # DynamicSupervisor — root cycles live here
+├── Froth.Telegram.Bot.Charlie     # GenServer — dispatcher, sibling of the above
+└── ... (other named bots, siblings)
+
+# At runtime, conceptually:
+CycleRuntime (root, supervised by CycleSupervisor)
+├── Worker                         # started in CycleRuntime.init/1, linked
+└── DynamicSupervisor              # "children_sup" — started in init/1, linked
+    ├── CycleRuntime (subagent 1)  # same module; carries parent_cycle_id
+    │   ├── Worker
+    │   └── DynamicSupervisor (grandchildren)
+    └── CycleRuntime (subagent 2)</code>
+    <p>Every cycle — root or subagent — is the same <tt>Froth.Agent.CycleRuntime</tt> GenServer. Registration uses the existing Froth pattern (see <tt>Froth.Tasks.Eval</tt>, <tt>Froth.Codex.Session</tt>):</p>
+    <code>defp via(cycle_id),
+  do: {:via, Registry, {Froth.Agent.CycleRegistry, cycle_id}}
+
+GenServer.start_link(__MODULE__, opts, name: via(cycle_id))</code>
+    <p>One flat <tt>Registry</tt> keyed by <tt>cycle_id</tt> covers both roots and subagents. Cycle ids are already globally unique in the DB, so no per-Bot scoping is needed; <tt>:bot_id</tt> is carried in each CycleRuntime's state for telemetry. <tt>Registry</tt> auto-unregisters pids on exit, so the Bot does <em>not</em> need its own <tt>%{cycle_id =&gt; pid}</tt> map: routing does a direct <tt>Registry.lookup/2</tt> without a Bot call.</p>
+    <p><strong>Root-cycle supervisor:</strong> a single app-wide <tt>Froth.Agent.CycleSupervisor</tt> DynamicSupervisor (sibling of <tt>CycleRegistry</tt>), not a per-Bot supervisor. The Bot GenServer and <tt>CycleSupervisor</tt> are siblings; Bot death does <em>not</em> cascade to cycles. This is intentional: a TDLib hiccup or Bot restart should not cancel in-flight agent runs.</p>
+    <p><strong>Subagent supervisor:</strong> each <tt>CycleRuntime</tt> starts its own unnamed <tt>DynamicSupervisor</tt> in <tt>init/1</tt> and keeps its pid in state (<tt>:children_sup</tt>). Subagents are started there. Parent death cascades to children via normal BEAM supervision.</p>
+    <p><strong>Worker lifetime:</strong> each <tt>CycleRuntime</tt> starts its Worker in <tt>init/1</tt> with <tt>Process.link/1</tt>. When the CycleRuntime exits for any reason, the Worker goes with it.</p>
   </section>
 
   <section title="Cycle Runtime State" id="cycle-runtime-state">
@@ -84,11 +96,11 @@
     <p>The Bot becomes a narrow dispatcher:</p>
     <list type="bullet">
       <item><p>Subscribe to the TDLib session and receive updates.</p></item>
-      <item><p>Maintain a registry of live <tt>CycleRuntime</tt> pids, keyed by <tt>cycle_id</tt>.</p></item>
-      <item><p>For each inbound Telegram update, decide whether to route it to an existing cycle (see Routing section) or start a new root cycle.</p></item>
+      <item><p>For each inbound Telegram update, look up the target cycle in <tt>Froth.Agent.CycleRegistry</tt> (no Bot call required for the lookup itself) or start a new root cycle under <tt>Froth.Agent.CycleSupervisor</tt>. See Routing.</p></item>
       <item><p>Hold <tt>bot_config</tt> (agent-identity defaults + Telegram permission fields) for use when starting new root cycles.</p></item>
+      <item><p>Hold debounce state for coalescing rapid user messages pre-dispatch.</p></item>
     </list>
-    <p>The Bot no longer holds: a cycle, a worker pid, a narration, a last-sent, mid-cycle-messages, pending-ask-resumes, active_tasks. All of that moves into each CycleRuntime.</p>
+    <p>The Bot no longer holds: a cycle, a worker pid, a narration, a last-sent, mid-cycle-messages, pending-ask-resumes, active_tasks, a <tt>%{cycle_id =&gt; pid}</tt> map. All of that moves into each CycleRuntime, or into <tt>Registry</tt>.</p>
   </section>
 
   <section title="Routing Inbound Telegram Updates" id="routing">
@@ -96,7 +108,7 @@
     <list type="numbered">
       <item><p><strong>Callback query with encoded cycle_id</strong> (e.g. a stop button, an ask alternative). Decode the callback data, look up the target cycle in the registry, forward to that CycleRuntime. Irrecoverable lookup failures (cycle no longer alive) answer the callback with a no-op.</p></item>
       <item><p><strong>New message with a <tt>reply_to</tt> matching a pending ask's anchor message id</strong>. Look up the owning cycle via <tt>PendingAsks.get_unresolved_by_message</tt>, then the registry. Forward to that CycleRuntime.</p></item>
-      <item><p><strong>New message otherwise addressed to the bot</strong> (mention, DM, reply-to-bot without matching any ask). Start a fresh root cycle under <tt>Bot.Cycles</tt> with the Bot's default agent config and a new surface <tt>(session, chat, msg.id)</tt>.</p></item>
+      <item><p><strong>New message otherwise addressed to the bot</strong> (mention, DM, reply-to-bot without matching any ask). Start a fresh root cycle under <tt>Froth.Agent.CycleSupervisor</tt> with the Bot's default agent config and a new surface <tt>(session, chat, msg.id)</tt>.</p></item>
       <item><p><strong>Everything else</strong>. Ignore.</p></item>
     </list>
     <p>Observation: the buffering logic currently called <tt>mid_cycle_messages</tt> goes away. New user messages start new root cycles regardless of whether another cycle is already running. Parallel cycles in the same chat are allowed and expected.</p>
@@ -115,8 +127,8 @@
   </section>
 
   <section title="Detached Subagents" id="detached">
-    <p>Some subagents are explicitly backgrounded: <tt>spawn_agent</tt> with <tt>wait: false</tt>, or tasks that continue past the parent's cycle end. When the parent CycleRuntime is about to terminate normally and still has living subagent children, those children are <strong>re-parented to the Bot's root cycle supervisor</strong>. They become independent root cycles.</p>
-    <p>Re-parenting is a message to the Bot: "adopt this CycleRuntime pid under <tt>Bot.Cycles</tt>." The Bot updates its registry. The subagent is unaffected — its state, surface, and ongoing work continue as-is.</p>
+    <p>Some subagents are explicitly backgrounded: <tt>spawn_agent</tt> with <tt>wait: false</tt>, or tasks that continue past the parent's cycle end. When the parent CycleRuntime is about to terminate normally and still has living subagent children, those children are <strong>re-parented to the root cycle supervisor</strong> (<tt>Froth.Agent.CycleSupervisor</tt>). They become independent root cycles.</p>
+    <p>Re-parenting means unlinking the child from the parent's child-supervisor and starting it (or, really, handing its pid) under <tt>CycleSupervisor</tt>. The subagent's <tt>Registry</tt> entry is unaffected — the pid stays the same, only its parent supervisor changes. State, surface, and ongoing work continue as-is.</p>
   </section>
 
   <section title="Pending Asks" id="pending-asks">
@@ -127,32 +139,45 @@
   <section title="Impact on Existing Modules" id="impact">
     <list type="bullet">
       <item><p><strong>Delete</strong>: <tt>Froth.Agent.Adhoc</tt>, <tt>Froth.Agent.AdhocToolExecutor</tt>, <tt>Froth.Telegram.Bot.CycleState</tt> (absorbed into CycleRuntime).</p></item>
-      <item><p><strong>New</strong>: <tt>Froth.Agent.CycleRuntime</tt>, <tt>Froth.Agent.CycleRuntime.Supervisor</tt> (DynamicSupervisor, maybe Bot-scoped via a registry key). Possibly a small <tt>Froth.Agent.AgentConfig</tt> struct for per-cycle identity.</p></item>
-      <item><p><strong>Rewrite</strong>: <tt>Froth.Telegram.Bot</tt> (shrinks dramatically), <tt>Froth.Headlines</tt> (explicit agent + surface), <tt>Froth.Inference.Tools.spawn_agent</tt> (spawn a child cycle via parent's CycleRuntime), <tt>Froth.Search</tt> (same).</p></item>
-      <item><p><strong>Light updates</strong>: <tt>Froth.Telegram.ToolExecution</tt>, <tt>Froth.Agent.FailureIntervention</tt> — receive a <tt>%CycleRuntime.Context{}</tt> or similar rather than a flat 18-key map.</p></item>
+      <item><p><strong>New</strong>: <tt>Froth.Agent.CycleRuntime</tt> (GenServer), <tt>Froth.Agent.CycleRegistry</tt> (Registry), <tt>Froth.Agent.CycleSupervisor</tt> (DynamicSupervisor), all app-level siblings. Possibly a small <tt>Froth.Agent.AgentConfig</tt> struct for per-cycle identity.</p></item>
+      <item><p><strong>Rewrite</strong>: <tt>Froth.Telegram.Bot</tt> (shrinks dramatically — no <tt>cycle_state</tt>, no <tt>pending_ask_resumes</tt>, no <tt>active_tasks</tt>), <tt>Froth.Headlines</tt> (explicit agent + surface), <tt>Froth.Inference.Tools.spawn_agent</tt> (spawn a child cycle via parent's CycleRuntime), <tt>Froth.Search</tt> (same).</p></item>
+      <item><p><strong>Light updates</strong>: <tt>Froth.Telegram.ToolExecution</tt>, <tt>Froth.Agent.FailureIntervention</tt> — receive a <tt>%CycleRuntime.Context{}</tt> rather than a flat 18-key map.</p></item>
       <item><p><strong>Unchanged</strong>: <tt>Froth.Agent.Worker</tt>, <tt>Froth.Agent</tt> (the DB/persistence module), <tt>Froth.Agent.Cycle</tt>, the event log, the tool protocol.</p></item>
     </list>
   </section>
 
   <section title="Rollout Sketch" id="rollout">
     <list type="numbered">
-      <item><p>Introduce <tt>CycleRuntime</tt> as a GenServer; move the nine fields currently inside <tt>%Bot.CycleState{}</tt> into it. Bot still owns exactly one CycleRuntime pid at a time. No subagent support yet, no routing changes.</p></item>
-      <item><p>Add the cycle registry and <tt>Bot.Cycles</tt> DynamicSupervisor. Root cycles are started there; Bot holds a pid reference in a registry. The single-cycle-at-a-time assumption still holds for now.</p></item>
-      <item><p>Allow parallel root cycles. The Bot's inbound-update routing starts distinguishing "new root cycle" vs "route to existing cycle by pending-ask anchor."</p></item>
-      <item><p>Implement <tt>CycleRuntime.spawn_subagent/3</tt>. Migrate <tt>Inference.Tools.spawn_agent</tt> and <tt>Froth.Search</tt> to use it. Kill <tt>Adhoc</tt> and <tt>AdhocToolExecutor</tt>.</p></item>
-      <item><p>Migrate <tt>Froth.Headlines</tt> to take an explicit bot identity (no more runtime introspection).</p></item>
-      <item><p>Clean up the tool-execution context to carry references (<tt>agent_config</tt>, <tt>surface</tt>, <tt>cycle_runtime_state</tt>) instead of the current flat 18-key map. Update <tt>ToolExecution</tt> and <tt>FailureIntervention</tt> readers.</p></item>
-      <item><p>Implement subagent re-parenting on parent finish.</p></item>
+      <item><p><strong>Scaffolding.</strong> Add <tt>Froth.Agent.CycleRegistry</tt> (Registry) and <tt>Froth.Agent.CycleSupervisor</tt> (DynamicSupervisor) to the app tree. Create an empty <tt>Froth.Agent.CycleRuntime</tt> module — module only, no callers yet. No behavior change.</p></item>
+      <item><p><strong>Move Worker + CycleState into CycleRuntime.</strong> CycleRuntime owns Worker lifetime (started+linked in <tt>init/1</tt>) and the nine fields currently in <tt>%Bot.CycleState{}</tt>. Bot holds <tt>cycle_runtime_pid</tt> + monitor ref instead of <tt>cycle_state</tt>. Worker callbacks (ask notifications, tool-call prepare/commit, result streaming, finish) flow through CycleRuntime and it forwards Telegram-side effects back to the Bot. Single-cycle-per-bot still enforced by the Bot.</p></item>
+      <item><p><strong>Allow parallel root cycles.</strong> Bot routing starts distinguishing "new root cycle" vs "route by pending-ask anchor" vs "route by callback cycle_id." The <tt>mid_cycle_messages</tt> buffering goes away. Debounce stays on the Bot, pre-dispatch.</p></item>
+      <item><p><strong>Subagents via CycleRuntime.spawn_subagent/3.</strong> Each CycleRuntime starts its own child DynamicSupervisor. Migrate <tt>Inference.Tools.spawn_agent</tt> and <tt>Froth.Search</tt> to call it. Delete <tt>Adhoc</tt> and <tt>AdhocToolExecutor</tt>.</p></item>
+      <item><p><strong>Delete runtime introspection.</strong> Migrate <tt>Froth.Headlines</tt> to take an explicit bot identity argument. Remove <tt>Adhoc.resolve_runtime</tt>'s <tt>:sys.get_state</tt> path (gone with Adhoc anyway).</p></item>
+      <item><p><strong>Tool-execution context cleanup.</strong> Replace the flat 18-key map with a <tt>%CycleRuntime.Context{}</tt> struct carrying <tt>agent_config</tt>, <tt>surface</tt>, and a <tt>runtime_pid</tt>. Update <tt>ToolExecution</tt> and <tt>FailureIntervention</tt> readers.</p></item>
+      <item><p><strong>Subagent re-parenting on parent finish.</strong> Detached children (<tt>spawn_agent</tt> with <tt>wait: false</tt>) migrate from the dying parent's child-supervisor to <tt>CycleSupervisor</tt> as new roots.</p></item>
     </list>
   </section>
 
-  <section title="Open Questions" id="open-questions">
+  <section title="Decided Questions" id="decided-questions">
     <list type="bullet">
-      <item><p>Which supervisor starts <tt>Bot.Cycles</tt> — the Bot GenServer itself (as a <tt>Supervisor</tt>-that-holds-a-GenServer), or a sibling supervisor in the application tree?</p></item>
-      <item><p>How does Failure Intervention surface from inside a subagent cycle attribute itself — does its <tt>[Carry on] [Stop]</tt> prompt say "subagent failed" vs "your tool failed"?</p></item>
-      <item><p>Do we want a <tt>%CycleRuntime.Context{}</tt> struct for the tool-execution context, or pass <tt>agent_config + surface + runtime_pid</tt> as discrete references?</p></item>
-      <item><p>The debounce feature (coalesce rapid user messages) currently lives at the Bot level. In the parallel-cycles world it still makes sense at the Bot level (pre-dispatch), but the debounce targets a <em>new</em> root cycle, not an existing one. Confirm this is the desired behavior.</p></item>
+      <item><p><strong>Registry mechanism.</strong> <tt>{:via, Registry, {Froth.Agent.CycleRegistry, cycle_id}}</tt> — same pattern as <tt>Froth.Tasks.Eval</tt> / <tt>Froth.Tasks.Shell</tt> / <tt>Froth.Codex.Session</tt>.</p></item>
+      <item><p><strong>Root-cycle supervisor placement.</strong> App-wide sibling of the Bot, not owned by the Bot. Bot death does not cascade to cycles.</p></item>
+      <item><p><strong>Registry scoping.</strong> One flat Registry keyed by <tt>cycle_id</tt>. Per-Bot scoping is unnecessary (cycle_ids are DB-unique; <tt>bot_id</tt> lives in cycle state).</p></item>
+      <item><p><strong>Tool-execution context shape.</strong> Use a <tt>%CycleRuntime.Context{}</tt> struct carrying <tt>agent_config</tt>, <tt>surface</tt>, and <tt>runtime_pid</tt>.</p></item>
+      <item><p><strong>Debounce.</strong> Stays on the Bot, pre-dispatch. Debounce resolution starts a new root cycle.</p></item>
     </list>
+  </section>
+
+  <section title="Remaining Open Questions" id="open-questions">
+    <list type="bullet">
+      <item><p>How does Failure Intervention surface from inside a subagent cycle attribute itself — does its <tt>[Carry on] [Stop]</tt> prompt say "subagent failed" vs "your tool failed"? UI detail; resolve during the subagent step.</p></item>
+    </list>
+  </section>
+
+  <section title="Future Direction: Bot as Session Dispatcher" id="future-bot">
+    <p>Once cycles are supervised processes, the Bot GenServer's remaining job is narrow: receive TDLib updates for one session, look up static bot config from app env, route to cycles. None of that is bot-shaped — it is <em>session-shaped</em>. A bot in Froth is mostly an identity (<tt>bot_username</tt>, default agent config, permission flags), which is static configuration, not a process.</p>
+    <p>A plausible future refactor collapses the Bot GenServer into a <tt>Froth.Telegram.SessionDispatcher</tt> — one process per TDLib session, whose entire job is dispatch. Bot identity becomes a module that reads <tt>Application.fetch_env!(:froth, Froth.Telegram.Bot)</tt>. Debounce moves to per-conversation processes keyed by <tt>{session_id, chat_id}</tt>.</p>
+    <p>This RFC does <em>not</em> undertake that refactor. The Bot GenServer remains as the dispatcher and is simply kept small. Dissolving the Bot process on top of cycle extraction would entangle the TDLib-subscription shape with the cycle work; one structural move at a time.</p>
   </section>
 
   <section title="Conclusion" id="conclusion">
