@@ -1,5 +1,5 @@
 defmodule Froth.LLMTest do
-  use Froth.AnthropicCase, async: false
+  use Froth.AnthropicCase, async: true
 
   alias Froth.ApiKey
   alias Froth.LLM

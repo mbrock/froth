@@ -2,9 +2,14 @@ defmodule Froth.AnthropicCase do
   @moduledoc false
   use ExUnit.CaseTemplate
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Froth.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Froth.Repo, {:shared, self()})
+  setup tags do
+    pid =
+      Ecto.Adapters.SQL.Sandbox.start_owner!(
+        Froth.Repo,
+        shared: not tags[:async]
+      )
+
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
 
     Froth.Repo.insert!(%Froth.ApiKey{
       name: "test-anthropic",
