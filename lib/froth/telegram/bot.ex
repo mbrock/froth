@@ -33,13 +33,11 @@ defmodule Froth.Telegram.Bot do
   alias Froth.Telegram.Names
   alias Froth.Telegram.PendingAsks
   alias Froth.Telegram.PromptCache
-  alias Froth.Telegram.SyntheticMessage
   alias Froth.Telemetry.Span
 
   defstruct [
     :bot_config,
     :cycle_state,
-    :pending_buffered_cycle,
     debounce_timer: nil,
     debounce_msg: nil,
     pending_ask_resumes: []
@@ -156,26 +154,14 @@ defmodule Froth.Telegram.Bot do
     {:noreply, state}
   end
 
-  def handle_info({:resume_buffered_cycle, _cycle_id, messages}, state) when is_list(messages) do
-    # CycleRuntime.terminate/2 hands buffered user messages back to us
-    # before exiting. We can't start a new cycle yet — our cycle_state
-    # still points at the dying runtime — so stash the messages for the
-    # DOWN handler to consume.
-    {:noreply, %{state | pending_buffered_cycle: messages}}
-  end
-
   def handle_info(
         {:DOWN, ref, :process, pid, _reason},
         %{cycle_state: %CycleState{cycle_runtime_ref: ref, cycle_runtime_pid: pid}} = state
       ) do
-    buffered_messages = state.pending_buffered_cycle || []
-
     {:noreply,
      state
-     |> Map.put(:pending_buffered_cycle, nil)
      |> reset_cycle_state()
-     |> maybe_resume_pending_ask()
-     |> maybe_resume_buffered_cycle(buffered_messages)}
+     |> maybe_resume_pending_ask()}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -511,65 +497,52 @@ defmodule Froth.Telegram.Bot do
               is_binary(text) and is_binary(system_prompt) do
     bc = state.bot_config
 
-    if cs = state.cycle_state do
-      session_span = Froth.Telegram.Session.span_id(bc.session_id)
+    # Per RFC-0021 step 3: every inbound user message starts its own
+    # root cycle. Parallel cycles in the same chat are allowed and
+    # expected; the Bot's `cycle_state` just tracks the most recent
+    # one for DOWN/stop-active dispatch. Older cycles keep running
+    # under their own `CycleRuntime` registered in `CycleRegistry`.
+    BotAdapter.send_typing(bc.session_id, chat_id)
 
-      Span.execute([:froth, :telegram, :bot, :busy], session_span, %{
-        bot_id: bc.id,
-        chat_id: chat_id,
-        active_cycle_id: cs.cycle_id
+    initial_content =
+      if is_nil(user_content) do
+        text
+      else
+        user_content
+      end
+
+    message =
+      Repo.insert!(%Message{
+        role: :user,
+        content: Message.wrap(initial_content)
       })
 
-      # Buffer the message for mid-loop injection on the runtime. It
-      # will fold it into the next tool result's text (so the LLM sees
-      # the interim message) and hand anything left over back to us at
-      # cycle finish so we can start a follow-up cycle.
-      buffered = %{chat_id: chat_id, reply_to: reply_to, text: text, time: DateTime.utc_now()}
-      :ok = CycleRuntime.buffer_user_message(cs.cycle_id, buffered)
-      state
-    else
-      BotAdapter.send_typing(bc.session_id, chat_id)
-
-      initial_content =
-        if is_nil(user_content) do
-          text
-        else
-          user_content
-        end
-
-      message =
-        Repo.insert!(%Message{
-          role: :user,
-          content: Message.wrap(initial_content)
-        })
-
-      base_config = %Config{
-        system: system_prompt,
-        model: bc.model,
-        tools: resolve_tool_specs(bc),
-        tool_executor: self(),
-        context: %{
-          chat_id: chat_id,
-          reply_to: reply_to,
-          bot_id: bc.id,
-          session_id: bc.session_id,
-          bot_username: bc.bot_username
-        },
-        thinking: bc.thinking,
-        effort: bc.effort
-      }
-
-      cycle = Agent.begin_cycle(message, base_config)
-
-      Repo.insert!(%CycleLink{
-        cycle_id: cycle.id,
-        bot_id: bc.id,
+    base_config = %Config{
+      system: system_prompt,
+      model: bc.model,
+      tools: resolve_tool_specs(bc),
+      tool_executor: self(),
+      context: %{
         chat_id: chat_id,
-        reply_to: reply_to
-      })
+        reply_to: reply_to,
+        bot_id: bc.id,
+        session_id: bc.session_id,
+        bot_username: bc.bot_username
+      },
+      thinking: bc.thinking,
+      effort: bc.effort
+    }
 
-      launch_cycle_worker(state, cycle, base_config, chat_id, reply_to)
-    end
+    cycle = Agent.begin_cycle(message, base_config)
+
+    Repo.insert!(%CycleLink{
+      cycle_id: cycle.id,
+      bot_id: bc.id,
+      chat_id: chat_id,
+      reply_to: reply_to
+    })
+
+    launch_cycle_worker(state, cycle, base_config, chat_id, reply_to)
   end
 
   defp start_cycle(state, _chat_id, _reply_to, _text, _user_content, _system_prompt), do: state
@@ -682,34 +655,6 @@ defmodule Froth.Telegram.Bot do
     |> Map.put(:pending_ask_resumes, rest)
     |> resume_pending_ask(resume)
   end
-
-  defp maybe_resume_buffered_cycle(state, []), do: state
-
-  defp maybe_resume_buffered_cycle(state, [%{chat_id: chat_id} | _] = messages)
-       when is_integer(chat_id) do
-    text =
-      messages
-      |> Enum.map(&String.trim(&1.text || ""))
-      |> Enum.reject(&(&1 == ""))
-      |> Enum.join("\n\n")
-
-    reply_to =
-      messages
-      |> Enum.reverse()
-      |> Enum.find_value(fn
-        %{reply_to: value} when is_integer(value) -> value
-        _ -> nil
-      end)
-
-    if text == "" do
-      state
-    else
-      message = SyntheticMessage.build(chat_id, text, reply_to: reply_to)
-      start_cycle_from_message(state, message)
-    end
-  end
-
-  defp maybe_resume_buffered_cycle(state, _messages), do: state
 
   defp maybe_finalize_pending_ask_message(pending_ask, session_id) do
     cond do

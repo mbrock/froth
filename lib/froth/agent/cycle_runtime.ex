@@ -19,7 +19,7 @@ defmodule Froth.Agent.CycleRuntime do
     here, not on the Bot.
   * Hold per-cycle live state: `bot_config` (a snapshot), `chat_id`,
     `reply_to`, `narration`, `last_sent`, `awaiting_user_input?`,
-    `active_tasks`, `mid_cycle_messages`.
+    and `active_tasks`.
   * Drive tool execution, narration edits, and last-sent bookkeeping.
   * On finish, append the per-cycle cost footer and hand back any
     buffered user messages so the Bot can start a follow-up cycle.
@@ -152,20 +152,6 @@ defmodule Froth.Agent.CycleRuntime do
     end
 
     :ok
-  end
-
-  @doc """
-  Buffer a user message received while this cycle is running. The
-  runtime drains its buffer into the next tool result (so the LLM sees
-  the interim messages) and hands anything left over back to the Bot
-  at cycle finish so the Bot can start a follow-up cycle.
-  """
-  @spec buffer_user_message(String.t(), map()) :: :ok
-  def buffer_user_message(cycle_id, msg) when is_binary(cycle_id) and is_map(msg) do
-    case whereis(cycle_id) do
-      pid when is_pid(pid) -> GenServer.cast(pid, {:buffer_user_message, msg})
-      nil -> :ok
-    end
   end
 
   @doc """
@@ -321,7 +307,6 @@ defmodule Froth.Agent.CycleRuntime do
       narration: nil,
       last_sent: nil,
       awaiting_user_input?: false,
-      mid_cycle_messages: [],
       children_sup: children_sup
     }
 
@@ -415,10 +400,6 @@ defmodule Froth.Agent.CycleRuntime do
      }}
   end
 
-  def handle_cast({:buffer_user_message, msg}, state) when is_map(msg) do
-    {:noreply, %{state | mid_cycle_messages: state.mid_cycle_messages ++ [msg]}}
-  end
-
   def handle_cast(:clear_awaiting_user_input, state) do
     {:noreply, %{state | awaiting_user_input?: false}}
   end
@@ -440,11 +421,6 @@ defmodule Froth.Agent.CycleRuntime do
   @impl true
   def terminate(_reason, state) do
     _ = maybe_append_cycle_footer(state)
-
-    if state.mid_cycle_messages != [] and is_pid(state.bot_pid) do
-      send(state.bot_pid, {:resume_buffered_cycle, state.cycle_id, state.mid_cycle_messages})
-    end
-
     :ok
   end
 
@@ -565,7 +541,7 @@ defmodule Froth.Agent.CycleRuntime do
       end
 
     state = maybe_track_task_from_result(state, cycle_id, result)
-    maybe_inject_mid_cycle_messages(result, state)
+    {result, state}
   end
 
   defp extract_cycle_id(%{execution: %{cycle_id: cycle_id}}) when is_binary(cycle_id),
@@ -573,31 +549,6 @@ defmodule Froth.Agent.CycleRuntime do
 
   defp extract_cycle_id(%{cycle_id: cycle_id}) when is_binary(cycle_id), do: cycle_id
   defp extract_cycle_id(_), do: nil
-
-  defp maybe_inject_mid_cycle_messages(result, %{mid_cycle_messages: [_ | _] = msgs} = state) do
-    injection =
-      msgs
-      |> Enum.map(fn %{text: text} ->
-        "[Message received during tool execution: " <> text <> "]"
-      end)
-      |> Enum.join("\n")
-
-    new_result =
-      case result do
-        {:ok, text} when is_binary(text) ->
-          {:ok, text <> "\n\n" <> injection}
-
-        {:ok, blocks} when is_list(blocks) ->
-          {:ok, blocks ++ [%{"type" => "text", "text" => injection}]}
-
-        other ->
-          other
-      end
-
-    {new_result, %{state | mid_cycle_messages: []}}
-  end
-
-  defp maybe_inject_mid_cycle_messages(result, state), do: {result, state}
 
   defp maybe_track_task_from_result(state, cycle_id, {:ok, result}) when is_binary(cycle_id) do
     case extract_task_id(result) do

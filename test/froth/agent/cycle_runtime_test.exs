@@ -100,35 +100,6 @@ defmodule Froth.Agent.CycleRuntimeTest do
       assert state.last_sent == %{id: 42, text: "hello"}
       assert state.narration == nil
     end
-
-    test "tracks sent messages and injects buffered mid-cycle messages" do
-      runtime = start_scaffold_runtime()
-
-      :sys.replace_state(runtime, fn rstate ->
-        %{rstate | mid_cycle_messages: [%{text: "new incoming"}]}
-      end)
-
-      tool_use = %ToolUse{id: "call_1", name: "send_message", input: %{"text" => "hello"}}
-      context = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
-
-      outcome = %{
-        result: {:ok, "sent"},
-        sent_message: %{sent: %{"id" => 42}, text: "hello"}
-      }
-
-      assert {:ok, result_text} =
-               GenServer.call(
-                 runtime,
-                 {:commit_tool, tool_use, context, %{execution: %{cycle_id: "cycle_1"}}, outcome}
-               )
-
-      assert result_text =~ "sent"
-      assert result_text =~ "Message received during tool execution: new incoming"
-
-      state = :sys.get_state(runtime)
-      assert state.last_sent == %{id: 42, text: "hello"}
-      assert state.mid_cycle_messages == []
-    end
   end
 
   describe "spawn_subagent" do
