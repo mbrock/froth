@@ -18,5 +18,6 @@ FROTH RFCs
 0017  Ontological Relational Core               DRAFT    2026-03-26
 0018  Architecture Survey and Module Atlas      DRAFT    2026-03-26
 0019  Chronological Prompt Context and Structured Cycle Trace Memory DRAFT 2026-03-28
+0021  Cycles as Processes, Subagents as Child Cycles DRAFT 2026-04-16
 
 * 0004 execution spine implemented; event-table schema revised by 0008.

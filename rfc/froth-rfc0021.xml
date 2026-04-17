@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0021" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0021: Cycles as Processes, Subagents as Child Cycles</title>
+    <status>DRAFT</status>
+    <author>Codex</author>
+    <date>2026-04-16</date>
+    <related>FROTH-RFC-0003, FROTH-RFC-0004, FROTH-RFC-0018</related>
+    <classification>Core runtime architecture — agent cycles, supervision, subagent spawning.</classification>
+  </meta>
+
+  <section title="Problem" id="problem">
+    <p>Today a <tt>Froth.Telegram.Bot</tt> GenServer holds at most one live cycle at a time as a struct field (<tt>cycle_state: nil | %CycleState{}</tt>). Subagents do not fit this mould: they run as separate <tt>AdhocToolExecutor</tt> GenServers started under a plain <tt>Task.Supervisor</tt>, with their own parallel copy of the bot-identity state and their own ad hoc rules for finding a session/chat. This causes four concrete problems.</p>
+    <list type="bullet">
+      <item><p><strong>Identity fallback introspection.</strong> <tt>Adhoc.resolve_runtime/1</tt> calls <tt>:sys.get_state</tt> on the live Charlie Bot process to peek its <tt>session_id</tt> and <tt>bot_username</tt> when the caller did not pass them. This is how <tt>Froth.Headlines.extract</tt> currently finds out who it is posting as.</p></item>
+      <item><p><strong>Structural duplication.</strong> <tt>AdhocToolExecutor.build_execution</tt> and <tt>Bot.prepare_tool_call</tt>'s <tt>execution_base</tt> produce near-identical 18-key flat maps that <tt>ToolExecution</tt> consumes. They drift.</p></item>
+      <item><p><strong>Subagent surface is unclear.</strong> <tt>Inference.Tools.spawn_agent</tt> and <tt>Froth.Search</tt> can spawn many concurrent subagents, all posting into the parent's chat_id. Narration editing is not wired across cycles, so each subagent posts fresh messages with no relationship to the parent's running narration scroll.</p></item>
+      <item><p><strong>Supervision is wrong.</strong> A cycle that owns long-running background tasks can outlive the parent's logical intent. The Bot reaches into <tt>active_tasks</tt> maps to cascade-stop these manually; subagents do not participate in the cleanup at all.</p></item>
+    </list>
+    <p>These are all instances of a single modelling error: a cycle is currently a field of the Bot, when it should be an independent supervised process.</p>
+  </section>
+
+  <section title="Goals" id="goals">
+    <list type="bullet">
+      <item><p>Make a cycle a real BEAM process with its own state, supervision tree, and lifetime.</p></item>
+      <item><p>Let subagents be ordinary cycles — just children of their spawning cycle.</p></item>
+      <item><p>Route Telegram inbound messages to the right cycle based on the message's reply-to anchor or callback payload, not based on a single-cycle-per-bot assumption.</p></item>
+      <item><p>Delete <tt>AdhocToolExecutor</tt> and the runtime-introspection identity fallback.</p></item>
+      <item><p>Keep the Bot process small: it is a Telegram session dispatcher and a cycle registry, nothing more.</p></item>
+    </list>
+  </section>
+
+  <section title="Non-Goals" id="non-goals">
+    <list type="bullet">
+      <item><p>This RFC does not change the Worker, the Cycle DB schema, the event log, or the tool protocol at the Worker-facing boundary.</p></item>
+      <item><p>This RFC does not give each subagent its own Telegram bot identity. All subagents under a Bot share its TDLib session.</p></item>
+      <item><p>This RFC does not attempt to deduplicate chat output across concurrent subagents. Each cycle gets its own narration message; parallel subagents produce parallel chat messages.</p></item>
+    </list>
+  </section>
+
+  <section title="Core Model" id="core-model">
+    <p>Three entities, strictly separated:</p>
+    <list type="bullet">
+      <item><p><strong>Agent identity</strong> — model, tools, system prompt. Configurable per cycle. Today this is a mix of <tt>Bot.Config</tt> fields and whatever the parent cycle happened to be configured with.</p></item>
+      <item><p><strong>Surface</strong> — <tt>(session_id, chat_id, reply_to)</tt>. The Telegram endpoint the cycle writes to and the thread anchor its replies hang off. Today this is implicit on the Bot's active cycle.</p></item>
+      <item><p><strong>Cycle runtime</strong> — the process that drives one cycle. Owns a Worker, a narration message, a last-sent message, a pending-ask if any, and a supervisor for child cycles.</p></item>
+    </list>
+  </section>
+
+  <section title="Process Topology" id="topology">
+    <p>Proposed supervision tree, per Bot:</p>
+    <code>Bot                       # the TG session dispatcher
+├── Bot.Cycles             # DynamicSupervisor for root cycles
+│   ├── CycleRuntime A     # GenServer, one per running cycle
+│   │   ├── Worker A       # Froth.Agent.Worker (started by CycleRuntime)
+│   │   └── Cycle.Children # DynamicSupervisor for A's subagents
+│   │       ├── CycleRuntime A.1  # web_search subagent #1
+│   │       │   └── ...              # nested identically
+│   │       └── CycleRuntime A.2
+│   └── CycleRuntime B     # independent root cycle, parallel user turn</code>
+    <p>Every cycle — root or subagent — is a <tt>CycleRuntime</tt> GenServer. A root cycle is started under <tt>Bot.Cycles</tt>. A subagent cycle is started under its parent's <tt>Cycle.Children</tt> supervisor.</p>
+    <p>Each <tt>CycleRuntime</tt> starts its Worker and its child supervisor as part of <tt>init/1</tt>. When the CycleRuntime terminates — for any reason — BEAM shuts down both the Worker and the entire subagent subtree.</p>
+  </section>
+
+  <section title="Cycle Runtime State" id="cycle-runtime-state">
+    <p>The CycleRuntime holds state that today is split between <tt>%Bot.CycleState{}</tt> and parts of <tt>AdhocToolExecutor</tt>'s GenServer state:</p>
+    <list type="bullet">
+      <item><p><tt>:agent_config</tt> — model, tools, system prompt, thinking, effort. Per cycle. May differ between parent and child.</p></item>
+      <item><p><tt>:surface</tt> — session_id, chat_id, reply_to. Inherited from parent by default; overridable when spawning a subagent.</p></item>
+      <item><p><tt>:cycle</tt> — the <tt>%Froth.Agent.Cycle{}</tt> DB row.</p></item>
+      <item><p><tt>:worker_pid</tt> — the Worker process. Linked, not just monitored; its lifetime equals the runtime's.</p></item>
+      <item><p><tt>:children_sup</tt> — the DynamicSupervisor pid for child cycles.</p></item>
+      <item><p><tt>:narration</tt> — <tt>nil | %{message_id, text, mode}</tt>. The cycle's own running narration scroll.</p></item>
+      <item><p><tt>:last_sent</tt> — <tt>nil | %{id, text}</tt>. For cost-footer edit target.</p></item>
+      <item><p><tt>:pending_ask</tt> — <tt>nil | %PendingAsk{}</tt>. At most one outstanding ask per cycle.</p></item>
+      <item><p><tt>:active_tasks</tt> — MapSet of background task ids spawned by this cycle's tools.</p></item>
+      <item><p><tt>:parent_cycle_id</tt> — nil for root cycles; the parent's cycle id for subagents.</p></item>
+      <item><p><tt>:bot_id</tt> — bot identity (for telemetry, Telegram-bot distinguishing).</p></item>
+    </list>
+  </section>
+
+  <section title="Bot Responsibilities After the Refactor" id="bot-responsibilities">
+    <p>The Bot becomes a narrow dispatcher:</p>
+    <list type="bullet">
+      <item><p>Subscribe to the TDLib session and receive updates.</p></item>
+      <item><p>Maintain a registry of live <tt>CycleRuntime</tt> pids, keyed by <tt>cycle_id</tt>.</p></item>
+      <item><p>For each inbound Telegram update, decide whether to route it to an existing cycle (see Routing section) or start a new root cycle.</p></item>
+      <item><p>Hold <tt>bot_config</tt> (agent-identity defaults + Telegram permission fields) for use when starting new root cycles.</p></item>
+    </list>
+    <p>The Bot no longer holds: a cycle, a worker pid, a narration, a last-sent, mid-cycle-messages, pending-ask-resumes, active_tasks. All of that moves into each CycleRuntime.</p>
+  </section>
+
+  <section title="Routing Inbound Telegram Updates" id="routing">
+    <p>When a Telegram update arrives, the Bot decides where it goes based on visible signals only:</p>
+    <list type="numbered">
+      <item><p><strong>Callback query with encoded cycle_id</strong> (e.g. a stop button, an ask alternative). Decode the callback data, look up the target cycle in the registry, forward to that CycleRuntime. Irrecoverable lookup failures (cycle no longer alive) answer the callback with a no-op.</p></item>
+      <item><p><strong>New message with a <tt>reply_to</tt> matching a pending ask's anchor message id</strong>. Look up the owning cycle via <tt>PendingAsks.get_unresolved_by_message</tt>, then the registry. Forward to that CycleRuntime.</p></item>
+      <item><p><strong>New message otherwise addressed to the bot</strong> (mention, DM, reply-to-bot without matching any ask). Start a fresh root cycle under <tt>Bot.Cycles</tt> with the Bot's default agent config and a new surface <tt>(session, chat, msg.id)</tt>.</p></item>
+      <item><p><strong>Everything else</strong>. Ignore.</p></item>
+    </list>
+    <p>Observation: the buffering logic currently called <tt>mid_cycle_messages</tt> goes away. New user messages start new root cycles regardless of whether another cycle is already running. Parallel cycles in the same chat are allowed and expected.</p>
+  </section>
+
+  <section title="Stop Semantics" id="stop-semantics">
+    <p>Stopping a cycle is a single operation: <tt>DynamicSupervisor.terminate_child(parent_sup, cycle_runtime_pid)</tt>. BEAM cascades the shutdown through the entire subtree — Worker, child cycles, grandchild cycles, their workers, their background tasks, all gone in dependency order.</p>
+    <p>The user-visible stop button on a cycle's narration message targets that specific cycle. The cascade is the expected behavior: stopping a parent research run naturally stops its in-flight web-search subagents.</p>
+    <p>Background tasks (<tt>eval:*</tt>, <tt>shell:*</tt>, etc.) are stopped explicitly in each CycleRuntime's <tt>terminate/2</tt> callback, since they run outside BEAM supervision. This preserves today's behavior.</p>
+  </section>
+
+  <section title="Subagent Lifecycle" id="subagent-lifecycle">
+    <p>A tool call like <tt>spawn_agent</tt> or <tt>Froth.Search</tt>'s parallel providers runs inside the parent CycleRuntime's tool-execution context. Instead of calling <tt>Adhoc.start</tt>, it calls something like <tt>CycleRuntime.spawn_subagent(parent_pid, agent_config, surface_override \\ nil)</tt>.</p>
+    <p>Default surface inheritance: the subagent's surface copies the parent's <tt>session_id</tt> and <tt>chat_id</tt>. The <tt>reply_to</tt> may either be inherited or set to a fresh anchor (e.g. the narration message the parent just posted). Either is defensible; the initial implementation should inherit <tt>reply_to</tt> for simplicity.</p>
+    <p>Chat output from subagents is visually distinguished by a small identifier tag — initially just the cycle's short id as a bracketed prefix in narration (<tt>[c5:a1]</tt>, <tt>[c5:a2]</tt>). This is crude by design; richer UI can evolve later (collapsed cards, threaded replies, badges).</p>
+  </section>
+
+  <section title="Detached Subagents" id="detached">
+    <p>Some subagents are explicitly backgrounded: <tt>spawn_agent</tt> with <tt>wait: false</tt>, or tasks that continue past the parent's cycle end. When the parent CycleRuntime is about to terminate normally and still has living subagent children, those children are <strong>re-parented to the Bot's root cycle supervisor</strong>. They become independent root cycles.</p>
+    <p>Re-parenting is a message to the Bot: "adopt this CycleRuntime pid under <tt>Bot.Cycles</tt>." The Bot updates its registry. The subagent is unaffected — its state, surface, and ongoing work continue as-is.</p>
+  </section>
+
+  <section title="Pending Asks" id="pending-asks">
+    <p>Pending asks are per-cycle. A CycleRuntime that has called <tt>ask</tt> carries a <tt>:pending_ask</tt> field and waits for resolution. When the user answers (routed in by the Bot), the CycleRuntime resolves the ask locally and resumes its Worker via <tt>Worker.resolve_pending_ask/3</tt>.</p>
+    <p>The Bot-level <tt>pending_ask_resumes</tt> queue disappears. There is no longer a case where a pending ask is "waiting for the bot to finish a different cycle first" because cycles are independent.</p>
+  </section>
+
+  <section title="Impact on Existing Modules" id="impact">
+    <list type="bullet">
+      <item><p><strong>Delete</strong>: <tt>Froth.Agent.Adhoc</tt>, <tt>Froth.Agent.AdhocToolExecutor</tt>, <tt>Froth.Telegram.Bot.CycleState</tt> (absorbed into CycleRuntime).</p></item>
+      <item><p><strong>New</strong>: <tt>Froth.Agent.CycleRuntime</tt>, <tt>Froth.Agent.CycleRuntime.Supervisor</tt> (DynamicSupervisor, maybe Bot-scoped via a registry key). Possibly a small <tt>Froth.Agent.AgentConfig</tt> struct for per-cycle identity.</p></item>
+      <item><p><strong>Rewrite</strong>: <tt>Froth.Telegram.Bot</tt> (shrinks dramatically), <tt>Froth.Headlines</tt> (explicit agent + surface), <tt>Froth.Inference.Tools.spawn_agent</tt> (spawn a child cycle via parent's CycleRuntime), <tt>Froth.Search</tt> (same).</p></item>
+      <item><p><strong>Light updates</strong>: <tt>Froth.Telegram.ToolExecution</tt>, <tt>Froth.Agent.FailureIntervention</tt> — receive a <tt>%CycleRuntime.Context{}</tt> or similar rather than a flat 18-key map.</p></item>
+      <item><p><strong>Unchanged</strong>: <tt>Froth.Agent.Worker</tt>, <tt>Froth.Agent</tt> (the DB/persistence module), <tt>Froth.Agent.Cycle</tt>, the event log, the tool protocol.</p></item>
+    </list>
+  </section>
+
+  <section title="Rollout Sketch" id="rollout">
+    <list type="numbered">
+      <item><p>Introduce <tt>CycleRuntime</tt> as a GenServer; move the nine fields currently inside <tt>%Bot.CycleState{}</tt> into it. Bot still owns exactly one CycleRuntime pid at a time. No subagent support yet, no routing changes.</p></item>
+      <item><p>Add the cycle registry and <tt>Bot.Cycles</tt> DynamicSupervisor. Root cycles are started there; Bot holds a pid reference in a registry. The single-cycle-at-a-time assumption still holds for now.</p></item>
+      <item><p>Allow parallel root cycles. The Bot's inbound-update routing starts distinguishing "new root cycle" vs "route to existing cycle by pending-ask anchor."</p></item>
+      <item><p>Implement <tt>CycleRuntime.spawn_subagent/3</tt>. Migrate <tt>Inference.Tools.spawn_agent</tt> and <tt>Froth.Search</tt> to use it. Kill <tt>Adhoc</tt> and <tt>AdhocToolExecutor</tt>.</p></item>
+      <item><p>Migrate <tt>Froth.Headlines</tt> to take an explicit bot identity (no more runtime introspection).</p></item>
+      <item><p>Clean up the tool-execution context to carry references (<tt>agent_config</tt>, <tt>surface</tt>, <tt>cycle_runtime_state</tt>) instead of the current flat 18-key map. Update <tt>ToolExecution</tt> and <tt>FailureIntervention</tt> readers.</p></item>
+      <item><p>Implement subagent re-parenting on parent finish.</p></item>
+    </list>
+  </section>
+
+  <section title="Open Questions" id="open-questions">
+    <list type="bullet">
+      <item><p>Which supervisor starts <tt>Bot.Cycles</tt> — the Bot GenServer itself (as a <tt>Supervisor</tt>-that-holds-a-GenServer), or a sibling supervisor in the application tree?</p></item>
+      <item><p>How does Failure Intervention surface from inside a subagent cycle attribute itself — does its <tt>[Carry on] [Stop]</tt> prompt say "subagent failed" vs "your tool failed"?</p></item>
+      <item><p>Do we want a <tt>%CycleRuntime.Context{}</tt> struct for the tool-execution context, or pass <tt>agent_config + surface + runtime_pid</tt> as discrete references?</p></item>
+      <item><p>The debounce feature (coalesce rapid user messages) currently lives at the Bot level. In the parallel-cycles world it still makes sense at the Bot level (pre-dispatch), but the debounce targets a <em>new</em> root cycle, not an existing one. Confirm this is the desired behavior.</p></item>
+    </list>
+  </section>
+
+  <section title="Conclusion" id="conclusion">
+    <p>Cycles are the unit of agent work. They have a natural tree structure (subagents branch off parents). Modelling them as independent supervised processes rather than as fields on a single Bot GenServer resolves four concrete pains — identity introspection, Adhoc duplication, subagent chat surface, manual cleanup — in one structural move. The payoff is a codebase where the subagent and the root cycle are the same thing, the Bot process is small, and stop-and-crash semantics follow BEAM defaults instead of hand-written cascades.</p>
+  </section>
+</rfc>
