@@ -749,13 +749,18 @@ defmodule Froth.Inference.Tools do
              reply_to: reply_to,
              parent_cycle_id: parent_cycle_id
            ) do
-      spawn_opts = [
-        cycle_id: cycle.id,
-        cycle: cycle,
-        worker_config: config,
-        chat_id: chat_id,
-        reply_to: reply_to
-      ]
+      spawn_opts =
+        [
+          cycle_id: cycle.id,
+          cycle: cycle,
+          worker_config: config,
+          chat_id: chat_id,
+          reply_to: reply_to,
+          bot_id: bot_id,
+          parent_cycle_id: parent_cycle_id,
+          bot_config: parent_bot_config_snapshot(parent_cycle_id)
+        ]
+        |> Keyword.reject(fn {_k, v} -> is_nil(v) end)
 
       spawn_opts =
         case opts[:spam] do
@@ -763,7 +768,13 @@ defmodule Froth.Inference.Tools do
           spam -> Keyword.put(spawn_opts, :spam, spam)
         end
 
-      case spawn_under_parent(parent_cycle_id, spawn_opts) do
+      # `spawn_agent` is fire-and-forget: the parent cycle does not
+      # await the subagent's result (it reads the transcript later via
+      # `read_tool_transcript`). Start the subagent as an independent
+      # root cycle so it outlives the parent — matching the old
+      # Task.Supervisor-based Adhoc behavior. `parent_cycle_id` is
+      # recorded on the child's state for attribution.
+      case CycleRuntime.start_root(spawn_opts) do
         {:ok, runtime_pid} ->
           {:ok, {cycle, task_id, runtime_pid}}
 
@@ -779,6 +790,15 @@ defmodule Froth.Inference.Tools do
       end
     end
   end
+
+  defp parent_bot_config_snapshot(parent_cycle_id) when is_binary(parent_cycle_id) do
+    case CycleRuntime.whereis(parent_cycle_id) do
+      pid when is_pid(pid) -> GenServer.call(pid, :get_state).bot_config
+      nil -> nil
+    end
+  end
+
+  defp parent_bot_config_snapshot(_), do: nil
 
   defp build_spawn_agent_config(chat_id, reply_to, tool_specs, opts, extra_opts) do
     %Config{
@@ -805,16 +825,6 @@ defmodule Froth.Inference.Tools do
 
   defp maybe_put_context(map, _key, nil), do: map
   defp maybe_put_context(map, key, value), do: Map.put(map, key, value)
-
-  defp spawn_under_parent(parent_cycle_id, spawn_opts) when is_binary(parent_cycle_id) do
-    CycleRuntime.spawn_subagent_by_cycle_id(parent_cycle_id, spawn_opts)
-  end
-
-  defp spawn_under_parent(_parent_cycle_id, spawn_opts) do
-    # No parent cycle (e.g. the `spawn_agent` tool invoked outside a
-    # regular cycle); start as a root under CycleSupervisor.
-    CycleRuntime.start_root(spawn_opts)
-  end
 
   defp maybe_link_spawned_cycle(%{id: cycle_id}, chat_id, bot_id, reply_to)
        when is_binary(cycle_id) and is_integer(chat_id) and is_binary(bot_id) do
