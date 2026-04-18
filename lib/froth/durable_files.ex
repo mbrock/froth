@@ -2,7 +2,7 @@ defmodule Froth.DurableFiles do
   @moduledoc false
 
   @default_files_base_url "https://less.rest/files"
-  @files_dir Path.expand("../priv/static/files", __DIR__)
+  @files_dir Path.expand("../../priv/static/files", __DIR__)
 
   @spec persist(binary(), String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
   def persist(file_data, media_type, filename)
