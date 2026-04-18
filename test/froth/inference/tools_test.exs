@@ -43,6 +43,39 @@ defmodule Froth.Inference.ToolsTest do
     assert get_in(spec, ["input_schema", "required"]) == ["ids"]
   end
 
+  test "elixir_eval hidden docs mode returns a Froth module overview" do
+    assert {:ok, [%Block{} = block]} = Tools.execute("elixir_eval", %{"mode" => "docs"}, 0, [])
+
+    assert Block.attr(block, :kind) == "module_overview"
+    assert Block.attr(block, :app) == "froth"
+    assert block.body =~ "Froth module hierarchy"
+    assert block.body =~ "Telegram"
+  end
+
+  test "elixir_eval hidden docs mode returns function docs with source clips" do
+    assert {:ok, [%Block{} = block]} =
+             Tools.execute(
+               "elixir_eval",
+               %{
+                 "mode" => "docs",
+                 "targets" => ["Froth.help/1"],
+                 "include_source" => true
+               },
+               0,
+               []
+             )
+
+    assert Block.attr(block, :kind) == "function"
+    assert Block.attr(block, :function) == "help/1"
+    assert block.body =~ "Pretty-print module docs"
+
+    source_block = Enum.find(block.children, &(Block.attr(&1, :kind) == "source_code"))
+
+    refute is_nil(source_block)
+    assert source_block.body =~ "def help(module)"
+    assert source_block.body =~ "Code.fetch_docs"
+  end
+
   test "view_analysis returns one block per matching analysis id" do
     first =
       Repo.insert!(

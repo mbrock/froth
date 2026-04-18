@@ -4,6 +4,7 @@ defmodule Froth.Tools.ElixirEval do
   @behaviour Froth.Tools.Definition
 
   alias Froth.Agent.CycleRuntime.Context
+  alias Froth.ElixirDocs
   alias Froth.Agent.ToolUse
   alias Froth.Tools.Support
 
@@ -68,9 +69,15 @@ defmodule Froth.Tools.ElixirEval do
 
   @impl true
   def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks) when is_map(input) do
-    eval_opts = [session_id: Support.eval_session_id(input)]
-    eval_opts = Support.maybe_put_eval_topic(eval_opts, ctx)
-    eval_opts = Support.maybe_put_eval_telegram(eval_opts, ctx)
-    Froth.Tasks.Eval.run_eval(input["code"], eval_opts)
+    case input["mode"] do
+      "docs" ->
+        ElixirDocs.query(input)
+
+      _ ->
+        eval_opts = [session_id: Support.eval_session_id(input)]
+        eval_opts = Support.maybe_put_eval_topic(eval_opts, ctx)
+        eval_opts = Support.maybe_put_eval_telegram(eval_opts, ctx)
+        Froth.Tasks.Eval.run_eval(input["code"], eval_opts)
+    end
   end
 end
