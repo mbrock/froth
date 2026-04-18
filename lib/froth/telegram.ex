@@ -146,7 +146,11 @@ defmodule Froth.Telegram do
            %{
              "@type" => "sendMessage",
              "chat_id" => chat_id,
-             "input_message_content" => photo_content(prepared_image.file_ref, opts)
+             "input_message_content" =>
+             photo_content(
+               prepared_image.file_ref,
+               maybe_append_png_links(opts, [prepared_image.metadata])
+             )
            }
            |> maybe_put_reply_to(opts[:reply_to])
            |> then(&call(session_id, &1)) do
@@ -459,19 +463,13 @@ defmodule Froth.Telegram do
   defp content_type_from_headers(_headers), do: nil
 
   defp album_contents(prepared_images, opts) when is_list(prepared_images) and is_list(opts) do
-    caption = Keyword.get(opts, :caption)
-    caption_entities = Keyword.get(opts, :caption_entities)
+    metadatas = Enum.map(prepared_images, & &1.metadata)
+    first_item_opts = maybe_append_png_links(opts, metadatas)
 
     prepared_images
     |> Enum.with_index()
     |> Enum.map(fn {%{file_ref: file_ref}, index} ->
-      item_opts =
-        if index == 0 and is_binary(caption) and caption != "" do
-          [caption: caption, caption_entities: caption_entities]
-        else
-          []
-        end
-
+      item_opts = if index == 0, do: first_item_opts, else: []
       photo_content(file_ref, item_opts)
     end)
   end
@@ -492,6 +490,85 @@ defmodule Froth.Telegram do
     else
       content
     end
+  end
+
+  defp maybe_append_png_links(opts, metadatas)
+       when is_list(opts) and is_list(metadatas) do
+    urls =
+      metadatas
+      |> Enum.map(fn
+        %{"public_url" => url} when is_binary(url) and url != "" -> url
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    cond do
+      Keyword.get(opts, :include_png_link, true) == false ->
+        opts
+
+      urls == [] ->
+        opts
+
+      true ->
+        caption = Keyword.get(opts, :caption) || ""
+        entities = Keyword.get(opts, :caption_entities) || []
+        {new_caption, new_entities} = append_png_link_footer(caption, entities, urls)
+
+        opts
+        |> Keyword.put(:caption, new_caption)
+        |> Keyword.put(:caption_entities, new_entities)
+    end
+  end
+
+  defp append_png_link_footer(caption, entities, [single_url]) do
+    base = to_string(caption)
+    separator = if base == "", do: "", else: " · "
+    offset = utf16_length(base) + utf16_length(separator)
+    arrow = "↗"
+    new_text = base <> separator <> arrow
+    link_entity = url_entity(offset, utf16_length(arrow), single_url)
+    {new_text, entities ++ [link_entity]}
+  end
+
+  defp append_png_link_footer(caption, entities, urls) when is_list(urls) do
+    base = to_string(caption)
+    separator = if base == "", do: "", else: " · "
+    prefix = base <> separator
+
+    {parts_rev, _} =
+      urls
+      |> Enum.with_index(1)
+      |> Enum.reduce({[], utf16_length(prefix)}, fn {url, idx}, {acc, offset} ->
+        between = if acc == [], do: "", else: " · "
+        between_len = utf16_length(between)
+        label = Integer.to_string(idx)
+        label_len = utf16_length(label)
+        entity = url_entity(offset + between_len, label_len, url)
+        {[{between, label, entity} | acc], offset + between_len + label_len}
+      end)
+
+    parts = Enum.reverse(parts_rev)
+    suffix = Enum.map_join(parts, "", fn {between, label, _} -> between <> label end)
+    new_text = prefix <> suffix
+    new_entities = entities ++ Enum.map(parts, fn {_, _, e} -> e end)
+    {new_text, new_entities}
+  end
+
+  defp url_entity(offset, length, url)
+       when is_integer(offset) and is_integer(length) and is_binary(url) do
+    %{
+      "@type" => "textEntity",
+      "offset" => offset,
+      "length" => length,
+      "type" => %{"@type" => "textEntityTypeTextUrl", "url" => url}
+    }
+  end
+
+  defp utf16_length(text) when is_binary(text) do
+    text
+    |> :unicode.characters_to_binary(:utf8, {:utf16, :little})
+    |> byte_size()
+    |> div(2)
   end
 
   defp formatted_text(text, entities) when is_binary(text) do
