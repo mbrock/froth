@@ -25,7 +25,8 @@ defmodule Froth.Inference.ToolsTest do
     spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "fetch"))
 
     refute is_nil(spec)
-    assert get_in(spec, ["input_schema", "required"]) == ["message_id"]
+    assert get_in(spec, ["input_schema", "required"]) == ["source"]
+    assert get_in(spec, ["input_schema", "properties", "source", "type"]) == "string"
     assert get_in(spec, ["input_schema", "properties", "view", "type"]) == "boolean"
   end
 
@@ -375,13 +376,13 @@ defmodule Froth.Inference.ToolsTest do
     assert {:error, message} =
              Tools.execute(
                "fetch",
-               %{"message_id" => "msg:not_a_number"},
+               %{"source" => "msg:not_a_number"},
                chat_id,
                bot_id: "charlie",
                session_id: "charlie"
              )
 
-    assert message =~ "Invalid message_id"
+    assert message =~ "Invalid source"
   end
 
   test "fetch loads a photo through telegram, materializes it, and inlines it by default" do
@@ -431,33 +432,28 @@ defmodule Froth.Inference.ToolsTest do
         end
       )
 
-    assert {:ok,
-            [
-              %{"type" => "text", "text" => metadata_json},
-              %{"type" => "image", "source" => source}
-            ]} =
+    assert {:ok, [%Block{} = block]} =
              Tools.execute(
                "fetch",
-               %{"message_id" => "msg:#{message_id}"},
+               %{"source" => "msg:#{message_id}"},
                chat_id,
                bot_id: "charlie",
                session_id: session_id
              )
 
-    metadata = Jason.decode!(metadata_json)
+    on_exit(fn -> File.rm(Block.attr(block, :local_path)) end)
 
-    on_exit(fn -> File.rm(metadata["local_path"]) end)
-
-    assert metadata["filename"] == "photo-#{message_id}.jpg"
-    assert metadata["media_type"] == "image/jpeg"
-    assert metadata["size_bytes"] == byte_size(image_data)
-    assert metadata["public_url"] =~ "https://files.test/files/"
-    assert metadata["local_path"] =~ "/priv/static/files/"
-    assert File.read!(metadata["local_path"]) == image_data
-
-    assert source["type"] == "base64"
-    assert source["media_type"] == "image/jpeg"
-    assert Base.decode64!(source["data"]) == image_data
+    assert Block.attr(block, :kind) == "fetched"
+    assert Block.attr(block, :source) == "msg:#{message_id}"
+    # Synthesized filename uses photo basename + content-hash suffix
+    assert Block.attr(block, :filename) =~ ~r/^photo-[0-9a-f]{8}\.jpg$/
+    assert Block.attr(block, :mime) == "image/jpeg"
+    assert Block.attr(block, :size) == byte_size(image_data)
+    assert Block.attr(block, :public_url) =~ "https://files.test/files/"
+    assert Block.attr(block, :local_path) =~ "/priv/static/files/"
+    assert File.read!(Block.attr(block, :local_path)) == image_data
+    # view defaults to true for images, so the body holds the bytes
+    assert block.body == image_data
   end
 
   test "fetch loads a pdf document and skips inline view by default" do
@@ -508,25 +504,26 @@ defmodule Froth.Inference.ToolsTest do
         end
       )
 
-    assert {:ok, [%{"type" => "text", "text" => metadata_json}]} =
+    assert {:ok, [%Block{} = block]} =
              Tools.execute(
                "fetch",
-               %{"message_id" => "tg:#{message_id}"},
+               %{"source" => "tg:#{message_id}"},
                chat_id,
                bot_id: "charlie",
                session_id: session_id
              )
 
-    metadata = Jason.decode!(metadata_json)
+    on_exit(fn -> File.rm(Block.attr(block, :local_path)) end)
 
-    on_exit(fn -> File.rm(metadata["local_path"]) end)
-
-    assert metadata["filename"] == "sample.pdf"
-    assert metadata["media_type"] == "application/pdf"
-    assert metadata["size_bytes"] == byte_size(pdf_data)
-    assert metadata["public_url"] =~ "https://files.test/files/"
-    assert metadata["local_path"] =~ "/priv/static/files/"
-    assert File.read!(metadata["local_path"]) == pdf_data
+    assert Block.attr(block, :filename) == "sample.pdf"
+    assert Block.attr(block, :mime) == "application/pdf"
+    assert Block.attr(block, :size) == byte_size(pdf_data)
+    assert Block.attr(block, :public_url) =~ "https://files.test/files/"
+    assert Block.attr(block, :local_path) =~ "/priv/static/files/"
+    assert File.read!(Block.attr(block, :local_path)) == pdf_data
+    # PDFs default to view: false — durable file is materialized but
+    # the body is nil so the agent has to opt in to inline the bytes.
+    assert is_nil(block.body)
   end
 
   test "fetch loads a video and materializes it without inline view by default" do
@@ -578,25 +575,24 @@ defmodule Froth.Inference.ToolsTest do
         end
       )
 
-    assert {:ok, [%{"type" => "text", "text" => metadata_json}]} =
+    assert {:ok, [%Block{} = block]} =
              Tools.execute(
                "fetch",
-               %{"message_id" => message_id},
+               %{"source" => message_id},
                chat_id,
                bot_id: "charlie",
                session_id: session_id
              )
 
-    metadata = Jason.decode!(metadata_json)
+    on_exit(fn -> File.rm(Block.attr(block, :local_path)) end)
 
-    on_exit(fn -> File.rm(metadata["local_path"]) end)
-
-    assert metadata["filename"] == "clip.mp4"
-    assert metadata["media_type"] == "video/mp4"
-    assert metadata["size_bytes"] == byte_size(video_data)
-    assert metadata["public_url"] =~ "https://files.test/files/"
-    assert metadata["local_path"] =~ "/priv/static/files/"
-    assert File.read!(metadata["local_path"]) == video_data
+    assert Block.attr(block, :filename) == "clip.mp4"
+    assert Block.attr(block, :mime) == "video/mp4"
+    assert Block.attr(block, :size) == byte_size(video_data)
+    assert Block.attr(block, :public_url) =~ "https://files.test/files/"
+    assert Block.attr(block, :local_path) =~ "/priv/static/files/"
+    assert File.read!(Block.attr(block, :local_path)) == video_data
+    assert is_nil(block.body)
   end
 
   test "fetch inlines a pdf when view is explicitly true" do
@@ -646,27 +642,20 @@ defmodule Froth.Inference.ToolsTest do
         end
       )
 
-    assert {:ok,
-            [
-              %{"type" => "text", "text" => metadata_json},
-              %{"type" => "document", "source" => source}
-            ]} =
+    assert {:ok, [%Block{} = block]} =
              Tools.execute(
                "fetch",
-               %{"message_id" => message_id, "view" => true},
+               %{"source" => message_id, "view" => true},
                chat_id,
                bot_id: "charlie",
                session_id: session_id
              )
 
-    metadata = Jason.decode!(metadata_json)
+    on_exit(fn -> File.rm(Block.attr(block, :local_path)) end)
 
-    on_exit(fn -> File.rm(metadata["local_path"]) end)
-
-    assert metadata["filename"] == "viewable.pdf"
-    assert source["type"] == "base64"
-    assert source["media_type"] == "application/pdf"
-    assert Base.decode64!(source["data"]) == pdf_data
+    assert Block.attr(block, :filename) == "viewable.pdf"
+    assert Block.attr(block, :mime) == "application/pdf"
+    assert block.body == pdf_data
   end
 
   test "run_shell falls back to the current working directory for an empty working_dir" do

@@ -38,7 +38,9 @@ defmodule Froth.Context.BlocksTest do
     end
 
     test "mime with parameters and case variations work" do
-      assert Blocks.binary_shaped?(Block.new([kind: "img", mime: "Image/JPEG; charset=binary"], <<>>))
+      assert Blocks.binary_shaped?(
+               Block.new([kind: "img", mime: "Image/JPEG; charset=binary"], <<>>)
+             )
 
       refute Blocks.binary_shaped?(
                Block.new([kind: "page", mime: "Text/Markdown; charset=utf-8"], "x")

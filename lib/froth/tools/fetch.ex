@@ -1,87 +1,392 @@
 defmodule Froth.Tools.Fetch do
-  @moduledoc false
+  @moduledoc """
+  Source-polymorphic fetch tool: brings external bytes into the agent
+  context as a durable file, addressable by URL and (optionally)
+  inlined as a multimodal content block.
+
+  The `source` parameter accepts:
+
+    * an integer or `"msg:N"` / `"tg:N"` string — Telegram message id;
+      the file attached to that message is downloaded via TDLib.
+
+    * an `https://` / `http://` URL — a HEAD probe sniffs the
+      content-type. HTML pages route through `Froth.Web.Lightpanda`
+      (Zig-based JS-enabled headless renderer) and come back as
+      markdown; everything else streams via `Req.get/1`.
+
+  In all cases the bytes are persisted via `Froth.DurableFiles.persist/3`
+  (content-hashed, public URL via the unindexed file root) and
+  returned to the agent as a single `<fetched>` `%Block{}` whose attrs
+  carry the metadata. When `view: true`, the bytes ride along in the
+  block body — text bodies fold into head/tail/blob via the normal
+  block materialization, image and PDF bodies emit a multimodal
+  content part for vision-capable providers.
+  """
 
   @behaviour Froth.Tools.Definition
 
   alias Froth.Agent.CycleRuntime.Context
   alias Froth.Agent.ToolUse
+  alias Froth.Context.Block
   alias Froth.DurableFiles
+  alias Froth.Telemetry.Span
+  alias Froth.Web.Lightpanda
+
+  defmodule Fetched do
+    @moduledoc false
+
+    @enforce_keys [:source]
+    defstruct [
+      :source,
+      :data,
+      :declared_media_type,
+      :filename,
+      :local_path,
+      fallback_basename: "file",
+      fallback_media_type: "application/octet-stream"
+    ]
+  end
 
   @impl true
   def name, do: "fetch"
 
   @impl true
-  def label, do: "Fetch media"
+  def label, do: "Fetch"
 
   @impl true
   def spec do
     %{
       "name" => name(),
       "description" =>
-        "Fetch a media file attached to a Telegram message. The file is downloaded from Telegram, saved as a local durable file that also lives in a public unindexed web root (so it can be shared directly or passed to external APIs by URL), and returned to you as a small JSON metadata block containing `local_path`, `public_url`, `media_type`, `size_bytes`, and `filename`. If `view` is true (the default for images) the file is also inlined as a native multimodal content block you can inspect directly — useful for photos where you want to see the picture. If `view` is false the file is only materialized and addressed, not inlined — useful for PDFs, zips, audio, video, large files, or anything you want to process via shell or elixir_eval rather than load into context. All Telegram media types are supported (photo, video, audio, voice, document, sticker, animation).",
+        "Fetch a resource and bring it into context. The `source` parameter accepts a Telegram message reference (`12345` or `\"msg:12345\"` from a `msg:` reference in the chat log) or an `http(s)://` URL. The bytes are saved as a local durable file (content-hashed, also lives in a public unindexed web root so it can be shared directly or passed to external APIs by URL) and returned to you as a `<fetched>` block whose attrs include `local_path`, `public_url`, `mime`, `size`, `filename`, and `source`. Web pages are rendered with a real JS-enabled headless browser and returned as markdown; non-HTML URLs stream through directly. If `view` is true (the default for images and textual content) the bytes are inlined — images and PDFs become multimodal content blocks; text-shaped bodies fold into head/tail/blob automatically and the pager can read them more fully. If `view` is false the file is only materialized and addressed, not inlined — useful for PDFs, video, audio, archives, large opaque binaries, or anything you want to process via shell or elixir_eval rather than load into context.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
-          "message_id" => %{
-            "type" => "integer",
+          "source" => %{
+            "type" => "string",
             "description" =>
-              "Telegram message ID from the chat log, i.e. the number from a msg:12345 reference."
+              "Either a Telegram message reference (a positive integer like `12345` or the string `\"msg:12345\"` / `\"tg:12345\"`), or an http(s):// URL."
           },
           "view" => %{
             "type" => "boolean",
             "description" =>
-              "Whether to inline the file as a multimodal content block. Defaults to true for images and false for everything else."
+              "Whether to inline the bytes in the block body. Defaults to true for images, PDFs, and textual content; false for opaque binaries."
           }
         },
-        "required" => ["message_id"],
+        "required" => ["source"],
         "additionalProperties" => false
       }
     }
   end
 
   @impl true
-  def execute(
-        %Context{surface: %{chat_id: chat_id, session_id: session_id}},
-        %ToolUse{input: input},
-        _hooks
-      )
-      when is_integer(chat_id) and is_map(input) and is_binary(session_id) do
-    with {:ok, message_id} <- parse_message_reference(input["message_id"]),
-         {:ok, message} <- fetch_message_for_media(session_id, chat_id, message_id),
-         {:ok, media} <- extract_fetch_media(message, message_id),
-         {:ok, file_data, local_path} <- download_tdlib_file(session_id, media.file_id),
-         {:ok, media_type} <- resolve_media_type(media, local_path),
-         {:ok, filename} <- resolve_filename(media, media_type),
-         {:ok, metadata} <- DurableFiles.persist(file_data, media_type, filename),
+  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks) when is_map(input) do
+    with {:ok, source} <- parse_source(input["source"] || input["message_id"]),
+         {:ok, fetched} <- fetch_source(source, ctx),
+         {:ok, media_type} <- resolve_media_type(fetched),
+         {:ok, filename} <- resolve_filename(fetched, media_type),
+         {:ok, metadata} <- DurableFiles.persist(fetched.data, media_type, filename),
          {:ok, view?} <- resolve_view(input["view"], media_type),
-         {:ok, blocks} <- build_result_blocks(file_data, view?, metadata) do
+         {:ok, blocks} <- build_result_blocks(fetched, metadata, view?) do
       {:ok, blocks}
     end
   end
 
-  def execute(%Context{}, %ToolUse{}, _hooks),
-    do: {:error, "Could not fetch media for the given input."}
+  # ── source parsing ───────────────────────────────────────────────
 
-  defp parse_message_reference(value) when is_integer(value) and value > 0, do: {:ok, value}
+  defp parse_source(value) when is_integer(value) and value > 0 do
+    {:ok, {:telegram, value}}
+  end
 
-  defp parse_message_reference(value) when is_binary(value) do
+  defp parse_source(value) when is_binary(value) do
+    trimmed = String.trim(value)
+
+    cond do
+      trimmed == "" ->
+        {:error, "Missing source. Provide a Telegram message id (msg:N) or an http(s):// URL."}
+
+      url?(trimmed) ->
+        {:ok, {:url, trimmed}}
+
+      true ->
+        parse_telegram_reference(trimmed)
+    end
+  end
+
+  defp parse_source(nil) do
+    {:error, "Missing source. Provide a Telegram message id (msg:N) or an http(s):// URL."}
+  end
+
+  defp parse_source(_),
+    do: {:error, "Invalid source. Use msg:N for Telegram or an http(s):// URL."}
+
+  defp url?(value) when is_binary(value) do
+    String.starts_with?(value, ["http://", "https://"])
+  end
+
+  defp parse_telegram_reference(value) do
     normalized =
       value
-      |> String.trim()
       |> String.replace_prefix("msg:", "")
       |> String.replace_prefix("tg:", "")
 
     case Integer.parse(normalized) do
       {message_id, ""} when message_id > 0 ->
-        {:ok, message_id}
+        {:ok, {:telegram, message_id}}
 
       _ ->
-        {:error, "Invalid message_id. Use an integer like 12345 or msg:12345."}
+        {:error, "Invalid source. Use an integer like 12345, msg:12345, or an http(s):// URL."}
     end
   end
 
-  defp parse_message_reference(_),
-    do: {:error, "Invalid message_id. Use an integer like 12345 or msg:12345."}
+  # ── source dispatch ──────────────────────────────────────────────
+
+  defp fetch_source({:telegram, message_id}, %Context{
+         surface: %{chat_id: chat_id, session_id: session_id}
+       })
+       when is_integer(chat_id) and is_binary(session_id) do
+    with {:ok, message} <- fetch_message_for_media(session_id, chat_id, message_id),
+         {:ok, media} <- extract_fetch_media(message, message_id),
+         {:ok, file_data, local_path} <- download_tdlib_file(session_id, media.file_id) do
+      {:ok,
+       %Fetched{
+         source: "msg:#{message_id}",
+         data: file_data,
+         declared_media_type: media.declared_media_type,
+         filename: media.filename,
+         local_path: local_path,
+         fallback_basename: telegram_basename(media.message_type, message_id),
+         fallback_media_type: default_media_type_for_message_type(media.message_type)
+       }}
+    end
+  end
+
+  defp fetch_source({:telegram, _message_id}, %Context{}) do
+    {:error, "Telegram source requires an active session and chat in the cycle context."}
+  end
+
+  defp fetch_source({:url, url}, %Context{} = _ctx) do
+    Span.span(
+      [:froth, :tools, :fetch, :url],
+      nil,
+      %{url: url},
+      fn _span_id -> do_fetch_url(url) end
+    )
+  end
+
+  defp do_fetch_url(url) do
+    case head_content_type(url) do
+      {:ok, content_type} ->
+        if html_like?(content_type) do
+          {fetch_via_lightpanda(url), %{outcome: :lightpanda, content_type: content_type}}
+        else
+          {fetch_via_req(url, content_type), %{outcome: :req, content_type: content_type}}
+        end
+
+      :unknown ->
+        {fetch_via_req(url, nil), %{outcome: :req_blind}}
+    end
+  end
+
+  defp head_content_type(url) do
+    case Req.head(url, redirect: true, retry: false, decode_body: false) do
+      {:ok, %Req.Response{status: status, headers: headers}}
+      when status in 200..399 ->
+        case content_type_header(headers) do
+          nil -> :unknown
+          ct -> {:ok, ct}
+        end
+
+      _ ->
+        :unknown
+    end
+  rescue
+    _ -> :unknown
+  end
+
+  defp content_type_header(headers) when is_map(headers) do
+    headers
+    |> Map.get("content-type", [])
+    |> List.wrap()
+    |> List.first()
+  end
+
+  defp content_type_header(headers) when is_list(headers) do
+    Enum.find_value(headers, fn
+      {"content-type", v} -> v
+      {"Content-Type", v} -> v
+      _ -> nil
+    end)
+  end
+
+  defp html_like?(content_type) when is_binary(content_type) do
+    base =
+      content_type
+      |> String.split(";", parts: 2)
+      |> List.first()
+      |> String.trim()
+      |> String.downcase()
+
+    base in ["text/html", "application/xhtml+xml"]
+  end
+
+  defp html_like?(_), do: false
+
+  defp fetch_via_lightpanda(url) do
+    case Lightpanda.fetch(url) do
+      {:ok, markdown} ->
+        {:ok,
+         %Fetched{
+           source: url,
+           data: markdown,
+           declared_media_type: "text/markdown",
+           filename: filename_from_url(url, force_ext: ".md"),
+           fallback_basename: hostname_basename(url),
+           fallback_media_type: "text/markdown"
+         }}
+
+      {:error, :timeout} ->
+        {:error, "lightpanda fetch timed out after 30s"}
+
+      {:error, :missing_executable} ->
+        {:error, "lightpanda binary not found on PATH"}
+
+      {:error, {:exit, code, tail}} ->
+        {:error, "lightpanda exited with #{code}: #{String.trim(tail)}"}
+    end
+  end
+
+  defp fetch_via_req(url, declared_content_type) do
+    case Req.get(url, redirect: true, decode_body: false) do
+      {:ok, %Req.Response{status: status, body: body, headers: headers}}
+      when status in 200..299 and is_binary(body) ->
+        content_type = declared_content_type || content_type_header(headers)
+
+        media_type =
+          content_type &&
+            content_type
+            |> String.split(";", parts: 2)
+            |> List.first()
+            |> String.trim()
+            |> String.downcase()
+
+        {:ok,
+         %Fetched{
+           source: url,
+           data: body,
+           declared_media_type: media_type,
+           filename: filename_from_url(url),
+           fallback_basename: hostname_basename(url),
+           fallback_media_type: media_type || "application/octet-stream"
+         }}
+
+      {:ok, %Req.Response{status: status}} ->
+        {:error, "GET #{url} returned HTTP #{status}"}
+
+      {:error, reason} ->
+        {:error, "GET #{url} failed: #{inspect(reason)}"}
+    end
+  rescue
+    error -> {:error, "GET #{url} crashed: #{Exception.message(error)}"}
+  end
+
+  # Returns a filename derived from the URL path, or nil if the URL
+  # has no useful basename. nil lets the post-resolution pipeline
+  # synthesize a name from the fallback basename plus the
+  # media-type-derived extension.
+  defp filename_from_url(url, opts \\ []) when is_binary(url) do
+    force_ext = Keyword.get(opts, :force_ext)
+
+    case URI.parse(url) do
+      %URI{path: path} when is_binary(path) and path != "" and path != "/" ->
+        base = path |> Path.basename() |> URI.decode()
+
+        cond do
+          base == "" -> nil
+          force_ext -> Path.rootname(base) <> force_ext
+          true -> base
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp hostname_basename(url) when is_binary(url) do
+    case URI.parse(url) do
+      %URI{host: host} when is_binary(host) and host != "" ->
+        host |> String.replace(".", "-")
+
+      _ ->
+        "page"
+    end
+  end
+
+  # ── post-resolution pipeline ─────────────────────────────────────
+
+  defp resolve_media_type(%Fetched{} = fetched) do
+    media_type =
+      fetched.declared_media_type ||
+        DurableFiles.media_type_from_filename(fetched.filename) ||
+        DurableFiles.media_type_from_path(fetched.local_path) ||
+        fetched.fallback_media_type
+
+    {:ok, media_type}
+  end
+
+  defp resolve_filename(%Fetched{filename: filename}, _media_type)
+       when is_binary(filename) and filename != "" do
+    {:ok, filename}
+  end
+
+  defp resolve_filename(%Fetched{} = fetched, media_type) when is_binary(media_type) do
+    extension = DurableFiles.extension_from_media_type(media_type) || ".bin"
+    {:ok, fetched.fallback_basename <> "-" <> short_hash(fetched.data) <> extension}
+  end
+
+  defp resolve_view(nil, media_type) when is_binary(media_type) do
+    {:ok, default_view_for_media_type(media_type)}
+  end
+
+  defp resolve_view(view, _media_type) when is_boolean(view), do: {:ok, view}
+
+  defp resolve_view(_, _), do: {:error, "Invalid view. Use true or false."}
+
+  # Default `view` per media type: inline images and textual content
+  # by default; require an explicit `view: true` for PDFs, audio,
+  # video, and opaque binaries (those can be very large, and the
+  # agent can always re-fetch with view: true if it wants the bytes).
+  defp default_view_for_media_type(media_type) when is_binary(media_type) do
+    cond do
+      String.starts_with?(media_type, "image/") -> true
+      String.starts_with?(media_type, "text/") -> true
+      media_type == "application/json" -> true
+      media_type == "application/xml" -> true
+      true -> false
+    end
+  end
+
+  defp build_result_blocks(%Fetched{} = fetched, metadata, view?) when is_boolean(view?) do
+    body = if view?, do: fetched.data, else: nil
+
+    attrs = [
+      kind: "fetched",
+      source: fetched.source,
+      mime: metadata["media_type"],
+      filename: metadata["filename"],
+      size: metadata["size_bytes"],
+      public_url: metadata["public_url"],
+      local_path: metadata["local_path"]
+    ]
+
+    {:ok, [Block.new(attrs, body)]}
+  end
+
+  defp short_hash(data) when is_binary(data) do
+    :crypto.hash(:sha256, data) |> Base.encode16(case: :lower) |> binary_part(0, 8)
+  end
+
+  # ── Telegram backend (unchanged behavior) ────────────────────────
 
   defp fetch_message_for_media(session_id, chat_id, message_id)
        when is_binary(session_id) and is_integer(chat_id) and is_integer(message_id) do
@@ -287,102 +592,6 @@ defmodule Froth.Tools.Fetch do
      "Message msg:#{message_id} is not a supported media message (photo, document, video, audio, voice note, sticker, animation, or video note)."}
   end
 
-  defp resolve_media_type(media, local_path) when is_map(media) and is_binary(local_path) do
-    media_type =
-      media.declared_media_type ||
-        DurableFiles.media_type_from_filename(media.filename) ||
-        DurableFiles.media_type_from_path(local_path) ||
-        default_media_type_for_message_type(media.message_type)
-
-    {:ok, media_type}
-  end
-
-  defp resolve_media_type(_media, _local_path),
-    do: {:error, "Could not determine media type for this message."}
-
-  defp resolve_filename(%{filename: filename}, _media_type)
-       when is_binary(filename) and filename != "" do
-    {:ok, filename}
-  end
-
-  defp resolve_filename(%{message_type: message_type, message_id: message_id}, media_type)
-       when is_binary(message_type) and is_integer(message_id) do
-    basename =
-      case message_type do
-        "messagePhoto" -> "photo"
-        "messageDocument" -> "document"
-        "messageVideo" -> "video"
-        "messageAudio" -> "audio"
-        "messageVoiceNote" -> "voice-note"
-        "messageSticker" -> "sticker"
-        "messageAnimation" -> "animation"
-        "messageVideoNote" -> "video-note"
-        _ -> "file"
-      end
-
-    {:ok,
-     "#{basename}-#{message_id}#{DurableFiles.extension_from_media_type(media_type) || ".bin"}"}
-  end
-
-  defp resolve_filename(_media, _media_type),
-    do: {:error, "Could not determine a filename for this message."}
-
-  defp resolve_view(nil, media_type) when is_binary(media_type),
-    do: {:ok, String.starts_with?(media_type, "image/")}
-
-  defp resolve_view(view, _media_type) when is_boolean(view), do: {:ok, view}
-
-  defp resolve_view(_, _),
-    do: {:error, "Invalid view. Use true or false."}
-
-  defp build_result_blocks(file_data, view?, meta)
-       when is_binary(file_data) and is_boolean(view?) and is_map(meta) do
-    metadata_block = %{"type" => "text", "text" => Jason.encode!(meta, pretty: true)}
-
-    case {view?, inline_content_block(meta["media_type"], file_data)} do
-      {true, {:ok, block}} ->
-        {:ok, [metadata_block, block]}
-
-      {true, :skip} ->
-        {:ok, [metadata_block]}
-
-      {false, _} ->
-        {:ok, [metadata_block]}
-    end
-  end
-
-  defp inline_content_block(media_type, file_data)
-       when is_binary(media_type) and is_binary(file_data) do
-    normalized_media_type = normalize_media_type(media_type)
-
-    cond do
-      String.starts_with?(normalized_media_type, "image/") ->
-        {:ok,
-         %{
-           "type" => "image",
-           "source" => %{
-             "type" => "base64",
-             "media_type" => normalized_media_type,
-             "data" => Base.encode64(file_data)
-           }
-         }}
-
-      normalized_media_type == "application/pdf" ->
-        {:ok,
-         %{
-           "type" => "document",
-           "source" => %{
-             "type" => "base64",
-             "media_type" => "application/pdf",
-             "data" => Base.encode64(file_data)
-           }
-         }}
-
-      true ->
-        :skip
-    end
-  end
-
   defp download_tdlib_file(session_id, file_id)
        when is_binary(session_id) and is_integer(file_id) do
     case Froth.Telegram.call(
@@ -397,11 +606,8 @@ defmodule Froth.Tools.Fetch do
          ) do
       {:ok, %{"local" => %{"path" => path}}} when is_binary(path) and path != "" ->
         case File.read(path) do
-          {:ok, data} ->
-            {:ok, data, path}
-
-          {:error, reason} ->
-            {:error, "downloaded file read failed: #{inspect(reason)}"}
+          {:ok, data} -> {:ok, data, path}
+          {:error, reason} -> {:error, "downloaded file read failed: #{inspect(reason)}"}
         end
 
       {:ok, %{"@type" => "error", "message" => reason}} ->
@@ -417,6 +623,28 @@ defmodule Froth.Tools.Fetch do
 
   defp download_tdlib_file(_session_id, _file_id),
     do: {:error, "Message does not include a valid downloadable file ID."}
+
+  # ── Telegram helpers ─────────────────────────────────────────────
+
+  defp telegram_basename("messagePhoto", _id), do: "photo"
+  defp telegram_basename("messageDocument", _id), do: "document"
+  defp telegram_basename("messageVideo", _id), do: "video"
+  defp telegram_basename("messageAudio", _id), do: "audio"
+  defp telegram_basename("messageVoiceNote", _id), do: "voice-note"
+  defp telegram_basename("messageSticker", _id), do: "sticker"
+  defp telegram_basename("messageAnimation", _id), do: "animation"
+  defp telegram_basename("messageVideoNote", _id), do: "video-note"
+  defp telegram_basename(_type, id), do: "msg-#{id}"
+
+  defp default_media_type_for_message_type("messagePhoto"), do: "image/jpeg"
+  defp default_media_type_for_message_type("messageDocument"), do: "application/octet-stream"
+  defp default_media_type_for_message_type("messageVideo"), do: "video/mp4"
+  defp default_media_type_for_message_type("messageAudio"), do: "audio/mpeg"
+  defp default_media_type_for_message_type("messageVoiceNote"), do: "audio/ogg"
+  defp default_media_type_for_message_type("messageSticker"), do: "application/octet-stream"
+  defp default_media_type_for_message_type("messageAnimation"), do: "video/mp4"
+  defp default_media_type_for_message_type("messageVideoNote"), do: "video/mp4"
+  defp default_media_type_for_message_type(_), do: "application/octet-stream"
 
   defp photo_size_pixels(size) when is_map(size) do
     (size["width"] || 0) * (size["height"] || 0)
@@ -449,23 +677,5 @@ defmodule Froth.Tools.Fetch do
       "video/webm" -> "sticker.webm"
       _ -> nil
     end
-  end
-
-  defp default_media_type_for_message_type("messagePhoto"), do: "image/jpeg"
-  defp default_media_type_for_message_type("messageDocument"), do: "application/octet-stream"
-  defp default_media_type_for_message_type("messageVideo"), do: "video/mp4"
-  defp default_media_type_for_message_type("messageAudio"), do: "audio/mpeg"
-  defp default_media_type_for_message_type("messageVoiceNote"), do: "audio/ogg"
-  defp default_media_type_for_message_type("messageSticker"), do: "application/octet-stream"
-  defp default_media_type_for_message_type("messageAnimation"), do: "video/mp4"
-  defp default_media_type_for_message_type("messageVideoNote"), do: "video/mp4"
-  defp default_media_type_for_message_type(_), do: "application/octet-stream"
-
-  defp normalize_media_type(media_type) when is_binary(media_type) do
-    media_type
-    |> String.downcase()
-    |> String.split(";", parts: 2)
-    |> List.first()
-    |> String.trim()
   end
 end

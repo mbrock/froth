@@ -244,7 +244,15 @@ defmodule Froth.Telemetry do
     [:froth, :web, :connect_failed],
     [:froth, :web, :snapshot_failed],
     [:froth, :web, :miniapp_log],
-    [:froth, :web, :miniapp_params]
+    [:froth, :web, :miniapp_params],
+    [:froth, :web, :lightpanda, :fetch, :start],
+    [:froth, :web, :lightpanda, :fetch, :stop],
+    [:froth, :web, :lightpanda, :fetch, :exception],
+    [:froth, :web, :http, :head],
+    [:froth, :web, :http, :get],
+    [:froth, :tools, :fetch, :url, :start],
+    [:froth, :tools, :fetch, :url, :stop],
+    [:froth, :tools, :fetch, :url, :exception]
   ]
 
   @all_events @http_events ++
