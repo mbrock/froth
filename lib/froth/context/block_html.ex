@@ -22,7 +22,7 @@ defmodule Froth.Context.BlockHTML do
 
   use Phoenix.Component
 
-  alias Froth.Context.{Block, Markup}
+  alias Froth.Context.{Block, Blocks, Markup}
 
   @preview_chars 160
   @trace_preview_lines 3
@@ -43,6 +43,7 @@ defmodule Froth.Context.BlockHTML do
     ~H"""
     <.block_tag kind={kind(@block)} attrs={structural_attrs(@block)}>
       <%= cond do %>
+        <% Blocks.binary_shaped?(@block) -> %>
         <% is_binary(@block.body) -> %>
           {@block.body}
         <% has_fold?(@block) -> %>
@@ -73,7 +74,12 @@ defmodule Froth.Context.BlockHTML do
   attr :block, Block, required: true
 
   defp trace_block(assigns) do
-    assigns = assign(assigns, preview: preview_text(assigns.block))
+    assigns =
+      if Blocks.binary_shaped?(assigns.block) do
+        assign(assigns, preview: "")
+      else
+        assign(assigns, preview: preview_text(assigns.block))
+      end
 
     ~H"""
     <.block_tag kind={kind(@block)} attrs={structural_attrs(@block)}>

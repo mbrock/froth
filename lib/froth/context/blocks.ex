@@ -7,20 +7,45 @@ defmodule Froth.Context.Blocks do
   Tools don't care; renderers don't care. This module is where the
   size threshold lives.
 
-  Tools can force an otherwise-large body to stay inline by setting
-  the internal `:no_fold` attr. This is useful for deliberate reads
-  such as pager slices, where re-folding would defeat the point of
-  the tool call.
+  ## Text-shaped vs binary-shaped blocks
+
+  A block's `:mime` attr decides how its body is treated:
+
+    * **Text-shaped** (no `:mime`, or a textual mime like `text/*`,
+      `application/json`, `application/xml`): body is line-counted,
+      and folded into a blob with `:head`/`:tail`/`:omitted` attrs
+      when it exceeds the inline thresholds.
+
+    * **Binary-shaped** (any other `:mime`, e.g. `image/jpeg`,
+      `application/pdf`): body is stored to a blob unconditionally,
+      and the block carries only structural attrs (`:blob`, `:size`,
+      `:mime`). No line splitting, no head/tail — those don't apply
+      to binary content.
+
+  The binary path is what lets tools emit images, PDFs, etc. inside
+  block trees instead of having to side-channel them as raw provider
+  content blocks.
+
+  ## `:no_fold`
+
+  Tools can force an otherwise-large text body to stay inline by
+  setting the internal `:no_fold` attr. This is useful for deliberate
+  reads such as pager slices, where re-folding would defeat the point
+  of the tool call. `:no_fold` also keeps a binary-shaped block's
+  body inline (skipping blob storage), for callers that want to hand
+  the bytes directly to a downstream consumer.
+
+  ## Pre-computed attrs
 
   For bodies that get blobbed, a set of pre-computed attrs is added
   to the block so renderers don't have to hit the database:
 
     * `:blob` — `"blob:<ulid>"` handle
     * `:size` — byte size of the full body
-    * `:lines` — line count of the full body
-    * `:head` — first N lines as a list
-    * `:tail` — last N lines as a list
-    * `:omitted` — lines not shown in head+tail
+    * `:lines` — line count of the full body (text-shaped only)
+    * `:head` — first N lines as a list (text-shaped only)
+    * `:tail` — last N lines as a list (text-shaped only)
+    * `:omitted` — lines not shown in head+tail (text-shaped only)
 
   `:size` / `:lines` are added even for inline bodies so the live
   renderer can decide whether to display them.
@@ -52,9 +77,32 @@ defmodule Froth.Context.Blocks do
     Enum.map(blocks, &materialize_one/1)
   end
 
-  defp materialize_one(%Block{body: nil} = block), do: materialize_children(block)
+  @doc """
+  Whether a block carries non-textual binary content.
+
+  Decided purely by the `:mime` attr; the body itself isn't
+  inspected. Used by `materialize/1` to skip text math, and by
+  downstream consumers (renderers, tool-result serialization) to
+  know which blocks describe images/PDFs/audio/video.
+  """
+  @spec binary_shaped?(Block.t()) :: boolean()
+  def binary_shaped?(%Block{attrs: attrs}), do: binary_mime?(Keyword.get(attrs, :mime))
+
+  defp materialize_one(%Block{body: nil} = block) do
+    block
+    |> Map.put(:attrs, drop_internal_attrs(block.attrs))
+    |> materialize_children()
+  end
 
   defp materialize_one(%Block{body: body, attrs: attrs} = block) when is_binary(body) do
+    if binary_mime?(Keyword.get(attrs, :mime)) do
+      materialize_binary(block, body, attrs)
+    else
+      materialize_text(block, body, attrs)
+    end
+  end
+
+  defp materialize_text(%Block{} = block, body, attrs) do
     no_fold? = Keyword.get(attrs, :no_fold, false)
     attrs = drop_internal_attrs(attrs)
     trimmed = String.trim_trailing(body, "\n")
@@ -64,7 +112,7 @@ defmodule Froth.Context.Blocks do
     if no_fold? or (size <= @inline_max_bytes and line_count <= @inline_max_lines) do
       block
       |> Map.put(:body, trimmed)
-      |> Map.put(:attrs, put_facts(attrs, size, line_count))
+      |> Map.put(:attrs, put_text_facts(attrs, size, line_count))
       |> materialize_children()
     else
       {:ok, blob} = Blobs.put(trimmed, mime: Keyword.get(attrs, :mime, "text/plain"))
@@ -77,11 +125,37 @@ defmodule Froth.Context.Blocks do
 
       new_attrs =
         attrs
-        |> put_facts(size, line_count)
+        |> put_text_facts(size, line_count)
         |> Keyword.put(:blob, blob.id)
         |> Keyword.put(:head, head)
         |> Keyword.put(:tail, tail)
         |> Keyword.put(:omitted, omitted)
+
+      block
+      |> Map.put(:body, nil)
+      |> Map.put(:attrs, new_attrs)
+      |> materialize_children()
+    end
+  end
+
+  defp materialize_binary(%Block{} = block, body, attrs) do
+    no_fold? = Keyword.get(attrs, :no_fold, false)
+    attrs = drop_internal_attrs(attrs)
+    mime = Keyword.fetch!(attrs, :mime)
+    size = byte_size(body)
+
+    if no_fold? do
+      block
+      |> Map.put(:body, body)
+      |> Map.put(:attrs, Keyword.put_new(attrs, :size, size))
+      |> materialize_children()
+    else
+      {:ok, blob} = Blobs.put(body, mime: mime)
+
+      new_attrs =
+        attrs
+        |> Keyword.put_new(:size, size)
+        |> Keyword.put(:blob, blob.id)
 
       block
       |> Map.put(:body, nil)
@@ -98,7 +172,7 @@ defmodule Froth.Context.Blocks do
     Keyword.drop(attrs, @internal_attrs)
   end
 
-  defp put_facts(attrs, size, lines) do
+  defp put_text_facts(attrs, size, lines) do
     attrs
     |> Keyword.put_new(:size, size)
     |> Keyword.put_new(:lines, lines)
@@ -109,4 +183,23 @@ defmodule Froth.Context.Blocks do
 
   defp count_lines(""), do: 0
   defp count_lines(bytes) when is_binary(bytes), do: length(split_lines(bytes))
+
+  # Anything that isn't plain text or one of the textual structured
+  # formats counts as binary for materialization purposes. The empty
+  # / nil case is text-shaped (legacy default).
+  defp binary_mime?(nil), do: false
+  defp binary_mime?(""), do: false
+
+  defp binary_mime?(mime) when is_binary(mime) do
+    case String.downcase(mime) |> String.split(";", parts: 2) |> List.first() |> String.trim() do
+      "text/" <> _ -> false
+      "application/json" -> false
+      "application/xml" -> false
+      "application/xhtml+xml" -> false
+      "application/javascript" -> false
+      _ -> true
+    end
+  end
+
+  defp binary_mime?(_), do: false
 end

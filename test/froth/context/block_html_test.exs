@@ -213,6 +213,51 @@ defmodule Froth.Context.BlockHTMLTest do
     end
   end
 
+  describe "live/1 — binary-shaped" do
+    test "image block renders as a placeholder tag with mime/blob/filename, no body" do
+      bytes = :crypto.strong_rand_bytes(8192)
+
+      blocks =
+        Blocks.materialize([
+          Block.new(
+            [kind: "fetched", mime: "image/jpeg", filename: "cat.jpg", source: "msg:42"],
+            bytes
+          )
+        ])
+
+      html = BlockHTML.live_to_string(blocks)
+
+      assert html =~ "<fetched"
+      assert html =~ ~s(mime="image/jpeg")
+      assert html =~ ~s(filename="cat.jpg")
+      assert html =~ ~s(source="msg:42")
+      assert html =~ ~r/blob="[0-9A-HJKMNP-TV-Z]{26}"/
+      assert html =~ ~s(size="8192")
+      refute html =~ "<head"
+      refute html =~ "<tail"
+      refute html =~ "<omitted"
+    end
+
+    test "image block with :no_fold also renders as placeholder, body not inlined" do
+      bytes = "fake-image-bytes-with-some-pseudo-binary"
+
+      blocks =
+        Blocks.materialize([
+          Block.new(
+            [kind: "image", mime: "image/png", filename: "x.png", no_fold: true],
+            bytes
+          )
+        ])
+
+      html = BlockHTML.live_to_string(blocks)
+
+      assert html =~ "<image"
+      assert html =~ ~s(mime="image/png")
+      assert html =~ ~s(filename="x.png")
+      refute html =~ "fake-image-bytes"
+    end
+  end
+
   describe "safe tag names" do
     test "unsafe kind falls back to <block>" do
       # HTML void tags cannot be used as containers, so they fall back
