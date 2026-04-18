@@ -7,6 +7,11 @@ defmodule Froth.Context.Blocks do
   Tools don't care; renderers don't care. This module is where the
   size threshold lives.
 
+  Tools can force an otherwise-large body to stay inline by setting
+  the internal `:no_fold` attr. This is useful for deliberate reads
+  such as pager slices, where re-folding would defeat the point of
+  the tool call.
+
   For bodies that get blobbed, a set of pre-computed attrs is added
   to the block so renderers don't have to hit the database:
 
@@ -24,10 +29,11 @@ defmodule Froth.Context.Blocks do
   alias Froth.Blobs
   alias Froth.Context.Block
 
-  @inline_max_bytes 1_200
-  @inline_max_lines 48
+  @inline_max_bytes 2_400
+  @inline_max_lines 80
   @head_lines 10
   @tail_lines 5
+  @internal_attrs [:no_fold]
 
   @doc """
   Materialize a block list for persistence and rendering.
@@ -49,11 +55,13 @@ defmodule Froth.Context.Blocks do
   defp materialize_one(%Block{body: nil} = block), do: materialize_children(block)
 
   defp materialize_one(%Block{body: body, attrs: attrs} = block) when is_binary(body) do
+    no_fold? = Keyword.get(attrs, :no_fold, false)
+    attrs = drop_internal_attrs(attrs)
     trimmed = String.trim_trailing(body, "\n")
     size = byte_size(trimmed)
     line_count = count_lines(trimmed)
 
-    if size <= @inline_max_bytes and line_count <= @inline_max_lines do
+    if no_fold? or (size <= @inline_max_bytes and line_count <= @inline_max_lines) do
       block
       |> Map.put(:body, trimmed)
       |> Map.put(:attrs, put_facts(attrs, size, line_count))
@@ -84,6 +92,10 @@ defmodule Froth.Context.Blocks do
 
   defp materialize_children(%Block{children: children} = block) when is_list(children) do
     %Block{block | children: Enum.map(children, &materialize_one/1)}
+  end
+
+  defp drop_internal_attrs(attrs) when is_list(attrs) do
+    Keyword.drop(attrs, @internal_attrs)
   end
 
   defp put_facts(attrs, size, lines) do

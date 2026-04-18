@@ -61,6 +61,7 @@ defmodule Froth.Inference.PagerToolTest do
 
       assert Block.attr(block, :kind) == "page"
       assert Block.attr(block, :from_line) == 10
+      assert Block.attr(block, :no_fold) == true
       assert block.body == "line 10\nline 11\nline 12"
     end
 
@@ -86,6 +87,7 @@ defmodule Froth.Inference.PagerToolTest do
         |> single_block!()
 
       assert Block.attr(block, :kind) == "grep"
+      assert Block.attr(block, :no_fold) == true
       assert Block.attr(block, :total) == 1
       assert Block.attr(block, :pattern) == "^line 1$"
       assert block.body =~ "line 1"

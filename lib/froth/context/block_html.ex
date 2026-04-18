@@ -24,7 +24,8 @@ defmodule Froth.Context.BlockHTML do
 
   alias Froth.Context.{Block, Markup}
 
-  @preview_chars 120
+  @preview_chars 160
+  @trace_preview_lines 3
 
   # ── live ─────────────────────────────────────────────────────────
 
@@ -154,20 +155,47 @@ defmodule Froth.Context.BlockHTML do
   defp join(lines) when is_list(lines), do: Enum.join(lines, "\n")
   defp join(_), do: ""
 
-  # A short, single-line preview string for the trace view.
+  # A compact multi-line preview string for the trace view.
   defp preview_text(%Block{body: body}) when is_binary(body) and body != "" do
-    body
-    |> String.split("\n", parts: 2)
-    |> hd()
-    |> String.slice(0, @preview_chars)
+    lines = String.split(body, "\n")
+    preview_lines = Enum.take(lines, @trace_preview_lines)
+    finish_preview(preview_lines, max(length(lines) - length(preview_lines), 0))
   end
 
   defp preview_text(%Block{} = block) do
     case Block.attr(block, :head, []) do
-      [first | _] -> first |> String.slice(0, @preview_chars)
-      _ -> ""
+      [] ->
+        if Block.attr(block, :empty, false), do: "(empty)", else: ""
+
+      head ->
+        total_lines = Block.attr(block, :lines, length(head))
+        preview_lines = Enum.take(head, @trace_preview_lines)
+
+        finish_preview(preview_lines, max(total_lines - length(preview_lines), 0))
     end
   end
+
+  defp finish_preview(lines, remaining_lines) when is_list(lines) do
+    preview_lines =
+      lines
+      |> Enum.map(&String.slice(&1, 0, @preview_chars))
+      |> Enum.reject(&(&1 == ""))
+
+    suffix =
+      if remaining_lines > 0 do
+        ["... ", Integer.to_string(remaining_lines), " more ", pluralize("line", remaining_lines)]
+      else
+        []
+      end
+
+    (preview_lines ++ [suffix])
+    |> Enum.reject(&(&1 == []))
+    |> Enum.intersperse("\n")
+    |> IO.iodata_to_binary()
+  end
+
+  defp pluralize(word, 1), do: word
+  defp pluralize(word, _count), do: word <> "s"
 
   # ── rendering helper ─────────────────────────────────────────────
 

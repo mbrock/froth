@@ -113,7 +113,8 @@ defmodule Froth.Tools.Pager do
 
     case Blobs.head(blob_id, lines) do
       {:ok, text} ->
-        {:ok, [Block.new([kind: "head", blob: blob_id, lines_requested: lines], text)]}
+        {:ok,
+         [Block.new([kind: "head", blob: blob_id, lines_requested: lines, no_fold: true], text)]}
 
       {:error, :not_found} ->
         {:error, "blob:#{blob_id} not found"}
@@ -125,7 +126,8 @@ defmodule Froth.Tools.Pager do
 
     case Blobs.tail(blob_id, lines) do
       {:ok, text} ->
-        {:ok, [Block.new([kind: "tail", blob: blob_id, lines_requested: lines], text)]}
+        {:ok,
+         [Block.new([kind: "tail", blob: blob_id, lines_requested: lines, no_fold: true], text)]}
 
       {:error, :not_found} ->
         {:error, "blob:#{blob_id} not found"}
@@ -144,7 +146,13 @@ defmodule Froth.Tools.Pager do
         {:ok,
          [
            Block.new(
-             [kind: "page", blob: blob_id, from_line: from_line, lines_requested: lines],
+             [
+               kind: "page",
+               blob: blob_id,
+               from_line: from_line,
+               lines_requested: lines,
+               no_fold: true
+             ],
              text
            )
          ]}
@@ -175,7 +183,14 @@ defmodule Froth.Tools.Pager do
           {:ok,
            [
              Block.new(
-               [kind: "grep", blob: blob_id, pattern: pattern, total: total, shown: shown],
+               [
+                 kind: "grep",
+                 blob: blob_id,
+                 pattern: pattern,
+                 total: total,
+                 shown: shown,
+                 no_fold: true
+               ],
                text
              )
            ]}

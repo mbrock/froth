@@ -50,11 +50,25 @@ defmodule Froth.Context.BlockHTMLTest do
       assert html =~ "<io"
       assert html =~ "<value"
     end
+
+    test "blocks marked no_fold stay inline even when they exceed the default limits" do
+      big = Enum.map_join(1..100, "\n", &"line #{&1}")
+
+      [block] =
+        Blocks.materialize([Block.new([kind: "page", blob: "01TEST", no_fold: true], big)])
+
+      assert is_binary(block.body)
+      assert Block.attr(block, :blob) == "01TEST"
+      refute Block.attr(block, :blob) =~ ~r/\A[0-9A-HJKMNP-TV-Z]{26}\z/
+      refute Keyword.has_key?(block.attrs, :no_fold)
+      refute Keyword.has_key?(block.attrs, :head)
+      refute Keyword.has_key?(block.attrs, :tail)
+    end
   end
 
   describe "live/1 — folded body" do
     test "big bodies render with head/omitted/tail children backed by a blob" do
-      big = Enum.map_join(1..80, "\n", &"line #{&1}")
+      big = Enum.map_join(1..100, "\n", &"line #{&1}")
       blocks = Blocks.materialize([Block.new([kind: "shell"], big)])
 
       html = BlockHTML.live_to_string(blocks)
@@ -64,9 +78,9 @@ defmodule Froth.Context.BlockHTMLTest do
       assert html =~ "line 1"
       assert html =~ "line 10"
       assert html =~ "<omitted"
-      assert html =~ ~s(count="65")
+      assert html =~ ~s(count="85")
       assert html =~ "<tail"
-      assert html =~ "line 80"
+      assert html =~ "line 100"
       refute html =~ "line 42"
     end
 
@@ -134,8 +148,16 @@ defmodule Froth.Context.BlockHTMLTest do
       end)
     end
 
-    test "truncates long preview to one line" do
-      body = String.duplicate("x", 500) <> "\nmore stuff"
+    test "shows a compact multi-line preview with a continuation summary" do
+      body =
+        [
+          String.duplicate("x", 500),
+          "more stuff",
+          "third line",
+          "fourth line"
+        ]
+        |> Enum.join("\n")
+
       blocks = Blocks.materialize([Block.new([kind: "shell"], body)])
 
       html =
@@ -144,7 +166,29 @@ defmodule Froth.Context.BlockHTMLTest do
         |> Phoenix.HTML.Safe.to_iodata()
         |> IO.iodata_to_binary()
 
-      refute html =~ "more stuff"
+      assert html =~ "more stuff"
+      assert html =~ "third line"
+      refute html =~ "fourth line"
+      assert html =~ "... 1 more line"
+    end
+
+    test "folded blocks show multiple preview lines and a continuation summary" do
+      body = Enum.map_join(1..100, "\n", &"line #{&1}")
+      blocks = Blocks.materialize([Block.new([kind: "shell"], body)])
+
+      html =
+        %{blocks: blocks}
+        |> BlockHTML.trace()
+        |> Phoenix.HTML.Safe.to_iodata()
+        |> IO.iodata_to_binary()
+
+      assert html =~ "line 1"
+      assert html =~ "line 2"
+      assert html =~ "line 3"
+      assert html =~ "... 97 more lines"
+      refute html =~ "<head"
+      refute html =~ "<tail"
+      refute html =~ "<omitted"
     end
 
     test "renders nested child blocks in trace output" do
