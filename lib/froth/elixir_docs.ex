@@ -3,6 +3,11 @@ defmodule Froth.ElixirDocs do
 
   alias Froth.Context.Block
 
+  @elixir_stdlib_apps ~w(elixir eex ex_unit iex logger mix)a
+  @stdlib_source_pattern ~r/(lib\/(?:elixir|eex|ex_unit|iex|logger|mix)\/.+)$/
+  @stdlib_source_base "https://raw.githubusercontent.com/elixir-lang/elixir"
+  @stdlib_source_cache_root Path.join(System.tmp_dir!(), "froth-elixir-source-cache")
+
   @type target ::
           %{kind: :module, module: module(), original: String.t()}
           | %{
@@ -82,7 +87,7 @@ defmodule Froth.ElixirDocs do
     attrs = [
       kind: "module",
       module: inspect(detail.module),
-      file: detail.source_path,
+      file: detail.source_display || detail.source_path,
       functions: length(detail.public_functions)
     ]
 
@@ -99,7 +104,7 @@ defmodule Froth.ElixirDocs do
       kind: "function",
       module: inspect(detail.module),
       function: "#{function_detail.name}/#{function_detail.arity}",
-      file: detail.source_path,
+      file: detail.source_display || detail.source_path,
       line: function_detail.line
     ]
 
@@ -120,7 +125,7 @@ defmodule Froth.ElixirDocs do
       "# #{inspect(detail.module)}",
       "",
       "Requested as: #{original}",
-      "Source: #{detail.source_path || "(unknown)"}",
+      "Source: #{detail.source_display || detail.source_path || "(unknown)"}",
       "Public functions: #{length(detail.public_functions)}",
       detail.module_doc != nil && "",
       detail.module_doc,
@@ -143,7 +148,7 @@ defmodule Froth.ElixirDocs do
       "Requested as: #{original}",
       function_detail.signature && "Signature: #{function_detail.signature}",
       function_detail.args != [] && "Args: #{Enum.join(function_detail.args, ", ")}",
-      "Source: #{detail.source_path || "(unknown)"}:#{function_detail.line || 0}",
+      "Source: #{detail.source_display || detail.source_path || "(unknown)"}:#{function_detail.line || 0}",
       function_detail.doc != nil && "",
       function_detail.doc
     ]
@@ -155,7 +160,12 @@ defmodule Froth.ElixirDocs do
     case detail.source_range do
       nil ->
         Block.new(
-          [kind: "source_code", target: inspect(detail.module), available: false],
+          [
+            kind: "source_code",
+            target: inspect(detail.module),
+            available: false,
+            file: detail.source_display || detail.source_path
+          ],
           "(source unavailable)"
         )
 
@@ -164,7 +174,7 @@ defmodule Froth.ElixirDocs do
           [
             kind: "source_code",
             target: inspect(detail.module),
-            file: detail.source_path,
+            file: detail.source_display || detail.source_path,
             from_line: from_line,
             to_line: to_line
           ],
@@ -193,7 +203,8 @@ defmodule Froth.ElixirDocs do
           [
             kind: "source_code",
             target: "#{inspect(detail.module)}.#{function_detail.name}/#{function_detail.arity}",
-            available: false
+            available: false,
+            file: detail.source_display || detail.source_path
           ],
           "(source unavailable)"
         )
@@ -203,7 +214,7 @@ defmodule Froth.ElixirDocs do
           [
             kind: "source_code",
             target: "#{inspect(detail.module)}.#{function_detail.name}/#{function_detail.arity}",
-            file: detail.source_path,
+            file: detail.source_display || detail.source_path,
             from_line: from_line,
             to_line: to_line
           ],
@@ -237,15 +248,15 @@ defmodule Froth.ElixirDocs do
 
   defp module_detail(module) when is_atom(module) do
     with {:ok, docs} <- fetch_docs(module) do
-      source_path =
-        case source_path(module, docs) do
-          {:ok, path} -> path
+      source_info =
+        case source_info(module, docs) do
+          {:ok, info} -> info
           {:error, _reason} -> nil
         end
 
       source_context =
-        case source_path do
-          path when is_binary(path) ->
+        case source_info do
+          %{path: path} when is_binary(path) ->
             case source_context(path) do
               {:ok, context} -> context
               {:error, _reason} -> nil
@@ -257,7 +268,9 @@ defmodule Froth.ElixirDocs do
 
       detail = %{
         module: module,
-        source_path: source_path,
+        source_path: source_info && source_info.path,
+        source_display: source_info && source_info.display,
+        source_origin_url: source_info && source_info.origin_url,
         module_doc: module_doc_text(docs.module_doc),
         public_functions: public_functions(docs.fun_docs),
         source_range: module_source_range(source_context, module),
@@ -282,7 +295,7 @@ defmodule Froth.ElixirDocs do
     end
   end
 
-  defp source_path(module, docs) when is_atom(module) and is_map(docs) do
+  defp source_info(module, docs) when is_atom(module) and is_map(docs) do
     docs_path =
       docs.metadata[:source_path]
       |> normalize_path()
@@ -292,9 +305,12 @@ defmodule Froth.ElixirDocs do
       |> module_compile_source()
       |> normalize_path()
 
-    case docs_path || compile_path do
-      path when is_binary(path) and path != "" -> {:ok, path}
-      _ -> {:error, :source_unavailable}
+    case Enum.find([docs_path, compile_path], &readable_source_path?/1) do
+      path when is_binary(path) ->
+        {:ok, %{path: path, display: path, origin_url: nil}}
+
+      nil ->
+        fetch_stdlib_source(docs_path || compile_path)
     end
   end
 
@@ -688,6 +704,66 @@ defmodule Froth.ElixirDocs do
   defp normalize_path(path) when is_binary(path), do: path
   defp normalize_path(path) when is_list(path), do: List.to_string(path)
   defp normalize_path(_), do: nil
+
+  defp readable_source_path?(path) when is_binary(path), do: File.regular?(path)
+  defp readable_source_path?(_), do: false
+
+  defp fetch_stdlib_source(source_hint) when is_binary(source_hint) do
+    case stdlib_relative_path(source_hint) do
+      {:ok, relative_path} ->
+        if stdlib_app_allowed?(relative_path) do
+          cache_path =
+            Path.join([@stdlib_source_cache_root, "v#{System.version()}", relative_path])
+
+          url = "#{@stdlib_source_base}/v#{System.version()}/#{relative_path}"
+
+          with :ok <- ensure_cached_source(cache_path, url) do
+            {:ok, %{path: cache_path, display: url, origin_url: url}}
+          end
+        else
+          {:error, :source_unavailable}
+        end
+
+      :error ->
+        {:error, :source_unavailable}
+    end
+  end
+
+  defp fetch_stdlib_source(_), do: {:error, :source_unavailable}
+
+  defp stdlib_relative_path(source_hint) when is_binary(source_hint) do
+    case Regex.run(@stdlib_source_pattern, source_hint, capture: :all_but_first) do
+      [relative_path] -> {:ok, relative_path}
+      _ -> :error
+    end
+  end
+
+  defp stdlib_app_allowed?(relative_path) when is_binary(relative_path) do
+    try do
+      case String.split(relative_path, "/", parts: 3) do
+        ["lib", app, _rest] -> String.to_existing_atom(app) in @elixir_stdlib_apps
+        _ -> false
+      end
+    rescue
+      ArgumentError -> false
+    end
+  end
+
+  defp ensure_cached_source(cache_path, url) when is_binary(cache_path) and is_binary(url) do
+    if File.regular?(cache_path) do
+      :ok
+    else
+      with :ok <- File.mkdir_p(Path.dirname(cache_path)),
+           {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) <- Req.get(url: url),
+           :ok <- File.write(cache_path, body) do
+        :ok
+      else
+        {:ok, %Req.Response{status: status}} -> {:error, {:http_status, status}}
+        {:error, reason} -> {:error, reason}
+        other -> {:error, other}
+      end
+    end
+  end
 
   defp module_compile_source(module) when is_atom(module) do
     module

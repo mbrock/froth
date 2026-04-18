@@ -43,8 +43,8 @@ defmodule Froth.Inference.ToolsTest do
     assert get_in(spec, ["input_schema", "required"]) == ["ids"]
   end
 
-  test "elixir_eval hidden docs mode returns a Froth module overview" do
-    assert {:ok, [%Block{} = block]} = Tools.execute("elixir_eval", %{"mode" => "docs"}, 0, [])
+  test "elixir_eval docs action returns a Froth module overview" do
+    assert {:ok, [%Block{} = block]} = Tools.execute("elixir_eval", %{"action" => "docs"}, 0, [])
 
     assert Block.attr(block, :kind) == "module_overview"
     assert Block.attr(block, :app) == "froth"
@@ -52,12 +52,12 @@ defmodule Froth.Inference.ToolsTest do
     assert block.body =~ "Telegram"
   end
 
-  test "elixir_eval hidden docs mode returns function docs with source clips" do
+  test "elixir_eval docs action returns function docs with source clips" do
     assert {:ok, [%Block{} = block]} =
              Tools.execute(
                "elixir_eval",
                %{
-                 "mode" => "docs",
+                 "action" => "docs",
                  "targets" => ["Froth.help/1"],
                  "include_source" => true
                },
@@ -204,7 +204,17 @@ defmodule Froth.Inference.ToolsTest do
     assert specs["timeline"]["description"] =~ "same context renderer"
     assert specs["timeline"]["description"] =~ "literal phrase matches"
     assert specs["fetch"]["description"] =~ "saved as a local durable file"
-    assert get_in(specs, ["elixir_eval", "input_schema", "required"]) == ["code", "description"]
+    assert get_in(specs, ["elixir_eval", "input_schema", "required"]) == []
+
+    assert get_in(specs, ["elixir_eval", "input_schema", "properties", "action", "type"]) ==
+             "string"
+
+    assert get_in(specs, ["elixir_eval", "input_schema", "properties", "targets", "type"]) ==
+             "array"
+
+    assert get_in(specs, ["elixir_eval", "input_schema", "properties", "include_source", "type"]) ==
+             "boolean"
+
     assert get_in(specs, ["run_shell", "input_schema", "required"]) == ["command", "description"]
 
     assert get_in(specs, ["run_shell", "input_schema", "properties", "description", "required"]) ==
@@ -213,6 +223,14 @@ defmodule Froth.Inference.ToolsTest do
                "goals",
                "assumptions"
              ]
+  end
+
+  test "elixir_eval eval action validates code and description at runtime" do
+    assert {:error, "code must be a non-empty string"} =
+             Tools.execute("elixir_eval", %{"action" => "eval"}, 0, [])
+
+    assert {:error, "description must be an object for eval"} =
+             Tools.execute("elixir_eval", %{"action" => "eval", "code" => "1 + 1"}, 0, [])
   end
 
   test "spawn_agent is exposed in tool specs" do
