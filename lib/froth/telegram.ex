@@ -23,8 +23,10 @@ defmodule Froth.Telegram do
   import Kernel, except: [send: 2]
   import Ecto.Query
 
+  alias Froth.DurableFiles
   alias Froth.Telegram.SessionConfig
   alias Froth.Telemetry.Span
+  alias Vix.Vips.Image, as: Vimage
 
   def start_link(_opts) do
     result = Supervisor.start_link(__MODULE__, [], name: __MODULE__)
@@ -86,32 +88,87 @@ defmodule Froth.Telegram do
   end
 
   @doc """
-  Send a photo to a chat. Downloads HTTP URLs to a temp file first.
+  Send one image or an image album to a chat.
+
+  Accepts:
+
+    * a local path
+    * an HTTP URL
+    * a `%Vix.Vips.Image{}`
+    * an `Nx.Tensor`
+    * a list of any of the above
+
+  When given multiple images, sends them as a Telegram album. If
+  `caption` is provided for an album, it is attached to the first
+  image.
+
+      Froth.Telegram.send_image("charlie", chat_id, "/tmp/render.png", caption: "look at this")
+
+      Froth.Telegram.send_image("charlie", chat_id, [image_a, image_b],
+        caption: "two variants"
+      )
+  """
+  def send_image(session_id, chat_id, images, opts \\ [])
+
+  def send_image(session_id, chat_id, [], _opts)
+      when is_binary(session_id) and is_integer(chat_id) do
+    {:error, "send_image requires at least one image"}
+  end
+
+  def send_image(session_id, chat_id, [image], opts)
+      when is_binary(session_id) and is_integer(chat_id) and is_list(opts) do
+    send_image(session_id, chat_id, image, opts)
+  end
+
+  def send_image(session_id, chat_id, images, opts)
+      when is_binary(session_id) and is_integer(chat_id) and is_list(images) and is_list(opts) do
+    if length(images) > 10 do
+      {:error, "Telegram image albums support at most 10 images"}
+    else
+      with {:ok, prepared_images} <- prepare_album_images(images),
+           {:ok, _response} <-
+             %{
+               "@type" => "sendMessageAlbum",
+               "chat_id" => chat_id,
+               "input_message_contents" => album_contents(prepared_images, opts)
+             }
+             |> maybe_put_reply_to(opts[:reply_to])
+             |> then(&call(session_id, &1)) do
+        {:ok, Enum.map(prepared_images, & &1.metadata)}
+      end
+    end
+  end
+
+  def send_image(session_id, chat_id, image, opts)
+      when is_binary(session_id) and is_integer(chat_id) and is_list(opts) do
+    with {:ok, prepared_image} <- prepare_image(image),
+         {:ok, _response} <-
+           %{
+             "@type" => "sendMessage",
+             "chat_id" => chat_id,
+             "input_message_content" => photo_content(prepared_image.file_ref, opts)
+           }
+           |> maybe_put_reply_to(opts[:reply_to])
+           |> then(&call(session_id, &1)) do
+      {:ok, prepared_image.metadata}
+    end
+  end
+
+  @doc """
+  Send a photo to a chat. Downloads HTTP URLs to a durable file first.
   Optional caption.
 
       Froth.Telegram.send_photo("charlie", chat_id, "https://example.com/img.webp", caption: "look at this")
   """
-  def send_photo(session_id, chat_id, url, opts \\ []) do
-    caption = Keyword.get(opts, :caption)
-
-    with {:ok, file_ref} <- resolve_file(url, ".jpg") do
-      content = %{
-        "@type" => "inputMessagePhoto",
-        "photo" => file_ref,
-        "width" => 0,
-        "height" => 0
-      }
-
-      content =
-        if caption,
-          do: Map.put(content, "caption", %{"@type" => "formattedText", "text" => caption}),
-          else: content
-
-      call(session_id, %{
+  def send_photo(session_id, chat_id, image, opts \\ []) do
+    with {:ok, prepared_image} <- prepare_image(image) do
+      %{
         "@type" => "sendMessage",
         "chat_id" => chat_id,
-        "input_message_content" => content
-      })
+        "input_message_content" => photo_content(prepared_image.file_ref, opts)
+      }
+      |> maybe_put_reply_to(opts[:reply_to])
+      |> then(&call(session_id, &1))
     end
   end
 
@@ -217,6 +274,115 @@ defmodule Froth.Telegram do
     end
   end
 
+  defp prepare_album_images(images) when is_list(images) do
+    images
+    |> Enum.reduce_while({:ok, []}, fn image, {:ok, acc} ->
+      case prepare_image(image) do
+        {:ok, prepared_image} ->
+          {:cont, {:ok, acc ++ [prepared_image]}}
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp prepare_image(input) do
+    with {:ok, %{file_data: file_data, filename: filename, media_type: media_type}} <-
+           image_data(input),
+         {:ok, metadata} <- DurableFiles.persist(file_data, media_type, filename) do
+      {:ok,
+       %{
+         metadata: metadata,
+         file_ref: %{"@type" => "inputFileLocal", "path" => metadata["local_path"]}
+       }}
+    end
+  end
+
+  defp image_data(input)
+
+  defp image_data(input) when is_binary(input) do
+    if String.starts_with?(input, "http") do
+      download_image_data(input, ".png")
+    else
+      image_data_from_path(input)
+    end
+  end
+
+  defp image_data(%Vimage{} = image) do
+    original_filename = image_filename(image)
+    suffix = DurableFiles.extension_from_filename(original_filename) || ".png"
+    filename = ensure_image_filename(original_filename, suffix)
+
+    with {:ok, file_data} <- Image.write(image, :memory, suffix: suffix) do
+      {:ok,
+       %{
+         file_data: file_data,
+         filename: filename,
+         media_type:
+           DurableFiles.media_type_from_filename(filename) ||
+             "image/png"
+       }}
+    else
+      {:error, reason} ->
+        {:error, {:image_write_failed, reason}}
+    end
+  end
+
+  defp image_data(%Nx.Tensor{} = tensor) do
+    with {:ok, image} <- Image.from_nx(tensor) do
+      image_data(image)
+    else
+      {:error, reason} -> {:error, {:image_from_nx_failed, reason}}
+    end
+  end
+
+  defp image_data(_input) do
+    {:error, "Unsupported image input. Use a local path, URL, Image value, or Nx tensor."}
+  end
+
+  defp image_data_from_path(path) when is_binary(path) do
+    with {:ok, file_data} <- File.read(path) do
+      filename = Path.basename(path)
+
+      {:ok,
+       %{
+         file_data: file_data,
+         filename: filename,
+         media_type:
+           DurableFiles.media_type_from_path(path) ||
+             DurableFiles.media_type_from_filename(filename) ||
+             "image/png"
+       }}
+    else
+      {:error, reason} ->
+        {:error, {:file_read_failed, reason}}
+    end
+  end
+
+  defp download_image_data(url, default_ext) when is_binary(url) and is_binary(default_ext) do
+    filename = filename_from_url(url, default_ext)
+
+    case Finch.request(Finch.build(:get, url), Froth.Finch, receive_timeout: 120_000) do
+      {:ok, %Finch.Response{status: 200, body: body, headers: headers}} ->
+        {:ok,
+         %{
+           file_data: body,
+           filename: filename,
+           media_type:
+             content_type_from_headers(headers) ||
+               DurableFiles.media_type_from_filename(filename) ||
+               "image/png"
+         }}
+
+      {:ok, %Finch.Response{status: status}} ->
+        {:error, {:download_failed, status}}
+
+      {:error, err} ->
+        {:error, {:download_failed, err}}
+    end
+  end
+
   defp download_to_temp(url, default_ext) do
     ext =
       case URI.parse(url).path do
@@ -250,6 +416,84 @@ defmodule Froth.Telegram do
     end
   end
 
+  defp image_filename(%Vimage{} = image) do
+    case Image.filename(image) do
+      path when is_binary(path) and path != "" -> Path.basename(path)
+      _ -> nil
+    end
+  end
+
+  defp ensure_image_filename(filename, suffix)
+       when is_binary(filename) and filename != "" and is_binary(suffix) do
+    case DurableFiles.extension_from_filename(filename) do
+      extension when is_binary(extension) -> filename
+      _ -> filename <> suffix
+    end
+  end
+
+  defp ensure_image_filename(_filename, suffix) when is_binary(suffix), do: "image#{suffix}"
+
+  defp filename_from_url(url, default_ext) when is_binary(url) and is_binary(default_ext) do
+    case URI.parse(url).path do
+      path when is_binary(path) and path != "" ->
+        case Path.basename(path) do
+          "" -> "image#{default_ext}"
+          "/" -> "image#{default_ext}"
+          basename -> basename
+        end
+
+      _ ->
+        "image#{default_ext}"
+    end
+  end
+
+  defp content_type_from_headers(headers) when is_list(headers) do
+    headers
+    |> Enum.find_value(fn
+      {"content-type", value} when is_binary(value) -> value
+      {"Content-Type", value} when is_binary(value) -> value
+      _ -> nil
+    end)
+  end
+
+  defp content_type_from_headers(_headers), do: nil
+
+  defp album_contents(prepared_images, opts) when is_list(prepared_images) and is_list(opts) do
+    caption = Keyword.get(opts, :caption)
+    caption_entities = Keyword.get(opts, :caption_entities)
+
+    prepared_images
+    |> Enum.with_index()
+    |> Enum.map(fn {%{file_ref: file_ref}, index} ->
+      item_opts =
+        if index == 0 and is_binary(caption) and caption != "" do
+          [caption: caption, caption_entities: caption_entities]
+        else
+          []
+        end
+
+      photo_content(file_ref, item_opts)
+    end)
+  end
+
+  defp photo_content(file_ref, opts) when is_map(file_ref) and is_list(opts) do
+    content = %{
+      "@type" => "inputMessagePhoto",
+      "photo" => file_ref,
+      "width" => Keyword.get(opts, :width, 0),
+      "height" => Keyword.get(opts, :height, 0)
+    }
+
+    caption = Keyword.get(opts, :caption)
+    caption_entities = Keyword.get(opts, :caption_entities)
+
+    if is_binary(caption) and caption != "" do
+      Map.put(content, "caption", formatted_text(caption, caption_entities))
+    else
+      content
+    end
+  end
+
   defp formatted_text(text, entities) when is_binary(text) do
     case entities do
       entities when is_list(entities) ->
@@ -266,6 +510,19 @@ defmodule Froth.Telegram do
         }
     end
   end
+
+  defp maybe_put_reply_to(payload, nil), do: payload
+  defp maybe_put_reply_to(payload, 0), do: payload
+
+  defp maybe_put_reply_to(payload, message_id)
+       when is_map(payload) and is_integer(message_id) and message_id > 0 do
+    Map.put(payload, "reply_to", %{
+      "@type" => "inputMessageReplyToMessage",
+      "message_id" => message_id
+    })
+  end
+
+  defp maybe_put_reply_to(payload, _message_id), do: payload
 
   # --- text drafts (Bot API 9.3, DM only) ---
   # Streams partial message text to a user while generating.
