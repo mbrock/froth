@@ -79,7 +79,12 @@ defmodule Froth.MixProject do
       {:logger_json, "~> 7.0"},
       {:ecto_ulid, "~> 0.3.0"},
       {:mint_web_socket, "~> 1.0"},
-      {:fresh, "~> 0.4"}
+      {:fresh, "~> 0.4"},
+      {:nx, "~> 0.10"},
+      {:bumblebee, "~> 0.6"},
+      {:exla, ">= 0.0.0"},
+      {:image, ">= 0.0.0"},
+      {:evision, ">= 0.0.0"}
     ]
   end
 

@@ -28,6 +28,8 @@ froth-*.tar
 # Ignore assets that are produced by build tools.
 /priv/static/assets/
 /priv/static/codex_uploads/
+/priv/static/files/*.*
+!/priv/static/files/.gitkeep
 
 # Ignore artworks
 /priv/static/art

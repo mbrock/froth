@@ -21,11 +21,12 @@ defmodule Froth.Inference.ToolsTest do
     refute Enum.any?(Tools.specs_for_api(), &(&1["type"] == "mcp_endpoint"))
   end
 
-  test "look is exposed in tool specs" do
-    spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "look"))
+  test "fetch is exposed in tool specs" do
+    spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "fetch"))
 
     refute is_nil(spec)
     assert get_in(spec, ["input_schema", "required"]) == ["message_id"]
+    assert get_in(spec, ["input_schema", "properties", "view", "type"]) == "boolean"
   end
 
   test "timeline is exposed in tool specs" do
@@ -169,7 +170,7 @@ defmodule Froth.Inference.ToolsTest do
     refute Map.has_key?(specs, "read_tool_transcript")
     assert specs["timeline"]["description"] =~ "same context renderer"
     assert specs["timeline"]["description"] =~ "literal phrase matches"
-    assert specs["look"]["description"] =~ "supports images and PDFs only"
+    assert specs["fetch"]["description"] =~ "saved as a local durable file"
     assert get_in(specs, ["elixir_eval", "input_schema", "required"]) == ["code", "description"]
     assert get_in(specs, ["run_shell", "input_schema", "required"]) == ["command", "description"]
 
@@ -317,12 +318,12 @@ defmodule Froth.Inference.ToolsTest do
     assert message =~ "run_shell"
   end
 
-  test "look validates message references before trying telegram download" do
+  test "fetch validates message references before trying telegram download" do
     chat_id = unique_chat_id()
 
     assert {:error, message} =
              Tools.execute(
-               "look",
+               "fetch",
                %{"message_id" => "msg:not_a_number"},
                chat_id,
                bot_id: "charlie",
@@ -332,15 +333,102 @@ defmodule Froth.Inference.ToolsTest do
     assert message =~ "Invalid message_id"
   end
 
-  test "look loads a pdf document through telegram and returns multimodal blocks" do
+  test "fetch loads a photo through telegram, materializes it, and inlines it by default" do
+    chat_id = unique_chat_id()
+    file_id = 987_651
+    message_id = 12_341
+    previous_base_url = Application.get_env(:froth, :files_base_url)
+
+    Application.put_env(:froth, :files_base_url, "https://files.test/files")
+
+    on_exit(fn ->
+      if is_nil(previous_base_url) do
+        Application.delete_env(:froth, :files_base_url)
+      else
+        Application.put_env(:froth, :files_base_url, previous_base_url)
+      end
+    end)
+
+    tmp_path =
+      Path.join(System.tmp_dir!(), "froth-fetch-#{System.unique_integer([:positive])}.jpg")
+
+    image_data = <<0xFF, 0xD8, 0xFF>> <> Integer.to_string(System.unique_integer([:positive]))
+    File.write!(tmp_path, image_data)
+    on_exit(fn -> File.rm(tmp_path) end)
+
+    session_id =
+      start_fake_session(
+        request_handler: fn
+          %{"@type" => "getMessage", "chat_id" => ^chat_id, "message_id" => ^message_id} ->
+            {:ok,
+             %{
+               "content" => %{
+                 "@type" => "messagePhoto",
+                 "photo" => %{
+                   "sizes" => [
+                     %{"width" => 64, "height" => 64, "photo" => %{"id" => file_id}}
+                   ]
+                 }
+               }
+             }}
+
+          %{"@type" => "downloadFile", "file_id" => ^file_id} ->
+            {:ok, %{"local" => %{"path" => tmp_path}}}
+
+          _ ->
+            :default
+        end
+      )
+
+    assert {:ok,
+            [
+              %{"type" => "text", "text" => metadata_json},
+              %{"type" => "image", "source" => source}
+            ]} =
+             Tools.execute(
+               "fetch",
+               %{"message_id" => "msg:#{message_id}"},
+               chat_id,
+               bot_id: "charlie",
+               session_id: session_id
+             )
+
+    metadata = Jason.decode!(metadata_json)
+
+    on_exit(fn -> File.rm(metadata["local_path"]) end)
+
+    assert metadata["filename"] == "photo-#{message_id}.jpg"
+    assert metadata["media_type"] == "image/jpeg"
+    assert metadata["size_bytes"] == byte_size(image_data)
+    assert metadata["public_url"] =~ "https://files.test/files/"
+    assert metadata["local_path"] =~ "/priv/static/files/"
+    assert File.read!(metadata["local_path"]) == image_data
+
+    assert source["type"] == "base64"
+    assert source["media_type"] == "image/jpeg"
+    assert Base.decode64!(source["data"]) == image_data
+  end
+
+  test "fetch loads a pdf document and skips inline view by default" do
     chat_id = unique_chat_id()
     file_id = 987_654
     message_id = 12_345
+    previous_base_url = Application.get_env(:froth, :files_base_url)
+
+    Application.put_env(:froth, :files_base_url, "https://files.test/files")
+
+    on_exit(fn ->
+      if is_nil(previous_base_url) do
+        Application.delete_env(:froth, :files_base_url)
+      else
+        Application.put_env(:froth, :files_base_url, previous_base_url)
+      end
+    end)
 
     tmp_path =
-      Path.join(System.tmp_dir!(), "froth-look-#{System.unique_integer([:positive])}.pdf")
+      Path.join(System.tmp_dir!(), "froth-fetch-#{System.unique_integer([:positive])}.pdf")
 
-    pdf_data = "%PDF-1.4\nlook test\n"
+    pdf_data = "%PDF-1.4\nfetch test\n"
     File.write!(tmp_path, pdf_data)
     on_exit(fn -> File.rm(tmp_path) end)
 
@@ -369,21 +457,162 @@ defmodule Froth.Inference.ToolsTest do
         end
       )
 
-    assert {:ok,
-            [%{"type" => "text", "text" => metadata}, %{"type" => "document", "source" => source}]} =
+    assert {:ok, [%{"type" => "text", "text" => metadata_json}]} =
              Tools.execute(
-               "look",
+               "fetch",
                %{"message_id" => "tg:#{message_id}"},
                chat_id,
                bot_id: "charlie",
                session_id: session_id
              )
 
-    assert metadata =~ "Loaded msg:#{message_id}"
-    assert metadata =~ "kind: pdf"
-    assert metadata =~ "media_type: application/pdf"
-    assert metadata =~ "filename: sample.pdf"
-    assert metadata =~ "caption: Sample caption"
+    metadata = Jason.decode!(metadata_json)
+
+    on_exit(fn -> File.rm(metadata["local_path"]) end)
+
+    assert metadata["filename"] == "sample.pdf"
+    assert metadata["media_type"] == "application/pdf"
+    assert metadata["size_bytes"] == byte_size(pdf_data)
+    assert metadata["public_url"] =~ "https://files.test/files/"
+    assert metadata["local_path"] =~ "/priv/static/files/"
+    assert File.read!(metadata["local_path"]) == pdf_data
+  end
+
+  test "fetch loads a video and materializes it without inline view by default" do
+    chat_id = unique_chat_id()
+    file_id = 987_655
+    message_id = 12_346
+    previous_base_url = Application.get_env(:froth, :files_base_url)
+
+    Application.put_env(:froth, :files_base_url, "https://files.test/files")
+
+    on_exit(fn ->
+      if is_nil(previous_base_url) do
+        Application.delete_env(:froth, :files_base_url)
+      else
+        Application.put_env(:froth, :files_base_url, previous_base_url)
+      end
+    end)
+
+    tmp_path =
+      Path.join(System.tmp_dir!(), "froth-fetch-#{System.unique_integer([:positive])}.mp4")
+
+    video_data =
+      <<0, 0, 0, 24, ?f, ?t, ?y, ?p>> <> Integer.to_string(System.unique_integer([:positive]))
+
+    File.write!(tmp_path, video_data)
+    on_exit(fn -> File.rm(tmp_path) end)
+
+    session_id =
+      start_fake_session(
+        request_handler: fn
+          %{"@type" => "getMessage", "chat_id" => ^chat_id, "message_id" => ^message_id} ->
+            {:ok,
+             %{
+               "content" => %{
+                 "@type" => "messageVideo",
+                 "video" => %{
+                   "video" => %{"id" => file_id},
+                   "file_name" => "clip.mp4",
+                   "mime_type" => "video/mp4"
+                 }
+               }
+             }}
+
+          %{"@type" => "downloadFile", "file_id" => ^file_id} ->
+            {:ok, %{"local" => %{"path" => tmp_path}}}
+
+          _ ->
+            :default
+        end
+      )
+
+    assert {:ok, [%{"type" => "text", "text" => metadata_json}]} =
+             Tools.execute(
+               "fetch",
+               %{"message_id" => message_id},
+               chat_id,
+               bot_id: "charlie",
+               session_id: session_id
+             )
+
+    metadata = Jason.decode!(metadata_json)
+
+    on_exit(fn -> File.rm(metadata["local_path"]) end)
+
+    assert metadata["filename"] == "clip.mp4"
+    assert metadata["media_type"] == "video/mp4"
+    assert metadata["size_bytes"] == byte_size(video_data)
+    assert metadata["public_url"] =~ "https://files.test/files/"
+    assert metadata["local_path"] =~ "/priv/static/files/"
+    assert File.read!(metadata["local_path"]) == video_data
+  end
+
+  test "fetch inlines a pdf when view is explicitly true" do
+    chat_id = unique_chat_id()
+    file_id = 987_656
+    message_id = 12_347
+    previous_base_url = Application.get_env(:froth, :files_base_url)
+
+    Application.put_env(:froth, :files_base_url, "https://files.test/files")
+
+    on_exit(fn ->
+      if is_nil(previous_base_url) do
+        Application.delete_env(:froth, :files_base_url)
+      else
+        Application.put_env(:froth, :files_base_url, previous_base_url)
+      end
+    end)
+
+    tmp_path =
+      Path.join(System.tmp_dir!(), "froth-fetch-#{System.unique_integer([:positive])}.pdf")
+
+    pdf_data = "%PDF-1.4\nfetch view test\n"
+    File.write!(tmp_path, pdf_data)
+    on_exit(fn -> File.rm(tmp_path) end)
+
+    session_id =
+      start_fake_session(
+        request_handler: fn
+          %{"@type" => "getMessage", "chat_id" => ^chat_id, "message_id" => ^message_id} ->
+            {:ok,
+             %{
+               "content" => %{
+                 "@type" => "messageDocument",
+                 "document" => %{
+                   "document" => %{"id" => file_id},
+                   "file_name" => "viewable.pdf",
+                   "mime_type" => "application/pdf"
+                 }
+               }
+             }}
+
+          %{"@type" => "downloadFile", "file_id" => ^file_id} ->
+            {:ok, %{"local" => %{"path" => tmp_path}}}
+
+          _ ->
+            :default
+        end
+      )
+
+    assert {:ok,
+            [
+              %{"type" => "text", "text" => metadata_json},
+              %{"type" => "document", "source" => source}
+            ]} =
+             Tools.execute(
+               "fetch",
+               %{"message_id" => message_id, "view" => true},
+               chat_id,
+               bot_id: "charlie",
+               session_id: session_id
+             )
+
+    metadata = Jason.decode!(metadata_json)
+
+    on_exit(fn -> File.rm(metadata["local_path"]) end)
+
+    assert metadata["filename"] == "viewable.pdf"
     assert source["type"] == "base64"
     assert source["media_type"] == "application/pdf"
     assert Base.decode64!(source["data"]) == pdf_data

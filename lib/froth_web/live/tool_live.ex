@@ -1202,7 +1202,7 @@ defmodule FrothWeb.ToolLive do
 
   defp tool_label("timeline"), do: "Timeline"
   defp tool_label("view_analysis"), do: "Read analysis"
-  defp tool_label("look"), do: "Look at media"
+  defp tool_label("fetch"), do: "Fetch media"
   defp tool_label("send_message"), do: "Send message"
   defp tool_label("elixir_eval"), do: "Run code (Elixir)"
   defp tool_label(name) when is_binary(name), do: name

@@ -644,7 +644,7 @@ defmodule Froth.Telegram.BotContextHTML do
               entries: [
                 %{
                   kind: :call,
-                  tool: "look",
+                  tool: "fetch",
                   input: %{"message_id" => "4401"}
                 },
                 %{

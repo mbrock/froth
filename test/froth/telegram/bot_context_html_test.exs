@@ -222,7 +222,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
       assert html =~ "context"
       assert html =~ "builder"
       assert html =~ ~s(<cycle id=01JNWABC)
-      assert html =~ ~s(<call tool=look)
+      assert html =~ ~s(<call tool=fetch)
 
       # newest user message is part of the same <msg> stream
       assert html =~ ~s(<text id=tg:4405)
@@ -274,7 +274,7 @@ defmodule Froth.Telegram.BotContextHTMLTest do
             cycle_id: "abc",
             inserted_at: ~U[2026-03-06 09:21:33Z],
             entries: [
-              %{kind: :call, tool: "look", input: %{"message_id" => "4401"}},
+              %{kind: :call, tool: "fetch", input: %{"message_id" => "4401"}},
               %{kind: :return, outcome: {:ok, "ok"}}
             ]
           })

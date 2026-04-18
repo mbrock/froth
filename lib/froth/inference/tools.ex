@@ -10,7 +10,7 @@ defmodule Froth.Inference.Tools do
   alias Froth.Tools.Await, as: AwaitTool
   alias Froth.Tools.ElixirEval, as: ElixirEvalTool
   alias Froth.Tools.ListTasks, as: ListTasksTool
-  alias Froth.Tools.Look, as: LookTool
+  alias Froth.Tools.Fetch, as: FetchTool
   alias Froth.Tools.Pager, as: PagerTool
   alias Froth.Tools.RegisterHeadlines, as: RegisterHeadlinesTool
   alias Froth.Tools.RunShell, as: RunShellTool
@@ -37,7 +37,7 @@ defmodule Froth.Inference.Tools do
     SpawnEngineerTool,
     PagerTool,
     ViewAnalysisTool,
-    LookTool,
+    FetchTool,
     TimelineTool
   ]
   @callable_tool_modules [RegisterHeadlinesTool | @extracted_tool_modules]
