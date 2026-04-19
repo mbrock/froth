@@ -138,6 +138,93 @@ defmodule Froth.Tools.FetchTest do
       File.rm(Block.attr(block, :local_path))
     end
 
+    test "HEAD 405 with text/html on an actual image still routes correctly via GET fallback" do
+      # Many sites (HN among them) return 405 Method Not Allowed for
+      # HEAD with content-type: text/html (the error page's type).
+      # We must NOT trust that and route to lightpanda — the actual
+      # resource here is a PNG and we should get its raw bytes back.
+      png_bytes = <<137, 80, 78, 71, 13, 10, 26, 10>> <> :crypto.strong_rand_bytes(64)
+      stub_name = {:fetch_405_then_png, System.unique_integer([:positive])}
+
+      ReqTest.stub(stub_name, fn conn ->
+        case conn.method do
+          "HEAD" ->
+            conn
+            |> Plug.Conn.put_resp_header("content-type", "text/html")
+            |> Plug.Conn.send_resp(405, "")
+
+          "GET" ->
+            conn
+            |> Plug.Conn.put_resp_header("content-type", "image/png")
+            |> Plug.Conn.send_resp(200, png_bytes)
+        end
+      end)
+
+      Req.default_options(plug: {ReqTest, stub_name})
+
+      assert {:ok, [%Block{} = block]} =
+               Fetch.execute(
+                 empty_context(),
+                 tool_use(%{"source" => "https://example.test/disguised.png"}),
+                 []
+               )
+
+      assert Block.attr(block, :mime) == "image/png"
+      assert block.body == png_bytes
+
+      File.rm(Block.attr(block, :local_path))
+    end
+
+    test "HEAD 405 + GET text/html falls back to lightpanda" do
+      # The other half of the previous case: a 405 HEAD shouldn't
+      # commit us to the GET body when the resource genuinely IS
+      # HTML — we should still re-route through lightpanda for
+      # markdown rendering. Since invoking the real lightpanda binary
+      # in a unit test isn't desirable, we just assert that the
+      # routing reaches an :error from the (presumably absent or
+      # network-blocked) lightpanda binary; the important thing is
+      # that we did NOT end up with the raw HTML body inlined as the
+      # block's content.
+      stub_name = {:fetch_405_then_html, System.unique_integer([:positive])}
+
+      ReqTest.stub(stub_name, fn conn ->
+        case conn.method do
+          "HEAD" ->
+            conn
+            |> Plug.Conn.put_resp_header("content-type", "text/html")
+            |> Plug.Conn.send_resp(405, "")
+
+          "GET" ->
+            conn
+            |> Plug.Conn.put_resp_header("content-type", "text/html; charset=utf-8")
+            |> Plug.Conn.send_resp(200, "<!doctype html><body>real html</body>")
+        end
+      end)
+
+      Req.default_options(plug: {ReqTest, stub_name})
+
+      result =
+        Fetch.execute(
+          empty_context(),
+          tool_use(%{"source" => "https://example.test/page"}),
+          []
+        )
+
+      # Either lightpanda renders successfully (and we get markdown)
+      # or its invocation fails — but in no case should the raw HTML
+      # body leak through as the block's content.
+      case result do
+        {:ok, [%Block{} = block]} ->
+          assert Block.attr(block, :mime) == "text/markdown"
+          refute block.body && block.body =~ "<!doctype html"
+          File.rm(Block.attr(block, :local_path))
+
+        {:error, msg} ->
+          assert is_binary(msg)
+          assert msg =~ "lightpanda"
+      end
+    end
+
     test "non-2xx response returns a clear error" do
       stub_name = {:fetch_404, System.unique_integer([:positive])}
 

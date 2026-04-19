@@ -174,29 +174,52 @@ defmodule Froth.Tools.Fetch do
     )
   end
 
+  # Two-step dispatch:
+  #
+  # 1. HEAD probe — only trusted when the server returns a 2xx with a
+  #    content-type. Method-not-allowed pages and similar error
+  #    responses commonly carry a misleading `text/html` (the error
+  #    page's own type, not the resource's), so a 405-on-image would
+  #    otherwise route us to lightpanda which would render the binary
+  #    as if it were a webpage.
+  #
+  # 2. If HEAD wasn't authoritative, do a real GET. The GET's
+  #    content-type is the actual resource type. If it's HTML, throw
+  #    away the body we just downloaded and re-fetch via lightpanda
+  #    so we still get markdown. Otherwise the body we have is the
+  #    answer — no extra round trip.
   defp do_fetch_url(url) do
     case head_content_type(url) do
       {:ok, content_type} ->
         if html_like?(content_type) do
-          {fetch_via_lightpanda(url), %{outcome: :lightpanda, content_type: content_type}}
+          {fetch_via_lightpanda(url), %{outcome: :lightpanda_via_head, content_type: content_type}}
         else
-          {fetch_via_req(url, content_type), %{outcome: :req, content_type: content_type}}
+          {fetch_via_req(url, content_type), %{outcome: :req_via_head, content_type: content_type}}
         end
 
       :unknown ->
-        {fetch_via_req(url, nil), %{outcome: :req_blind}}
+        case fetch_via_req(url, nil) do
+          {:ok, %Fetched{declared_media_type: media_type} = fetched} ->
+            if media_type && html_like?(media_type) do
+              {fetch_via_lightpanda(url),
+               %{outcome: :lightpanda_via_get, content_type: media_type}}
+            else
+              {{:ok, fetched}, %{outcome: :req_via_get_sniff, content_type: media_type}}
+            end
+
+          {:error, _} = error ->
+            {error, %{outcome: :error}}
+        end
     end
   end
 
-  # Many sites (Hacker News among them) return 405 Method Not Allowed
-  # for HEAD but still set a Content-Type header on the error response
-  # — that's still good enough to route on. We trust any HEAD that
-  # gives us a content-type and only fall back to a "blind GET" when
-  # the server is silent. If the routing turns out wrong, the GET in
-  # `fetch_via_req` is still authoritative for the actual bytes.
+  # Strict HEAD: only trust 2xx responses. A 4xx/5xx with a
+  # content-type is reporting on the error page, not the resource,
+  # and trusting it would misroute (e.g. a 405-on-PNG that returns an
+  # HTML error page would be sent to lightpanda).
   defp head_content_type(url) do
     case Req.head(url, redirect: true, retry: false, decode_body: false) do
-      {:ok, %Req.Response{headers: headers}} ->
+      {:ok, %Req.Response{status: status, headers: headers}} when status in 200..299 ->
         case content_type_header(headers) do
           nil -> :unknown
           ct -> {:ok, ct}
