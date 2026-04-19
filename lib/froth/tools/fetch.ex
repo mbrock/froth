@@ -70,7 +70,7 @@ defmodule Froth.Tools.Fetch do
           "view" => %{
             "type" => "boolean",
             "description" =>
-              "Whether to inline the bytes in the block body. Defaults to true for images, PDFs, and textual content; false for opaque binaries."
+              "Whether to inline the bytes in the block body. Defaults to true for images and textual content (markdown, JSON, XML, etc.); false for PDFs, audio, video, archives, and other opaque binaries — pass true explicitly when you want those inlined."
           }
         },
         "required" => ["source"],
@@ -188,10 +188,15 @@ defmodule Froth.Tools.Fetch do
     end
   end
 
+  # Many sites (Hacker News among them) return 405 Method Not Allowed
+  # for HEAD but still set a Content-Type header on the error response
+  # — that's still good enough to route on. We trust any HEAD that
+  # gives us a content-type and only fall back to a "blind GET" when
+  # the server is silent. If the routing turns out wrong, the GET in
+  # `fetch_via_req` is still authoritative for the actual bytes.
   defp head_content_type(url) do
     case Req.head(url, redirect: true, retry: false, decode_body: false) do
-      {:ok, %Req.Response{status: status, headers: headers}}
-      when status in 200..399 ->
+      {:ok, %Req.Response{headers: headers}} ->
         case content_type_header(headers) do
           nil -> :unknown
           ct -> {:ok, ct}
@@ -291,9 +296,10 @@ defmodule Froth.Tools.Fetch do
   end
 
   # Returns a filename derived from the URL path, or nil if the URL
-  # has no useful basename. nil lets the post-resolution pipeline
-  # synthesize a name from the fallback basename plus the
-  # media-type-derived extension.
+  # has no useful basename (or its basename has no extension). nil
+  # lets the post-resolution pipeline synthesize a name from the
+  # fallback basename plus the media-type-derived extension, which
+  # ensures downstream tooling sees a sensible file extension.
   defp filename_from_url(url, opts \\ []) when is_binary(url) do
     force_ext = Keyword.get(opts, :force_ext)
 
@@ -304,6 +310,7 @@ defmodule Froth.Tools.Fetch do
         cond do
           base == "" -> nil
           force_ext -> Path.rootname(base) <> force_ext
+          Path.extname(base) == "" -> nil
           true -> base
         end
 
