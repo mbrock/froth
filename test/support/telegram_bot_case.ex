@@ -47,6 +47,7 @@ defmodule Froth.TelegramBotCase do
       alias Froth.LLM.Fake, as: FakeLLM
       alias Froth.Repo
       alias Froth.Telegram.Bot
+      alias Froth.Telegram.BotRuntime
 
       import Froth.TelegramBotCase
     end
@@ -85,7 +86,7 @@ defmodule Froth.TelegramBotCase do
   `FakeLLM.claim/0`, so any request routed to it lands on the current
   test pid via `assert_receive`).
 
-  Returns `%{bot: pid, bot_id: id, session_id: id, model: id}`.
+  Returns `%{bot: pid, bot_runtime: pid, bot_id: id, session_id: id, model: id}`.
   """
   def start_charlie_bot(opts \\ []) do
     session_id =
@@ -118,8 +119,9 @@ defmodule Froth.TelegramBotCase do
       |> Keyword.put(:model, model)
       |> Keyword.put_new(:name, Froth.Telegram.Bots.via(bot_id))
 
-    bot = ExUnit.Callbacks.start_supervised!({Froth.Telegram.Bot, bot_opts})
+    runtime = ExUnit.Callbacks.start_supervised!({Froth.Telegram.BotRuntime, bot_opts})
+    {bot, _config} = Froth.Telegram.Bot.snapshot(runtime)
 
-    %{bot: bot, bot_id: bot_id, session_id: session_id, model: model}
+    %{bot: bot, bot_runtime: runtime, bot_id: bot_id, session_id: session_id, model: model}
   end
 end

@@ -307,7 +307,7 @@ defmodule Froth.Inference.ToolsTest do
   end
 
   test "spawn_agent runtime stops when the owning bot stops" do
-    %{bot_id: bot_id, session_id: session_id} = start_charlie_bot()
+    %{bot_runtime: _bot_runtime, bot_id: bot_id, session_id: session_id} = start_charlie_bot()
     chat_id = unique_chat_id()
     model = FakeLLM.claim()
 
@@ -329,7 +329,7 @@ defmodule Froth.Inference.ToolsTest do
     runtime_pid = wait_for_runtime(result["cycle_id"])
     ref = Process.monitor(runtime_pid)
 
-    :ok = stop_supervised({Froth.Telegram.Bot, bot_id})
+    :ok = stop_supervised({Froth.Telegram.BotRuntime, bot_id})
 
     assert_receive {:DOWN, ^ref, :process, ^runtime_pid, _reason}, 5_000
     _ = :sys.get_state(Module.concat(Froth.Agent.CycleRegistry, "PIDPartition0"))

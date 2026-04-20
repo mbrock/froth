@@ -3,7 +3,7 @@ defmodule Froth.Telegram.Charlie do
   Charlie bot profile (identity + prompt config) backed by `Froth.Telegram.Bot`.
   """
 
-  alias Froth.Telegram.Bot
+  alias Froth.Telegram.BotRuntime
   alias Froth.Telegram.Profiles.CharliePrompt
   alias Froth.Telegram.Toolsets.Charlie, as: CharlieTools
 
@@ -75,6 +75,6 @@ defmodule Froth.Telegram.Charlie do
       |> Map.merge(Map.new(opts))
       |> Map.put(:name, name)
 
-    Bot.start_link(config)
+    BotRuntime.start_link(config)
   end
 end

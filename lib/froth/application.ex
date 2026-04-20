@@ -83,7 +83,7 @@ defmodule Froth.Application do
           {Registry, keys: :unique, name: Froth.Agent.CycleRegistry}
         ] ++
           Enum.map(Application.fetch_env!(:froth, Froth.Telegram.Bot), fn bot_opts ->
-            {Froth.Telegram.Bot, bot_opts}
+            {Froth.Telegram.BotRuntime, bot_opts}
           end) ++
           [
             {Registry, keys: :unique, name: Froth.Codex.SessionRegistry},

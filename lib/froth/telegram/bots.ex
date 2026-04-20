@@ -7,6 +7,7 @@ defmodule Froth.Telegram.Bots do
 
   use Supervisor
 
+  alias Froth.Telegram.BotRuntime
   alias Froth.Telegram.Charlie
   alias Froth.Telemetry.Span
 
@@ -68,8 +69,14 @@ defmodule Froth.Telegram.Bots do
 
   def cast(bot_id, message) when is_binary(bot_id) do
     case Registry.lookup(@registry, bot_id) do
-      [{pid, _}] -> GenServer.cast(pid, message)
-      [] -> :ok
+      [{pid, _}] ->
+        case BotRuntime.bot_pid(pid) do
+          bot_pid when is_pid(bot_pid) -> GenServer.cast(bot_pid, message)
+          nil -> GenServer.cast(pid, message)
+        end
+
+      [] ->
+        :ok
     end
   end
 

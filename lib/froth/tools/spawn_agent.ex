@@ -7,6 +7,7 @@ defmodule Froth.Tools.SpawnAgent do
   alias Froth.Agent.{Config, CycleRuntime, Message, TaskBridge, ToolUse}
   alias Froth.Repo
   alias Froth.Telegram.Bot
+  alias Froth.Telegram.BotRuntime
   alias Froth.Telegram.Bot.Config, as: BotConfig
   alias Froth.Telegram.Bots
   alias Froth.Telegram.CycleLink
@@ -121,7 +122,7 @@ defmodule Froth.Tools.SpawnAgent do
           chat_id: chat_id,
           reply_to: reply_to,
           bot_id: bot_id,
-          bot_pid: bot_id && GenServer.whereis(Bots.via(bot_id)),
+          bot_pid: bot_id && BotRuntime.bot_pid(Bots.via(bot_id)),
           parent_cycle_id: parent_cycle_id,
           bot_config: bc,
           spam: ctx.spam
