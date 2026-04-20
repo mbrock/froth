@@ -42,6 +42,7 @@ defmodule Froth.Agent.CycleRuntime do
   @type opts :: [
           cycle_id: String.t(),
           bot_id: String.t() | nil,
+          bot_ref: pid() | atom() | {:via, module(), term()} | nil,
           parent_cycle_id: String.t() | nil,
           cycle: Cycle.t() | nil,
           worker_config: Config.t() | nil,
@@ -82,7 +83,7 @@ defmodule Froth.Agent.CycleRuntime do
   Start a bot-owned root cycle runtime under the resolved Bot's private
   cycle supervisor. Returns `{:ok, pid}` on success.
   """
-  @spec start_for_bot(pid() | atom() | {:via, module(), term()}, opts()) ::
+  @spec start_for_bot(String.t() | pid() | atom() | {:via, module(), term()}, opts()) ::
           DynamicSupervisor.on_start_child() | {:error, :bot_not_running}
   def start_for_bot(bot_ref, opts) when is_list(opts) do
     Bot.start_cycle_runtime(bot_ref, opts)
@@ -220,7 +221,7 @@ defmodule Froth.Agent.CycleRuntime do
 
   `opts` are passed through to `start_for_bot/2` and must include at
   least `:cycle_id`, `:cycle`, and `:worker_config`, plus bot ownership
-  via `:bot_pid` or `:bot_id`.
+  via `:bot_id` or explicit `:bot_ref`.
   """
   @spec event_stream_for(opts()) :: Enumerable.t()
   def event_stream_for(opts) when is_list(opts) do
@@ -669,15 +670,15 @@ defmodule Froth.Agent.CycleRuntime do
 
   defp bot_ref_from_opts!(opts) when is_list(opts) do
     cond do
-      is_pid(Keyword.get(opts, :bot_pid)) ->
-        Keyword.fetch!(opts, :bot_pid)
+      ref = Keyword.get(opts, :bot_ref) ->
+        ref
 
       is_binary(Keyword.get(opts, :bot_id)) ->
         Bots.via(Keyword.fetch!(opts, :bot_id))
 
       true ->
         raise ArgumentError,
-              "bot-owned cycle runtime requires :bot_pid or :bot_id in runtime opts"
+              "bot-owned cycle runtime requires :bot_id or :bot_ref in runtime opts"
     end
   end
 

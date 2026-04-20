@@ -1169,7 +1169,7 @@ defmodule Froth.Agent.WorkerTest do
       prompt = "run a quick shell command and summarize it"
       user_message = Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
       cycle = Agent.begin_cycle(user_message, config)
-      %{bot: bot} = Froth.TelegramBotCase.start_charlie_bot(model: model)
+      %{bot_id: bot_id} = Froth.TelegramBotCase.start_charlie_bot(model: model)
 
       run_task =
         Task.async(fn ->
@@ -1177,7 +1177,7 @@ defmodule Froth.Agent.WorkerTest do
             cycle_id: cycle.id,
             cycle: cycle,
             worker_config: config,
-            bot_pid: bot
+            bot_id: bot_id
           )
         end)
 

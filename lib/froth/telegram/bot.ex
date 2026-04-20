@@ -11,7 +11,7 @@ defmodule Froth.Telegram.Bot do
   import Ecto.Query
 
   alias Froth.Agent
-  alias Froth.Telegram.BotRuntime
+  alias Froth.Telegram.Bots
 
   alias Froth.Agent.{
     AwaitControl,
@@ -70,15 +70,20 @@ defmodule Froth.Telegram.Bot do
   @doc """
   Start a `CycleRuntime` under the resolved bot's private cycle supervisor.
   """
-  @spec start_cycle_runtime(pid() | atom() | {:via, module(), term()}, keyword()) ::
+  @spec start_cycle_runtime(String.t() | pid() | atom() | {:via, module(), term()}, keyword()) ::
           DynamicSupervisor.on_start_child() | {:error, :bot_not_running}
   def start_cycle_runtime(bot_ref, runtime_opts) when is_list(runtime_opts) do
-    BotRuntime.start_cycle_runtime(bot_ref, runtime_opts)
+    case resolve(bot_ref) do
+      {:ok, pid} ->
+        GenServer.call(pid, {:start_cycle_runtime, runtime_opts})
+
+      :error ->
+        {:error, :bot_not_running}
+    end
   end
 
   @impl true
   def init(opts) do
-    Process.put(:froth_telegram_bot_worker, true)
     bot_config = BotConfig.build(opts)
     runtime_ref = Keyword.fetch!(opts, :runtime_ref)
 
@@ -224,11 +229,38 @@ defmodule Froth.Telegram.Bot do
   `bot_ref` can be a pid, a registered name (module atom or
   `{:via, ...}` tuple). Raises if the bot is not running.
   """
-  @spec snapshot(pid() | atom() | {:via, module(), term()}) :: {pid(), BotConfig.t()}
+  @spec snapshot(String.t() | pid() | atom() | {:via, module(), term()}) :: {pid(), BotConfig.t()}
   def snapshot(bot_ref) do
-    pid = BotRuntime.bot_pid(bot_ref) || raise "bot not running: #{inspect(bot_ref)}"
+    pid =
+      case resolve(bot_ref) do
+        {:ok, pid} ->
+          pid
+
+        :error ->
+          raise "bot not running: #{inspect(bot_ref)}"
+      end
 
     {pid, GenServer.call(pid, :snapshot)}
+  end
+
+  defp resolve(pid) when is_pid(pid), do: {:ok, pid}
+
+  defp resolve(name) when is_atom(name) do
+    case Process.whereis(name) do
+      pid when is_pid(pid) -> {:ok, pid}
+      nil -> :error
+    end
+  end
+
+  defp resolve(bot_id) when is_binary(bot_id) do
+    resolve(Bots.via(bot_id))
+  end
+
+  defp resolve({:via, _, _} = via) do
+    case GenServer.whereis(via) do
+      pid when is_pid(pid) -> {:ok, pid}
+      nil -> :error
+    end
   end
 
   defp dispatch_update_action(state, {:mention, msg}) do
@@ -643,7 +675,28 @@ defmodule Froth.Telegram.Bot do
       |> Keyword.put_new(:bot_config, state.bot_config)
       |> Keyword.put_new(:bot_pid, self())
 
-    BotRuntime.start_cycle_runtime(state.runtime_ref, runtime_opts)
+    case cycles_sup(state.runtime_ref) do
+      pid when is_pid(pid) ->
+        DynamicSupervisor.start_child(pid, {CycleRuntime, runtime_opts})
+
+      _ ->
+        {:error, :bot_not_running}
+    end
+  end
+
+  defp cycles_sup(runtime_ref) when is_pid(runtime_ref) do
+    case Supervisor.which_children(runtime_ref) do
+      children when is_list(children) ->
+        Enum.find_value(children, fn
+          {:cycles_sup, pid, _type, _modules} when is_pid(pid) -> pid
+          _ -> nil
+        end)
+
+      _ ->
+        nil
+    end
+  catch
+    :exit, _reason -> nil
   end
 
   @response_instruction "\n\nNow reply using the send_message tool."

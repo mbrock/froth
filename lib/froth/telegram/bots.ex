@@ -7,7 +7,6 @@ defmodule Froth.Telegram.Bots do
 
   use Supervisor
 
-  alias Froth.Telegram.BotRuntime
   alias Froth.Telegram.Charlie
   alias Froth.Telemetry.Span
 
@@ -58,8 +57,26 @@ defmodule Froth.Telegram.Bots do
 
   def stop_bot(bot_id) when is_binary(bot_id) do
     case Registry.lookup(@registry, bot_id) do
-      [{pid, _}] -> DynamicSupervisor.terminate_child(@supervisor, pid)
-      [] -> {:error, :not_found}
+      [{pid, _}] ->
+        case DynamicSupervisor.terminate_child(@supervisor, pid) do
+          :ok ->
+            :ok
+
+          {:error, :not_found} ->
+            case runtime_pid(pid) do
+              runtime_pid when is_pid(runtime_pid) ->
+                DynamicSupervisor.terminate_child(@supervisor, runtime_pid)
+
+              nil ->
+                {:error, :not_found}
+            end
+
+          other ->
+            other
+        end
+
+      [] ->
+        {:error, :not_found}
     end
   end
 
@@ -70,14 +87,17 @@ defmodule Froth.Telegram.Bots do
   def cast(bot_id, message) when is_binary(bot_id) do
     case Registry.lookup(@registry, bot_id) do
       [{pid, _}] ->
-        case BotRuntime.bot_pid(pid) do
-          bot_pid when is_pid(bot_pid) -> GenServer.cast(bot_pid, message)
-          nil -> GenServer.cast(pid, message)
-        end
+        GenServer.cast(pid, message)
 
       [] ->
         :ok
     end
+  end
+
+  defp runtime_pid(pid) when is_pid(pid) do
+    GenServer.call(pid, :runtime_ref)
+  catch
+    :exit, _reason -> nil
   end
 
   defp auto_start_bots do

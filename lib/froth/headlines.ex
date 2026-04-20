@@ -48,7 +48,7 @@ defmodule Froth.Headlines do
 
   defp prepare_cycle(opts) when is_list(opts) do
     bot_ref = Keyword.fetch!(opts, :bot)
-    {bot_pid, bot_config} = Bot.snapshot(bot_ref)
+    {_bot_pid, bot_config} = Bot.snapshot(bot_ref)
 
     chat_id = Keyword.get(opts, :chat_id, @default_chat_id)
     model = Keyword.get(opts, :model, @model)
@@ -68,10 +68,9 @@ defmodule Froth.Headlines do
       cycle: cycle,
       worker_config: config,
       bot_id: bot_config.id,
-      bot_pid: bot_pid,
       chat_id: chat_id,
       spam: spam,
-      bot_config: bot_config
+      bot_ref: bot_ref
     ]
 
     {cycle, runtime_opts}

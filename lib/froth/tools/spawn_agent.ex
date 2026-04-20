@@ -7,9 +7,7 @@ defmodule Froth.Tools.SpawnAgent do
   alias Froth.Agent.{Config, CycleRuntime, Message, TaskBridge, ToolUse}
   alias Froth.Repo
   alias Froth.Telegram.Bot
-  alias Froth.Telegram.BotRuntime
   alias Froth.Telegram.Bot.Config, as: BotConfig
-  alias Froth.Telegram.Bots
   alias Froth.Telegram.CycleLink
   alias Froth.Tools.Support
 
@@ -122,9 +120,7 @@ defmodule Froth.Tools.SpawnAgent do
           chat_id: chat_id,
           reply_to: reply_to,
           bot_id: bot_id,
-          bot_pid: bot_id && BotRuntime.bot_pid(Bots.via(bot_id)),
           parent_cycle_id: parent_cycle_id,
-          bot_config: bc,
           spam: ctx.spam
         ]
         |> Keyword.reject(fn {_k, v} -> is_nil(v) end)
@@ -182,8 +178,8 @@ defmodule Froth.Tools.SpawnAgent do
   end
 
   defp bot_ref(bot_id) when is_binary(bot_id) and bot_id != "" do
-    case Bot.snapshot(Bots.via(bot_id)) do
-      {_pid, _config} -> {:ok, Bots.via(bot_id)}
+    case Bot.snapshot(bot_id) do
+      {_pid, _config} -> {:ok, bot_id}
     end
   rescue
     RuntimeError -> {:error, "spawn_agent requires a running owning bot"}

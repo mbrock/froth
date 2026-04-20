@@ -14,7 +14,7 @@ defmodule Froth.TelegramBotCase do
         use Froth.TelegramBotCase, async: true
 
         test "something" do
-          %{bot: bot, bot_id: _bot_id, session_id: _sid} = start_charlie_bot()
+          %{bot_ref: bot_ref, bot_id: _bot_id, session_id: _sid} = start_charlie_bot()
           # ... interact with bot ...
         end
       end
@@ -36,7 +36,7 @@ defmodule Froth.TelegramBotCase do
       under the test supervisor and returns the `session_id`.
     * `start_charlie_bot/1` — starts a fake session *and* a `Bot` in
       one call, with sane Charlie-profile defaults. Caller overrides
-      any keyword option. Returns `%{bot: pid, bot_id: id,
+      any keyword option. Returns `%{bot: pid, bot_ref: via, bot_id: id,
       session_id: id}`.
   """
 
@@ -47,7 +47,6 @@ defmodule Froth.TelegramBotCase do
       alias Froth.LLM.Fake, as: FakeLLM
       alias Froth.Repo
       alias Froth.Telegram.Bot
-      alias Froth.Telegram.BotRuntime
 
       import Froth.TelegramBotCase
     end
@@ -86,7 +85,7 @@ defmodule Froth.TelegramBotCase do
   `FakeLLM.claim/0`, so any request routed to it lands on the current
   test pid via `assert_receive`).
 
-  Returns `%{bot: pid, bot_runtime: pid, bot_id: id, session_id: id, model: id}`.
+  Returns `%{bot: pid, bot_ref: via, bot_runtime: pid, bot_id: id, session_id: id, model: id}`.
   """
   def start_charlie_bot(opts \\ []) do
     session_id =
@@ -120,8 +119,16 @@ defmodule Froth.TelegramBotCase do
       |> Keyword.put_new(:name, Froth.Telegram.Bots.via(bot_id))
 
     runtime = ExUnit.Callbacks.start_supervised!({Froth.Telegram.BotRuntime, bot_opts})
-    {bot, _config} = Froth.Telegram.Bot.snapshot(runtime)
+    bot_ref = Froth.Telegram.Bots.via(bot_id)
+    {bot, _config} = Froth.Telegram.Bot.snapshot(bot_ref)
 
-    %{bot: bot, bot_runtime: runtime, bot_id: bot_id, session_id: session_id, model: model}
+    %{
+      bot: bot,
+      bot_ref: bot_ref,
+      bot_runtime: runtime,
+      bot_id: bot_id,
+      session_id: session_id,
+      model: model
+    }
   end
 end
