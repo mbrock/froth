@@ -52,7 +52,9 @@ defmodule Froth.TelegramBotCase do
     end
   end
 
-  setup do
+  setup tags do
+    Froth.Repo.put_test_context(tags)
+
     pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Froth.Repo, shared: false)
     on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
     :ok

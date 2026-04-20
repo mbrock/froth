@@ -55,7 +55,8 @@ defmodule Froth.LogFormatter do
 
   defp format_loc(_), do: []
 
-  defp format_message({:string, msg}, _meta), do: msg
+  defp format_message({:string, msg}, _meta),
+    do: Froth.LogTranslator.annotate_dbconnection_message(msg)
 
   # Our translator stashes the translation in the report data
   defp format_message({:report, %{elixir_translation: t}}, _meta), do: t
@@ -72,7 +73,9 @@ defmodule Froth.LogFormatter do
 
   # Erlang format string
   defp format_message({fmt, args}, _meta) do
-    :io_lib.format(fmt, args)
+    fmt
+    |> :io_lib.format(args)
+    |> Froth.LogTranslator.annotate_dbconnection_message()
   end
 
   defp format_kv(pairs) do

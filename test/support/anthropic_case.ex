@@ -3,6 +3,8 @@ defmodule Froth.AnthropicCase do
   use ExUnit.CaseTemplate
 
   setup tags do
+    Froth.Repo.put_test_context(tags)
+
     pid =
       Ecto.Adapters.SQL.Sandbox.start_owner!(
         Froth.Repo,

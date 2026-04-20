@@ -6,6 +6,20 @@ defmodule Froth.LogTranslator do
 
   @behaviour Logger.Translator
 
+  @dbconnection_owner_exit_regex ~r/owner (?<owner>#PID<\d+\.\d+\.\d+>) exited.*?Client (?<client>#PID<\d+\.\d+\.\d+>) .*?is still using a connection from owner/s
+  @dbconnection_client_exit_regex ~r/client (?<client>#PID<\d+\.\d+\.\d+>) exited/i
+
+  @doc false
+  def annotate_dbconnection_message(message) do
+    with binary when is_binary(binary) <- IO.iodata_to_binary(message),
+         {:ok, client_pid} <- dbconnection_disconnect_context(binary),
+         %{} = debug <- Froth.Repo.allow_debug_context(client_pid) do
+      [binary, "\n", format_repo_allow_debug(debug)]
+    else
+      _ -> message
+    end
+  end
+
   @impl true
   def translate(_min_level, _level, :report, {:logger, %{label: label} = report}) do
     case label do
@@ -88,6 +102,13 @@ defmodule Froth.LogTranslator do
 
   def translate(_min_level, :info, :report, {:progress, [application: app, started_at: node]}),
     do: {:ok, "app #{app} started at #{inspect(node)}"}
+
+  def translate(_min_level, level, :string, message) when level in [:warning, :error] do
+    case annotate_dbconnection_message(message) do
+      ^message -> :none
+      annotated -> {:ok, annotated}
+    end
+  end
 
   def translate(_min_level, _level, _kind, _message), do: :none
 
@@ -268,6 +289,62 @@ defmodule Froth.LogTranslator do
 
   defp registered_name(name) when is_atom(name), do: [registered_name: name]
   defp registered_name(_), do: []
+
+  defp dbconnection_disconnect_context(message) when is_binary(message) do
+    case dbconnection_owner_exit(message) do
+      {:ok, _owner_pid, client_pid} ->
+        {:ok, client_pid}
+
+      :error ->
+        dbconnection_client_exit(message)
+    end
+  end
+
+  defp dbconnection_owner_exit(message) when is_binary(message) do
+    case Regex.named_captures(@dbconnection_owner_exit_regex, message) do
+      %{"owner" => owner, "client" => client} ->
+        with {:ok, owner_pid} <- parse_pid(owner),
+             {:ok, client_pid} <- parse_pid(client) do
+          {:ok, owner_pid, client_pid}
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  defp dbconnection_client_exit(message) when is_binary(message) do
+    case Regex.named_captures(@dbconnection_client_exit_regex, message) do
+      %{"client" => client} -> parse_pid(client)
+      _ -> :error
+    end
+  end
+
+  defp parse_pid(string) when is_binary(string) do
+    try do
+      {:ok,
+       string
+       |> String.replace_prefix("#PID", "")
+       |> String.to_charlist()
+       |> :erlang.list_to_pid()}
+    rescue
+      ArgumentError -> :error
+    end
+  end
+
+  defp format_repo_allow_debug(debug) when is_map(debug) do
+    lines =
+      [
+        debug.test && "  test: #{debug.test}",
+        debug.label && "  allow label: #{debug.label}",
+        is_list(debug.chain) && "  allow chain: #{Enum.join(debug.chain, " -> ")}",
+        is_pid(debug.parent_pid) && "  allowed via parent: #{inspect(debug.parent_pid)}",
+        is_pid(debug.pid) && "  client pid: #{inspect(debug.pid)}"
+      ]
+      |> Enum.reject(&(&1 in [false, nil]))
+
+    ["Repo sandbox context:\n", Enum.intersperse(lines, "\n")]
+  end
 
   defp format_reason({maybe_exception, [_ | _] = maybe_stacktrace} = reason) do
     try do
