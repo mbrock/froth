@@ -147,10 +147,10 @@ defmodule Froth.Telegram do
              "@type" => "sendMessage",
              "chat_id" => chat_id,
              "input_message_content" =>
-             photo_content(
-               prepared_image.file_ref,
-               maybe_append_png_links(opts, [prepared_image.metadata])
-             )
+               photo_content(
+                 prepared_image.file_ref,
+                 maybe_append_png_links(opts, [prepared_image.metadata])
+               )
            }
            |> maybe_put_reply_to(opts[:reply_to])
            |> then(&call(session_id, &1)) do

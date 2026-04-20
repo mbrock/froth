@@ -192,9 +192,11 @@ defmodule Froth.Tools.Fetch do
     case head_content_type(url) do
       {:ok, content_type} ->
         if html_like?(content_type) do
-          {fetch_via_lightpanda(url), %{outcome: :lightpanda_via_head, content_type: content_type}}
+          {fetch_via_lightpanda(url),
+           %{outcome: :lightpanda_via_head, content_type: content_type}}
         else
-          {fetch_via_req(url, content_type), %{outcome: :req_via_head, content_type: content_type}}
+          {fetch_via_req(url, content_type),
+           %{outcome: :req_via_head, content_type: content_type}}
         end
 
       :unknown ->
