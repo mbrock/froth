@@ -29,15 +29,20 @@ defmodule Froth.TelegramTest do
                     %{
                       "@type" => "sendMessage",
                       "chat_id" => ^chat_id,
-                      "reply_to" => %{"message_id" => ^reply_to},
+                      "reply_to" => %{
+                        "@type" => "inputMessageReplyToMessage",
+                        "message_id" => ^reply_to
+                      },
                       "input_message_content" => %{
                         "@type" => "inputMessagePhoto",
-                        "caption" => %{"text" => "caption"},
+                        "caption" => %{"text" => caption_text, "entities" => [link_entity]},
                         "photo" => %{"@type" => "inputFileLocal", "path" => sent_path}
                       }
                     }}
 
     assert sent_path == metadata["local_path"]
+    assert caption_text == "caption · ↗"
+    assert get_in(link_entity, ["type", "url"]) == metadata["public_url"]
   end
 
   test "send_image accepts an Nx tensor" do
@@ -117,7 +122,14 @@ defmodule Froth.TelegramTest do
                       "input_message_contents" => [first_content, second_content]
                     }}
 
-    assert get_in(first_content, ["caption", "text"]) == "album caption"
+    assert get_in(first_content, ["caption", "text"]) == "album caption · 1 · 2"
+
+    assert Enum.map(get_in(first_content, ["caption", "entities"]), &get_in(&1, ["type", "url"])) ==
+             [
+               first_metadata["public_url"],
+               second_metadata["public_url"]
+             ]
+
     refute Map.has_key?(second_content, "caption")
     assert get_in(first_content, ["photo", "path"]) == first_metadata["local_path"]
     assert get_in(second_content, ["photo", "path"]) == second_metadata["local_path"]
