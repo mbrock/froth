@@ -2,14 +2,11 @@ defmodule Froth.Telemetry.Store do
   @moduledoc """
   Persists telemetry events to a Postgres table asynchronously.
 
-  Attaches to all [:froth, **] telemetry events and batches inserts
-  through a GenServer to avoid blocking the caller's process.
+  Attaches to all [:froth, **] telemetry events and writes each event
+  through a GenServer as soon as it is received.
   """
 
   use GenServer
-
-  @flush_interval_ms 1_000
-  @max_batch_size 100
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -30,48 +27,29 @@ defmodule Froth.Telemetry.Store do
 
   @impl true
   def init(_opts) do
-    schedule_flush()
-    {:ok, %{buffer: []}}
+    {:ok, %{}}
   end
 
   @impl true
   def handle_cast({:event, event_name, measurements, metadata}, state) do
-    entry = %{
+    persist_entry(%{
       event: Enum.join(event_name, "."),
       span_id: to_string_or_nil(metadata[:span_id]),
       parent_id: to_string_or_nil(metadata[:parent_id]),
       measurements: safe_json(measurements),
       metadata: safe_json(metadata),
       inserted_at: DateTime.utc_now()
-    }
+    })
 
-    buffer = [entry | state.buffer]
-
-    if length(buffer) >= @max_batch_size do
-      flush(buffer)
-      {:noreply, %{state | buffer: []}}
-    else
-      {:noreply, %{state | buffer: buffer}}
-    end
+    {:noreply, state}
   end
 
-  @impl true
-  def handle_info(:flush, state) do
-    if state.buffer != [], do: flush(state.buffer)
-    schedule_flush()
-    {:noreply, %{state | buffer: []}}
-  end
-
-  defp schedule_flush do
-    Process.send_after(self(), :flush, @flush_interval_ms)
-  end
-
-  defp flush(entries) do
-    Froth.Repo.insert_all("events", entries, log: false)
+  defp persist_entry(entry) do
+    Froth.Repo.insert_all("events", [entry], log: false)
   rescue
     e ->
       require Logger
-      Logger.warning("Telemetry store flush failed: #{Exception.message(e)}")
+      Logger.warning("Telemetry store persist failed: #{Exception.message(e)}")
   end
 
   defp safe_json(map) when is_map(map) do
