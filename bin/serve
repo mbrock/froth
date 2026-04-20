@@ -3,7 +3,7 @@
 set -euo pipefail
 
 export HOME="${HOME:-$(eval echo ~$(whoami))}"
-export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.asdf/shims:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.asdf/shims:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
 . "$HOME/.asdf/asdf.sh"
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
