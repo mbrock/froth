@@ -66,6 +66,21 @@ defmodule Froth.Telegram.Bot do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @doc """
+  Start a `CycleRuntime` under the resolved bot's private cycle supervisor.
+  """
+  @spec start_cycle_runtime(pid() | atom() | {:via, module(), term()}, keyword()) ::
+          DynamicSupervisor.on_start_child() | {:error, :bot_not_running}
+  def start_cycle_runtime(bot_ref, runtime_opts) when is_list(runtime_opts) do
+    case resolve(bot_ref) do
+      {:ok, pid} ->
+        GenServer.call(pid, {:start_cycle_runtime, runtime_opts})
+
+      :error ->
+        {:error, :bot_not_running}
+    end
+  end
+
   @impl true
   def init(opts) do
     bot_config = BotConfig.build(opts)
@@ -201,6 +216,11 @@ defmodule Froth.Telegram.Bot do
     {:reply, state.bot_config, state}
   end
 
+  def handle_call({:start_cycle_runtime, runtime_opts}, _from, state)
+      when is_list(runtime_opts) do
+    {:reply, start_cycle_runtime_child(state, runtime_opts), state}
+  end
+
   def handle_call(_, _from, state), do: {:reply, {:error, "unsupported"}, state}
 
   @doc """
@@ -212,18 +232,31 @@ defmodule Froth.Telegram.Bot do
   @spec snapshot(pid() | atom() | {:via, module(), term()}) :: {pid(), BotConfig.t()}
   def snapshot(bot_ref) do
     pid =
-      case bot_ref do
-        pid when is_pid(pid) ->
+      case resolve(bot_ref) do
+        {:ok, pid} ->
           pid
 
-        name when is_atom(name) ->
-          Process.whereis(name) || raise "bot not running: #{inspect(name)}"
-
-        {:via, _, _} = via ->
-          GenServer.whereis(via) || raise "bot not running: #{inspect(via)}"
+        :error ->
+          raise "bot not running: #{inspect(bot_ref)}"
       end
 
     {pid, GenServer.call(pid, :snapshot)}
+  end
+
+  defp resolve(pid) when is_pid(pid), do: {:ok, pid}
+
+  defp resolve(name) when is_atom(name) do
+    case Process.whereis(name) do
+      pid when is_pid(pid) -> {:ok, pid}
+      nil -> :error
+    end
+  end
+
+  defp resolve({:via, _, _} = via) do
+    case GenServer.whereis(via) do
+      pid when is_pid(pid) -> {:ok, pid}
+      nil -> :error
+    end
   end
 
   defp dispatch_update_action(state, {:mention, msg}) do
@@ -615,8 +648,7 @@ defmodule Froth.Telegram.Bot do
       reply_to: reply_to
     ]
 
-    {:ok, runtime_pid} =
-      DynamicSupervisor.start_child(state.cycles_sup, {CycleRuntime, runtime_opts})
+    {:ok, runtime_pid} = start_cycle_runtime_child(state, runtime_opts)
 
     ref = Process.monitor(runtime_pid)
 
@@ -630,6 +662,16 @@ defmodule Froth.Telegram.Bot do
           reply_to: reply_to
         }
     }
+  end
+
+  defp start_cycle_runtime_child(state, runtime_opts) when is_list(runtime_opts) do
+    runtime_opts =
+      runtime_opts
+      |> Keyword.put_new(:bot_id, state.bot_config.id)
+      |> Keyword.put_new(:bot_config, state.bot_config)
+      |> Keyword.put_new(:bot_pid, self())
+
+    DynamicSupervisor.start_child(state.cycles_sup, {CycleRuntime, runtime_opts})
   end
 
   @response_instruction "\n\nNow reply using the send_message tool."

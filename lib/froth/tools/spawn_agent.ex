@@ -6,6 +6,7 @@ defmodule Froth.Tools.SpawnAgent do
   alias Froth.Agent.CycleRuntime.Context
   alias Froth.Agent.{Config, CycleRuntime, Message, TaskBridge, ToolUse}
   alias Froth.Repo
+  alias Froth.Telegram.Bot
   alias Froth.Telegram.Bot.Config, as: BotConfig
   alias Froth.Telegram.Bots
   alias Froth.Telegram.CycleLink
@@ -99,16 +100,13 @@ defmodule Froth.Tools.SpawnAgent do
     bc = ctx.bot_config
     bot_id = bc && bc.id
 
-    config = build_config(ctx, chat_id, reply_to, tool_specs, extra_opts)
-
-    user_message =
-      Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
-
-    cycle = Froth.Agent.begin_cycle(user_message, config)
-
-    maybe_link_spawned_cycle(cycle, chat_id, bot_id, reply_to)
-
-    with {:ok, task_id} <-
+    with {:ok, bot_ref} <- bot_ref(bot_id),
+         config = build_config(ctx, chat_id, reply_to, tool_specs, extra_opts),
+         user_message =
+           Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)}),
+         cycle = Froth.Agent.begin_cycle(user_message, config),
+         :ok <- maybe_link_spawned_cycle(cycle, chat_id, bot_id, reply_to),
+         {:ok, task_id} <-
            TaskBridge.create_spawned_agent_task(cycle, prompt,
              bot_id: bot_id,
              chat_id: chat_id,
@@ -130,9 +128,19 @@ defmodule Froth.Tools.SpawnAgent do
         ]
         |> Keyword.reject(fn {_k, v} -> is_nil(v) end)
 
-      case CycleRuntime.start_root(spawn_opts) do
+      case CycleRuntime.start_for_bot(bot_ref, spawn_opts) do
         {:ok, runtime_pid} ->
           {:ok, {cycle, task_id, runtime_pid}}
+
+        {:error, :bot_not_running} ->
+          :ok =
+            Froth.Tasks.fail(
+              task_id,
+              "failed to start sub-agent runtime: owning bot is not running",
+              %{"cycle_id" => cycle.id, "cycle_status" => "failed"}
+            )
+
+          {:error, "failed to start sub-agent runtime: owning bot is not running"}
 
         {:error, reason} ->
           :ok =
@@ -171,6 +179,16 @@ defmodule Froth.Tools.SpawnAgent do
       reasoning_summary: nil
     }
   end
+
+  defp bot_ref(bot_id) when is_binary(bot_id) and bot_id != "" do
+    case Bot.snapshot(Bots.via(bot_id)) do
+      {_pid, _config} -> {:ok, Bots.via(bot_id)}
+    end
+  rescue
+    RuntimeError -> {:error, "spawn_agent requires a running owning bot"}
+  end
+
+  defp bot_ref(_bot_id), do: {:error, "spawn_agent requires an owning bot"}
 
   defp maybe_put_context(map, _key, nil), do: map
   defp maybe_put_context(map, key, value), do: Map.put(map, key, value)

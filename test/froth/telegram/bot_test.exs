@@ -38,14 +38,11 @@ defmodule Froth.Telegram.BotTest do
         started_at: started_at
       })
 
-    bot_config = :sys.get_state(bot).bot_config
-
     {:ok, runtime_pid} =
-      Froth.Agent.CycleRuntime.start_root(
-        cycle_id: cycle.id,
+      Froth.Agent.CycleRuntime.start_for_bot(
+        bot,
         cycle: cycle,
-        bot_config: bot_config,
-        bot_pid: bot,
+        cycle_id: cycle.id,
         chat_id: 123
       )
 
@@ -53,13 +50,9 @@ defmodule Froth.Telegram.BotTest do
       put_in(rstate.context.view.last_sent, %{id: 42, text: "hello"})
     end)
 
-    on_exit(fn ->
-      if Process.alive?(runtime_pid) do
-        DynamicSupervisor.terminate_child(Froth.Agent.CycleSupervisor, runtime_pid)
-      end
-    end)
-
-    :ok = DynamicSupervisor.terminate_child(Froth.Agent.CycleSupervisor, runtime_pid)
+    ref = Process.monitor(runtime_pid)
+    stop_runtime(runtime_pid)
+    assert_receive {:DOWN, ^ref, :process, ^runtime_pid, _}, 5_000
 
     assert_receive {:telegram_call,
                     %{
@@ -76,5 +69,15 @@ defmodule Froth.Telegram.BotTest do
     assert edited_text =~ "0.4k cw"
     assert edited_text =~ "2.5k cr"
     assert edited_text =~ "$"
+  end
+
+  defp stop_runtime(pid) when is_pid(pid) do
+    try do
+      GenServer.stop(pid, :normal, 5_000)
+    catch
+      :exit, _reason -> :ok
+    end
+
+    :ok
   end
 end

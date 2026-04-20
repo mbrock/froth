@@ -80,8 +80,7 @@ defmodule Froth.Application do
           Froth.DailyDigest,
           {Registry, keys: :unique, name: Froth.Agent.Registry},
           {Task.Supervisor, name: Froth.Agent.TaskSupervisor},
-          {Registry, keys: :unique, name: Froth.Agent.CycleRegistry},
-          {DynamicSupervisor, name: Froth.Agent.CycleSupervisor, strategy: :one_for_one}
+          {Registry, keys: :unique, name: Froth.Agent.CycleRegistry}
         ] ++
           Enum.map(Application.fetch_env!(:froth, Froth.Telegram.Bot), fn bot_opts ->
             {Froth.Telegram.Bot, bot_opts}

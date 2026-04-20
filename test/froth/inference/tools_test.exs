@@ -3,7 +3,7 @@ defmodule Froth.Inference.ToolsTest do
 
   alias Froth.Analysis
   alias Froth.ApiKey
-  alias Froth.Agent.Cycle
+  alias Froth.Agent.{Cycle, CycleRuntime}
   alias Froth.Context.Block
   alias Froth.Inference.Tools
   alias Froth.LLM.Message, as: LLMMessage
@@ -304,6 +304,36 @@ defmodule Froth.Inference.ToolsTest do
              bot_id: bot_id,
              chat_id: chat_id
            )
+  end
+
+  test "spawn_agent runtime stops when the owning bot stops" do
+    %{bot_id: bot_id, session_id: session_id} = start_charlie_bot()
+    chat_id = unique_chat_id()
+    model = FakeLLM.claim()
+
+    assert {:ok, result} =
+             Tools.execute(
+               "spawn_agent",
+               %{
+                 "prompt" => "Keep working until the bot goes away",
+                 "model" => model
+               },
+               chat_id,
+               bot_id: bot_id,
+               bot_username: "charliebuddybot",
+               session_id: session_id
+             )
+
+    assert_receive {FakeLLM, _from, %Request{}}, 5_000
+
+    runtime_pid = wait_for_runtime(result["cycle_id"])
+    ref = Process.monitor(runtime_pid)
+
+    :ok = stop_supervised({Froth.Telegram.Bot, bot_id})
+
+    assert_receive {:DOWN, ^ref, :process, ^runtime_pid, _reason}, 5_000
+    _ = :sys.get_state(Module.concat(Froth.Agent.CycleRegistry, "PIDPartition0"))
+    refute is_pid(CycleRuntime.whereis(result["cycle_id"]))
   end
 
   test "ask sends an inline-keyboard question and persists a pending ask" do
@@ -776,5 +806,24 @@ defmodule Froth.Inference.ToolsTest do
 
   defp wait_for_cycle_status(cycle_id, status, 0) do
     flunk("cycle #{cycle_id} did not reach status #{inspect(status)} in time")
+  end
+
+  defp wait_for_runtime(cycle_id, attempts \\ 100)
+
+  defp wait_for_runtime(cycle_id, attempts) when is_binary(cycle_id) and attempts > 0 do
+    case CycleRuntime.whereis(cycle_id) do
+      pid when is_pid(pid) ->
+        pid
+
+      nil ->
+        receive do
+        after
+          10 -> wait_for_runtime(cycle_id, attempts - 1)
+        end
+    end
+  end
+
+  defp wait_for_runtime(cycle_id, 0) do
+    flunk("cycle runtime #{cycle_id} did not start in time")
   end
 end

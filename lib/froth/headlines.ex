@@ -2,9 +2,10 @@ defmodule Froth.Headlines do
   @moduledoc """
   Extract significant daily headlines from stored chat summaries.
 
-  Headlines runs as an agent cycle under an existing Bot — the Bot
-  supplies the TDLib session / username / user identity that tool
-  execution needs. Pass the running Bot via the `:bot` option:
+  Headlines runs as a bot-owned agent cycle under an existing Bot —
+  the Bot supplies both the TDLib/session identity that tool execution
+  needs and the owning supervisor for the cycle runtime. Pass the
+  running Bot via the `:bot` option:
 
       Froth.Headlines.extract(bot: Froth.Telegram.Bot.Charlie,
                               chat_id: -1003690254489)

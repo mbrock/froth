@@ -1,38 +1,34 @@
 defmodule Froth.Agent.CycleRuntimeTest do
-  use ExUnit.Case, async: true
+  use Froth.TelegramBotCase, async: true
 
   alias Froth.Agent.{Cycle, CycleRuntime, ToolUse}
   alias Froth.Agent.CycleRuntime.{Context, View}
-  alias Froth.Telegram.Bot.Config, as: BotConfig
 
   describe "scaffolding: registry + supervisor wiring" do
-    test "start_root/1 starts a runtime under CycleSupervisor and registers it" do
+    test "start_for_bot/2 starts a runtime under the owning bot and registers it" do
       cycle_id = unique_cycle_id()
+      %{bot: bot, bot_id: bot_id} = start_charlie_bot()
 
-      {:ok, pid} = CycleRuntime.start_root(cycle_id: cycle_id, bot_id: "charlie")
-
-      on_exit(fn ->
-        if Process.alive?(pid) do
-          DynamicSupervisor.terminate_child(Froth.Agent.CycleSupervisor, pid)
-        end
-      end)
+      {:ok, pid} = CycleRuntime.start_for_bot(bot, cycle_id: cycle_id)
 
       assert is_pid(pid)
       assert Process.alive?(pid)
       assert CycleRuntime.whereis(cycle_id) == pid
-      assert CycleRuntime.alive?(cycle_id)
+      assert is_pid(CycleRuntime.whereis(cycle_id))
 
       state = GenServer.call(CycleRuntime.via(cycle_id), :get_state)
       assert %Context{cycle_id: ^cycle_id} = state.context
+      assert state.context.bot_config.id == bot_id
       assert state.parent_cycle_id == nil
     end
 
     test "terminating the runtime removes it from the registry" do
       cycle_id = unique_cycle_id()
-      {:ok, pid} = CycleRuntime.start_root(cycle_id: cycle_id)
+      %{bot: bot} = start_charlie_bot()
+      {:ok, pid} = CycleRuntime.start_for_bot(bot, cycle_id: cycle_id)
 
       ref = Process.monitor(pid)
-      :ok = DynamicSupervisor.terminate_child(Froth.Agent.CycleSupervisor, pid)
+      stop_runtime(pid)
       assert_receive {:DOWN, ^ref, :process, ^pid, _}, 500
 
       # Registry monitors registered pids in its PID-partition process; the
@@ -41,7 +37,7 @@ defmodule Froth.Agent.CycleRuntimeTest do
       # the cleanup is observable.
       _ = :sys.get_state(Module.concat(Froth.Agent.CycleRegistry, "PIDPartition0"))
 
-      refute CycleRuntime.alive?(cycle_id)
+      refute is_pid(CycleRuntime.whereis(cycle_id))
       assert CycleRuntime.whereis(cycle_id) == nil
     end
 
@@ -138,7 +134,7 @@ defmodule Froth.Agent.CycleRuntimeTest do
       parent_ref = Process.monitor(parent)
       child_ref = Process.monitor(child_pid)
 
-      :ok = DynamicSupervisor.terminate_child(Froth.Agent.CycleSupervisor, parent)
+      stop_runtime(parent)
 
       assert_receive {:DOWN, ^parent_ref, :process, ^parent, _}, 500
       assert_receive {:DOWN, ^child_ref, :process, ^child_pid, _}, 500
@@ -180,22 +176,16 @@ defmodule Froth.Agent.CycleRuntimeTest do
 
   defp start_scaffold_runtime do
     cycle_id = unique_cycle_id()
+    %{bot: bot} = start_charlie_bot()
 
     {:ok, pid} =
-      CycleRuntime.start_root(
-        cycle_id: cycle_id,
-        bot_id: "charlie",
+      CycleRuntime.start_for_bot(
+        bot,
         cycle: %Cycle{id: cycle_id},
-        bot_config: minimal_bot_config(),
+        cycle_id: cycle_id,
         chat_id: 123,
         reply_to: 456
       )
-
-    on_exit(fn ->
-      if Process.alive?(pid) do
-        DynamicSupervisor.terminate_child(Froth.Agent.CycleSupervisor, pid)
-      end
-    end)
 
     pid
   end
@@ -205,17 +195,14 @@ defmodule Froth.Agent.CycleRuntimeTest do
     %{context: ctx, tool_call: tool_use}
   end
 
-  defp minimal_bot_config do
-    BotConfig.build(
-      id: "charlie",
-      session_id: "charlie",
-      bot_username: "charliebuddybot",
-      bot_user_id: 1,
-      owner_user_id: 1,
-      model: "claude-opus-4-6",
-      system_prompt: "You are Charlie.",
-      tools_module: Froth.Telegram.Toolsets.Charlie
-    )
+  defp stop_runtime(pid) when is_pid(pid) do
+    try do
+      GenServer.stop(pid, :normal, 5_000)
+    catch
+      :exit, _reason -> :ok
+    end
+
+    :ok
   end
 
   defp unique_cycle_id do

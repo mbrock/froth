@@ -2,13 +2,14 @@ defmodule Froth.Agent.CycleRuntime do
   @moduledoc """
   Supervised process driving one agent cycle.
 
-  Every cycle — root or subagent — is a `Froth.Agent.CycleRuntime`.
-  Root cycles are started under `Froth.Agent.CycleSupervisor`; subagent
-  cycles are started under their parent runtime's own child
-  DynamicSupervisor. Runtimes are registered in `Froth.Agent.CycleRegistry`
-  keyed by `cycle_id` (globally unique), so any caller can address a
-  live cycle via `Registry.lookup/2` or the `via/1` helper without
-  going through the Bot.
+  Every cycle — bot-owned root or subagent — is a
+  `Froth.Agent.CycleRuntime`. Root cycles are started under the owning
+  Bot's private cycle supervisor; subagent cycles are started under
+  their parent runtime's own child DynamicSupervisor. Runtimes are
+  registered in `Froth.Agent.CycleRegistry` keyed by `cycle_id`
+  (globally unique), so any caller can address a live cycle via
+  `Registry.lookup/2` or the `via/1` helper without going through the
+  Bot after startup.
 
   See `rfc/froth-rfc0021.xml` for the full design.
 
@@ -29,11 +30,11 @@ defmodule Froth.Agent.CycleRuntime do
 
   alias Froth.Agent.{Config, Cycle, Surface, ToolUse, Worker}
   alias Froth.Agent.CycleRuntime.{Context, View}
+  alias Froth.Telegram.{Bot, Bots}
   alias Froth.Telegram.Bot.Config, as: BotConfig
   alias Froth.Telegram.{CostFooter, ToolExecution}
 
   @registry Froth.Agent.CycleRegistry
-  @supervisor Froth.Agent.CycleSupervisor
 
   @type last_sent :: %{id: integer() | nil, text: binary()}
   @type narration :: %{message_id: integer(), text: binary(), mode: :italic | :markdown}
@@ -77,19 +78,14 @@ defmodule Froth.Agent.CycleRuntime do
     end
   end
 
-  @doc "Returns `true` if a cycle runtime is live for `cycle_id`."
-  @spec alive?(String.t()) :: boolean()
-  def alive?(cycle_id) when is_binary(cycle_id) do
-    whereis(cycle_id) != nil
-  end
-
   @doc """
-  Start a root-level cycle runtime under `Froth.Agent.CycleSupervisor`.
-  Returns `{:ok, pid}` on success.
+  Start a bot-owned root cycle runtime under the resolved Bot's private
+  cycle supervisor. Returns `{:ok, pid}` on success.
   """
-  @spec start_root(opts()) :: DynamicSupervisor.on_start_child()
-  def start_root(opts) when is_list(opts) do
-    DynamicSupervisor.start_child(@supervisor, {__MODULE__, opts})
+  @spec start_for_bot(pid() | atom() | {:via, module(), term()}, opts()) ::
+          DynamicSupervisor.on_start_child() | {:error, :bot_not_running}
+  def start_for_bot(bot_ref, opts) when is_list(opts) do
+    Bot.start_cycle_runtime(bot_ref, opts)
   end
 
   @doc """
@@ -213,26 +209,28 @@ defmodule Froth.Agent.CycleRuntime do
   end
 
   @doc """
-  Lazily start a root runtime and return an `Enumerable` of events it
-  publishes on `"cycle:<cycle_id>"`. The runtime is *not* started
+  Lazily start a bot-owned runtime and return an `Enumerable` of events
+  it publishes on `"cycle:<cycle_id>"`. The runtime is *not* started
   until the stream is consumed — matching the old `Agent.cycle_stream/2`
-  semantics — so PubSub subscription and the runtime start are
-  guaranteed to happen in that order, with no events lost.
+  semantics — so PubSub subscription and runtime start are guaranteed
+  to happen in that order, with no events lost.
 
   The stream halts when the runtime exits `:normal`; an abnormal exit
   raises through `exit/1`.
 
-  `opts` are passed through to `start_root/1` and must include at
-  least `:cycle_id`, `:cycle`, and `:worker_config`.
+  `opts` are passed through to `start_for_bot/2` and must include at
+  least `:cycle_id`, `:cycle`, and `:worker_config`, plus bot ownership
+  via `:bot_pid` or `:bot_id`.
   """
   @spec event_stream_for(opts()) :: Enumerable.t()
   def event_stream_for(opts) when is_list(opts) do
     cycle_id = Keyword.fetch!(opts, :cycle_id)
+    bot_ref = bot_ref_from_opts!(opts)
 
     Stream.resource(
       fn ->
         :ok = Phoenix.PubSub.subscribe(Froth.PubSub, "cycle:#{cycle_id}")
-        {:ok, runtime_pid} = start_root(opts)
+        {:ok, runtime_pid} = start_for_bot(bot_ref, opts)
         ref = Process.monitor(runtime_pid)
         {runtime_pid, ref, cycle_id}
       end,
@@ -668,6 +666,20 @@ defmodule Froth.Agent.CycleRuntime do
   defp maybe_append_cycle_footer(_ctx), do: :ok
 
   # --- Misc helpers ---
+
+  defp bot_ref_from_opts!(opts) when is_list(opts) do
+    cond do
+      is_pid(Keyword.get(opts, :bot_pid)) ->
+        Keyword.fetch!(opts, :bot_pid)
+
+      is_binary(Keyword.get(opts, :bot_id)) ->
+        Bots.via(Keyword.fetch!(opts, :bot_id))
+
+      true ->
+        raise ArgumentError,
+              "bot-owned cycle runtime requires :bot_pid or :bot_id in runtime opts"
+    end
+  end
 
   defp swap_id(%{} = map, key, old_id, new_id) do
     case Map.get(map, key) do
