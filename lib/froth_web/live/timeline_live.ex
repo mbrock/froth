@@ -11,6 +11,7 @@ defmodule FrothWeb.TimelineLive do
   use FrothWeb, :live_view
 
   alias Froth.Agent
+  alias Froth.Context.Block
   alias Froth.Telegram
   alias Froth.Telegram.Charlie
   alias Froth.Telegram.CycleLink
@@ -20,6 +21,7 @@ defmodule FrothWeb.TimelineLive do
   alias Froth.Telegram.Usernames
 
   alias FrothWeb.RemixLive, as: Remix
+  alias FrothWeb.SyntaxHighlight
 
   # Charlie's group-chat by default. Override with `?chat_id=…` on the URL.
   @default_chat_id -1_003_690_254_489
@@ -61,6 +63,7 @@ defmodule FrothWeb.TimelineLive do
      |> assign(:latest_sort_key, nil)
      |> assign(:latest_day_key, nil)
      |> assign(:cycle_inserted_at, %{})
+     |> assign(:syntax_highlight_css, SyntaxHighlight.stylesheet())
      |> assign(:chat_topic, nil)
      |> assign(:cycle_topics, MapSet.new())
      |> stream_configure(:blocks, dom_id: & &1.id)
@@ -765,6 +768,9 @@ defmodule FrothWeb.TimelineLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} variant={:plain}>
+      <style id="timeline-syntax-highlight">
+        <%= Phoenix.HTML.raw(@syntax_highlight_css) %>
+      </style>
       <div class="app-shell safe-top flex min-h-0 bg-void text-fg font-sans text-[13px] leading-5 antialiased">
         <.sidebar
           chat_title={@chat_title}
@@ -1029,7 +1035,7 @@ defmodule FrothWeb.TimelineLive do
         narration: entry[:narration],
         input: entry[:input] || %{},
         result: summarize_result(entry[:result]),
-        output: render_output(entry[:result])
+        output: render_output(entry[:tool] || "?", entry[:result])
       )
 
     ~H"""
@@ -1064,6 +1070,29 @@ defmodule FrothWeb.TimelineLive do
     <div class="font-mono text-[12px] leading-5 text-fg flex items-baseline gap-2 min-w-0">
       <span class="text-green select-none shrink-0">$</span>
       <span class="min-w-0 whitespace-pre-wrap break-all">{@cmd}</span>
+    </div>
+    """
+  end
+
+  defp tool_input(%{tool: "elixir_eval", input: %{"code" => code} = input} = assigns)
+       when is_binary(code) do
+    assigns =
+      assign(assigns,
+        code_htmls: SyntaxHighlight.elixir_htmls(code),
+        session_id: short_eval_session_id(input["session_id"])
+      )
+
+    ~H"""
+    <div class="overflow-hidden border border-amber/20">
+      <div class="flex items-baseline gap-2 border-b border-amber/20 px-2 py-1 font-mono text-2xs uppercase tracking-[0.14em]">
+        <span class="text-amber">elixir</span>
+        <span :if={@session_id} class="text-fg-ghost normal-case tracking-normal">
+          session {@session_id}
+        </span>
+      </div>
+      <div class="px-2 py-1">
+        <.responsive_highlight htmls={@code_htmls} />
+      </div>
     </div>
     """
   end
@@ -1165,7 +1194,22 @@ defmodule FrothWeb.TimelineLive do
   # Normalise any outcome into either `nil` (nothing to show) or
   # `%{body, kind, footer}`. No text-level truncation — the scroll
   # box in `tool_output/1` clips visually instead.
-  defp render_output({:ok, [%{__struct__: Froth.Context.Block} = block | rest]}) do
+  defp render_output("elixir_eval", {:ok, [%Block{} | _] = blocks}) do
+    session_id =
+      blocks
+      |> Enum.find_value(&Block.attr(&1, :session))
+      |> short_eval_session_id()
+
+    sections =
+      blocks
+      |> Enum.map(&eval_output_section/1)
+      |> Enum.reject(&is_nil/1)
+      |> attach_eval_session(session_id)
+
+    if sections == [], do: nil, else: %{variant: :eval, sections: sections}
+  end
+
+  defp render_output(_tool, {:ok, [%Block{} = block | rest]}) do
     attrs = Map.get(block, :attrs, []) |> List.wrap()
     body = Map.get(block, :body) |> normalize_body()
 
@@ -1184,19 +1228,73 @@ defmodule FrothWeb.TimelineLive do
     %{body: body, kind: Keyword.get(attrs, :kind), footer: footer}
   end
 
-  defp render_output({:ok, value}) when is_binary(value) do
+  defp render_output(_tool, {:ok, value}) when is_binary(value) do
     %{body: normalize_body(value), kind: nil, footer: []}
   end
 
-  defp render_output({:ok, value}) when is_map(value) do
+  defp render_output(_tool, {:ok, value}) when is_map(value) do
     %{body: inspect(value, limit: 10, printable_limit: 1000, pretty: true), kind: nil, footer: []}
   end
 
-  defp render_output({:error, message}) do
+  defp render_output(_tool, {:error, message}) do
     %{body: to_string(message), kind: "error", footer: []}
   end
 
-  defp render_output(_), do: nil
+  defp render_output(_tool, _), do: nil
+
+  defp eval_output_section(%Block{} = block) do
+    body = normalize_body(block.body)
+    kind = Block.attr(block, :kind)
+
+    meta =
+      [
+        Block.attr(block, :lines)
+        |> case do
+          n when is_integer(n) -> "#{n} line#{if n == 1, do: "", else: "s"}"
+          _ -> nil
+        end,
+        Block.attr(block, :size) |> format_size()
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join(" · ")
+      |> case do
+        "" -> nil
+        text -> text
+      end
+
+    case body do
+      "" ->
+        nil
+
+      _ ->
+        %{
+          kind: kind,
+          label: eval_output_label(kind),
+          htmls: eval_output_htmls(kind, body),
+          body: body,
+          meta: meta,
+          session_id: nil
+        }
+    end
+  end
+
+  defp attach_eval_session([], _session_id), do: []
+
+  defp attach_eval_session([first | rest], session_id) do
+    [%{first | session_id: session_id} | rest]
+  end
+
+  defp eval_output_label("value"), do: "result"
+  defp eval_output_label("io"), do: "io"
+  defp eval_output_label("error"), do: "error"
+
+  defp eval_output_label(kind) when is_binary(kind) and kind != "",
+    do: String.replace(kind, "_", " ")
+
+  defp eval_output_label(_), do: "output"
+
+  defp eval_output_htmls("value", body), do: SyntaxHighlight.elixir_htmls(body)
+  defp eval_output_htmls(_kind, _body), do: nil
 
   defp normalize_body(nil), do: ""
 
@@ -1220,6 +1318,41 @@ defmodule FrothWeb.TimelineLive do
   defp tool_output(%{output: %{body: body}} = assigns) when body in [nil, "", "nil"],
     do: ~H""
 
+  defp tool_output(%{output: %{variant: :eval, sections: sections}} = assigns)
+       when sections == [] do
+    ~H""
+  end
+
+  defp tool_output(%{output: %{variant: :eval}} = assigns) do
+    ~H"""
+    <div class="flex flex-col gap-2">
+      <div :for={section <- @output.sections} class={eval_output_frame_class(section.kind)}>
+        <div class="flex items-baseline gap-2 border-b border-current/20 px-2 py-1 font-mono text-2xs uppercase tracking-[0.14em]">
+          <span class={eval_output_label_class(section.kind)}>{section.label}</span>
+          <span :if={section.session_id} class="text-fg-ghost normal-case tracking-normal">
+            session {section.session_id}
+          </span>
+          <span :if={section.meta} class="ml-auto text-fg-ghost normal-case tracking-normal">
+            {section.meta}
+          </span>
+        </div>
+
+        <div :if={section.htmls} class="px-2 py-1">
+          <.responsive_highlight htmls={section.htmls} />
+        </div>
+
+        <pre
+          :if={!section.htmls}
+          class={[
+            "max-h-[280px] overflow-auto whitespace-pre px-2 py-1.5 font-mono text-[12px] leading-5",
+            eval_output_text_class(section.kind)
+          ]}
+        >{section.body}</pre>
+      </div>
+    </div>
+    """
+  end
+
   defp tool_output(assigns) do
     ~H"""
     <div class="flex flex-col">
@@ -1238,12 +1371,50 @@ defmodule FrothWeb.TimelineLive do
     """
   end
 
+  attr :htmls, :map, required: true
+
+  defp responsive_highlight(assigns) do
+    ~H"""
+    <div class="hidden text-fg md:block">
+      {raw(@htmls.desktop_html)}
+    </div>
+    <div class="text-fg md:hidden">
+      {raw(@htmls.mobile_html)}
+    </div>
+    """
+  end
+
   defp output_bg("shell"), do: "bg-glow"
   defp output_bg("error"), do: "bg-red/10"
   defp output_bg(_), do: "bg-glow"
 
   defp output_color("error"), do: "text-red"
   defp output_color(_), do: "text-fg-dim"
+
+  defp eval_output_frame_class("value"), do: "overflow-hidden border border-amber/20"
+  defp eval_output_frame_class("io"), do: "overflow-hidden border border-cyan/20"
+  defp eval_output_frame_class("error"), do: "overflow-hidden border border-red/20"
+  defp eval_output_frame_class(_), do: "overflow-hidden border border-line"
+
+  defp eval_output_label_class("value"), do: "text-amber"
+  defp eval_output_label_class("io"), do: "text-cyan"
+  defp eval_output_label_class("error"), do: "text-red"
+  defp eval_output_label_class(_), do: "text-fg"
+
+  defp eval_output_text_class("error"), do: "text-red"
+  defp eval_output_text_class(_), do: "text-fg-dim"
+
+  defp short_eval_session_id(nil), do: nil
+
+  defp short_eval_session_id(session_id) when is_binary(session_id) do
+    trimmed = String.replace_prefix(session_id, "eval_session_", "")
+
+    cond do
+      trimmed == "" -> nil
+      String.length(trimmed) > 12 -> String.slice(trimmed, 0, 12) <> "…"
+      true -> trimmed
+    end
+  end
 
   defp summarize_result(nil), do: nil
 

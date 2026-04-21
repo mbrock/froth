@@ -81,6 +81,8 @@ defmodule Froth.MixProject do
       {:ecto_ulid, "~> 0.3.0"},
       {:mint_web_socket, "~> 1.0"},
       {:fresh, "~> 0.4"},
+      {:makeup, "~> 1.2"},
+      {:makeup_elixir, "~> 1.0"},
       {:nx, "~> 0.10"},
       {:bumblebee, "~> 0.6"},
       {:exla, ">= 0.0.0"},
