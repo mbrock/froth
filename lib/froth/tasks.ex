@@ -110,7 +110,7 @@ defmodule Froth.Tasks do
   # --- Events ---
 
   def append(task_id, kind, content) when is_binary(task_id) and is_binary(kind) do
-    content = to_string(content)
+    content = content |> to_string() |> sanitize_event_content()
     now = DateTime.utc_now()
 
     seq = next_sequence(task_id)
@@ -132,6 +132,29 @@ defmodule Froth.Tasks do
 
   def append_output(task_id, content) when is_binary(task_id) do
     append(task_id, "stdout", content)
+  end
+
+  # task_events.content is a Postgres text column, which rejects NUL
+  # bytes and invalid UTF-8. That used to take down the shell
+  # GenServer the first time a binary chunk (e.g. `cat foo.png`)
+  # arrived on stdout — the port callback crashed on a failed
+  # `{:ok, _} = Repo.insert(...)` match, the task died, task_events
+  # ended up empty, and from the agent's side `task_output` returned
+  # "No output for task." for a command that looked like it succeeded.
+  #
+  # Rather than try to store the raw bytes here (the right place for
+  # those is a blob), we replace any non-JSON-text-safe chunk with a
+  # short human-readable placeholder that tells the reader what we
+  # dropped. MimeSniff picks a concrete MIME when it can; otherwise
+  # the chunk is labeled `application/octet-stream`. The chunk is
+  # still counted as one stdout event so ordering/stats stay honest.
+  defp sanitize_event_content(content) when is_binary(content) do
+    if Froth.Context.Blocks.json_text_safe?(content) do
+      content
+    else
+      mime = Froth.MimeSniff.sniff(content) || "application/octet-stream"
+      "[binary: #{mime} #{byte_size(content)} bytes]\n"
+    end
   end
 
   # --- Queries ---

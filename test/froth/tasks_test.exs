@@ -99,4 +99,48 @@ defmodule Froth.TasksTest do
     assert text =~ "[Task failed] #{task_id} failed."
     assert text =~ "failed: boom"
   end
+
+  describe "append_output/2 with non-text-safe bytes" do
+    # task_events.content is a Postgres text column, which rejects
+    # NUL bytes and invalid UTF-8. The shell GenServer appends raw
+    # stdout chunks directly, so a `cat foo.png` used to crash the
+    # GenServer on the first chunk — taking the whole task with it
+    # and leaving the agent with an empty task_output. These tests
+    # lock in the sanitizer that replaces unsafe chunks with a
+    # human-readable placeholder.
+
+    test "binary stdout lands as a [binary: …] placeholder event" do
+      task_id = Tasks.generate_id("shell")
+      {:ok, _} = Tasks.create(%{task_id: task_id, type: "shell", label: "cat logo.png"})
+
+      png = <<0x89, "PNG\r\n", 0x1A, 0x0A, 0, 0, 0, 13, "IHDR">>
+      event = Tasks.append_output(task_id, png)
+
+      assert %Froth.TaskEvent{kind: "stdout"} = event
+      assert event.content == "[binary: image/png #{byte_size(png)} bytes]\n"
+
+      [stored] = Tasks.recent_output(task_id, 10)
+      assert stored.content == event.content
+    end
+
+    test "NUL-bearing stdout without a known signature falls back to octet-stream" do
+      task_id = Tasks.generate_id("shell")
+      {:ok, _} = Tasks.create(%{task_id: task_id, type: "shell", label: "printf ..."})
+
+      chunk = <<0xAB, 0xCD, 0x00, 0x01, 0x02>>
+      event = Tasks.append_output(task_id, chunk)
+
+      assert event.content ==
+               "[binary: application/octet-stream #{byte_size(chunk)} bytes]\n"
+    end
+
+    test "text stdout passes through unchanged" do
+      task_id = Tasks.generate_id("shell")
+      {:ok, _} = Tasks.create(%{task_id: task_id, type: "shell", label: "echo hello"})
+
+      event = Tasks.append_output(task_id, "hello world\n")
+
+      assert event.content == "hello world\n"
+    end
+  end
 end

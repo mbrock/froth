@@ -44,6 +44,7 @@ defmodule Froth.Context.BlockHTML do
     <.block_tag kind={kind(@block)} attrs={structural_attrs(@block)}>
       <%= cond do %>
         <% Blocks.binary_shaped?(@block) -> %>
+          {binary_placeholder(@block)}
         <% is_binary(@block.body) -> %>
           {@block.body}
         <% has_fold?(@block) -> %>
@@ -61,6 +62,29 @@ defmodule Froth.Context.BlockHTML do
     """
   end
 
+  # The outer tag already carries mime/blob/size as attributes, but a
+  # self-closing `<shell mime="image/png" blob="…" size="10650"/>`
+  # reads as "empty output" at a glance and is easy to miss next to a
+  # `<shell/>` for a command that genuinely produced nothing. This
+  # placeholder spells it out in the body so the agent can tell
+  # "there's a PNG here, go pull it out of the blob" from "nothing
+  # happened". Duplicating info with the attrs is fine — the tag-plus-
+  # body form is redundant *on purpose*.
+  defp binary_placeholder(%Block{} = block) do
+    mime = Block.attr(block, :mime) || "application/octet-stream"
+    size = Block.attr(block, :size)
+    blob = Block.attr(block, :blob)
+
+    size_part = if is_integer(size), do: " #{size} bytes", else: ""
+
+    blob_part =
+      if is_binary(blob) and blob != "",
+        do: " → #{Froth.Blobs.render_id(blob)}",
+        else: ""
+
+    "[binary: #{mime}#{size_part}#{blob_part}]"
+  end
+
   # ── trace ────────────────────────────────────────────────────────
 
   attr :blocks, :list, required: true
@@ -76,7 +100,7 @@ defmodule Froth.Context.BlockHTML do
   defp trace_block(assigns) do
     assigns =
       if Blocks.binary_shaped?(assigns.block) do
-        assign(assigns, preview: "")
+        assign(assigns, preview: binary_placeholder(assigns.block))
       else
         assign(assigns, preview: preview_text(assigns.block))
       end

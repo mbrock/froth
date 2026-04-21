@@ -19,13 +19,25 @@ defmodule Froth.Tools.RunShell do
     %{
       "name" => name(),
       "description" =>
-        "Run a shell command via bash in the Froth environment. Use this for filesystem work, git inspection, local scripts, builds, and other OS-level actions that are better expressed as shell than Elixir. Fast commands return inline output; longer commands continue in the background and return a task_id for use with list_tasks, task_output, subscribe_task, stop_task, or send_input. The required description field is a user-visible observer note, so use it to explain the action, your layered goals, and your ungrounded assumptions before acting. A non-zero exit code is treated as an error, so do not assume a command worked unless the tool result says it did.",
+        """
+        Run a shell command via bash in the Froth environment. Use this for filesystem work, git inspection, local scripts, builds, and other OS-level actions that are better expressed as shell than Elixir.
+
+        This is not a plain terminal. Command output is captured as a structured block and handled by Froth before it reaches you, so several habits from normal shell usage are unnecessary here:
+
+        * Large text output is fine. Long output is automatically folded into head + tail with the omitted middle stored in a blob (shown as `blob:01K…`), and you can read the middle or search it later with the `pager` tool. Do not pipe into `head`, `tail`, `cut`, `wc -l`, or `less` just to avoid "too much output" — emit the full output and inspect it at your own pace.
+        * Binary output is fine. Bytes that are not safe as text (invalid UTF-8, NUL) are auto-detected, MIME-sniffed, and stored in a blob. Images and PDFs are delivered to you as real content parts, so `cat logo.png`, `curl -sL https://…/cat.jpg`, or `pdftoppm …` will actually show you the image/document — no need to base64-encode or hex-dump first. The text stream will also carry a `[binary: <mime> <N> bytes → blob:…]` placeholder so you can always see that something was captured and where it went.
+        * Slow or long-running commands are fine. If the command has not finished after a short window, it continues in the background and the tool result gives you a `task_id`; use `list_tasks`, `task_output`, `subscribe_task`, `send_input`, or `stop_task` to drive it from there. Do not wrap things in `timeout`, `nohup`, or `&` just to keep the call snappy — run the real command.
+
+        The required `description` field is a user-visible observer note: use it to state the action, your layered goals, and the ungrounded assumptions this invocation depends on before acting. A non-zero exit code is treated as an error, so do not assume a command worked unless the tool result says it did.
+        """
+        |> String.trim(),
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
           "command" => %{
             "type" => "string",
-            "description" => "Shell command to run."
+            "description" =>
+              "Shell command to run. Bash syntax; multi-line and pipelines are fine. Emit the full output you actually want — no need to pre-truncate with head/tail/wc, and no need to avoid commands that produce binary. Runs under `/bin/bash -c` with stderr merged into stdout."
           },
           "description" => %{
             "type" => "object",

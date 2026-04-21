@@ -256,6 +256,41 @@ defmodule Froth.Context.BlockHTMLTest do
       assert html =~ ~s(filename="x.png")
       refute html =~ "fake-image-bytes"
     end
+
+    test "binary-shaped block body carries a visible [binary: …] placeholder" do
+      # Simulates the `cat foo.png` path: a text-shaped shell block
+      # comes in with raw PNG bytes, gets auto-promoted to binary,
+      # and renders with an inline placeholder so the agent can tell
+      # "there's a PNG here" from "cat produced nothing".
+      png = <<0x89, "PNG\r\n", 0x1A, 0x0A>> <> :crypto.strong_rand_bytes(10_000)
+
+      blocks =
+        Blocks.materialize([
+          Block.new([kind: "shell", task_id: "shell:abc", exit_code: 0], png)
+        ])
+
+      html = BlockHTML.live_to_string(blocks)
+      [block] = blocks
+      expected_size = Block.attr(block, :size)
+      expected_blob = Block.attr(block, :blob)
+
+      assert html =~ ~s(mime="image/png")
+      assert html =~ "[binary: image/png #{expected_size} bytes → blob:#{expected_blob}]"
+    end
+
+    test "binary placeholder falls back to octet-stream when mime is unknown" do
+      bytes = :crypto.strong_rand_bytes(256)
+
+      blocks =
+        Blocks.materialize([
+          Block.new([kind: "shell"], <<0xAB, 0xCD, 0xEF, 0x00, 0x01>> <> bytes)
+        ])
+
+      html = BlockHTML.live_to_string(blocks)
+
+      assert html =~ "[binary: application/octet-stream"
+      assert html =~ ~r/bytes → blob:[0-9A-HJKMNP-TV-Z]{26}\]/
+    end
   end
 
   describe "safe tag names" do

@@ -238,12 +238,21 @@ defmodule Froth.Context.Blocks do
 
   defp binary_mime?(_), do: false
 
-  # A body is safe to persist as JSON text only if it is valid UTF-8
-  # *and* contains no NUL bytes — Postgres rejects `\u0000` inside
-  # JSONB/JSON text columns even though NUL is legal UTF-8.
-  defp json_text_safe?(body) when is_binary(body) do
+  @doc """
+  Whether a binary is safe to persist as JSON text or in a Postgres
+  `text` column.
+
+  Returns true only for valid UTF-8 that contains no NUL bytes.
+  Postgres rejects `\\u0000` inside JSON text columns and rejects NUL
+  in `text`/`varchar` columns generally, even though NUL is legal
+  UTF-8. Callers that see `false` here typically either promote to a
+  binary-shaped block (so the bytes go to a blob) or substitute a
+  human-readable placeholder (so event streams don't get truncated).
+  """
+  @spec json_text_safe?(binary() | any()) :: boolean()
+  def json_text_safe?(body) when is_binary(body) do
     String.valid?(body) and not String.contains?(body, <<0>>)
   end
 
-  defp json_text_safe?(_), do: false
+  def json_text_safe?(_), do: false
 end
