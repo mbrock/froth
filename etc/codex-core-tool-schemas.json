@@ -1,0 +1,315 @@
+{
+  "source_files": {
+    "tool_specs": "/Users/mbrock/Documents/Codex/2026-04-21-i-have-the-amp-extension-installed/openai-codex/codex-rs/tools/src/local_tool.rs",
+    "apply_patch_spec": "/Users/mbrock/Documents/Codex/2026-04-21-i-have-the-amp-extension-installed/openai-codex/codex-rs/tools/src/apply_patch_tool.rs",
+    "apply_patch_grammar": "/Users/mbrock/Documents/Codex/2026-04-21-i-have-the-amp-extension-installed/openai-codex/codex-rs/tools/src/tool_apply_patch.lark",
+    "tool_registry": "/Users/mbrock/Documents/Codex/2026-04-21-i-have-the-amp-extension-installed/openai-codex/codex-rs/tools/src/tool_registry_plan.rs",
+    "shell_handler": "/Users/mbrock/Documents/Codex/2026-04-21-i-have-the-amp-extension-installed/openai-codex/codex-rs/core/src/tools/handlers/shell.rs",
+    "unified_exec_handler": "/Users/mbrock/Documents/Codex/2026-04-21-i-have-the-amp-extension-installed/openai-codex/codex-rs/core/src/tools/handlers/unified_exec.rs",
+    "exec_runtime": "/Users/mbrock/Documents/Codex/2026-04-21-i-have-the-amp-extension-installed/openai-codex/codex-rs/core/src/exec.rs",
+    "unified_exec_runtime": "/Users/mbrock/Documents/Codex/2026-04-21-i-have-the-amp-extension-installed/openai-codex/codex-rs/core/src/unified_exec/mod.rs"
+  },
+  "current_model_shell_tooling": {
+    "gpt-5.4": {
+      "shell_type": "shell_command",
+      "apply_patch_tool_type": "freeform"
+    },
+    "gpt-5.4-mini": {
+      "shell_type": "shell_command",
+      "apply_patch_tool_type": "freeform"
+    },
+    "gpt-5.3-codex": {
+      "shell_type": "shell_command",
+      "apply_patch_tool_type": "freeform"
+    }
+  },
+  "tools": {
+    "shell": {
+      "kind": "function",
+      "used_when": "legacy/default argv-style shell tool path",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The command to execute"
+          },
+          "workdir": {
+            "type": "string",
+            "description": "The working directory to execute the command in"
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "The timeout for the command in milliseconds"
+          },
+          "sandbox_permissions": {
+            "type": "string",
+            "description": "Approval/sandbox override selector"
+          },
+          "justification": {
+            "type": "string",
+            "description": "Only set when asking for escalated execution"
+          },
+          "prefix_rule": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional reusable prefix for future approvals"
+          },
+          "additional_permissions": {
+            "type": "object",
+            "description": "Optional explicit network/filesystem permission profile when enabled"
+          }
+        }
+      },
+      "output_shape": {
+        "kind": "plain_text",
+        "format_for_freeform_models": [
+          "Exit code: <int>",
+          "Wall time: <seconds>",
+          "Total output lines: <n> (optional)",
+          "Output:",
+          "<possibly truncated combined stdout/stderr>"
+        ]
+      }
+    },
+    "shell_command": {
+      "kind": "function",
+      "used_when": "current GPT-5.4-family Codex shell tool",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The shell script to execute in the user's default shell"
+          },
+          "workdir": {
+            "type": "string",
+            "description": "The working directory to execute the command in"
+          },
+          "timeout_ms": {
+            "type": "number",
+            "description": "The timeout for the command in milliseconds"
+          },
+          "login": {
+            "type": "boolean",
+            "description": "Whether to run the shell with login shell semantics. Defaults to true."
+          },
+          "sandbox_permissions": {
+            "type": "string",
+            "description": "Approval/sandbox override selector"
+          },
+          "justification": {
+            "type": "string",
+            "description": "Only set when asking for escalated execution"
+          },
+          "prefix_rule": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional reusable prefix for future approvals"
+          },
+          "additional_permissions": {
+            "type": "object",
+            "description": "Optional explicit network/filesystem permission profile when enabled"
+          }
+        }
+      },
+      "output_shape": {
+        "kind": "plain_text",
+        "same_as_shell": true
+      }
+    },
+    "exec_command": {
+      "kind": "function",
+      "used_when": "unified exec / interactive PTY path",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "cmd"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "cmd": {
+            "type": "string",
+            "description": "Shell command to execute."
+          },
+          "workdir": {
+            "type": "string",
+            "description": "Optional working directory to run the command in; defaults to the turn cwd."
+          },
+          "shell": {
+            "type": "string",
+            "description": "Shell binary to launch. Defaults to the user's default shell."
+          },
+          "tty": {
+            "type": "boolean",
+            "description": "Whether to allocate a TTY for the command. Defaults to false (plain pipes); set to true to open a PTY and access TTY process."
+          },
+          "yield_time_ms": {
+            "type": "number",
+            "description": "How long to wait (in milliseconds) for output before yielding."
+          },
+          "max_output_tokens": {
+            "type": "number",
+            "description": "Maximum number of tokens to return. Excess output will be truncated."
+          },
+          "login": {
+            "type": "boolean",
+            "description": "Whether to run the shell with -l/-i semantics. Defaults to true."
+          },
+          "sandbox_permissions": {
+            "type": "string",
+            "description": "Approval/sandbox override selector"
+          },
+          "justification": {
+            "type": "string",
+            "description": "Only set when asking for escalated execution"
+          },
+          "prefix_rule": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional reusable prefix for future approvals"
+          },
+          "additional_permissions": {
+            "type": "object",
+            "description": "Optional explicit network/filesystem permission profile when enabled"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "wall_time_seconds",
+          "output"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "chunk_id": {
+            "type": "string",
+            "description": "Chunk identifier included when the response reports one."
+          },
+          "wall_time_seconds": {
+            "type": "number",
+            "description": "Elapsed wall time spent waiting for output in seconds."
+          },
+          "exit_code": {
+            "type": "number",
+            "description": "Process exit code when the command finished during this call."
+          },
+          "session_id": {
+            "type": "number",
+            "description": "Session identifier to pass to write_stdin when the process is still running."
+          },
+          "original_token_count": {
+            "type": "number",
+            "description": "Approximate token count before output truncation."
+          },
+          "output": {
+            "type": "string",
+            "description": "Command output text, possibly truncated."
+          }
+        }
+      }
+    },
+    "write_stdin": {
+      "kind": "function",
+      "used_when": "continuation or polling of unified exec session",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "number",
+            "description": "Identifier of the running unified exec session."
+          },
+          "chars": {
+            "type": "string",
+            "description": "Bytes to write to stdin (may be empty to poll)."
+          },
+          "yield_time_ms": {
+            "type": "number",
+            "description": "How long to wait (in milliseconds) for output before yielding."
+          },
+          "max_output_tokens": {
+            "type": "number",
+            "description": "Maximum number of tokens to return. Excess output will be truncated."
+          }
+        }
+      },
+      "output_schema": {
+        "$ref": "#/tools/exec_command/output_schema"
+      }
+    },
+    "apply_patch_freeform": {
+      "kind": "freeform",
+      "used_when": "modern GPT-5 models with grammar tool support",
+      "name": "apply_patch",
+      "description": "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.",
+      "format": {
+        "type": "grammar",
+        "syntax": "lark"
+      },
+      "grammar": "start: begin_patch hunk+ end_patch\nbegin_patch: \"*** Begin Patch\" LF\nend_patch: \"*** End Patch\" LF?\n\nhunk: add_hunk | delete_hunk | update_hunk\nadd_hunk: \"*** Add File: \" filename LF add_line+\ndelete_hunk: \"*** Delete File: \" filename LF\nupdate_hunk: \"*** Update File: \" filename LF change_move? change?\n\nfilename: /(.+)/\nadd_line: \"+\" /(.*)/ LF -> line\n\nchange_move: \"*** Move to: \" filename LF\nchange: (change_context | change_line)+ eof_line?\nchange_context: (\"@@\" | \"@@ \" /(.+)/) LF\nchange_line: (\"+\" | \"-\" | \" \") /(.*)/ LF\neof_line: \"*** End of File\" LF\n\n%import common.LF\n",
+      "public_output_shape": {
+        "kind": "plain_text",
+        "note": "Tool output is plain text; richer patch begin/update/end information travels via events."
+      }
+    },
+    "apply_patch_json": {
+      "kind": "function",
+      "used_when": "fallback for models without freeform grammar support",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "The entire contents of the apply_patch command"
+          }
+        }
+      },
+      "public_output_shape": {
+        "kind": "plain_text"
+      }
+    }
+  },
+  "runtime_defaults_and_limits": {
+    "classic_shell": {
+      "default_timeout_ms": 10000,
+      "timeout_exit_code": 124,
+      "io_drain_timeout_ms": 2000,
+      "max_exec_output_deltas_per_call": 10000
+    },
+    "unified_exec": {
+      "min_yield_time_ms": 250,
+      "min_empty_poll_yield_time_ms": 5000,
+      "max_yield_time_ms": 30000,
+      "default_max_background_terminal_timeout_ms": 300000,
+      "default_max_output_tokens": 10000,
+      "output_buffer_max_bytes": 1048576,
+      "max_open_processes": 64
+    }
+  }
+}
