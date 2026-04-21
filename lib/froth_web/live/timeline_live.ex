@@ -11,7 +11,9 @@ defmodule FrothWeb.TimelineLive do
   use FrothWeb, :live_view
 
   alias Froth.Agent
+  alias Froth.Telegram
   alias Froth.Telegram.Charlie
+  alias Froth.Telegram.CycleLink
   alias Froth.Telegram.Message, as: TMsg
   alias Froth.Telegram.Names
   alias Froth.Telegram.Queries
@@ -47,6 +49,22 @@ defmodule FrothWeb.TimelineLive do
      |> assign(:session_id, session_id)
      |> assign(:chat_id, chat_id)
      |> assign(:filter_sender, nil)
+     |> assign(:messages, [])
+     |> assign(:short_names, %{})
+     |> assign(:reply_lookup, %{})
+     |> assign(:blocks, [])
+     |> assign(:participants, [])
+     |> assign(:chat_title, nil)
+     |> assign(:message_count, 0)
+     |> assign(:oldest_date, nil)
+     |> assign(:newest_date, nil)
+     |> assign(:latest_sort_key, nil)
+     |> assign(:latest_day_key, nil)
+     |> assign(:cycle_inserted_at, %{})
+     |> assign(:chat_topic, nil)
+     |> assign(:cycle_topics, MapSet.new())
+     |> stream_configure(:blocks, dom_id: & &1.id)
+     |> stream(:blocks, [], reset: true)
      |> load_chat()}
   end
 
@@ -58,10 +76,39 @@ defmodule FrothWeb.TimelineLive do
         _ -> nil
       end
 
-    {:noreply, assign(socket, :filter_sender, next)}
+    {:noreply, socket |> assign(:filter_sender, next) |> sync_blocks()}
   end
 
   def handle_event("reload", _, socket), do: {:noreply, load_chat(socket)}
+
+  @impl true
+  def handle_info({:message_persisted, chat_id, %TMsg{} = message}, %{assigns: %{chat_id: chat_id}} = socket) do
+    {:noreply, append_message_block(socket, message)}
+  end
+
+  def handle_info(
+        {:cycle_linked, chat_id, %CycleLink{bot_id: "charlie"} = cycle_link},
+        %{assigns: %{chat_id: chat_id}} = socket
+      ) do
+    socket =
+      socket
+      |> track_cycle_link(cycle_link)
+      |> refresh_cycle_block(cycle_link.cycle_id)
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:event, event, _message}, socket) do
+    cycle_id = event.metadata["cycle_id"]
+
+    if is_binary(cycle_id) and MapSet.member?(socket.assigns.cycle_topics, cycle_id) do
+      {:noreply, refresh_cycle_block(socket, cycle_id)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info(_, socket), do: {:noreply, socket}
 
   # ─────────────────────────────────────────────────────────────────────────
   # Data loading
@@ -96,16 +143,25 @@ defmodule FrothWeb.TimelineLive do
 
     cycles = load_cycle_traces(chat_id, messages, short_names)
 
-    turns =
+    blocks =
       build_timeline(messages, short_names, reply_lookup, cycles, chat_id)
 
     socket
+    |> maybe_subscribe_chat(chat_id)
+    |> sync_cycle_topics(Enum.map(cycles, & &1.cycle_id))
     |> assign(:chat_title, chat_title)
+    |> assign(:messages, messages)
+    |> assign(:short_names, short_names)
+    |> assign(:reply_lookup, reply_lookup)
+    |> assign(:blocks, blocks)
+    |> assign(:cycle_inserted_at, Map.new(cycles, &{&1.cycle_id, &1.inserted_at}))
     |> assign(:participants, participants)
-    |> assign(:turns, turns)
     |> assign(:message_count, length(messages))
     |> assign(:oldest_date, List.first(messages) |> date_of())
     |> assign(:newest_date, List.last(messages) |> date_of())
+    |> assign(:latest_sort_key, latest_sort_key(messages, cycles))
+    |> assign(:latest_day_key, latest_day_key(messages, cycles))
+    |> sync_blocks()
   end
 
   defp dedupe_by_message_id(messages) do
@@ -122,6 +178,47 @@ defmodule FrothWeb.TimelineLive do
   defp date_of(nil), do: nil
   defp date_of(%{date: unix}) when is_integer(unix), do: unix
   defp date_of(_), do: nil
+
+  defp latest_sort_key(messages, cycles) do
+    message_key =
+      case List.last(messages) do
+        %{date: unix} when is_integer(unix) -> unix * 1_000_000
+        _ -> nil
+      end
+
+    cycle_key =
+      cycles
+      |> Enum.map(&sort_key(&1.inserted_at))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.max(fn -> nil end)
+
+    Enum.max([message_key, cycle_key], fn -> nil end)
+  end
+
+  defp latest_day_key(messages, cycles) do
+    case latest_sort_key(messages, cycles) do
+      nil ->
+        nil
+
+      latest ->
+        cond do
+          cycles != [] and latest == Enum.max(Enum.map(cycles, &sort_key(&1.inserted_at))) ->
+            cycles
+            |> Enum.max_by(&sort_key(&1.inserted_at))
+            |> Map.fetch!(:inserted_at)
+            |> shift_to_zone("Europe/Riga")
+            |> day_key()
+
+          true ->
+            messages
+            |> List.last()
+            |> case do
+              %{date: unix} when is_integer(unix) -> datetime_in("Europe/Riga", unix) |> day_key()
+              _ -> nil
+            end
+        end
+    end
+  end
 
   defp participants(messages, short_names) do
     messages
@@ -391,6 +488,253 @@ defmodule FrothWeb.TimelineLive do
 
   defp format_time(dt), do: Calendar.strftime(dt, "%H:%M")
 
+  defp sync_blocks(socket) do
+    stream_items = Enum.map(socket.assigns.blocks, &timeline_stream_item/1)
+    stream(socket, :blocks, stream_items, reset: true)
+  end
+
+  defp timeline_stream_item(block), do: %{id: block_id(block), block: block}
+
+  defp block_id({:turn, %{id: id}}), do: id
+  defp block_id({:cycle, %{id: id}}), do: id
+  defp block_id({:daybreak, dt}), do: "d-#{day_key(dt)}"
+
+  defp sort_key(%DateTime{} = dt), do: DateTime.to_unix(dt, :microsecond)
+  defp sort_key(%NaiveDateTime{} = ndt), do: ndt |> DateTime.from_naive!("Etc/UTC") |> sort_key()
+  defp sort_key(unix) when is_integer(unix), do: unix * 1_000_000
+  defp sort_key(_), do: nil
+
+  defp day_key(%DateTime{} = dt), do: Date.to_iso8601(DateTime.to_date(dt))
+  defp day_key(%NaiveDateTime{} = ndt), do: ndt |> DateTime.from_naive!("Etc/UTC") |> day_key()
+
+  defp maybe_subscribe_chat(socket, chat_id) when is_integer(chat_id) do
+    topic = Telegram.chat_topic(chat_id)
+
+    socket =
+      if connected?(socket) do
+        if is_binary(socket.assigns.chat_topic) and socket.assigns.chat_topic != topic do
+          Phoenix.PubSub.unsubscribe(Froth.PubSub, socket.assigns.chat_topic)
+        end
+
+        if socket.assigns.chat_topic != topic do
+          Phoenix.PubSub.subscribe(Froth.PubSub, topic)
+        end
+
+        socket
+      else
+        socket
+      end
+
+    assign(socket, :chat_topic, topic)
+  end
+
+  defp maybe_subscribe_chat(socket, _chat_id), do: socket
+
+  defp sync_cycle_topics(socket, cycle_ids) do
+    desired = cycle_ids |> Enum.filter(&is_binary/1) |> MapSet.new()
+    current = socket.assigns.cycle_topics || MapSet.new()
+
+    if connected?(socket) do
+      MapSet.difference(current, desired)
+      |> Enum.each(fn cycle_id ->
+        Phoenix.PubSub.unsubscribe(Froth.PubSub, "cycle:#{cycle_id}")
+      end)
+
+      MapSet.difference(desired, current)
+      |> Enum.each(fn cycle_id ->
+        Phoenix.PubSub.subscribe(Froth.PubSub, "cycle:#{cycle_id}")
+      end)
+    end
+
+    assign(socket, :cycle_topics, desired)
+  end
+
+  defp track_cycle_link(socket, %CycleLink{cycle_id: cycle_id, chat_id: chat_id, inserted_at: inserted_at})
+       when is_binary(cycle_id) and is_integer(chat_id) do
+    socket
+    |> assign(:cycle_inserted_at, Map.put(socket.assigns.cycle_inserted_at, cycle_id, inserted_at))
+    |> sync_cycle_topics(MapSet.put(socket.assigns.cycle_topics, cycle_id) |> MapSet.to_list())
+  end
+
+  defp append_message_block(socket, %TMsg{} = message) do
+    dt = datetime_in("Europe/Riga", message.date)
+
+    if out_of_order?(socket.assigns.latest_sort_key, dt) do
+      load_chat(socket)
+    else
+      short_names = ensure_short_names(socket.assigns.short_names, socket.assigns.session_id, [message.sender_id])
+      block = build_message_turn(message, short_names, socket.assigns.reply_lookup, socket.assigns.chat_id, dt)
+
+      blocks_to_append =
+        maybe_daybreak(socket.assigns.latest_day_key, dt) ++ [block]
+
+      reply_lookup =
+        Map.put(socket.assigns.reply_lookup, message.message_id, %{
+          text: TMsg.text(message.raw),
+          name: short_name_for(message.sender_id, short_names)
+        })
+
+      messages = socket.assigns.messages ++ [message]
+      blocks = socket.assigns.blocks ++ blocks_to_append
+      participants = participants(messages, short_names)
+
+      socket =
+        socket
+        |> assign(:messages, messages)
+        |> assign(:short_names, short_names)
+        |> assign(:reply_lookup, reply_lookup)
+        |> assign(:blocks, blocks)
+        |> assign(:participants, participants)
+        |> assign(:message_count, length(messages))
+        |> assign(:oldest_date, List.first(messages) |> date_of())
+        |> assign(:newest_date, List.last(messages) |> date_of())
+        |> assign(:latest_sort_key, sort_key(dt))
+        |> assign(:latest_day_key, day_key(dt))
+
+      Enum.reduce(blocks_to_append, socket, fn next_block, acc ->
+        stream_insert(acc, :blocks, timeline_stream_item(next_block), at: -1)
+      end)
+    end
+  end
+
+  defp refresh_cycle_block(socket, cycle_id) when is_binary(cycle_id) do
+    case Map.get(socket.assigns.cycle_inserted_at, cycle_id) do
+      nil ->
+        socket
+
+      inserted_at ->
+        entries =
+          Agent.cycle_traces([cycle_id])
+          |> Map.get(cycle_id, [])
+
+        cond do
+          entries == [] ->
+            socket
+
+          true ->
+            dt = shift_to_zone(inserted_at, "Europe/Riga")
+
+            if out_of_order_new_block?(socket, cycle_id, dt) do
+              load_chat(socket)
+            else
+              cycle =
+                %{
+                  cycle_id: cycle_id,
+                  inserted_at: inserted_at,
+                  entries: entries,
+                  bot_name: timeline_bot_name(socket.assigns.short_names),
+                  bot_color: timeline_bot_color(socket.assigns.short_names)
+                }
+
+              block = build_cycle_turn(cycle, dt)
+
+              case upsert_block(socket.assigns.blocks, block) do
+                :insert ->
+                  blocks_to_append = maybe_daybreak(socket.assigns.latest_day_key, dt) ++ [block]
+                  blocks = socket.assigns.blocks ++ blocks_to_append
+
+                  socket =
+                    socket
+                    |> assign(:blocks, blocks)
+                    |> assign(:latest_sort_key, sort_key(dt))
+                    |> assign(:latest_day_key, day_key(dt))
+
+                  Enum.reduce(blocks_to_append, socket, fn next_block, acc ->
+                    stream_insert(acc, :blocks, timeline_stream_item(next_block), at: -1)
+                  end)
+
+                {:update, blocks} ->
+                  socket
+                  |> assign(:blocks, blocks)
+                  |> assign(:latest_sort_key, max_sort_key(socket.assigns.latest_sort_key, dt))
+                  |> assign(:latest_day_key, max_day_key(socket.assigns.latest_day_key, dt))
+                  |> stream_insert(:blocks, timeline_stream_item(block))
+              end
+            end
+        end
+    end
+  end
+
+  defp refresh_cycle_block(socket, _cycle_id), do: socket
+
+  defp upsert_block(blocks, block) do
+    id = block_id(block)
+
+    case Enum.find_index(blocks, &(block_id(&1) == id)) do
+      nil -> :insert
+      idx -> {:update, List.replace_at(blocks, idx, block)}
+    end
+  end
+
+  defp maybe_daybreak(nil, dt), do: [{:daybreak, dt}]
+
+  defp maybe_daybreak(current_day_key, dt) do
+    if current_day_key == day_key(dt), do: [], else: [{:daybreak, dt}]
+  end
+
+  defp ensure_short_names(short_names, session_id, sender_ids) do
+    missing =
+      sender_ids
+      |> Enum.filter(&(is_integer(&1) and &1 > 0))
+      |> Enum.reject(&Map.has_key?(short_names, &1))
+      |> Enum.uniq()
+
+    if missing == [] do
+      short_names
+    else
+      _labels = Names.labels_for_ids(missing, session_id)
+      Map.merge(short_names, Usernames.short_name_map(missing))
+    end
+  end
+
+  defp timeline_bot_name(short_names) do
+    case bot_sender_id(short_names, "charlie") do
+      id when is_integer(id) -> short_name_for(id, short_names)
+      _ -> "bot"
+    end
+  end
+
+  defp timeline_bot_color(short_names) do
+    short_names
+    |> bot_sender_id("charlie")
+    |> color_for()
+  end
+
+  defp bot_sender_id(short_names, "charlie") do
+    short_names
+    |> Enum.find(fn {_id, name} -> name == "Charlie" end)
+    |> case do
+      {id, _} -> id
+      _ -> nil
+    end
+  end
+
+  defp bot_sender_id(_short_names, _bot_id), do: nil
+
+  defp out_of_order?(nil, _dt), do: false
+  defp out_of_order?(latest_sort_key, dt), do: sort_key(dt) < latest_sort_key
+
+  defp out_of_order_new_block?(socket, cycle_id, dt) do
+    latest_sort_key = socket.assigns.latest_sort_key
+    not cycle_block_present?(socket.assigns.blocks, cycle_id) and out_of_order?(latest_sort_key, dt)
+  end
+
+  defp cycle_block_present?(blocks, cycle_id) do
+    Enum.any?(blocks, fn
+      {:cycle, %{cycle_id: ^cycle_id}} -> true
+      _ -> false
+    end)
+  end
+
+  defp max_sort_key(nil, dt), do: sort_key(dt)
+  defp max_sort_key(latest_sort_key, dt), do: max(latest_sort_key, sort_key(dt))
+
+  defp max_day_key(nil, dt), do: day_key(dt)
+
+  defp max_day_key(current_day_key, dt) do
+    if current_day_key >= day_key(dt), do: current_day_key, else: day_key(dt)
+  end
+
   # ─────────────────────────────────────────────────────────────────────────
   # Render
   # ─────────────────────────────────────────────────────────────────────────
@@ -408,30 +752,29 @@ defmodule FrothWeb.TimelineLive do
           message_count={@message_count}
         />
 
-        <main class="flex-1 flex flex-col min-w-0">
+        <main
+          id="timeline-live-viewer"
+          phx-hook="ToolScroll"
+          data-follow-mode="smart"
+          class="flex-1 flex flex-col min-w-0 overflow-hidden"
+        >
           <div
             id="timeline-scroll"
-            phx-hook=".ScrollBottom"
+            data-scroll-body
             class="flex-1 overflow-y-auto"
           >
-            <div class="max-w-[960px] mx-auto py-4 md:py-6">
-              <%= for block <- @turns do %>
+            <div id="timeline-blocks" phx-update="stream" class="max-w-[960px] mx-auto py-4 md:py-6">
+              <div :for={{dom_id, item} <- @streams.blocks} id={dom_id}>
                 <.timeline_block
-                  block={block}
+                  block={item.block}
                   filter_sender={@filter_sender}
                 />
-              <% end %>
+              </div>
+              <div id="timeline-feed-end" data-scroll-end></div>
             </div>
           </div>
         </main>
       </div>
-
-      <script :type={Phoenix.LiveView.ColocatedHook} name=".ScrollBottom">
-        export default {
-          mounted() { this.el.scrollTop = this.el.scrollHeight; },
-          updated() { this.el.scrollTop = this.el.scrollHeight; },
-        };
-      </script>
     </Layouts.app>
     """
   end

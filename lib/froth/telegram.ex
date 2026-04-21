@@ -79,6 +79,9 @@ defmodule Froth.Telegram do
     Phoenix.PubSub.subscribe(Froth.PubSub, Froth.Telegram.Session.topic(session_id))
   end
 
+  @doc "PubSub topic for persisted updates scoped to one Telegram chat."
+  def chat_topic(chat_id) when is_integer(chat_id), do: "telegram:chat:#{chat_id}"
+
   def send(session_id, request) do
     GenServer.cast(Froth.Telegram.Session.via(session_id), {:send, request})
   end

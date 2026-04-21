@@ -608,12 +608,15 @@ defmodule Froth.Telegram.Bot do
 
     cycle = Agent.begin_cycle(message, base_config)
 
-    Repo.insert!(%CycleLink{
-      cycle_id: cycle.id,
-      bot_id: bc.id,
-      chat_id: chat_id,
-      reply_to: reply_to
-    })
+    cycle_link =
+      Repo.insert!(%CycleLink{
+        cycle_id: cycle.id,
+        bot_id: bc.id,
+        chat_id: chat_id,
+        reply_to: reply_to
+      })
+
+    Froth.broadcast(Froth.Telegram.chat_topic(chat_id), {:cycle_linked, chat_id, cycle_link})
 
     launch_cycle_worker(state, cycle, base_config, chat_id, reply_to)
   end
