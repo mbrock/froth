@@ -19,12 +19,16 @@ defmodule Froth.Telegram.PendingAsks do
   # that id to the final one. If the broadcast arrived first the
   # MessageIdSync ETS table already has the mapping; substitute the
   # final id at insert time so the row lands in its final state.
-  defp resolve_message_id(%{bot_id: bid, chat_id: cid, message_id: mid} = attrs)
+  defp resolve_message_id(
+         %{bot_id: bid, chat_id: cid, message_id: mid} = attrs
+       )
        when is_binary(bid) and is_integer(cid) and is_integer(mid) do
     %{attrs | message_id: MessageIdSync.resolve(bid, cid, mid)}
   end
 
-  defp resolve_message_id(%{"bot_id" => bid, "chat_id" => cid, "message_id" => mid} = attrs)
+  defp resolve_message_id(
+         %{"bot_id" => bid, "chat_id" => cid, "message_id" => mid} = attrs
+       )
        when is_binary(bid) and is_integer(cid) and is_integer(mid) do
     %{attrs | "message_id" => MessageIdSync.resolve(bid, cid, mid)}
   end
@@ -35,11 +39,13 @@ defmodule Froth.Telegram.PendingAsks do
   def get(_id), do: nil
 
   def get_unresolved_by_message(bot_id, chat_id, message_id)
-      when is_binary(bot_id) and is_integer(chat_id) and is_integer(message_id) do
+      when is_binary(bot_id) and is_integer(chat_id) and
+             is_integer(message_id) do
     Repo.one(
       from(p in PendingAsk,
         where:
-          p.bot_id == ^bot_id and p.chat_id == ^chat_id and p.message_id == ^message_id and
+          p.bot_id == ^bot_id and p.chat_id == ^chat_id and
+            p.message_id == ^message_id and
             is_nil(p.resolved_at),
         limit: 1
       ),
@@ -53,7 +59,9 @@ defmodule Froth.Telegram.PendingAsks do
       when is_binary(bot_id) and is_integer(chat_id) do
     Repo.one(
       from(p in PendingAsk,
-        where: p.bot_id == ^bot_id and p.chat_id == ^chat_id and is_nil(p.resolved_at),
+        where:
+          p.bot_id == ^bot_id and p.chat_id == ^chat_id and
+            is_nil(p.resolved_at),
         order_by: [desc: p.inserted_at],
         limit: 1
       ),
@@ -122,19 +130,26 @@ defmodule Froth.Telegram.PendingAsks do
     end
   end
 
-  def resolve(_pending_ask, _answer, _opts), do: {:error, :invalid_pending_ask}
+  def resolve(_pending_ask, _answer, _opts),
+    do: {:error, :invalid_pending_ask}
 
   def sync_message_id(bot_id, chat_id, old_message_id, new_message_id)
-      when is_binary(bot_id) and is_integer(chat_id) and is_integer(old_message_id) and
+      when is_binary(bot_id) and is_integer(chat_id) and
+             is_integer(old_message_id) and
              is_integer(new_message_id) do
     {count, _rows} =
       from(p in PendingAsk,
-        where: p.bot_id == ^bot_id and p.chat_id == ^chat_id and p.message_id == ^old_message_id
+        where:
+          p.bot_id == ^bot_id and p.chat_id == ^chat_id and
+            p.message_id == ^old_message_id
       )
-      |> Repo.update_all(set: [message_id: new_message_id, updated_at: DateTime.utc_now()])
+      |> Repo.update_all(
+        set: [message_id: new_message_id, updated_at: DateTime.utc_now()]
+      )
 
     count
   end
 
-  def sync_message_id(_bot_id, _chat_id, _old_message_id, _new_message_id), do: 0
+  def sync_message_id(_bot_id, _chat_id, _old_message_id, _new_message_id),
+    do: 0
 end

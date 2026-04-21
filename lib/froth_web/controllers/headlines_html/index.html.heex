@@ -26,7 +26,9 @@
               <p class="headlines-brutalist-display mt-2 text-3xl uppercase leading-none">
                 {@coverage.filed_days} / {@coverage.total_days}
               </p>
-              <p class="mt-2 text-xs font-bold uppercase tracking-[0.16em]">Days Filed</p>
+              <p class="mt-2 text-xs font-bold uppercase tracking-[0.16em]">
+                Days Filed
+              </p>
             </div>
 
             <div class="border-4 border-[var(--headline-brutalist-paper)] p-3">
@@ -36,7 +38,9 @@
               <p class="headlines-brutalist-display mt-2 text-3xl uppercase leading-none">
                 {@coverage.total_headlines}
               </p>
-              <p class="mt-2 text-xs font-bold uppercase tracking-[0.16em]">Saved Total</p>
+              <p class="mt-2 text-xs font-bold uppercase tracking-[0.16em]">
+                Saved Total
+              </p>
             </div>
 
             <div class="border-4 border-[var(--headline-brutalist-warning)] bg-[var(--headline-brutalist-warning)] p-3 text-black">
@@ -46,7 +50,9 @@
               <p class="headlines-brutalist-display mt-2 text-3xl uppercase leading-none">
                 {@coverage.missing_count}
               </p>
-              <p class="mt-2 text-xs font-bold uppercase tracking-[0.16em]">Unfiled Days</p>
+              <p class="mt-2 text-xs font-bold uppercase tracking-[0.16em]">
+                Unfiled Days
+              </p>
             </div>
           </section>
 
@@ -57,7 +63,9 @@
             <p class="headlines-brutalist-meta text-[10px] uppercase tracking-[0.24em] text-black/70">
               Active Chat
             </p>
-            <p class="mt-2 break-all text-sm font-black tracking-[0.1em]">{@chat_id}</p>
+            <p class="mt-2 break-all text-sm font-black tracking-[0.1em]">
+              {@chat_id}
+            </p>
           </section>
 
           <section
@@ -75,7 +83,8 @@
                   "border-4 border-black px-3 py-2 text-[11px] font-black uppercase tracking-[0.16em] transition",
                   if(chat_id == @chat_id,
                     do: "bg-black text-[var(--headline-brutalist-paper)]",
-                    else: "bg-[var(--headline-brutalist-paper)] text-black hover:-translate-y-0.5"
+                    else:
+                      "bg-[var(--headline-brutalist-paper)] text-black hover:-translate-y-0.5"
                   )
                 ]}
               >
@@ -126,7 +135,8 @@
                     Date Span
                   </p>
                   <p class="mt-2 text-sm font-black uppercase tracking-[0.14em]">
-                    {@coverage.first_day || "none"} to {@coverage.last_day || "none"}
+                    {@coverage.first_day || "none"} to {@coverage.last_day ||
+                      "none"}
                   </p>
                 </div>
                 <div

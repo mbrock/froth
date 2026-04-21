@@ -2,7 +2,9 @@ defmodule FrothWeb.ErrorJSONTest do
   use FrothWeb.ConnCase, async: true
 
   test "renders 404" do
-    assert FrothWeb.ErrorJSON.render("404.json", %{}) == %{errors: %{detail: "Not Found"}}
+    assert FrothWeb.ErrorJSON.render("404.json", %{}) == %{
+             errors: %{detail: "Not Found"}
+           }
   end
 
   test "renders 500" do

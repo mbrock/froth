@@ -6,7 +6,8 @@ defmodule Froth.Telegram.PromptCache do
   @default_cache_control %{"type" => "ephemeral", "ttl" => "1h"}
   @tail_breakpoint_backoff 3
 
-  def text_blocks(parts, bot_config) when is_list(parts) and is_map(bot_config) do
+  def text_blocks(parts, bot_config)
+      when is_list(parts) and is_map(bot_config) do
     breakpoint_indices = breakpoint_indices(parts, bot_config)
 
     parts

@@ -9,7 +9,9 @@ if config_env() in [:dev, :test] do
 end
 
 node_role =
-  case System.get_env("FROTH_NODE_ROLE", "full") |> String.trim() |> String.downcase() do
+  case System.get_env("FROTH_NODE_ROLE", "full")
+       |> String.trim()
+       |> String.downcase() do
     "worker" -> :worker
     _ -> :full
   end
@@ -58,13 +60,16 @@ if System.get_env("PHX_SERVER") do
 end
 
 config :froth, FrothWeb.Endpoint, http: endpoint_http
-config :froth, Froth.Telemetry.Store, enabled: config_env() != :test and node_role != :worker
+
+config :froth, Froth.Telemetry.Store,
+  enabled: config_env() != :test and node_role != :worker
 
 # The app usually runs on the host while Fuseki runs in Docker, so localhost is
 # the right default here. Override this when Froth itself runs in Docker or the
 # SPARQL service is reachable on a different network path.
 config :froth, Froth.Dataset,
-  endpoint: System.get_env("FROTH_SPARQL_ENDPOINT", "http://localhost:3030/kg/sparql"),
+  endpoint:
+    System.get_env("FROTH_SPARQL_ENDPOINT", "http://localhost:3030/kg/sparql"),
   query_opts: [request_method: :post, protocol_version: "1.1"]
 
 config :froth, Froth.ObjectStore,
@@ -73,7 +78,11 @@ config :froth, Froth.ObjectStore,
        "proxy" -> :proxy
        _ -> :local
      end),
-  root_dir: System.get_env("FROTH_OBJECT_STORE_ROOT_DIR", Path.expand("tmp/object-store")),
+  root_dir:
+    System.get_env(
+      "FROTH_OBJECT_STORE_ROOT_DIR",
+      Path.expand("tmp/object-store")
+    ),
   public_base: System.get_env("FROTH_OBJECT_STORE_PUBLIC_BASE"),
   internal_base: System.get_env("FROTH_OBJECT_STORE_INTERNAL_BASE"),
   write_token: System.get_env("FROTH_OBJECT_STORE_TOKEN")
@@ -100,8 +109,10 @@ config :froth, Froth.DailyDigest,
   chat_id: System.get_env("FROTH_DAILY_DIGEST_CHAT_ID", "-1003690254489"),
   session_id: System.get_env("FROTH_DAILY_DIGEST_SESSION_ID", "charlie"),
   run_at_utc: System.get_env("FROTH_DAILY_DIGEST_RUN_AT_UTC", "00:05:00"),
-  startup_delay_ms: System.get_env("FROTH_DAILY_DIGEST_STARTUP_DELAY_MS", "15000"),
-  digest_dir: System.get_env("FROTH_DAILY_DIGEST_DIR", Path.expand("tmp/daily-digests")),
+  startup_delay_ms:
+    System.get_env("FROTH_DAILY_DIGEST_STARTUP_DELAY_MS", "15000"),
+  digest_dir:
+    System.get_env("FROTH_DAILY_DIGEST_DIR", Path.expand("tmp/daily-digests")),
   headline_model: System.get_env("FROTH_DAILY_DIGEST_HEADLINE_MODEL")
 
 config :froth, Froth.Anthropic,
@@ -116,7 +127,9 @@ config :froth, Froth.Anthropic,
          end
      end),
   output_config:
-    (case System.get_env("ANTHROPIC_EFFORT", "") |> String.downcase() |> String.trim() do
+    (case System.get_env("ANTHROPIC_EFFORT", "")
+          |> String.downcase()
+          |> String.trim() do
        "" ->
          nil
 
@@ -160,7 +173,9 @@ config :froth, Froth.OpenAI,
          end
      end),
   effort:
-    (case System.get_env("OPENAI_EFFORT", "") |> String.downcase() |> String.trim() do
+    (case System.get_env("OPENAI_EFFORT", "")
+          |> String.downcase()
+          |> String.trim() do
        "" -> nil
        effort -> effort
      end)
@@ -177,7 +192,9 @@ config :froth, Froth.Grok,
          end
      end),
   effort:
-    (case System.get_env("GROK_EFFORT", "") |> String.downcase() |> String.trim() do
+    (case System.get_env("GROK_EFFORT", "")
+          |> String.downcase()
+          |> String.trim() do
        "" -> nil
        effort -> effort
      end)
@@ -194,12 +211,15 @@ config :froth, Froth.Gemini,
          end
      end),
   effort:
-    (case System.get_env("GEMINI_EFFORT", "") |> String.downcase() |> String.trim() do
+    (case System.get_env("GEMINI_EFFORT", "")
+          |> String.downcase()
+          |> String.trim() do
        "" -> nil
        effort -> effort
      end)
 
-config :froth, Froth.Analyzer, tdlib_session: System.get_env("ANALYZER_TDLIB_SESSION")
+config :froth, Froth.Analyzer,
+  tdlib_session: System.get_env("ANALYZER_TDLIB_SESSION")
 
 config :froth, Froth.Podcast,
   docroot: System.get_env("PODCAST_DOCROOT"),
@@ -207,7 +227,8 @@ config :froth, Froth.Podcast,
 
 config :froth, Froth.Telegram.Charlie,
   bot_user_id: String.to_integer(System.get_env("CHARLIE_BOT_USER_ID", "0")),
-  owner_user_id: String.to_integer(System.get_env("CHARLIE_OWNER_USER_ID", "0"))
+  owner_user_id:
+    String.to_integer(System.get_env("CHARLIE_OWNER_USER_ID", "0"))
 
 # Auto-start the Charlie bot on full nodes. Test env and worker nodes
 # skip this. Set FROTH_DISABLE_CHARLIE=1 to disable on full nodes too.
@@ -225,7 +246,8 @@ config :froth, Froth.Telegram,
   server_name: System.get_env("TELEGRAM_TDLIB_CNODE_SERVER"),
   # optional override for explicit TgCalls registration plugin path
   tgcalls_plugin:
-    System.get_env("TELEGRAM_TGCALLS_PLUGIN") || System.get_env("FROTH_TGCALLS_PLUGIN")
+    System.get_env("TELEGRAM_TGCALLS_PLUGIN") ||
+      System.get_env("FROTH_TGCALLS_PLUGIN")
 
 config :libcluster, topologies: Froth.Cluster.topologies()
 

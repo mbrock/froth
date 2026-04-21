@@ -25,7 +25,14 @@ defmodule Froth.Analysis do
       :metadata,
       :generated_at
     ])
-    |> validate_required([:type, :chat_id, :message_id, :agent, :analysis_text, :generated_at])
+    |> validate_required([
+      :type,
+      :chat_id,
+      :message_id,
+      :agent,
+      :analysis_text,
+      :generated_at
+    ])
     |> unique_constraint([:type, :chat_id, :message_id, :agent])
   end
 end

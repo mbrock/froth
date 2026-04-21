@@ -36,7 +36,8 @@ defmodule Froth.Tools.SpawnAgent do
           },
           "model" => %{
             "type" => "string",
-            "description" => "Optional model for the sub-agent. Defaults to gpt-5.4-mini."
+            "description" =>
+              "Optional model for the sub-agent. Defaults to gpt-5.4-mini."
           },
           "tools" => %{
             "type" => "array",
@@ -57,7 +58,8 @@ defmodule Froth.Tools.SpawnAgent do
   end
 
   @impl true
-  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks) when is_map(input) do
+  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks)
+      when is_map(input) do
     chat_id = Support.chat_id(ctx)
 
     if chat_id == 0 do
@@ -68,7 +70,8 @@ defmodule Froth.Tools.SpawnAgent do
 
       with {:ok, prompt} <- Support.required_trimmed_string(input, "prompt"),
            {:ok, model} <- Support.optional_trimmed_string(input, "model"),
-           {:ok, system_prompt} <- Support.optional_trimmed_string(input, "system_prompt"),
+           {:ok, system_prompt} <-
+             Support.optional_trimmed_string(input, "system_prompt"),
            {:ok, tool_names, tool_specs} <- resolve_tools(input),
            {:ok, {cycle, task_id, _pid}} <-
              start_cycle(
@@ -137,7 +140,8 @@ defmodule Froth.Tools.SpawnAgent do
               %{"cycle_id" => cycle.id, "cycle_status" => "failed"}
             )
 
-          {:error, "failed to start sub-agent runtime: owning bot is not running"}
+          {:error,
+           "failed to start sub-agent runtime: owning bot is not running"}
 
         {:error, reason} ->
           :ok =
@@ -152,7 +156,13 @@ defmodule Froth.Tools.SpawnAgent do
     end
   end
 
-  defp build_config(%Context{} = ctx, chat_id, reply_to, tool_specs, extra_opts) do
+  defp build_config(
+         %Context{} = ctx,
+         chat_id,
+         reply_to,
+         tool_specs,
+         extra_opts
+       ) do
     bc = ctx.bot_config
 
     %Config{
@@ -204,7 +214,8 @@ defmodule Froth.Tools.SpawnAgent do
 
   defp maybe_link_spawned_cycle(_cycle, _chat_id, _bot_id, _reply_to), do: :ok
 
-  defp result(%Context{bot_config: bc}, cycle, tool_names, task_id) when is_list(tool_names) do
+  defp result(%Context{bot_config: bc}, cycle, tool_names, task_id)
+       when is_list(tool_names) do
     %{
       "status" => "started",
       "cycle_id" => cycle.id,
@@ -218,7 +229,8 @@ defmodule Froth.Tools.SpawnAgent do
   end
 
   defp open_url(%BotConfig{id: bot_id, bot_username: username}, cycle_id)
-       when is_binary(cycle_id) and is_binary(bot_id) and bot_id != "" and is_binary(username) and
+       when is_binary(cycle_id) and is_binary(bot_id) and bot_id != "" and
+              is_binary(username) and
               username != "" do
     "https://t.me/#{username}/tool?startapp=cycle_#{bot_id}_#{cycle_id}"
   end
@@ -253,11 +265,16 @@ defmodule Froth.Tools.SpawnAgent do
 
   defp resolve_tool_names(names) when is_list(names) do
     with {:ok, normalized_names} <- normalize_tool_names(names) do
-      available_specs = Map.new(Froth.Inference.Tools.specs_for_api(), &{&1["name"], &1})
+      available_specs =
+        Map.new(Froth.Inference.Tools.specs_for_api(), &{&1["name"], &1})
 
-      case Enum.filter(normalized_names, &(not Map.has_key?(available_specs, &1))) do
+      case Enum.filter(
+             normalized_names,
+             &(not Map.has_key?(available_specs, &1))
+           ) do
         [] ->
-          {:ok, normalized_names, Enum.map(normalized_names, &Map.fetch!(available_specs, &1))}
+          {:ok, normalized_names,
+           Enum.map(normalized_names, &Map.fetch!(available_specs, &1))}
 
         unknown ->
           available =
@@ -288,7 +305,9 @@ defmodule Froth.Tools.SpawnAgent do
             {:cont, {:ok, {seen, acc}}}
 
           true ->
-            {:cont, {:ok, {MapSet.put(seen, normalized_name), acc ++ [normalized_name]}}}
+            {:cont,
+             {:ok,
+              {MapSet.put(seen, normalized_name), acc ++ [normalized_name]}}}
         end
 
       _name, _acc ->

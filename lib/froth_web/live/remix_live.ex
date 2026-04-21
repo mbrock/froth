@@ -142,7 +142,9 @@ defmodule FrothWeb.RemixLive do
             <span class="font-mono">{@room.agents_online}</span> online
           </span>
           <span class="text-fg-ghost">room age</span>
-          <span class="text-fg-dim"><span class="font-mono">{@room.age}</span></span>
+          <span class="text-fg-dim">
+            <span class="font-mono">{@room.age}</span>
+          </span>
         </div>
       </div>
     </aside>
@@ -192,7 +194,9 @@ defmodule FrothWeb.RemixLive do
       <div class="text-right text-fg-mute text-2xs">{@weekday}</div>
       <div class="text-fg-mute text-2xs">
         {@date}
-        <span :if={@range} class="font-mono text-fg-ghost ml-3 tabular-nums">{@range}</span>
+        <span :if={@range} class="font-mono text-fg-ghost ml-3 tabular-nums">
+          {@range}
+        </span>
       </div>
     </div>
     """
@@ -227,7 +231,9 @@ defmodule FrothWeb.RemixLive do
         >
           {@name}
         </span>
-        <span class="shrink-0 font-mono text-2xs text-fg-ghost tabular-nums">{@time}</span>
+        <span class="shrink-0 font-mono text-2xs text-fg-ghost tabular-nums">
+          {@time}
+        </span>
       </div>
 
       <div class="relative hidden text-right md:block md:col-start-1 md:row-start-1">
@@ -258,7 +264,9 @@ defmodule FrothWeb.RemixLive do
         />
       </div>
 
-      <div class="min-w-0 md:col-start-2 md:row-start-1">{render_slot(@inner_block)}</div>
+      <div class="min-w-0 md:col-start-2 md:row-start-1">
+        {render_slot(@inner_block)}
+      </div>
 
       <div class="hidden font-mono text-2xs text-fg-ghost tabular-nums text-right pt-[2px] md:block md:col-start-3 md:row-start-1">
         {@time}
@@ -355,7 +363,9 @@ defmodule FrothWeb.RemixLive do
 
   defp msg_part(%{part: {:tag, _}} = assigns) do
     ~H"""
-    <span class="font-mono text-2xs text-amber bg-amber/10 px-1">{elem(@part, 1)}</span>
+    <span class="font-mono text-2xs text-amber bg-amber/10 px-1">
+      {elem(@part, 1)}
+    </span>
     """
   end
 
@@ -406,8 +416,18 @@ defmodule FrothWeb.RemixLive do
             <stop offset="50%" stop-color="#7a5423" stop-opacity="0.2" />
             <stop offset="100%" stop-color="#000" stop-opacity="0" />
           </radialGradient>
-          <pattern id="invoice-paper" width="3" height="5" patternUnits="userSpaceOnUse">
-            <path d="M0 5 L3 5" stroke="#2a2218" stroke-width="0.25" opacity="0.5" />
+          <pattern
+            id="invoice-paper"
+            width="3"
+            height="5"
+            patternUnits="userSpaceOnUse"
+          >
+            <path
+              d="M0 5 L3 5"
+              stroke="#2a2218"
+              stroke-width="0.25"
+              opacity="0.5"
+            />
           </pattern>
         </defs>
         <rect width="400" height="290" fill="#070609" />
@@ -423,20 +443,35 @@ defmodule FrothWeb.RemixLive do
           />
           <rect x="70" y="28" width="260" height="234" fill="url(#invoice-paper)" />
           <g font-family="monospace" fill="#78726a">
-            <text x="84" y="52" font-size="6.5" letter-spacing="0.4">VALSTS IEŅĒMUMU DIENESTS</text>
-            <text x="84" y="63" font-size="5" opacity="0.6">Talejas iela 1, Rīga LV-1978</text>
+            <text x="84" y="52" font-size="6.5" letter-spacing="0.4">
+              VALSTS IEŅĒMUMU DIENESTS
+            </text>
+            <text x="84" y="63" font-size="5" opacity="0.6">
+              Talejas iela 1, Rīga LV-1978
+            </text>
             <text x="84" y="88" font-size="6">RĒĶINS</text>
             <text x="130" y="88" font-size="6" fill="#a8a49a">2026-00412</text>
             <text x="84" y="110" font-size="5.5">soc. apdrošināšana</text>
             <text x="280" y="110" font-size="5.5" text-anchor="end">863.00</text>
             <text x="84" y="120" font-size="5.5">procenti (12 d.)</text>
             <text x="280" y="120" font-size="5.5" text-anchor="end">12.40</text>
-            <line x1="84" y1="128" x2="280" y2="128" stroke="#3a2d1c" stroke-width="0.4" />
+            <line
+              x1="84"
+              y1="128"
+              x2="280"
+              y2="128"
+              stroke="#3a2d1c"
+              stroke-width="0.4"
+            />
             <text x="84" y="140" font-size="7" fill="#c9c3b5">KOPĀ</text>
-            <text x="280" y="140" font-size="7" fill="#e8a33d" text-anchor="end">875.40 EUR</text>
+            <text x="280" y="140" font-size="7" fill="#e8a33d" text-anchor="end">
+              875.40 EUR
+            </text>
             <text x="84" y="170" font-size="5">termiņš  2026-04-20</text>
             <text x="84" y="180" font-size="5">maksātājs  Mira Ozola</text>
-            <text x="84" y="220" font-size="4.5" opacity="0.5">LV40003456789 · IBAN LV08 HABA …</text>
+            <text x="84" y="220" font-size="4.5" opacity="0.5">
+              LV40003456789 · IBAN LV08 HABA …
+            </text>
           </g>
         </g>
         <rect width="400" height="290" fill="url(#invoice-glow)" />
@@ -451,7 +486,9 @@ defmodule FrothWeb.RemixLive do
       <div class="flex items-baseline gap-4 pb-3 border-b border-line">
         <div class="flex-1 min-w-0">
           <div class="text-fg">{@artifact.payer}</div>
-          <div class="font-mono text-2xs text-fg-mute tabular-nums mt-0.5">{@artifact.ref}</div>
+          <div class="font-mono text-2xs text-fg-mute tabular-nums mt-0.5">
+            {@artifact.ref}
+          </div>
         </div>
         <div class="text-right">
           <div class="font-sans text-2xs text-fg-mute">EUR</div>
@@ -503,7 +540,9 @@ defmodule FrothWeb.RemixLive do
     <div class="font-mono text-[13px] max-w-[720px]">
       <%= for line <- @artifact.lines do %>
         <div class="grid grid-cols-[16px_1fr_auto] gap-2 items-baseline">
-          <span class={["font-bold", shell_glyph_color(line)]}>{shell_glyph(line)}</span>
+          <span class={["font-bold", shell_glyph_color(line)]}>
+            {shell_glyph(line)}
+          </span>
           <span class={shell_text_color(line)}>
             {line.text}
             <span
@@ -511,7 +550,9 @@ defmodule FrothWeb.RemixLive do
               class="inline-block w-[7px] h-3 bg-amber align-[-2px] ml-0.5 animate-blink"
             />
           </span>
-          <span class="text-fg-ghost text-2xs tabular-nums">{line[:ms] || ""}</span>
+          <span class="text-fg-ghost text-2xs tabular-nums">
+            {line[:ms] || ""}
+          </span>
         </div>
       <% end %>
     </div>
@@ -536,8 +577,12 @@ defmodule FrothWeb.RemixLive do
             "grid grid-cols-[32px_32px_16px_1fr] px-2",
             diff_row_bg(line.kind)
           ]}>
-            <span class="text-fg-ghost tabular-nums text-right pr-2">{line[:a] || ""}</span>
-            <span class="text-fg-ghost tabular-nums text-right pr-2">{line[:b] || ""}</span>
+            <span class="text-fg-ghost tabular-nums text-right pr-2">
+              {line[:a] || ""}
+            </span>
+            <span class="text-fg-ghost tabular-nums text-right pr-2">
+              {line[:b] || ""}
+            </span>
             <span class={[diff_marker_color(line.kind), "text-center"]}>
               {diff_marker(line.kind)}
             </span>
@@ -546,7 +591,10 @@ defmodule FrothWeb.RemixLive do
         <% end %>
       </div>
 
-      <div :if={@artifact[:review]} class="px-3 py-2 border-t border-line text-2xs text-fg-dim">
+      <div
+        :if={@artifact[:review]}
+        class="px-3 py-2 border-t border-line text-2xs text-fg-dim"
+      >
         <span class="text-cyan font-medium mr-2">{@artifact.review.by}</span>
         {Phoenix.HTML.raw(@artifact.review.html)}
       </div>
@@ -558,7 +606,8 @@ defmodule FrothWeb.RemixLive do
     assigns =
       assign(assigns,
         cur_idx: floor(assigns.play_pos * length(assigns.artifact.waveform)),
-        cur_seconds: floor(assigns.play_pos * assigns.artifact.duration_seconds),
+        cur_seconds:
+          floor(assigns.play_pos * assigns.artifact.duration_seconds),
         mm_ss: mm_ss(assigns.play_pos, assigns.artifact.duration_seconds)
       )
 
@@ -639,7 +688,9 @@ defmodule FrothWeb.RemixLive do
             <dt class="text-fg-mute text-2xs">by</dt>
             <dd class="m-0 text-fg">{@artifact.by}</dd>
             <dt class="text-fg-mute text-2xs">created</dt>
-            <dd class="m-0 text-fg font-mono text-2xs tabular-nums">{@artifact.created}</dd>
+            <dd class="m-0 text-fg font-mono text-2xs tabular-nums">
+              {@artifact.created}
+            </dd>
           </dl>
         </div>
 
@@ -647,12 +698,17 @@ defmodule FrothWeb.RemixLive do
           <h4 class="font-sans text-2xs text-fg-mute mb-2 flex items-baseline gap-2">
             <span>provenance</span>
             <span class="text-fg-ghost font-normal">
-              · upstream {length(@artifact.ancestors)}, downstream {length(@artifact.descendants)}
+              · upstream {length(@artifact.ancestors)}, downstream {length(
+                @artifact.descendants
+              )}
             </span>
           </h4>
           <div class="text-[13px]">
             <%= for {a, i} <- Enum.with_index(@artifact.ancestors) do %>
-              <div class="flex items-baseline gap-2 py-1" style={"padding-left: #{i * 20}px"}>
+              <div
+                class="flex items-baseline gap-2 py-1"
+                style={"padding-left: #{i * 20}px"}
+              >
                 <span class="text-fg-ghost font-mono text-2xs">└</span>
                 <span class="text-fg-mute text-2xs">{a.kind}</span>
                 <span class="text-fg font-medium">{a.name}</span>
@@ -692,12 +748,16 @@ defmodule FrothWeb.RemixLive do
         <div class="px-6 py-4 border-b border-line">
           <h4 class="font-sans text-2xs text-fg-mute mb-2 flex items-baseline gap-2">
             <span>history</span>
-            <span class="text-fg-ghost font-normal">· {length(@artifact.history)} entries</span>
+            <span class="text-fg-ghost font-normal">
+              · {length(@artifact.history)} entries
+            </span>
           </h4>
           <div class="space-y-0.5">
             <%= for h <- @artifact.history do %>
               <div class="grid grid-cols-[72px_56px_1fr_auto] gap-3 text-[13px]">
-                <span class="font-mono text-2xs text-lavender tabular-nums">{h.when}</span>
+                <span class="font-mono text-2xs text-lavender tabular-nums">
+                  {h.when}
+                </span>
                 <span class={["text-2xs", history_op_color(h.op)]}>{h.op}</span>
                 <span class="text-fg-dim">{h.what}</span>
                 <span class="text-fg-mute text-2xs">{h.by}</span>
@@ -799,10 +859,30 @@ defmodule FrothWeb.RemixLive do
         "orr" => %{name: "orr", color: "text-cyan", kind: :agent}
       },
       sidebar_artifacts: [
-        %{key: "parsed-invoice", glyph: "▣", name: "invoice · LV-2026-00412", meta: "v2"},
-        %{key: "photo-invoice", glyph: "▢", name: "invoice photo", meta: "heic"},
-        %{key: "payment-shell", glyph: "$", name: "SEPA signing · 2.2s", meta: "4 cmd"},
-        %{key: "code-fix", glyph: "▼", name: "invoice.tsx · patch", meta: "+3/−2"},
+        %{
+          key: "parsed-invoice",
+          glyph: "▣",
+          name: "invoice · LV-2026-00412",
+          meta: "v2"
+        },
+        %{
+          key: "photo-invoice",
+          glyph: "▢",
+          name: "invoice photo",
+          meta: "heic"
+        },
+        %{
+          key: "payment-shell",
+          glyph: "$",
+          name: "SEPA signing · 2.2s",
+          meta: "4 cmd"
+        },
+        %{
+          key: "code-fix",
+          glyph: "▼",
+          name: "invoice.tsx · patch",
+          meta: "+3/−2"
+        },
         %{key: "podcast", glyph: "♪", name: "tuesday dispatch", meta: "6:12"}
       ],
       turns: turns(),
@@ -840,7 +920,9 @@ defmodule FrothWeb.RemixLive do
         lineage: ["photo-invoice"],
         body: [
           {:artifact, "photo-invoice",
-           caption: "a photograph · 4032×3024 · heic", lineage: [], kind: :image}
+           caption: "a photograph · 4032×3024 · heic",
+           lineage: [],
+           kind: :image}
         ]
       },
       %{
@@ -934,12 +1016,25 @@ defmodule FrothWeb.RemixLive do
            lines: [
              %{
                kind: :cmd,
-               text: "swed sign --account op --to LV08HABA055100… --amount 87540 --ref 2026-00412"
+               text:
+                 "swed sign --account op --to LV08HABA055100… --amount 87540 --ref 2026-00412"
              },
-             %{kind: :ok, text: "signature captured · mira · 14:05:04", ms: "240ms"},
+             %{
+               kind: :ok,
+               text: "signature captured · mira · 14:05:04",
+               ms: "240ms"
+             },
              %{kind: :cmd, text: "sepa broadcast --tx 0x7a1c4f09"},
-             %{kind: :ok, text: "accepted by clearer · pending confirmation", ms: "612ms"},
-             %{kind: :ok, text: "confirmed · block 21,417,308 · fee €0.35", ms: "1.3s"}
+             %{
+               kind: :ok,
+               text: "accepted by clearer · pending confirmation",
+               ms: "612ms"
+             },
+             %{
+               kind: :ok,
+               text: "confirmed · block 21,417,308 · fee €0.35",
+               ms: "1.3s"
+             }
            ]}
         ]
       },
@@ -989,7 +1084,8 @@ defmodule FrothWeb.RemixLive do
         is_child?: false,
         lineage: ["code-fix"],
         body: [
-          {:msg, ["read source, three-line patch. tests pass, merged to main."]}
+          {:msg,
+           ["read source, three-line patch. tests pass, merged to main."]}
         ]
       },
       %{
@@ -1101,7 +1197,8 @@ defmodule FrothWeb.RemixLive do
              %{label: "draws from 34 sources in this room", link: nil},
              %{label: "cites invoice + tax fix", link: "parsed-invoice"}
            ],
-           title: "tuesday dispatch — tax, tabular figures, the Luna Press ratio",
+           title:
+             "tuesday dispatch — tax, tabular figures, the Luna Press ratio",
            duration_label: "06:12",
            duration_seconds: 372,
            waveform: podcast_wave()}
@@ -1136,9 +1233,24 @@ defmodule FrothWeb.RemixLive do
           %{kind: "cite", name: "tuesday dispatch", by: "vale"}
         ],
         history: [
-          %{when: "13:52:34", op: "create", what: "uploaded from phone", by: "mira"},
-          %{when: "13:54:12", op: "cite", what: "referenced by vale/parsed-invoice", by: "vale"},
-          %{when: "17:00:42", op: "cite", what: "cited in podcast (0:14)", by: "vale"}
+          %{
+            when: "13:52:34",
+            op: "create",
+            what: "uploaded from phone",
+            by: "mira"
+          },
+          %{
+            when: "13:54:12",
+            op: "cite",
+            what: "referenced by vale/parsed-invoice",
+            by: "vale"
+          },
+          %{
+            when: "17:00:42",
+            op: "cite",
+            what: "cited in podcast (0:14)",
+            by: "vale"
+          }
         ]
       },
       "parsed-invoice" => %{
@@ -1150,7 +1262,11 @@ defmodule FrothWeb.RemixLive do
         by: "vale",
         created: "2026-04-21 · 13:54",
         ancestors: [
-          %{kind: "photograph", name: "invoice — Latvian tax authority", by: "mira"}
+          %{
+            kind: "photograph",
+            name: "invoice — Latvian tax authority",
+            by: "mira"
+          }
         ],
         descendants: [
           %{kind: "shell", name: "SEPA signing", by: "orr"},
@@ -1159,11 +1275,36 @@ defmodule FrothWeb.RemixLive do
           %{kind: "cite", name: "tuesday dispatch", by: "vale"}
         ],
         history: [
-          %{when: "13:54:12", op: "create", what: "OCR parsed (9 fields)", by: "vale"},
-          %{when: "14:04:58", op: "sign", what: "authorized by mira (touch-id)", by: "mira"},
-          %{when: "14:07:21", op: "settle", what: "SEPA confirmed · block 21,417,308", by: "orr"},
-          %{when: "14:33:02", op: "cite", what: "quoted as bug reference", by: "jonas"},
-          %{when: "14:35:17", op: "revise", what: "rendered via patched invoice.tsx", by: "orr"}
+          %{
+            when: "13:54:12",
+            op: "create",
+            what: "OCR parsed (9 fields)",
+            by: "vale"
+          },
+          %{
+            when: "14:04:58",
+            op: "sign",
+            what: "authorized by mira (touch-id)",
+            by: "mira"
+          },
+          %{
+            when: "14:07:21",
+            op: "settle",
+            what: "SEPA confirmed · block 21,417,308",
+            by: "orr"
+          },
+          %{
+            when: "14:33:02",
+            op: "cite",
+            what: "quoted as bug reference",
+            by: "jonas"
+          },
+          %{
+            when: "14:35:17",
+            op: "revise",
+            what: "rendered via patched invoice.tsx",
+            by: "orr"
+          }
         ],
         body:
           "parsed fields: payer, amount, ref, due date, IBAN, issue date, fee code, interest, VAT id."
@@ -1183,10 +1324,30 @@ defmodule FrothWeb.RemixLive do
           %{kind: "cite", name: "tuesday dispatch", by: "vale"}
         ],
         history: [
-          %{when: "14:05:01", op: "create", what: "signing flow invoked", by: "orr"},
-          %{when: "14:05:04", op: "sign", what: "private key on phone accepted", by: "mira"},
-          %{when: "14:05:16", op: "emit", what: "broadcast to SEPA clearer", by: "orr"},
-          %{when: "14:07:21", op: "settle", what: "confirmed · block 21,417,308", by: "orr"}
+          %{
+            when: "14:05:01",
+            op: "create",
+            what: "signing flow invoked",
+            by: "orr"
+          },
+          %{
+            when: "14:05:04",
+            op: "sign",
+            what: "private key on phone accepted",
+            by: "mira"
+          },
+          %{
+            when: "14:05:16",
+            op: "emit",
+            what: "broadcast to SEPA clearer",
+            by: "orr"
+          },
+          %{
+            when: "14:07:21",
+            op: "settle",
+            what: "confirmed · block 21,417,308",
+            by: "orr"
+          }
         ]
       },
       "code-fix" => %{
@@ -1205,7 +1366,12 @@ defmodule FrothWeb.RemixLive do
           %{kind: "cite", name: "tuesday dispatch", by: "vale"}
         ],
         history: [
-          %{when: "14:35:02", op: "create", what: "patch composed from jonas' trace", by: "orr"},
+          %{
+            when: "14:35:02",
+            op: "create",
+            what: "patch composed from jonas' trace",
+            by: "orr"
+          },
           %{
             when: "14:35:14",
             op: "test",

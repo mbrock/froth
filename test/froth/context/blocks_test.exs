@@ -16,41 +16,75 @@ defmodule Froth.Context.BlocksTest do
     end
 
     test "blocks with text/* mime are text-shaped" do
-      refute Blocks.binary_shaped?(Block.new([kind: "page", mime: "text/markdown"], "# hi"))
-      refute Blocks.binary_shaped?(Block.new([kind: "page", mime: "text/plain"], "hi"))
-      refute Blocks.binary_shaped?(Block.new([kind: "page", mime: "text/html"], "<p>hi</p>"))
+      refute Blocks.binary_shaped?(
+               Block.new([kind: "page", mime: "text/markdown"], "# hi")
+             )
+
+      refute Blocks.binary_shaped?(
+               Block.new([kind: "page", mime: "text/plain"], "hi")
+             )
+
+      refute Blocks.binary_shaped?(
+               Block.new([kind: "page", mime: "text/html"], "<p>hi</p>")
+             )
     end
 
     test "json/xml/javascript count as text-shaped" do
-      refute Blocks.binary_shaped?(Block.new([kind: "data", mime: "application/json"], "{}"))
-      refute Blocks.binary_shaped?(Block.new([kind: "data", mime: "application/xml"], "<x/>"))
+      refute Blocks.binary_shaped?(
+               Block.new([kind: "data", mime: "application/json"], "{}")
+             )
 
       refute Blocks.binary_shaped?(
-               Block.new([kind: "data", mime: "application/javascript"], "x=1")
+               Block.new([kind: "data", mime: "application/xml"], "<x/>")
+             )
+
+      refute Blocks.binary_shaped?(
+               Block.new(
+                 [kind: "data", mime: "application/javascript"],
+                 "x=1"
+               )
              )
     end
 
     test "image/pdf/audio/video are binary-shaped" do
-      assert Blocks.binary_shaped?(Block.new([kind: "img", mime: "image/jpeg"], <<>>))
-      assert Blocks.binary_shaped?(Block.new([kind: "doc", mime: "application/pdf"], <<>>))
-      assert Blocks.binary_shaped?(Block.new([kind: "audio", mime: "audio/ogg"], <<>>))
-      assert Blocks.binary_shaped?(Block.new([kind: "video", mime: "video/mp4"], <<>>))
+      assert Blocks.binary_shaped?(
+               Block.new([kind: "img", mime: "image/jpeg"], <<>>)
+             )
+
+      assert Blocks.binary_shaped?(
+               Block.new([kind: "doc", mime: "application/pdf"], <<>>)
+             )
+
+      assert Blocks.binary_shaped?(
+               Block.new([kind: "audio", mime: "audio/ogg"], <<>>)
+             )
+
+      assert Blocks.binary_shaped?(
+               Block.new([kind: "video", mime: "video/mp4"], <<>>)
+             )
     end
 
     test "mime with parameters and case variations work" do
       assert Blocks.binary_shaped?(
-               Block.new([kind: "img", mime: "Image/JPEG; charset=binary"], <<>>)
+               Block.new(
+                 [kind: "img", mime: "Image/JPEG; charset=binary"],
+                 <<>>
+               )
              )
 
       refute Blocks.binary_shaped?(
-               Block.new([kind: "page", mime: "Text/Markdown; charset=utf-8"], "x")
+               Block.new(
+                 [kind: "page", mime: "Text/Markdown; charset=utf-8"],
+                 "x"
+               )
              )
     end
   end
 
   describe "materialize/1 — text-shaped" do
     test "small bodies stay inline with size and lines attrs" do
-      [block] = Blocks.materialize([Block.new([kind: "shell"], "hello world")])
+      [block] =
+        Blocks.materialize([Block.new([kind: "shell"], "hello world")])
 
       assert block.body == "hello world"
       assert Block.attr(block, :size) == 11
@@ -77,7 +111,10 @@ defmodule Froth.Context.BlocksTest do
 
       [block] =
         Blocks.materialize([
-          Block.new([kind: "fetched", mime: "image/jpeg", filename: "photo.jpg"], bytes)
+          Block.new(
+            [kind: "fetched", mime: "image/jpeg", filename: "photo.jpg"],
+            bytes
+          )
         ])
 
       assert is_nil(block.body)
@@ -98,7 +135,10 @@ defmodule Froth.Context.BlocksTest do
     end
 
     test "small binary bodies still get blobbed (no size threshold for binary)" do
-      [block] = Blocks.materialize([Block.new([kind: "img", mime: "image/png"], "tiny")])
+      [block] =
+        Blocks.materialize([
+          Block.new([kind: "img", mime: "image/png"], "tiny")
+        ])
 
       assert is_nil(block.body)
       assert is_binary(Block.attr(block, :blob))
@@ -186,7 +226,10 @@ defmodule Froth.Context.BlocksTest do
     end
 
     test "text block whose bytes start with a PNG signature is sniffed as image/png" do
-      png = <<0x89, "PNG\r\n", 0x1A, 0x0A, :crypto.strong_rand_bytes(128)::binary>>
+      png =
+        <<0x89, "PNG\r\n", 0x1A, 0x0A,
+          :crypto.strong_rand_bytes(128)::binary>>
+
       [block] = Blocks.materialize([Block.new([kind: "shell"], png)])
 
       assert is_nil(block.body)
@@ -224,7 +267,8 @@ defmodule Froth.Context.BlocksTest do
     end
 
     test "clean text body is unaffected (no promotion, no blob)" do
-      [block] = Blocks.materialize([Block.new([kind: "shell"], "hello world")])
+      [block] =
+        Blocks.materialize([Block.new([kind: "shell"], "hello world")])
 
       assert block.body == "hello world"
       refute Block.attr(block, :mime)

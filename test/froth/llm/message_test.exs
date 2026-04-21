@@ -28,7 +28,9 @@ defmodule Froth.LLM.MessageTest do
                "id" => "call_1",
                "name" => "froth_echo",
                "input" => %{"text" => "hi"},
-               "extra_content" => %{"google" => %{"thought_signature" => "sig_123"}}
+               "extra_content" => %{
+                 "google" => %{"thought_signature" => "sig_123"}
+               }
              }
            ]
 
@@ -40,7 +42,9 @@ defmodule Froth.LLM.MessageTest do
                "id" => "call_1",
                "name" => "froth_echo",
                "input" => %{"text" => "hi"},
-               "extra_content" => %{"google" => %{"thought_signature" => "sig_123"}}
+               "extra_content" => %{
+                 "google" => %{"thought_signature" => "sig_123"}
+               }
              }
            ]
   end
@@ -50,17 +54,26 @@ defmodule Froth.LLM.MessageTest do
       Message.user([
         "before ",
         %{"type" => "text", "text" => "after"},
-        %{"type" => "tool_result", "tool_use_id" => "call_1", "content" => "echoed: hi"}
+        %{
+          "type" => "tool_result",
+          "tool_use_id" => "call_1",
+          "content" => "echoed: hi"
+        }
       ])
 
     assert Message.text_content(message) == "before after"
 
     assert Message.tool_results(message) == [
-             %{"type" => "tool_result", "tool_use_id" => "call_1", "content" => "echoed: hi"}
+             %{
+               "type" => "tool_result",
+               "tool_use_id" => "call_1",
+               "content" => "echoed: hi"
+             }
            ]
   end
 
   test "rejects unsupported roles" do
-    assert :error = Message.normalize(%{"role" => "tool", "content" => "nope"})
+    assert :error =
+             Message.normalize(%{"role" => "tool", "content" => "nope"})
   end
 end

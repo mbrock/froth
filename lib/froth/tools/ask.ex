@@ -27,7 +27,8 @@ defmodule Froth.Tools.Ask do
         "properties" => %{
           "question" => %{
             "type" => "string",
-            "description" => "The question to ask. Keep it concrete and answerable in one reply."
+            "description" =>
+              "The question to ask. Keep it concrete and answerable in one reply."
           },
           "alternatives" => %{
             "type" => "array",
@@ -45,7 +46,11 @@ defmodule Froth.Tools.Ask do
   @impl true
   def execute(
         %Context{
-          surface: %Surface{session_id: session_id, chat_id: chat_id, reply_to: reply_to},
+          surface: %Surface{
+            session_id: session_id,
+            chat_id: chat_id,
+            reply_to: reply_to
+          },
           bot_config: %BotConfig{id: bot_id},
           cycle_id: cycle_id,
           system_prompt: system_prompt
@@ -54,17 +59,25 @@ defmodule Froth.Tools.Ask do
         hooks
       )
       when is_binary(session_id) and is_integer(chat_id) and is_binary(bot_id) and
-             is_binary(cycle_id) and is_binary(tool_use_id) and is_binary(system_prompt) and
+             is_binary(cycle_id) and is_binary(tool_use_id) and
+             is_binary(system_prompt) and
              is_map(input) do
     with {:ok, question} <- Support.required_trimmed_string(input, "question"),
          {:ok, alternatives} <-
-           PendingAskSupport.normalize_ask_alternatives(Map.get(input, "alternatives")) do
-      send_message_fun = Keyword.get(hooks, :send_message_fun, &BotAdapter.send_message/4)
+           PendingAskSupport.normalize_ask_alternatives(
+             Map.get(input, "alternatives")
+           ) do
+      send_message_fun =
+        Keyword.get(hooks, :send_message_fun, &BotAdapter.send_message/4)
+
       reply_markup = PendingAskSupport.ask_reply_markup(alternatives)
 
       send_opts =
         [reply_to: reply_to]
-        |> PendingAskSupport.maybe_put_send_message_opt(:reply_markup, reply_markup)
+        |> PendingAskSupport.maybe_put_send_message_opt(
+          :reply_markup,
+          reply_markup
+        )
 
       case send_message_fun.(session_id, chat_id, question, send_opts) do
         {:ok, sent} ->
@@ -96,7 +109,8 @@ defmodule Froth.Tools.Ask do
                "sent_message" => sent
              }}
           else
-            {:error, reason} -> {:error, PendingAskSupport.format_error(reason)}
+            {:error, reason} ->
+              {:error, PendingAskSupport.format_error(reason)}
           end
 
         {:error, reason} ->
@@ -105,5 +119,6 @@ defmodule Froth.Tools.Ask do
     end
   end
 
-  def execute(_ctx, _tool_call, _hooks), do: {:error, "ask requires a full Telegram context"}
+  def execute(_ctx, _tool_call, _hooks),
+    do: {:error, "ask requires a full Telegram context"}
 end

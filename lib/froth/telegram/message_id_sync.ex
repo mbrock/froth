@@ -5,13 +5,15 @@ defmodule Froth.Telegram.MessageIdSync do
   @ttl_ms 300_000
 
   def put(bot_id, chat_id, old_message_id, new_message_id)
-      when is_binary(bot_id) and is_integer(chat_id) and is_integer(old_message_id) and
+      when is_binary(bot_id) and is_integer(chat_id) and
+             is_integer(old_message_id) and
              is_integer(new_message_id) do
     ensure_table!()
 
     :ets.insert(
       @table,
-      {{bot_id, chat_id, old_message_id}, {new_message_id, System.monotonic_time(:millisecond)}}
+      {{bot_id, chat_id, old_message_id},
+       {new_message_id, System.monotonic_time(:millisecond)}}
     )
 
     :ok
@@ -20,7 +22,8 @@ defmodule Froth.Telegram.MessageIdSync do
   def put(_bot_id, _chat_id, _old_message_id, _new_message_id), do: :ok
 
   def resolve(bot_id, chat_id, message_id)
-      when is_binary(bot_id) and is_integer(chat_id) and is_integer(message_id) do
+      when is_binary(bot_id) and is_integer(chat_id) and
+             is_integer(message_id) do
     ensure_table!()
 
     case :ets.lookup(@table, {bot_id, chat_id, message_id}) do

@@ -6,7 +6,10 @@ defmodule Froth.ElixirDocs do
   @elixir_stdlib_apps ~w(elixir eex ex_unit iex logger mix)a
   @stdlib_source_pattern ~r/(lib\/(?:elixir|eex|ex_unit|iex|logger|mix)\/.+)$/
   @stdlib_source_base "https://raw.githubusercontent.com/elixir-lang/elixir"
-  @stdlib_source_cache_root Path.join(System.tmp_dir!(), "froth-elixir-source-cache")
+  @stdlib_source_cache_root Path.join(
+                              System.tmp_dir!(),
+                              "froth-elixir-source-cache"
+                            )
 
   @type target ::
           %{kind: :module, module: module(), original: String.t()}
@@ -28,7 +31,11 @@ defmodule Froth.ElixirDocs do
         {:ok, [overview_block()]}
 
       {:ok, targets} ->
-        {:ok, Enum.flat_map(targets, &target_blocks(&1, include_source, include_ast))}
+        {:ok,
+         Enum.flat_map(
+           targets,
+           &target_blocks(&1, include_source, include_ast)
+         )}
 
       {:error, reason} ->
         {:error, reason}
@@ -64,7 +71,13 @@ defmodule Froth.ElixirDocs do
   end
 
   defp target_blocks(
-         %{kind: :function, module: module, function: function, arity: arity, original: original},
+         %{
+           kind: :function,
+           module: module,
+           function: function,
+           arity: arity,
+           original: original
+         },
          include_source,
          include_ast
        ) do
@@ -73,9 +86,17 @@ defmodule Froth.ElixirDocs do
         matches = matching_functions(detail, function, arity)
 
         if matches == [] do
-          [error_block(original, "No matching function found in #{inspect(module)}.")]
+          [
+            error_block(
+              original,
+              "No matching function found in #{inspect(module)}."
+            )
+          ]
         else
-          Enum.map(matches, &function_block(detail, &1, original, include_source, include_ast))
+          Enum.map(
+            matches,
+            &function_block(detail, &1, original, include_source, include_ast)
+          )
         end
 
       {:error, reason} ->
@@ -99,7 +120,13 @@ defmodule Froth.ElixirDocs do
     Block.new(attrs, module_body(detail, original), children)
   end
 
-  defp function_block(detail, function_detail, original, include_source, include_ast) do
+  defp function_block(
+         detail,
+         function_detail,
+         original,
+         include_source,
+         include_ast
+       ) do
     attrs = [
       kind: "function",
       module: inspect(detail.module),
@@ -110,13 +137,24 @@ defmodule Froth.ElixirDocs do
 
     children =
       []
-      |> maybe_append(include_source, function_source_block(detail, function_detail))
-      |> maybe_append(include_ast, function_ast_block(detail, function_detail))
+      |> maybe_append(
+        include_source,
+        function_source_block(detail, function_detail)
+      )
+      |> maybe_append(
+        include_ast,
+        function_ast_block(detail, function_detail)
+      )
 
-    Block.new(attrs, function_body(detail, function_detail, original), children)
+    Block.new(
+      attrs,
+      function_body(detail, function_detail, original),
+      children
+    )
   end
 
-  defp error_block(target, reason) when is_binary(target) and is_binary(reason) do
+  defp error_block(target, reason)
+       when is_binary(target) and is_binary(reason) do
     Block.new([kind: "lookup_error", target: target], reason)
   end
 
@@ -147,7 +185,8 @@ defmodule Froth.ElixirDocs do
       "",
       "Requested as: #{original}",
       function_detail.signature && "Signature: #{function_detail.signature}",
-      function_detail.args != [] && "Args: #{Enum.join(function_detail.args, ", ")}",
+      function_detail.args != [] &&
+        "Args: #{Enum.join(function_detail.args, ", ")}",
       "Source: #{detail.source_display || detail.source_path || "(unknown)"}:#{function_detail.line || 0}",
       function_detail.doc != nil && "",
       function_detail.doc
@@ -192,7 +231,10 @@ defmodule Froth.ElixirDocs do
         )
 
       ast ->
-        Block.new([kind: "ast", target: inspect(detail.module)], inspect_ast(ast))
+        Block.new(
+          [kind: "ast", target: inspect(detail.module)],
+          inspect_ast(ast)
+        )
     end
   end
 
@@ -202,7 +244,8 @@ defmodule Froth.ElixirDocs do
         Block.new(
           [
             kind: "source_code",
-            target: "#{inspect(detail.module)}.#{function_detail.name}/#{function_detail.arity}",
+            target:
+              "#{inspect(detail.module)}.#{function_detail.name}/#{function_detail.arity}",
             available: false,
             file: detail.source_display || detail.source_path
           ],
@@ -213,7 +256,8 @@ defmodule Froth.ElixirDocs do
         Block.new(
           [
             kind: "source_code",
-            target: "#{inspect(detail.module)}.#{function_detail.name}/#{function_detail.arity}",
+            target:
+              "#{inspect(detail.module)}.#{function_detail.name}/#{function_detail.arity}",
             file: detail.source_display || detail.source_path,
             from_line: from_line,
             to_line: to_line
@@ -229,7 +273,8 @@ defmodule Froth.ElixirDocs do
         Block.new(
           [
             kind: "ast",
-            target: "#{inspect(detail.module)}.#{function_detail.name}/#{function_detail.arity}",
+            target:
+              "#{inspect(detail.module)}.#{function_detail.name}/#{function_detail.arity}",
             available: false
           ],
           "(ast unavailable)"
@@ -239,7 +284,8 @@ defmodule Froth.ElixirDocs do
         Block.new(
           [
             kind: "ast",
-            target: "#{inspect(detail.module)}.#{function_detail.name}/#{function_detail.arity}"
+            target:
+              "#{inspect(detail.module)}.#{function_detail.name}/#{function_detail.arity}"
           ],
           inspect_ast(ast)
         )
@@ -274,11 +320,13 @@ defmodule Froth.ElixirDocs do
         module_doc: module_doc_text(docs.module_doc),
         public_functions: public_functions(docs.fun_docs),
         source_range: module_source_range(source_context, module),
-        module_ast: module_ast(source_context, module) || debug_module_ast(module),
+        module_ast:
+          module_ast(source_context, module) || debug_module_ast(module),
         source_context: source_context
       }
 
-      {:ok, %{detail | public_functions: enrich_functions(detail, docs.fun_docs)}}
+      {:ok,
+       %{detail | public_functions: enrich_functions(detail, docs.fun_docs)}}
     else
       {:error, :docs_unavailable} ->
         {:error, "No docs available for #{inspect(module)}."}
@@ -288,7 +336,8 @@ defmodule Froth.ElixirDocs do
   defp fetch_docs(module) when is_atom(module) do
     case Code.fetch_docs(module) do
       {:docs_v1, _, _, _, module_doc, metadata, fun_docs} ->
-        {:ok, %{module_doc: module_doc, metadata: metadata, fun_docs: fun_docs}}
+        {:ok,
+         %{module_doc: module_doc, metadata: metadata, fun_docs: fun_docs}}
 
       {:error, _reason} ->
         {:error, :docs_unavailable}
@@ -317,18 +366,30 @@ defmodule Froth.ElixirDocs do
   defp source_context(path) when is_binary(path) do
     with {:ok, source} <- File.read(path),
          {:ok, ast, comments} <-
-           Code.string_to_quoted_with_comments(source, columns: true, token_metadata: true) do
+           Code.string_to_quoted_with_comments(source,
+             columns: true,
+             token_metadata: true
+           ) do
       lines = String.split(source, "\n")
       modules = collect_modules(ast)
 
       {:ok,
-       %{path: path, source: source, lines: lines, ast: ast, comments: comments, modules: modules}}
+       %{
+         path: path,
+         source: source,
+         lines: lines,
+         ast: ast,
+         comments: comments,
+         modules: modules
+       }}
     else
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp module_doc_text(%{"en" => text}) when is_binary(text), do: String.trim(text)
+  defp module_doc_text(%{"en" => text}) when is_binary(text),
+    do: String.trim(text)
+
   defp module_doc_text(_), do: nil
 
   defp public_functions(fun_docs) when is_list(fun_docs) do
@@ -356,7 +417,9 @@ defmodule Froth.ElixirDocs do
     |> Enum.sort_by(&{&1.name, &1.arity})
   end
 
-  defp function_doc_text(%{"en" => text}) when is_binary(text), do: String.trim(text)
+  defp function_doc_text(%{"en" => text}) when is_binary(text),
+    do: String.trim(text)
+
   defp function_doc_text(:none), do: nil
   defp function_doc_text(_), do: nil
 
@@ -369,12 +432,16 @@ defmodule Froth.ElixirDocs do
     doc_functions = public_functions(fun_docs)
 
     Enum.map(doc_functions, fn function ->
-      case Enum.find(source_functions, &(&1.name == function.name and &1.arity == function.arity)) do
+      case Enum.find(
+             source_functions,
+             &(&1.name == function.name and &1.arity == function.arity)
+           ) do
         nil ->
           Map.merge(function, %{
             args: [],
             source_range: nil,
-            ast: debug_function_ast(detail.module, function.name, function.arity)
+            ast:
+              debug_function_ast(detail.module, function.name, function.arity)
           })
 
         source_function ->
@@ -387,8 +454,12 @@ defmodule Froth.ElixirDocs do
     Enum.filter(detail.public_functions, &(&1.name == function_name))
   end
 
-  defp matching_functions(detail, function_name, arity) when is_integer(arity) do
-    Enum.filter(detail.public_functions, &(&1.name == function_name and &1.arity == arity))
+  defp matching_functions(detail, function_name, arity)
+       when is_integer(arity) do
+    Enum.filter(
+      detail.public_functions,
+      &(&1.name == function_name and &1.arity == arity)
+    )
   end
 
   defp module_source_range(nil, _module), do: nil
@@ -397,7 +468,11 @@ defmodule Froth.ElixirDocs do
     with %{line: line} <- find_module_node(source_context, module),
          start_line when is_integer(start_line) <- max(line, 1),
          end_line <- next_module_start(source_context, module, start_line) - 1 do
-      source_range(source_context.lines, start_line, max(end_line, start_line))
+      source_range(
+        source_context.lines,
+        start_line,
+        max(end_line, start_line)
+      )
     else
       _ -> nil
     end
@@ -433,16 +508,21 @@ defmodule Froth.ElixirDocs do
               next_line =
                 forms
                 |> Enum.drop(index + 1)
-                |> Enum.find_value(length(source_context.lines) + 1, fn next_form ->
-                  next_form
-                  |> form_line()
-                  |> case do
-                    line when is_integer(line) and line > 0 -> line
-                    _ -> nil
+                |> Enum.find_value(
+                  length(source_context.lines) + 1,
+                  fn next_form ->
+                    next_form
+                    |> form_line()
+                    |> case do
+                      line when is_integer(line) and line > 0 -> line
+                      _ -> nil
+                    end
                   end
-                end)
+                )
 
-              source_start = decorated_start_line(source_context.lines, function.line)
+              source_start =
+                decorated_start_line(source_context.lines, function.line)
+
               source_end = max(next_line - 1, source_start)
 
               [
@@ -451,7 +531,12 @@ defmodule Froth.ElixirDocs do
                   arity: function.arity,
                   line: function.line,
                   args: function.args,
-                  source_range: source_range(source_context.lines, source_start, source_end),
+                  source_range:
+                    source_range(
+                      source_context.lines,
+                      source_start,
+                      source_end
+                    ),
                   ast: form
                 }
               ]
@@ -487,8 +572,9 @@ defmodule Froth.ElixirDocs do
 
   defp arg_name({:\\, _, [lhs, _rhs]}), do: arg_name(lhs)
 
-  defp arg_name({name, _, context}) when is_atom(name) and (is_atom(context) or is_nil(context)),
-    do: Atom.to_string(name)
+  defp arg_name({name, _, context})
+       when is_atom(name) and (is_atom(context) or is_nil(context)),
+       do: Atom.to_string(name)
 
   defp arg_name(other), do: Macro.to_string(other)
 
@@ -501,7 +587,8 @@ defmodule Froth.ElixirDocs do
     {from_line, to_line, excerpt}
   end
 
-  defp decorated_start_line(lines, line) when is_list(lines) and is_integer(line) and line > 1 do
+  defp decorated_start_line(lines, line)
+       when is_list(lines) and is_integer(line) and line > 1 do
     line
     |> Kernel.-(1)
     |> do_decorated_start_line(lines)
@@ -564,9 +651,15 @@ defmodule Froth.ElixirDocs do
   defp form_line({_, meta, _}) when is_list(meta), do: meta[:line]
   defp form_line(_), do: nil
 
-  defp next_module_start(%{modules: modules, lines: lines}, module, current_line) do
+  defp next_module_start(
+         %{modules: modules, lines: lines},
+         module,
+         current_line
+       ) do
     modules
-    |> Enum.filter(&(&1.module != module and is_integer(&1.line) and &1.line > current_line))
+    |> Enum.filter(
+      &(&1.module != module and is_integer(&1.line) and &1.line > current_line)
+    )
     |> Enum.map(& &1.line)
     |> Enum.min(fn -> length(lines) + 1 end)
   end
@@ -586,7 +679,8 @@ defmodule Froth.ElixirDocs do
     case debug_info(module) do
       {:ok, %{definitions: definitions}} ->
         Enum.find_value(definitions, fn
-          {{name, definition_arity}, _, _meta, clauses} when definition_arity == arity ->
+          {{name, definition_arity}, _, _meta, clauses}
+          when definition_arity == arity ->
             if Atom.to_string(name) == function_name, do: clauses, else: nil
 
           _ ->
@@ -600,7 +694,12 @@ defmodule Froth.ElixirDocs do
 
   defp debug_info(module) when is_atom(module) do
     with beam when beam != :non_existing <- :code.which(module),
-         {:ok, {_, [{:debug_info, {:debug_info_v1, :elixir_erl, {:elixir_v1, metadata, _}}}]}} <-
+         {:ok,
+          {_,
+           [
+             {:debug_info,
+              {:debug_info_v1, :elixir_erl, {:elixir_v1, metadata, _}}}
+           ]}} <-
            :beam_lib.chunks(beam, [:debug_info]) do
       {:ok, metadata}
     else
@@ -633,7 +732,8 @@ defmodule Froth.ElixirDocs do
   end
 
   defp parse_target(target) when is_binary(target) do
-    module_pattern = ~r/\A(?<module>(?:Elixir\.)?[A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)\z/
+    module_pattern =
+      ~r/\A(?<module>(?:Elixir\.)?[A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)\z/
 
     function_pattern =
       ~r/\A(?<module>(?:Elixir\.)?[A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)\.(?<function>[a-z_][A-Za-z0-9_!?]*)(?:\/(?<arity>\d+))?\z/
@@ -666,19 +766,23 @@ defmodule Froth.ElixirDocs do
       [name]
       |> maybe_prefix_elixir()
 
-    Enum.find_value(candidates, {:error, "Unknown module: #{name}"}, fn candidate ->
-      try do
-        module = String.to_existing_atom(candidate)
+    Enum.find_value(
+      candidates,
+      {:error, "Unknown module: #{name}"},
+      fn candidate ->
+        try do
+          module = String.to_existing_atom(candidate)
 
-        if Code.ensure_loaded?(module) do
-          {:ok, module}
-        else
-          nil
+          if Code.ensure_loaded?(module) do
+            {:ok, module}
+          else
+            nil
+          end
+        rescue
+          ArgumentError -> nil
         end
-      rescue
-        ArgumentError -> nil
       end
-    end)
+    )
   end
 
   defp maybe_prefix_elixir([<<"Elixir.", _::binary>> = name]), do: [name]
@@ -695,9 +799,14 @@ defmodule Froth.ElixirDocs do
 
   defp parse_boolean(value, default) when is_boolean(default) do
     cond do
-      is_boolean(value) -> value
-      is_binary(value) -> String.downcase(String.trim(value)) in ["1", "true", "yes", "on"]
-      true -> default
+      is_boolean(value) ->
+        value
+
+      is_binary(value) ->
+        String.downcase(String.trim(value)) in ["1", "true", "yes", "on"]
+
+      true ->
+        default
     end
   end
 
@@ -705,7 +814,9 @@ defmodule Froth.ElixirDocs do
   defp normalize_path(path) when is_list(path), do: List.to_string(path)
   defp normalize_path(_), do: nil
 
-  defp readable_source_path?(path) when is_binary(path), do: File.regular?(path)
+  defp readable_source_path?(path) when is_binary(path),
+    do: File.regular?(path)
+
   defp readable_source_path?(_), do: false
 
   defp fetch_stdlib_source(source_hint) when is_binary(source_hint) do
@@ -713,7 +824,11 @@ defmodule Froth.ElixirDocs do
       {:ok, relative_path} ->
         if stdlib_app_allowed?(relative_path) do
           cache_path =
-            Path.join([@stdlib_source_cache_root, "v#{System.version()}", relative_path])
+            Path.join([
+              @stdlib_source_cache_root,
+              "v#{System.version()}",
+              relative_path
+            ])
 
           url = "#{@stdlib_source_base}/v#{System.version()}/#{relative_path}"
 
@@ -732,7 +847,9 @@ defmodule Froth.ElixirDocs do
   defp fetch_stdlib_source(_), do: {:error, :source_unavailable}
 
   defp stdlib_relative_path(source_hint) when is_binary(source_hint) do
-    case Regex.run(@stdlib_source_pattern, source_hint, capture: :all_but_first) do
+    case Regex.run(@stdlib_source_pattern, source_hint,
+           capture: :all_but_first
+         ) do
       [relative_path] -> {:ok, relative_path}
       _ -> :error
     end
@@ -741,26 +858,36 @@ defmodule Froth.ElixirDocs do
   defp stdlib_app_allowed?(relative_path) when is_binary(relative_path) do
     try do
       case String.split(relative_path, "/", parts: 3) do
-        ["lib", app, _rest] -> String.to_existing_atom(app) in @elixir_stdlib_apps
-        _ -> false
+        ["lib", app, _rest] ->
+          String.to_existing_atom(app) in @elixir_stdlib_apps
+
+        _ ->
+          false
       end
     rescue
       ArgumentError -> false
     end
   end
 
-  defp ensure_cached_source(cache_path, url) when is_binary(cache_path) and is_binary(url) do
+  defp ensure_cached_source(cache_path, url)
+       when is_binary(cache_path) and is_binary(url) do
     if File.regular?(cache_path) do
       :ok
     else
       with :ok <- File.mkdir_p(Path.dirname(cache_path)),
-           {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) <- Req.get(url: url),
+           {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) <-
+             Req.get(url: url),
            :ok <- File.write(cache_path, body) do
         :ok
       else
-        {:ok, %Req.Response{status: status}} -> {:error, {:http_status, status}}
-        {:error, reason} -> {:error, reason}
-        other -> {:error, other}
+        {:ok, %Req.Response{status: status}} ->
+          {:error, {:http_status, status}}
+
+        {:error, reason} ->
+          {:error, reason}
+
+        other ->
+          {:error, other}
       end
     end
   end
@@ -818,6 +945,8 @@ defmodule Froth.ElixirDocs do
   defp count_leaves(children) when children == %{}, do: 1
 
   defp count_leaves(children) when is_map(children) do
-    Enum.reduce(children, 0, fn {_segment, nested}, acc -> acc + count_leaves(nested) end)
+    Enum.reduce(children, 0, fn {_segment, nested}, acc ->
+      acc + count_leaves(nested)
+    end)
   end
 end

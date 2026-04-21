@@ -21,7 +21,14 @@ defmodule FrothWeb.ChatStatsLive do
     days = available_days()
 
     {:ok,
-     assign(socket, days: days, day: nil, stats: [], user_id: nil, user_msgs: [], user_name: nil)}
+     assign(socket,
+       days: days,
+       day: nil,
+       stats: [],
+       user_id: nil,
+       user_msgs: [],
+       user_name: nil
+     )}
   end
 
   @impl true
@@ -33,7 +40,13 @@ defmodule FrothWeb.ChatStatsLive do
       name = Map.get(@names, uid, "uid:#{uid}")
 
       {:noreply,
-       assign(socket, day: day, stats: stats, user_id: uid, user_msgs: msgs, user_name: name)}
+       assign(socket,
+         day: day,
+         stats: stats,
+         user_id: uid,
+         user_msgs: msgs,
+         user_name: name
+       )}
     else
       _ -> {:noreply, push_patch(socket, to: ~p"/froth/chat-stats")}
     end
@@ -45,7 +58,13 @@ defmodule FrothWeb.ChatStatsLive do
         stats = day_stats(day)
 
         {:noreply,
-         assign(socket, day: day, stats: stats, user_id: nil, user_msgs: [], user_name: nil)}
+         assign(socket,
+           day: day,
+           stats: stats,
+           user_id: nil,
+           user_msgs: [],
+           user_name: nil
+         )}
 
       _ ->
         {:noreply, push_patch(socket, to: ~p"/froth/chat-stats")}
@@ -57,23 +76,39 @@ defmodule FrothWeb.ChatStatsLive do
     stats = day_stats(day)
 
     {:noreply,
-     assign(socket, day: day, stats: stats, user_id: nil, user_msgs: [], user_name: nil)}
+     assign(socket,
+       day: day,
+       stats: stats,
+       user_id: nil,
+       user_msgs: [],
+       user_name: nil
+     )}
   end
 
   @impl true
   def handle_event("prev", _, socket) do
     day = Date.add(socket.assigns.day, -1)
-    {:noreply, push_patch(socket, to: ~p"/froth/chat-stats/#{Date.to_iso8601(day)}")}
+
+    {:noreply,
+     push_patch(socket, to: ~p"/froth/chat-stats/#{Date.to_iso8601(day)}")}
   end
 
   def handle_event("next", _, socket) do
     day = Date.add(socket.assigns.day, 1)
-    {:noreply, push_patch(socket, to: ~p"/froth/chat-stats/#{Date.to_iso8601(day)}")}
+
+    {:noreply,
+     push_patch(socket, to: ~p"/froth/chat-stats/#{Date.to_iso8601(day)}")}
   end
 
   defp day_bounds(day) do
     s = day |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
-    e = day |> Date.add(1) |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
+
+    e =
+      day
+      |> Date.add(1)
+      |> DateTime.new!(~T[00:00:00], "Etc/UTC")
+      |> DateTime.to_unix()
+
     {s, e}
   end
 
@@ -153,7 +188,9 @@ defmodule FrothWeb.ChatStatsLive do
     if max_chars > 0, do: round(chars / max_chars * 100), else: 0
   end
 
-  defp total_chars(stats), do: stats |> Enum.map(& &1.text_chars) |> Enum.sum()
+  defp total_chars(stats),
+    do: stats |> Enum.map(& &1.text_chars) |> Enum.sum()
+
   defp total_msgs(stats), do: stats |> Enum.map(& &1.msg_count) |> Enum.sum()
 
   @impl true
@@ -194,13 +231,19 @@ defmodule FrothWeb.ChatStatsLive do
           <div class="space-y-1">
             <div :for={s <- @stats} class="flex items-center gap-2">
               <.link
-                patch={~p"/froth/chat-stats/#{Date.to_iso8601(@day)}?user=#{s.sender_id}"}
+                patch={
+                  ~p"/froth/chat-stats/#{Date.to_iso8601(@day)}?user=#{s.sender_id}"
+                }
                 class={"w-28 text-sm truncate hover:underline #{if s.sender_id == @user_id, do: "font-bold text-primary", else: "opacity-70 hover:opacity-100"}"}
               >
                 {s.name}
               </.link>
-              <span class="w-12 text-right text-xs opacity-50">{s.msg_count}</span>
-              <span class="w-14 text-right text-xs opacity-50">{div(s.text_chars, 1000)}K</span>
+              <span class="w-12 text-right text-xs opacity-50">
+                {s.msg_count}
+              </span>
+              <span class="w-14 text-right text-xs opacity-50">
+                {div(s.text_chars, 1000)}K
+              </span>
               <div class="flex-1 bg-base-200 rounded h-4 overflow-hidden">
                 <div
                   class="h-full bg-primary rounded"
@@ -223,7 +266,10 @@ defmodule FrothWeb.ChatStatsLive do
             {length(@user_msgs)} messages on {Date.to_iso8601(@day)}
           </p>
           <div class="space-y-2">
-            <div :for={m <- @user_msgs} class="border border-base-300 rounded p-3 bg-base-200">
+            <div
+              :for={m <- @user_msgs}
+              class="border border-base-300 rounded p-3 bg-base-200"
+            >
               <div class="flex items-center gap-2 mb-1 text-xs opacity-40">
                 <span>{m.time}</span>
                 <span class="opacity-30">|</span>

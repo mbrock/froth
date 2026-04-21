@@ -11,7 +11,10 @@ defmodule Froth.Codex.SessionTest do
   end
 
   test "assistant deltas for a new item do not append onto the previous assistant entry" do
-    session_id = "s_test_" <> Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+    session_id =
+      "s_test_" <>
+        Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+
     previous_executable = System.get_env("CODEX_EXECUTABLE")
     System.put_env("CODEX_EXECUTABLE", "/definitely/not-a-real-codex")
 
@@ -63,7 +66,11 @@ defmodule Froth.Codex.SessionTest do
     assert [
              %{id: "assistant-turn-1-msg-1", body: "first", sequence: 1},
              %{id: "assistant-turn-1-msg-2", body: "second", sequence: 2}
-           ] = Enum.map(snapshot.entries, &Map.take(&1, [:id, :body, :sequence]))
+           ] =
+             Enum.map(
+               snapshot.entries,
+               &Map.take(&1, [:id, :body, :sequence])
+             )
 
     send_assistant_completed(pid, "turn-1", "msg-2", "second")
 
@@ -72,14 +79,21 @@ defmodule Froth.Codex.SessionTest do
     assert [
              %{id: "assistant-turn-1-msg-1", body: "first", sequence: 1},
              %{id: "assistant-turn-1-msg-2", body: "second", sequence: 2}
-           ] = Enum.map(snapshot.entries, &Map.take(&1, [:id, :body, :sequence]))
+           ] =
+             Enum.map(
+               snapshot.entries,
+               &Map.take(&1, [:id, :body, :sequence])
+             )
   end
 
   test "close/1 terminates a dynamically supervised session without restarting it" do
-    session_id = "s_test_" <> Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+    session_id =
+      "s_test_" <>
+        Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
 
     handler_id =
-      "codex-session-test-" <> Base.url_encode64(:crypto.strong_rand_bytes(6), padding: false)
+      "codex-session-test-" <>
+        Base.url_encode64(:crypto.strong_rand_bytes(6), padding: false)
 
     previous_executable = System.get_env("CODEX_EXECUTABLE")
     System.put_env("CODEX_EXECUTABLE", "/definitely/not-a-real-codex")
@@ -116,22 +130,32 @@ defmodule Froth.Codex.SessionTest do
 
     assert is_binary(span_id)
 
-    assert_receive {:telemetry, [:froth, :codex, :session, :start], %{system_time: _},
-                    %{span_id: ^span_id, parent_id: nil, session_id: ^session_id}}
+    assert_receive {:telemetry, [:froth, :codex, :session, :start],
+                    %{system_time: _},
+                    %{
+                      span_id: ^span_id,
+                      parent_id: nil,
+                      session_id: ^session_id
+                    }}
 
     assert :ok = Session.close(session_id)
 
-    assert_receive {:telemetry, [:froth, :codex, :session, :close_requested], %{},
-                    %{parent_id: ^span_id, session_id: ^session_id}}
+    assert_receive {:telemetry, [:froth, :codex, :session, :close_requested],
+                    %{}, %{parent_id: ^span_id, session_id: ^session_id}}
 
-    assert_receive {:telemetry, [:froth, :codex, :session, :stop], %{duration: _},
-                    %{span_id: ^span_id, session_id: ^session_id, reason: :requested}}
+    assert_receive {:telemetry, [:froth, :codex, :session, :stop],
+                    %{duration: _},
+                    %{
+                      span_id: ^span_id,
+                      session_id: ^session_id,
+                      reason: :requested
+                    }}
 
     assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
     assert Session.child_spec(session_id: session_id).restart == :transient
 
-    refute_receive {:telemetry, [:froth, :codex, :session, :start], _measurements,
-                    %{session_id: ^session_id}},
+    refute_receive {:telemetry, [:froth, :codex, :session, :start],
+                    _measurements, %{session_id: ^session_id}},
                    100
 
     assert :ok = Session.close(session_id)
@@ -141,7 +165,8 @@ defmodule Froth.Codex.SessionTest do
     send(
       pid,
       {:codex, :notification, "item/agentMessage/delta",
-       %{"turnId" => turn_id, "itemId" => item_id, "delta" => delta}, %{}, nil}
+       %{"turnId" => turn_id, "itemId" => item_id, "delta" => delta}, %{},
+       nil}
     )
 
     _ = :sys.get_state(pid)

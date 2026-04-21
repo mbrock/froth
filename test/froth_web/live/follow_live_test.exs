@@ -58,7 +58,9 @@ defmodule FrothWeb.FollowLiveTest do
     assert has_element?(view, "#follow-entry-#{id}", "provider=anthropic")
   end
 
-  test "errors mode focuses the timeline on failures and warnings", %{conn: conn} do
+  test "errors mode focuses the timeline on failures and warnings", %{
+    conn: conn
+  } do
     ok_id =
       insert_event(%{
         event: "froth.agent.tool.completed",
@@ -122,7 +124,13 @@ defmodule FrothWeb.FollowLiveTest do
     |> render_click()
 
     assert_patch(view, ~p"/froth/follow?cycle=01KMDKN3GHAC7B814PD3GB4THP")
-    assert has_element?(view, "#follow-reader", "cycle #{String.slice(cycle_id, 0, 12)}")
+
+    assert has_element?(
+             view,
+             "#follow-reader",
+             "cycle #{String.slice(cycle_id, 0, 12)}"
+           )
+
     assert has_element?(view, "#follow-entry-#{matching_id}")
     refute has_element?(view, "#follow-entry-#{other_id}")
   end
@@ -151,8 +159,18 @@ defmodule FrothWeb.FollowLiveTest do
     {:ok, view, _html} =
       live(conn, ~p"/froth/follow?cycle=01KMDKN3GHAC7B814PD3GB4THP&mode=raw")
 
-    assert has_element?(view, "#follow-reader", "cycle #{String.slice(cycle_id, 0, 12)}")
-    assert has_element?(view, "#follow-entry-#{matching_id}", "froth.llm.edit")
+    assert has_element?(
+             view,
+             "#follow-reader",
+             "cycle #{String.slice(cycle_id, 0, 12)}"
+           )
+
+    assert has_element?(
+             view,
+             "#follow-entry-#{matching_id}",
+             "froth.llm.edit"
+           )
+
     refute has_element?(view, "#follow-entry-#{other_id}")
   end
 
@@ -161,7 +179,8 @@ defmodule FrothWeb.FollowLiveTest do
 
     send(
       view.pid,
-      {:telemetry_event, [:froth, :agent, :tool, :completed], %{"duration_ms" => 17},
+      {:telemetry_event, [:froth, :agent, :tool, :completed],
+       %{"duration_ms" => 17},
        %{tool_name: "live_echo", cycle_id: "01LIVECYCLE00000000000000"}}
     )
 

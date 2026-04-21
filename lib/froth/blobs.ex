@@ -54,12 +54,22 @@ defmodule Froth.Blobs do
         _ -> if textual_mime?(mime), do: count_lines(body), else: nil
       end
 
-    blob = %Blob{bytes: body, mime: mime, size: size, lines: lines, sha256: sha256}
+    blob = %Blob{
+      bytes: body,
+      mime: mime,
+      size: size,
+      lines: lines,
+      sha256: sha256
+    }
 
     # Racing put/2 calls for the same bytes are rare but possible.
     # `on_conflict: :nothing` makes the second insert a no-op; we then
     # re-read by sha256 to get the canonical row.
-    case Repo.insert(blob, on_conflict: :nothing, conflict_target: :sha256, log: false) do
+    case Repo.insert(blob,
+           on_conflict: :nothing,
+           conflict_target: :sha256,
+           log: false
+         ) do
       {:ok, %Blob{id: nil}} ->
         {:ok, Repo.get_by!(Blob, [sha256: sha256], log: false)}
 
@@ -74,7 +84,8 @@ defmodule Froth.Blobs do
   @doc """
   Fetch a blob by id, including bytes.
   """
-  @spec get(String.t()) :: {:ok, Blob.t()} | {:error, :not_found | :invalid_id}
+  @spec get(String.t()) ::
+          {:ok, Blob.t()} | {:error, :not_found | :invalid_id}
   def get(id) do
     with {:ok, id} <- normalize_id(id),
          %Blob{} = blob <- Repo.get(Blob, id, log: false) do
@@ -120,7 +131,8 @@ defmodule Froth.Blobs do
   Accept either `"blob:01K…"` or the bare 26-char ULID, return the bare
   canonical ULID. Rejects anything else.
   """
-  @spec normalize_id(String.t() | any()) :: {:ok, String.t()} | {:error, :invalid_id}
+  @spec normalize_id(String.t() | any()) ::
+          {:ok, String.t()} | {:error, :invalid_id}
   def normalize_id(id) when is_binary(id) do
     trimmed = String.trim(id)
 
@@ -190,7 +202,8 @@ defmodule Froth.Blobs do
   Returns `{:ok, %{total_matches, shown, text}}` where `text` is a
   ready-to-paginate rendering. Raises on invalid regex.
   """
-  @spec grep(String.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  @spec grep(String.t(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
   def grep(id, pattern, opts \\ []) when is_binary(pattern) do
     before_n = Keyword.get(opts, :before, 0)
     after_n = Keyword.get(opts, :after, 3)
@@ -277,10 +290,12 @@ defmodule Froth.Blobs do
     Enum.reverse(acc)
   end
 
-  defp chunk_consecutive([x | rest], [], acc), do: chunk_consecutive(rest, [x], acc)
+  defp chunk_consecutive([x | rest], [], acc),
+    do: chunk_consecutive(rest, [x], acc)
 
-  defp chunk_consecutive([x | rest], [prev | _] = group, acc) when x == prev + 1,
-    do: chunk_consecutive(rest, [x | group], acc)
+  defp chunk_consecutive([x | rest], [prev | _] = group, acc)
+       when x == prev + 1,
+       do: chunk_consecutive(rest, [x | group], acc)
 
   defp chunk_consecutive([x | rest], group, acc),
     do: chunk_consecutive(rest, [x], [Enum.reverse(group) | acc])
@@ -312,7 +327,9 @@ defmodule Froth.Blobs do
   end
 
   defp count_lines(""), do: 0
-  defp count_lines(bytes) when is_binary(bytes), do: length(split_lines(bytes))
+
+  defp count_lines(bytes) when is_binary(bytes),
+    do: length(split_lines(bytes))
 
   defp textual_mime?(mime) when is_binary(mime) do
     String.starts_with?(mime, "text/") or

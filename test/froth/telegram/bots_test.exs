@@ -28,7 +28,10 @@ defmodule Froth.Telegram.BotsTest do
 
   test "default profile configs declare their runtime and tool modules" do
     assert Charlie.default_config().runtime_module == Charlie
-    assert Charlie.default_config().tools_module == Froth.Telegram.Toolsets.Charlie
+
+    assert Charlie.default_config().tools_module ==
+             Froth.Telegram.Toolsets.Charlie
+
     assert is_list(Charlie.default_config().tools_module.specs_for_api())
 
     assert Enum.any?(

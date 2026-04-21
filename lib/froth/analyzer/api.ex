@@ -13,7 +13,10 @@ defmodule Froth.Analyzer.API do
 
     body =
       if opts[:system],
-        do: Map.put(body, "systemInstruction", %{"parts" => [%{"text" => opts[:system]}]}),
+        do:
+          Map.put(body, "systemInstruction", %{
+            "parts" => [%{"text" => opts[:system]}]
+          }),
         else: body
 
     case post_json(url, body) do
@@ -29,7 +32,12 @@ defmodule Froth.Analyzer.API do
     end
   end
 
-  def gemini_with_file(model \\ "gemini-3-flash-preview", file_uri, mime_type, prompt) do
+  def gemini_with_file(
+        model \\ "gemini-3-flash-preview",
+        file_uri,
+        mime_type,
+        prompt
+      ) do
     contents = [
       %{
         "parts" => [
@@ -42,7 +50,12 @@ defmodule Froth.Analyzer.API do
     gemini(model, contents)
   end
 
-  def gemini_with_inline(model \\ "gemini-3-flash-preview", data, mime_type, prompt) do
+  def gemini_with_inline(
+        model \\ "gemini-3-flash-preview",
+        data,
+        mime_type,
+        prompt
+      ) do
     b64 = Base.encode64(data)
 
     contents = [

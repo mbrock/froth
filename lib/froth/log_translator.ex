@@ -21,7 +21,12 @@ defmodule Froth.LogTranslator do
   end
 
   @impl true
-  def translate(_min_level, _level, :report, {:logger, %{label: label} = report}) do
+  def translate(
+        _min_level,
+        _level,
+        :report,
+        {:logger, %{label: label} = report}
+      ) do
     case label do
       {:gen_server, :terminate} -> genserver_terminate(report)
       {:gen_event, :terminate} -> gen_event_terminate(report)
@@ -46,7 +51,8 @@ defmodule Froth.LogTranslator do
         _min_level,
         _level,
         :report,
-        {{:application_controller, :progress}, [application: app, started_at: node]}
+        {{:application_controller, :progress},
+         [application: app, started_at: node]}
       ) do
     {:ok, "app #{app} started at #{inspect(node)}"}
   end
@@ -55,7 +61,8 @@ defmodule Froth.LogTranslator do
         _min_level,
         _level,
         :report,
-        {{:application_controller, :exit}, [application: app, exited: reason, type: _type]}
+        {{:application_controller, :exit},
+         [application: app, exited: reason, type: _type]}
       ) do
     {:ok, "app #{app} exited: #{Exception.format_exit(reason)}"}
   end
@@ -88,8 +95,13 @@ defmodule Froth.LogTranslator do
     {:ok, msg, [crash_reason: reason] ++ registered_name(name)}
   end
 
-  def translate(min_level, :error, :report, {{:error_logger, :error_report}, data}),
-    do: translate(min_level, :error, :report, {{:supervisor, :error}, data})
+  def translate(
+        min_level,
+        :error,
+        :report,
+        {{:error_logger, :error_report}, data}
+      ),
+      do: translate(min_level, :error, :report, {{:supervisor, :error}, data})
 
   def translate(min_level, :error, :report, {:supervisor_report, data}),
     do: translate(min_level, :error, :report, {{:supervisor, :error}, data})
@@ -97,13 +109,24 @@ defmodule Froth.LogTranslator do
   def translate(min_level, :error, :report, {:crash_report, data}),
     do: translate(min_level, :error, :report, {{:proc_lib, :crash}, data})
 
-  def translate(_min_level, :info, :report, {:progress, [{:supervisor, _} | _] = data}),
-    do: supervisor_progress(data)
+  def translate(
+        _min_level,
+        :info,
+        :report,
+        {:progress, [{:supervisor, _} | _] = data}
+      ),
+      do: supervisor_progress(data)
 
-  def translate(_min_level, :info, :report, {:progress, [application: app, started_at: node]}),
-    do: {:ok, "app #{app} started at #{inspect(node)}"}
+  def translate(
+        _min_level,
+        :info,
+        :report,
+        {:progress, [application: app, started_at: node]}
+      ),
+      do: {:ok, "app #{app} started at #{inspect(node)}"}
 
-  def translate(_min_level, level, :string, message) when level in [:warning, :error] do
+  def translate(_min_level, level, :string, message)
+      when level in [:warning, :error] do
     case annotate_dbconnection_message(message) do
       ^message -> :none
       annotated -> {:ok, annotated}
@@ -114,7 +137,10 @@ defmodule Froth.LogTranslator do
 
   ## Supervisor progress — compact
 
-  defp supervisor_progress(supervisor: sup, started: [{:pid, pid}, {:id, id} | _]) do
+  defp supervisor_progress(
+         supervisor: sup,
+         started: [{:pid, pid}, {:id, id} | _]
+       ) do
     {:ok, "#{sup_name(sup)} started #{inspect(id)} as #{inspect(pid)}"}
   end
 
@@ -161,15 +187,19 @@ defmodule Froth.LogTranslator do
   ## GenServer terminate — readable
 
   defp genserver_terminate(
-         %{name: name, reason: reason, last_message: last, state: state} = report
+         %{name: name, reason: reason, last_message: last, state: state} =
+           report
        ) do
     {reason, stack} = format_reason(reason)
     metadata = [crash_reason: reason] ++ registered_name(name)
 
     label_line =
       case report do
-        %{process_label: l} when l != :undefined -> ["  label: #{inspect(l)}\n"]
-        _ -> []
+        %{process_label: l} when l != :undefined ->
+          ["  label: #{inspect(l)}\n"]
+
+        _ ->
+          []
       end
 
     msg = [
@@ -236,7 +266,11 @@ defmodule Froth.LogTranslator do
     {{kind, reason, stack}, _} = Keyword.pop_first(crashed, :error_info)
 
     reason = Exception.normalize(kind, reason, stack)
-    metadata = [{:crash_reason, exit_reason(kind, reason, stack)} | registered_name(name)]
+
+    metadata = [
+      {:crash_reason, exit_reason(kind, reason, stack)}
+      | registered_name(name)
+    ]
 
     msg = [
       "Process #{crash_name(pid, name)} terminating\n",
@@ -253,12 +287,24 @@ defmodule Froth.LogTranslator do
 
   defp format_exit_readable(reason), do: format_exit_readable(reason, [])
 
-  defp format_exit_readable(reason, stack) when is_list(stack) and stack != [] do
-    ["  ", Exception.format_banner(:error, reason, stack), "\n", format_stacktrace(stack)]
+  defp format_exit_readable(reason, stack)
+       when is_list(stack) and stack != [] do
+    [
+      "  ",
+      Exception.format_banner(:error, reason, stack),
+      "\n",
+      format_stacktrace(stack)
+    ]
   end
 
-  defp format_exit_readable({reason, stack}, _) when is_list(stack) and stack != [] do
-    ["  ", Exception.format_banner(:error, reason, stack), "\n", format_stacktrace(stack)]
+  defp format_exit_readable({reason, stack}, _)
+       when is_list(stack) and stack != [] do
+    [
+      "  ",
+      Exception.format_banner(:error, reason, stack),
+      "\n",
+      format_stacktrace(stack)
+    ]
   end
 
   defp format_exit_readable(reason, _) do
@@ -337,8 +383,10 @@ defmodule Froth.LogTranslator do
       [
         debug.test && "  test: #{debug.test}",
         debug.label && "  allow label: #{debug.label}",
-        is_list(debug.chain) && "  allow chain: #{Enum.join(debug.chain, " -> ")}",
-        is_pid(debug.parent_pid) && "  allowed via parent: #{inspect(debug.parent_pid)}",
+        is_list(debug.chain) &&
+          "  allow chain: #{Enum.join(debug.chain, " -> ")}",
+        is_pid(debug.parent_pid) &&
+          "  allowed via parent: #{inspect(debug.parent_pid)}",
         is_pid(debug.pid) && "  client pid: #{inspect(debug.pid)}"
       ]
       |> Enum.reject(&(&1 in [false, nil]))
@@ -357,7 +405,11 @@ defmodule Froth.LogTranslator do
           if is_exception(maybe_exception) do
             maybe_exception
           else
-            case Exception.normalize(:error, maybe_exception, maybe_stacktrace) do
+            case Exception.normalize(
+                   :error,
+                   maybe_exception,
+                   maybe_stacktrace
+                 ) do
               %ErlangError{} -> maybe_exception
               exception -> exception
             end

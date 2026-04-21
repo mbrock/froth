@@ -1,7 +1,8 @@
 defmodule Froth.Telegram.ControlPrompt do
   @moduledoc false
 
-  def reserve(cycles, cycle_id) when is_struct(cycles, MapSet) and is_binary(cycle_id) do
+  def reserve(cycles, cycle_id)
+      when is_struct(cycles, MapSet) and is_binary(cycle_id) do
     if MapSet.member?(cycles, cycle_id) do
       {cycles, false}
     else
@@ -9,7 +10,8 @@ defmodule Froth.Telegram.ControlPrompt do
     end
   end
 
-  def reserve(cycles, _cycle_id) when is_struct(cycles, MapSet), do: {cycles, false}
+  def reserve(cycles, _cycle_id) when is_struct(cycles, MapSet),
+    do: {cycles, false}
 
   def maybe_put(input, true, opts)
       when is_map(input) and is_list(opts) do
@@ -53,14 +55,16 @@ defmodule Froth.Telegram.ControlPrompt do
     open_button =
       case {bot_id, bot_username} do
         {bot_id, bot_username}
-        when is_binary(bot_id) and bot_id != "" and is_binary(bot_username) and bot_username != "" ->
+        when is_binary(bot_id) and bot_id != "" and is_binary(bot_username) and
+               bot_username != "" ->
           [
             %{
               "@type" => "inlineKeyboardButton",
               "text" => "Open",
               "type" => %{
                 "@type" => "inlineKeyboardButtonTypeUrl",
-                "url" => "https://t.me/#{bot_username}/tool?startapp=cycle_#{bot_id}_#{cycle_id}"
+                "url" =>
+                  "https://t.me/#{bot_username}/tool?startapp=cycle_#{bot_id}_#{cycle_id}"
               }
             }
           ]
@@ -104,7 +108,8 @@ defmodule Froth.Telegram.ControlPrompt do
     |> Enum.map_join(&escape_markdown_grapheme/1)
   end
 
-  defp maybe_put_content(payload, opts) when is_map(payload) and is_list(opts) do
+  defp maybe_put_content(payload, opts)
+       when is_map(payload) and is_list(opts) do
     cond do
       is_binary(opts[:markdown]) and opts[:markdown] != "" ->
         Map.put(payload, "markdown", opts[:markdown])

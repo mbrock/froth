@@ -13,8 +13,20 @@ defmodule Froth.Codex.RawEvents do
   alias Froth.Telemetry.Span
   alias Froth.Repo
 
-  @spec append_notification(String.t(), String.t(), map(), term(), String.t() | nil) :: :ok
-  def append_notification(session_id, method, params, raw_message, raw_line \\ nil)
+  @spec append_notification(
+          String.t(),
+          String.t(),
+          map(),
+          term(),
+          String.t() | nil
+        ) :: :ok
+  def append_notification(
+        session_id,
+        method,
+        params,
+        raw_message,
+        raw_line \\ nil
+      )
       when is_binary(session_id) and is_binary(method) and is_map(params) do
     payload = %{
       "params" => params,
@@ -25,7 +37,8 @@ defmodule Froth.Codex.RawEvents do
   end
 
   @spec append_protocol_error(String.t(), term(), String.t() | nil) :: :ok
-  def append_protocol_error(session_id, reason, raw_line \\ nil) when is_binary(session_id) do
+  def append_protocol_error(session_id, reason, raw_line \\ nil)
+      when is_binary(session_id) do
     payload = %{
       "reason" => inspect(reason, limit: 120, printable_limit: 10_000)
     }
@@ -92,7 +105,8 @@ defmodule Froth.Codex.RawEvents do
       :ok
   end
 
-  defp normalize_raw_message(raw_message) when is_map(raw_message), do: raw_message
+  defp normalize_raw_message(raw_message) when is_map(raw_message),
+    do: raw_message
 
   defp normalize_raw_message(raw_message) do
     %{"value" => inspect(raw_message, limit: 120, printable_limit: 10_000)}
@@ -101,6 +115,8 @@ defmodule Froth.Codex.RawEvents do
   defp normalize_raw_line(raw_line) when is_binary(raw_line), do: raw_line
   defp normalize_raw_line(_raw_line), do: ""
 
-  defp normalize_optional_text(value) when is_binary(value) and value != "", do: value
+  defp normalize_optional_text(value) when is_binary(value) and value != "",
+    do: value
+
   defp normalize_optional_text(_value), do: nil
 end

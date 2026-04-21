@@ -65,7 +65,11 @@ defmodule Froth.BlobsTest do
       blob_id = blob.id
       assert {:ok, ^blob_id} = Blobs.normalize_id(blob.id)
       assert {:ok, ^blob_id} = Blobs.normalize_id("blob:" <> blob.id)
-      assert {:ok, ^blob_id} = Blobs.normalize_id("  blob:" <> String.downcase(blob.id) <> "  ")
+
+      assert {:ok, ^blob_id} =
+               Blobs.normalize_id(
+                 "  blob:" <> String.downcase(blob.id) <> "  "
+               )
     end
 
     test "rejects garbage" do
@@ -117,7 +121,8 @@ defmodule Froth.BlobsTest do
       body = Enum.map_join(1..10, "\n", &"row #{&1}") <> "\n"
       {:ok, blob} = Blobs.put(body)
 
-      assert {:ok, "row 4\nrow 5\nrow 6"} = Blobs.page(blob.id, from_line: 4, lines: 3)
+      assert {:ok, "row 4\nrow 5\nrow 6"} =
+               Blobs.page(blob.id, from_line: 4, lines: 3)
     end
 
     test "past the end returns empty" do
@@ -149,7 +154,9 @@ defmodule Froth.BlobsTest do
 
     test "no matches yields a terse sentinel" do
       {:ok, blob} = Blobs.put("nothing to see\nkeep walking\n")
-      assert {:ok, %{total_matches: 0, text: "(no matches)"}} = Blobs.grep(blob.id, "absent")
+
+      assert {:ok, %{total_matches: 0, text: "(no matches)"}} =
+               Blobs.grep(blob.id, "absent")
     end
 
     test "caps matches with :max" do

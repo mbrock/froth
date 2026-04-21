@@ -13,7 +13,10 @@ defmodule Froth.Agent.ToolDescriptionTest do
                  "avoid inventing state from memory",
                  "this should be ignored"
                ],
-               "assumptions" => ["the registry is available", "the name is spelled correctly"]
+               "assumptions" => [
+                 "the registry is available",
+                 "the name is spelled correctly"
+               ]
              }
            }) == "Inspecting the runtime registry"
   end
@@ -30,7 +33,9 @@ defmodule Froth.Agent.ToolDescriptionTest do
   end
 
   test "falls back to legacy narration when no structured description is present" do
-    assert ToolDescription.text_from_input(%{"narration" => "Checking the current logs."}) ==
+    assert ToolDescription.text_from_input(%{
+             "narration" => "Checking the current logs."
+           }) ==
              "Checking the current logs."
   end
 end

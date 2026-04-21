@@ -14,7 +14,12 @@ defmodule Froth.Agent.FailureIntervention do
   @default_reason "Waiting for a human failure intervention."
   @carry_on_answer "__failure_intervention_carry_on__"
   @stop_answer "__failure_intervention_stop__"
-  @digit_buttons ["1\ufe0f\u20e3", "2\ufe0f\u20e3", "3\ufe0f\u20e3", "4\ufe0f\u20e3"]
+  @digit_buttons [
+    "1\ufe0f\u20e3",
+    "2\ufe0f\u20e3",
+    "3\ufe0f\u20e3",
+    "4\ufe0f\u20e3"
+  ]
   @max_interventions 4
   @max_transcript_chars 8_000
   @max_field_chars 420
@@ -23,14 +28,16 @@ defmodule Froth.Agent.FailureIntervention do
   def carry_on_answer, do: @carry_on_answer
   def stop_answer, do: @stop_answer
 
-  def failure_intervention?(%PendingAsk{config: config}) when is_map(config) do
+  def failure_intervention?(%PendingAsk{config: config})
+      when is_map(config) do
     config["kind"] == "failure_intervention"
   end
 
   def failure_intervention?(_pending_ask), do: false
 
   def reply_required?(%PendingAsk{} = pending_ask) do
-    failure_intervention?(pending_ask) and get_in(pending_ask.config, ["require_reply"]) == true
+    failure_intervention?(pending_ask) and
+      get_in(pending_ask.config, ["require_reply"]) == true
   end
 
   def reply_required?(_pending_ask), do: false
@@ -41,7 +48,11 @@ defmodule Froth.Agent.FailureIntervention do
   def stop_answer?(@stop_answer), do: true
   def stop_answer?(_answer), do: false
 
-  def maybe_intervene({:error, [%Froth.Context.Block{} | _] = blocks}, ctx, tool_call) do
+  def maybe_intervene(
+        {:error, [%Froth.Context.Block{} | _] = blocks},
+        ctx,
+        tool_call
+      ) do
     # Same trick for the block-list flavor of structured errors: the
     # report builder wants a plain string to quote from. The LLM
     # still sees the full block-rendered output in tool_result.content.
@@ -50,7 +61,11 @@ defmodule Froth.Agent.FailureIntervention do
     maybe_intervene({:error, text}, ctx, tool_call)
   end
 
-  def maybe_intervene({:error, error_text}, %Context{} = ctx, %ToolUse{} = tool_call)
+  def maybe_intervene(
+        {:error, error_text},
+        %Context{} = ctx,
+        %ToolUse{} = tool_call
+      )
       when is_binary(error_text) do
     if should_intervene?(ctx, tool_call) do
       rpt = build_report_ctx(ctx, tool_call, error_text)
@@ -69,7 +84,8 @@ defmodule Froth.Agent.FailureIntervention do
 
   def maybe_intervene(result, _ctx, _tool_call), do: result
 
-  def resolution_config(answer, opts \\ []) when is_binary(answer) and is_list(opts) do
+  def resolution_config(answer, opts \\ [])
+      when is_binary(answer) and is_list(opts) do
     kind =
       cond do
         stop_answer?(answer) -> "stop"
@@ -85,14 +101,19 @@ defmodule Froth.Agent.FailureIntervention do
         |> maybe_put("index", normalize_resolution_index(opts[:index]))
         |> maybe_put("source", resolution_source(opts[:source]))
         |> maybe_put("actor_label", normalize_label(opts[:actor_label]))
-        |> maybe_put("actor_id", normalize_resolution_actor_id(opts[:actor_id]))
+        |> maybe_put(
+          "actor_id",
+          normalize_resolution_actor_id(opts[:actor_id])
+        )
     }
   end
 
   def maybe_finalize_message(%PendingAsk{} = pending_ask, session_id)
       when is_binary(session_id) do
-    if failure_intervention?(pending_ask) and is_integer(pending_ask.message_id) do
-      updated_text = pending_ask.question <> "\n\n" <> decision_line(pending_ask)
+    if failure_intervention?(pending_ask) and
+         is_integer(pending_ask.message_id) do
+      updated_text =
+        pending_ask.question <> "\n\n" <> decision_line(pending_ask)
 
       BotAdapter.edit_message_text(
         session_id,
@@ -141,7 +162,8 @@ defmodule Froth.Agent.FailureIntervention do
          },
          %ToolUse{id: tool_use_id, name: name}
        )
-       when is_binary(cycle_id) and is_binary(tool_use_id) and is_binary(session_id) and
+       when is_binary(cycle_id) and is_binary(tool_use_id) and
+              is_binary(session_id) and
               is_binary(bot_id) and is_integer(chat_id) do
     enabled?() and supported_tool?(name)
   end
@@ -212,7 +234,9 @@ defmodule Froth.Agent.FailureIntervention do
   # That way failure intervention works out of the box for every bot,
   # and you can still opt into a cheaper / differently-tuned report
   # model via `Bot.Config{failure_report_model: "..."}`.
-  defp report_model(%{ctx: %Context{bot_config: %BotConfig{failure_report_model: model}}})
+  defp report_model(%{
+         ctx: %Context{bot_config: %BotConfig{failure_report_model: model}}
+       })
        when is_binary(model) and model != "",
        do: model
 
@@ -237,7 +261,8 @@ defmodule Froth.Agent.FailureIntervention do
          ) do
       {:ok, sent} ->
         with {:ok, message_id} <- sent_message_id(sent),
-             pending_ask_id = MessageIdSync.resolve(bot_id, chat_id, message_id),
+             pending_ask_id =
+               MessageIdSync.resolve(bot_id, chat_id, message_id),
              {:ok, pending_ask} <-
                PendingAsks.create(%{
                  cycle_id: rpt.cycle.id,
@@ -250,7 +275,12 @@ defmodule Froth.Agent.FailureIntervention do
                  config: report_config(rpt, report, bc)
                }) do
           pending_ask =
-            maybe_refresh_pending_ask_message_id(pending_ask, bot_id, chat_id, message_id)
+            maybe_refresh_pending_ask_message_id(
+              pending_ask,
+              bot_id,
+              chat_id,
+              message_id
+            )
 
           {:ok, pending_ask, sent, message_text}
         end
@@ -260,7 +290,8 @@ defmodule Froth.Agent.FailureIntervention do
     end
   end
 
-  defp await_payload(%PendingAsk{} = pending_ask, report) when is_map(report) do
+  defp await_payload(%PendingAsk{} = pending_ask, report)
+       when is_map(report) do
     %{
       "kind" => "failure_intervention",
       "reason" => @default_reason,
@@ -364,7 +395,11 @@ defmodule Froth.Agent.FailureIntervention do
 
   defp deliver_failure_report_tool_use(content) when is_list(content) do
     Enum.find(content, fn
-      %{"type" => "tool_use", "name" => "deliver_failure_report", "input" => %{}} ->
+      %{
+        "type" => "tool_use",
+        "name" => "deliver_failure_report",
+        "input" => %{}
+      } ->
         true
 
       _ ->
@@ -388,7 +423,8 @@ defmodule Froth.Agent.FailureIntervention do
       "expectation" => cap_field(input["expectation"]),
       "irritation" => cap_field(input["irritation"]),
       "designation" => cap_field(input["designation"]),
-      "intervention" => input |> Map.get("intervention", []) |> normalize_interventions()
+      "intervention" =>
+        input |> Map.get("intervention", []) |> normalize_interventions()
     }
   end
 
@@ -419,7 +455,9 @@ defmodule Froth.Agent.FailureIntervention do
     [
       "Failure intervention",
       nil,
-      Enum.map_join(fields, "\n\n", fn {label, value} -> "#{label}\n#{value}" end),
+      Enum.map_join(fields, "\n\n", fn {label, value} ->
+        "#{label}\n#{value}"
+      end),
       interventions_block
     ]
     |> Enum.reject(&is_nil/1)
@@ -476,14 +514,16 @@ defmodule Froth.Agent.FailureIntervention do
          cycle_id: cycle_id,
          bot_config: %BotConfig{id: bot_id, bot_username: bot_username}
        })
-       when is_binary(bot_id) and bot_id != "" and is_binary(bot_username) and bot_username != "" and
+       when is_binary(bot_id) and bot_id != "" and is_binary(bot_username) and
+              bot_username != "" and
               is_binary(cycle_id) and cycle_id != "" do
     %{
       "@type" => "inlineKeyboardButton",
       "text" => "\u{1F50D}",
       "type" => %{
         "@type" => "inlineKeyboardButtonTypeUrl",
-        "url" => "https://t.me/#{bot_username}/tool?startapp=cycle_#{bot_id}_#{cycle_id}"
+        "url" =>
+          "https://t.me/#{bot_username}/tool?startapp=cycle_#{bot_id}_#{cycle_id}"
       }
     }
   end
@@ -504,13 +544,26 @@ defmodule Froth.Agent.FailureIntervention do
 
   defp sent_message_id(_sent), do: {:error, :invalid_message_id}
 
-  defp maybe_refresh_pending_ask_message_id(pending_ask, bot_id, chat_id, original_message_id)
+  defp maybe_refresh_pending_ask_message_id(
+         pending_ask,
+         bot_id,
+         chat_id,
+         original_message_id
+       )
        when is_map(pending_ask) and is_binary(bot_id) and is_integer(chat_id) and
               is_integer(original_message_id) do
-    resolved_message_id = MessageIdSync.resolve(bot_id, chat_id, original_message_id)
+    resolved_message_id =
+      MessageIdSync.resolve(bot_id, chat_id, original_message_id)
 
-    if is_integer(resolved_message_id) and resolved_message_id != pending_ask.message_id do
-      PendingAsks.sync_message_id(bot_id, chat_id, pending_ask.message_id, resolved_message_id)
+    if is_integer(resolved_message_id) and
+         resolved_message_id != pending_ask.message_id do
+      PendingAsks.sync_message_id(
+        bot_id,
+        chat_id,
+        pending_ask.message_id,
+        resolved_message_id
+      )
+
       %{pending_ask | message_id: resolved_message_id}
     else
       pending_ask
@@ -598,14 +651,19 @@ defmodule Froth.Agent.FailureIntervention do
   defp render_transcript_content(other),
     do: inspect(other, limit: 12, printable_limit: 400)
 
-  defp render_tool_result(result) when is_binary(result), do: truncate(result, 280)
+  defp render_tool_result(result) when is_binary(result),
+    do: truncate(result, 280)
+
   defp render_tool_result(result), do: truncate(inspect(result), 280)
 
   defp initial_intention(messages) when is_list(messages) do
     messages
     |> Enum.find_value(fn
-      %AgentMessage{role: :user} = message -> AgentMessage.extract_text(message)
-      _ -> nil
+      %AgentMessage{role: :user} = message ->
+        AgentMessage.extract_text(message)
+
+      _ ->
+        nil
     end)
     |> cap_field()
   end
@@ -636,15 +694,18 @@ defmodule Froth.Agent.FailureIntervention do
 
   defp reply_target(_ctx, _tool_call), do: nil
 
-  defp format_invocation("run_shell", %{"command" => command}) when is_binary(command) do
+  defp format_invocation("run_shell", %{"command" => command})
+       when is_binary(command) do
     "run_shell command=#{inspect(command)}"
   end
 
-  defp format_invocation("elixir_eval", %{"code" => code}) when is_binary(code) do
+  defp format_invocation("elixir_eval", %{"code" => code})
+       when is_binary(code) do
     "elixir_eval code=#{inspect(truncate(code, 220))}"
   end
 
-  defp format_invocation(name, input) when is_binary(name) and is_map(input) do
+  defp format_invocation(name, input)
+       when is_binary(name) and is_map(input) do
     "#{name} #{encode_json(input)}"
   end
 
@@ -746,11 +807,17 @@ defmodule Froth.Agent.FailureIntervention do
 
   defp cap_field(_value), do: nil
 
-  defp resolution_source(value) when value in ["callback", "message"], do: value
-  defp resolution_source(value) when value in [:callback, :message], do: Atom.to_string(value)
+  defp resolution_source(value) when value in ["callback", "message"],
+    do: value
+
+  defp resolution_source(value) when value in [:callback, :message],
+    do: Atom.to_string(value)
+
   defp resolution_source(_value), do: nil
 
-  defp normalize_resolution_index(value) when is_integer(value) and value >= 0, do: value
+  defp normalize_resolution_index(value)
+       when is_integer(value) and value >= 0, do: value
+
   defp normalize_resolution_index(_value), do: nil
 
   defp normalize_resolution_actor_id(value) when is_integer(value), do: value
@@ -777,11 +844,15 @@ defmodule Froth.Agent.FailureIntervention do
   defp stringify_map(_value), do: %{}
 
   defp stringify_value(value) when is_map(value), do: stringify_map(value)
-  defp stringify_value(value) when is_list(value), do: Enum.map(value, &stringify_value/1)
+
+  defp stringify_value(value) when is_list(value),
+    do: Enum.map(value, &stringify_value/1)
+
   defp stringify_value(value) when is_atom(value), do: Atom.to_string(value)
   defp stringify_value(value), do: value
 
-  defp truncate(text, limit) when is_binary(text) and is_integer(limit) and limit > 3 do
+  defp truncate(text, limit)
+       when is_binary(text) and is_integer(limit) and limit > 3 do
     if String.length(text) > limit do
       String.slice(text, 0, limit - 3) <> "..."
     else
@@ -797,7 +868,8 @@ defmodule Froth.Agent.FailureIntervention do
   # tool call and its immediate context) matter more than the ancient
   # preamble. The old `truncate/2` did the opposite and would feed the
   # diagnostic agent only the stale opening of a long conversation.
-  defp truncate_tail(text, limit) when is_binary(text) and is_integer(limit) and limit > 3 do
+  defp truncate_tail(text, limit)
+       when is_binary(text) and is_integer(limit) and limit > 3 do
     len = String.length(text)
 
     if len > limit do

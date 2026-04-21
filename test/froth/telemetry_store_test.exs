@@ -30,7 +30,8 @@ defmodule Froth.Telemetry.StoreTest do
     event =
       Repo.one!(
         from(e in Event,
-          where: e.event == "froth.agent.tool.completed" and e.span_id == ^span_id
+          where:
+            e.event == "froth.agent.tool.completed" and e.span_id == ^span_id
         )
       )
 

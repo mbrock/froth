@@ -22,7 +22,9 @@ defmodule FrothWeb.AnalysesLive do
 
       _ ->
         {:noreply,
-         push_patch(socket, to: ~p"/froth/analyses/day/#{Date.to_iso8601(Date.utc_today())}")}
+         push_patch(socket,
+           to: ~p"/froth/analyses/day/#{Date.to_iso8601(Date.utc_today())}"
+         )}
     end
   end
 
@@ -34,17 +36,28 @@ defmodule FrothWeb.AnalysesLive do
   @impl true
   def handle_event("prev", _, socket) do
     day = Date.add(socket.assigns.day, -1)
-    {:noreply, push_patch(socket, to: ~p"/froth/analyses/day/#{Date.to_iso8601(day)}")}
+
+    {:noreply,
+     push_patch(socket, to: ~p"/froth/analyses/day/#{Date.to_iso8601(day)}")}
   end
 
   def handle_event("next", _, socket) do
     day = Date.add(socket.assigns.day, 1)
-    {:noreply, push_patch(socket, to: ~p"/froth/analyses/day/#{Date.to_iso8601(day)}")}
+
+    {:noreply,
+     push_patch(socket, to: ~p"/froth/analyses/day/#{Date.to_iso8601(day)}")}
   end
 
   defp day_bounds(day) do
-    start_unix = day |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
-    end_unix = day |> Date.add(1) |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
+    start_unix =
+      day |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
+
+    end_unix =
+      day
+      |> Date.add(1)
+      |> DateTime.new!(~T[00:00:00], "Etc/UTC")
+      |> DateTime.to_unix()
+
     {start_unix, end_unix}
   end
 
@@ -106,19 +119,36 @@ defmodule FrothWeb.AnalysesLive do
     <Layouts.app flash={@flash} variant={:plain}>
       <div id="analyses-page" class="max-w-2xl mx-auto py-6 px-4">
         <div class="flex items-center gap-4 mb-6">
-          <button phx-click="prev" class="text-neutral-400 hover:text-white px-2">&larr;</button>
-          <h1 class="text-xl font-bold">{Calendar.strftime(@day, "%A, %B %d")}</h1>
-          <button phx-click="next" class="text-neutral-400 hover:text-white px-2">&rarr;</button>
-          <.link navigate={~p"/froth/inference"} class="text-xs text-neutral-500 hover:text-white">
+          <button phx-click="prev" class="text-neutral-400 hover:text-white px-2">
+            &larr;
+          </button>
+          <h1 class="text-xl font-bold">
+            {Calendar.strftime(@day, "%A, %B %d")}
+          </h1>
+          <button phx-click="next" class="text-neutral-400 hover:text-white px-2">
+            &rarr;
+          </button>
+          <.link
+            navigate={~p"/froth/inference"}
+            class="text-xs text-neutral-500 hover:text-white"
+          >
             inference
           </.link>
-          <.link navigate={~p"/froth/dataset"} class="text-xs text-neutral-500 hover:text-white">
+          <.link
+            navigate={~p"/froth/dataset"}
+            class="text-xs text-neutral-500 hover:text-white"
+          >
             dataset
           </.link>
-          <.link navigate={~p"/froth/rdf"} class="text-xs text-neutral-500 hover:text-white">
+          <.link
+            navigate={~p"/froth/rdf"}
+            class="text-xs text-neutral-500 hover:text-white"
+          >
             rdf
           </.link>
-          <span class="text-xs text-neutral-500 ml-auto">{length(@analyses)} analyses</span>
+          <span class="text-xs text-neutral-500 ml-auto">
+            {length(@analyses)} analyses
+          </span>
         </div>
 
         <div class="flex flex-wrap gap-1 mb-6">

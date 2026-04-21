@@ -20,7 +20,10 @@ defmodule FrothWeb.InferenceSessionsLive do
      |> assign(:filters, filters)
      |> assign(:filter_query, %{})
      |> assign(:max_limit, @max_limit)
-     |> assign(:filter_form, to_form(filter_form_values(filters), as: :filters))
+     |> assign(
+       :filter_form,
+       to_form(filter_form_values(filters), as: :filters)
+     )
      |> assign(:cycle_summaries, [])
      |> assign(:matching_count, 0)
      |> assign(:selected_cycle, nil)
@@ -40,12 +43,16 @@ defmodule FrothWeb.InferenceSessionsLive do
   @impl true
   def handle_event("apply_filters", %{"filters" => params}, socket) do
     filters = normalize_filters(params)
-    {:noreply, push_patch(socket, to: cycles_path(nil, filter_query_params(filters)))}
+
+    {:noreply,
+     push_patch(socket, to: cycles_path(nil, filter_query_params(filters)))}
   end
 
   def handle_event("clear_filters", _params, socket) do
     filters = default_filters()
-    {:noreply, push_patch(socket, to: cycles_path(nil, filter_query_params(filters)))}
+
+    {:noreply,
+     push_patch(socket, to: cycles_path(nil, filter_query_params(filters)))}
   end
 
   def handle_event("refresh", _params, socket) do
@@ -58,7 +65,10 @@ defmodule FrothWeb.InferenceSessionsLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} variant={:plain}>
-      <div id="cycles-page" class="min-h-screen bg-black text-zinc-100 text-[13px]">
+      <div
+        id="cycles-page"
+        class="min-h-screen bg-black text-zinc-100 text-[13px]"
+      >
         <header class="sticky top-0 z-30 border-b border-white/10 bg-black/95 backdrop-blur">
           <div class="mx-auto flex max-w-[1500px] items-center justify-between gap-3 px-3 py-2">
             <div class="min-w-0">
@@ -170,7 +180,9 @@ defmodule FrothWeb.InferenceSessionsLive do
                       :if={summary.input_tokens && summary.input_tokens > 0}
                       class="text-[10px] text-zinc-400"
                     >
-                      {format_number(summary.input_tokens)}in {format_number(summary.output_tokens)}out
+                      {format_number(summary.input_tokens)}in {format_number(
+                        summary.output_tokens
+                      )}out
                     </span>
                     <span class={[
                       "rounded border px-1.5 py-0.5 text-[10px]",
@@ -193,10 +205,15 @@ defmodule FrothWeb.InferenceSessionsLive do
                   <span :if={summary.llm_call_count && summary.llm_call_count > 0}>
                     {summary.llm_call_count} llm
                   </span>
-                  <span :if={summary.tool_call_count && summary.tool_call_count > 0}>
+                  <span :if={
+                    summary.tool_call_count && summary.tool_call_count > 0
+                  }>
                     {summary.tool_call_count} tools
                   </span>
-                  <span :if={summary.cache_read_input_tokens && summary.cache_read_input_tokens > 0}>
+                  <span :if={
+                    summary.cache_read_input_tokens &&
+                      summary.cache_read_input_tokens > 0
+                  }>
                     {format_number(summary.cache_read_input_tokens)}cache
                   </span>
                   <span :if={summary.cost_usd && summary.cost_usd > 0}>
@@ -209,7 +226,10 @@ defmodule FrothWeb.InferenceSessionsLive do
                 </div>
               </.link>
 
-              <div :if={@cycle_summaries == []} class="px-3 py-8 text-center text-zinc-500">
+              <div
+                :if={@cycle_summaries == []}
+                class="px-3 py-8 text-center text-zinc-500"
+              >
                 No agent cycles matched these filters.
               </div>
             </div>
@@ -256,15 +276,21 @@ defmodule FrothWeb.InferenceSessionsLive do
                   </div>
                   <div>
                     <dt class="text-zinc-500">created</dt>
-                    <dd class="font-mono">{format_timestamp(@selected_cycle.inserted_at)}</dd>
+                    <dd class="font-mono">
+                      {format_timestamp(@selected_cycle.inserted_at)}
+                    </dd>
                   </div>
                   <div :if={@selected_cycle.started_at}>
                     <dt class="text-zinc-500">started</dt>
-                    <dd class="font-mono">{format_timestamp(@selected_cycle.started_at)}</dd>
+                    <dd class="font-mono">
+                      {format_timestamp(@selected_cycle.started_at)}
+                    </dd>
                   </div>
                   <div :if={@selected_cycle.finished_at}>
                     <dt class="text-zinc-500">finished</dt>
-                    <dd class="font-mono">{format_timestamp(@selected_cycle.finished_at)}</dd>
+                    <dd class="font-mono">
+                      {format_timestamp(@selected_cycle.finished_at)}
+                    </dd>
                   </div>
                   <div :if={@selected_cycle.event_count}>
                     <dt class="text-zinc-500">events</dt>
@@ -278,9 +304,13 @@ defmodule FrothWeb.InferenceSessionsLive do
                     <dt class="text-zinc-500">tool calls</dt>
                     <dd class="font-mono">{@selected_cycle.tool_call_count}</dd>
                   </div>
-                  <div :if={@selected_cycle.cost_usd && @selected_cycle.cost_usd > 0}>
+                  <div :if={
+                    @selected_cycle.cost_usd && @selected_cycle.cost_usd > 0
+                  }>
                     <dt class="text-zinc-500">cost</dt>
-                    <dd class="font-mono">${format_cost(@selected_cycle.cost_usd)}</dd>
+                    <dd class="font-mono">
+                      ${format_cost(@selected_cycle.cost_usd)}
+                    </dd>
                   </div>
                   <div :if={@selected_cycle.root_span_id}>
                     <dt class="text-zinc-500">root span</dt>
@@ -298,11 +328,15 @@ defmodule FrothWeb.InferenceSessionsLive do
                   </div>
                   <div :if={@selected_cycle.toolset_hash}>
                     <dt class="text-zinc-500">toolset hash</dt>
-                    <dd class="font-mono">{String.slice(@selected_cycle.toolset_hash, 0, 16)}...</dd>
+                    <dd class="font-mono">
+                      {String.slice(@selected_cycle.toolset_hash, 0, 16)}...
+                    </dd>
                   </div>
                   <div :if={@selected_cycle.legacy_inference_session_id}>
                     <dt class="text-zinc-500">legacy session</dt>
-                    <dd class="font-mono">{@selected_cycle.legacy_inference_session_id}</dd>
+                    <dd class="font-mono">
+                      {@selected_cycle.legacy_inference_session_id}
+                    </dd>
                   </div>
                   <div :if={@selected_cycle.error}>
                     <dt class="text-zinc-500">error</dt>
@@ -351,7 +385,10 @@ defmodule FrothWeb.InferenceSessionsLive do
     socket
     |> assign(:filters, filters)
     |> assign(:filter_query, filter_query_params(filters))
-    |> assign(:filter_form, to_form(filter_form_values(filters), as: :filters))
+    |> assign(
+      :filter_form,
+      to_form(filter_form_values(filters), as: :filters)
+    )
     |> assign(:cycle_summaries, cycle_summaries)
     |> assign(:matching_count, matching_count)
     |> assign(:selected_cycle, selected)
@@ -376,7 +413,9 @@ defmodule FrothWeb.InferenceSessionsLive do
 
   defp list_cycle_summaries(filters) do
     cycles_base_query(filters)
-    |> join(:left, [l, c], u in fragment("cycle_usage"), on: u.cycle_id == l.cycle_id)
+    |> join(:left, [l, c], u in fragment("cycle_usage"),
+      on: u.cycle_id == l.cycle_id
+    )
     |> order_by([_l, c], desc: c.inserted_at)
     |> limit(^filters.limit)
     |> select([l, c, u], %{
@@ -441,16 +480,23 @@ defmodule FrothWeb.InferenceSessionsLive do
   end
 
   defp maybe_filter_bot(query, nil), do: query
-  defp maybe_filter_bot(query, bot_id), do: from([l, c] in query, where: l.bot_id == ^bot_id)
+
+  defp maybe_filter_bot(query, bot_id),
+    do: from([l, c] in query, where: l.bot_id == ^bot_id)
 
   defp maybe_filter_chat(query, nil), do: query
-  defp maybe_filter_chat(query, chat_id), do: from([l, c] in query, where: l.chat_id == ^chat_id)
+
+  defp maybe_filter_chat(query, chat_id),
+    do: from([l, c] in query, where: l.chat_id == ^chat_id)
 
   defp filter_form_values(filters) do
     %{
       "bot_id" => filters.bot_id || "",
       "chat_id" =>
-        if(is_integer(filters.chat_id), do: Integer.to_string(filters.chat_id), else: ""),
+        if(is_integer(filters.chat_id),
+          do: Integer.to_string(filters.chat_id),
+          else: ""
+        ),
       "limit" => Integer.to_string(filters.limit)
     }
   end
@@ -460,11 +506,17 @@ defmodule FrothWeb.InferenceSessionsLive do
     |> maybe_put_query("bot_id", filters.bot_id)
     |> maybe_put_query(
       "chat_id",
-      if(is_integer(filters.chat_id), do: Integer.to_string(filters.chat_id), else: nil)
+      if(is_integer(filters.chat_id),
+        do: Integer.to_string(filters.chat_id),
+        else: nil
+      )
     )
     |> maybe_put_query(
       "limit",
-      if(filters.limit == @default_limit, do: nil, else: Integer.to_string(filters.limit))
+      if(filters.limit == @default_limit,
+        do: nil,
+        else: Integer.to_string(filters.limit)
+      )
     )
   end
 
@@ -570,7 +622,10 @@ defmodule FrothWeb.InferenceSessionsLive do
           No messages in this cycle.
         </div>
 
-        <div :if={@messages != []} class="max-h-[46rem] space-y-1 overflow-y-auto pr-1">
+        <div
+          :if={@messages != []}
+          class="max-h-[46rem] space-y-1 overflow-y-auto pr-1"
+        >
           <article
             :for={message <- @messages}
             id={"cycle-msg-#{message.index}"}
@@ -578,7 +633,9 @@ defmodule FrothWeb.InferenceSessionsLive do
           >
             <div class="mb-2 flex items-center justify-between gap-2">
               <div class="flex items-center gap-2">
-                <span class="font-mono text-[11px] text-zinc-500">{"m#{message.index}"}</span>
+                <span class="font-mono text-[11px] text-zinc-500">
+                  {"m#{message.index}"}
+                </span>
                 <span class={[
                   "rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide",
                   api_role_class(message.role)
@@ -586,7 +643,9 @@ defmodule FrothWeb.InferenceSessionsLive do
                   {message.role}
                 </span>
               </div>
-              <span class="text-[10px] text-zinc-600">{api_content_kind_label(message.content)}</span>
+              <span class="text-[10px] text-zinc-600">
+                {api_content_kind_label(message.content)}
+              </span>
             </div>
 
             <.api_message_content content={message.content} />
@@ -683,7 +742,10 @@ defmodule FrothWeb.InferenceSessionsLive do
   end
 
   defp api_content_kind_label(content) when is_binary(content), do: "string"
-  defp api_content_kind_label(content) when is_list(content), do: "#{length(content)} blocks"
+
+  defp api_content_kind_label(content) when is_list(content),
+    do: "#{length(content)} blocks"
+
   defp api_content_kind_label(content) when is_map(content), do: "map"
   defp api_content_kind_label(nil), do: "empty"
   defp api_content_kind_label(_), do: "value"
@@ -757,19 +819,33 @@ defmodule FrothWeb.InferenceSessionsLive do
         <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] sm:grid-cols-3">
           <.usage_item label="Input tokens" value={@usage["input_tokens"]} />
           <.usage_item label="Output tokens" value={@usage["output_tokens"]} />
-          <.usage_item label="Cache read" value={@usage["cache_read_input_tokens"]} />
-          <.usage_item label="Cache created" value={@usage["cache_creation_input_tokens"]} />
+          <.usage_item
+            label="Cache read"
+            value={@usage["cache_read_input_tokens"]}
+          />
+          <.usage_item
+            label="Cache created"
+            value={@usage["cache_creation_input_tokens"]}
+          />
           <.usage_item
             :if={@usage["cache_creation"]}
             label="Ephemeral 5m"
-            value={get_in(@usage, ["cache_creation", "ephemeral_5m_input_tokens"])}
+            value={
+              get_in(@usage, ["cache_creation", "ephemeral_5m_input_tokens"])
+            }
           />
           <.usage_item
             :if={@usage["cache_creation"]}
             label="Ephemeral 1h"
-            value={get_in(@usage, ["cache_creation", "ephemeral_1h_input_tokens"])}
+            value={
+              get_in(@usage, ["cache_creation", "ephemeral_1h_input_tokens"])
+            }
           />
-          <.usage_item :if={@usage["service_tier"]} label="Tier" value={@usage["service_tier"]} />
+          <.usage_item
+            :if={@usage["service_tier"]}
+            label="Tier"
+            value={@usage["service_tier"]}
+          />
         </dl>
       </div>
     </details>
@@ -798,7 +874,10 @@ defmodule FrothWeb.InferenceSessionsLive do
       <span :if={@metadata["usage"]}>
         {format_token_summary(@metadata["usage"])}
       </span>
-      <span :if={@metadata["message_id"]} class="font-mono text-zinc-600 truncate max-w-[14ch]">
+      <span
+        :if={@metadata["message_id"]}
+        class="font-mono text-zinc-600 truncate max-w-[14ch]"
+      >
         {String.slice(to_string(@metadata["message_id"]), 0, 14)}
       </span>
     </div>
@@ -814,7 +893,9 @@ defmodule FrothWeb.InferenceSessionsLive do
       [
         if(input, do: "#{format_number(input)}in"),
         if(output, do: "#{format_number(output)}out"),
-        if(cache_read && cache_read > 0, do: "#{format_number(cache_read)}cache")
+        if(cache_read && cache_read > 0,
+          do: "#{format_number(cache_read)}cache"
+        )
       ]
       |> Enum.reject(&is_nil/1)
 
@@ -836,30 +917,50 @@ defmodule FrothWeb.InferenceSessionsLive do
   defp format_usage_value(v) when is_binary(v), do: v
   defp format_usage_value(v), do: inspect(v)
 
-  defp format_cost(value) when is_float(value), do: :erlang.float_to_binary(value, decimals: 4)
+  defp format_cost(value) when is_float(value),
+    do: :erlang.float_to_binary(value, decimals: 4)
+
   defp format_cost(value), do: to_string(value)
 
   defp pretty_json(value) do
     case Jason.encode(value, pretty: true) do
-      {:ok, encoded} -> encoded
-      _ -> inspect(value, pretty: true, limit: :infinity, printable_limit: 500_000)
+      {:ok, encoded} ->
+        encoded
+
+      _ ->
+        inspect(value,
+          pretty: true,
+          limit: :infinity,
+          printable_limit: 500_000
+        )
     end
   end
 
-  defp api_role_class("user"), do: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-  defp api_role_class("assistant"), do: "border-sky-500/30 bg-sky-500/10 text-sky-300"
+  defp api_role_class("user"),
+    do: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+
+  defp api_role_class("assistant"),
+    do: "border-sky-500/30 bg-sky-500/10 text-sky-300"
+
   defp api_role_class(_), do: "border-white/20 bg-white/5 text-zinc-300"
 
   defp cycle_status_class(:completed),
     do: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
 
-  defp cycle_status_class(:running), do: "border-sky-500/30 bg-sky-500/10 text-sky-300"
+  defp cycle_status_class(:running),
+    do: "border-sky-500/30 bg-sky-500/10 text-sky-300"
 
   defp cycle_status_class(:waiting_on_tools),
     do: "border-amber-500/30 bg-amber-500/10 text-amber-300"
 
-  defp cycle_status_class(:failed), do: "border-red-500/30 bg-red-500/10 text-red-300"
-  defp cycle_status_class(:cancelled), do: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300"
-  defp cycle_status_class(:queued), do: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300"
+  defp cycle_status_class(:failed),
+    do: "border-red-500/30 bg-red-500/10 text-red-300"
+
+  defp cycle_status_class(:cancelled),
+    do: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300"
+
+  defp cycle_status_class(:queued),
+    do: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300"
+
   defp cycle_status_class(_), do: "border-white/20 bg-white/5 text-zinc-300"
 end

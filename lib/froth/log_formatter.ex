@@ -64,7 +64,9 @@ defmodule Froth.LogFormatter do
 
   # Keyword list or map — key=value on one line
   defp format_message({:report, data}, _meta) when is_list(data) do
-    if Keyword.keyword?(data), do: format_kv(data), else: inspect(data, limit: 30)
+    if Keyword.keyword?(data),
+      do: format_kv(data),
+      else: inspect(data, limit: 30)
   end
 
   defp format_message({:report, data}, _meta) when is_map(data) do

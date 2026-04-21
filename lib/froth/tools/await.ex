@@ -38,7 +38,11 @@ defmodule Froth.Tools.Await do
   @impl true
   def execute(
         %Context{
-          surface: %Surface{session_id: session_id, chat_id: chat_id, reply_to: reply_to},
+          surface: %Surface{
+            session_id: session_id,
+            chat_id: chat_id,
+            reply_to: reply_to
+          },
           bot_config: %BotConfig{id: bot_id},
           cycle_id: cycle_id,
           system_prompt: system_prompt,
@@ -48,7 +52,8 @@ defmodule Froth.Tools.Await do
         hooks
       )
       when is_binary(session_id) and is_integer(chat_id) and is_binary(bot_id) and
-             is_binary(cycle_id) and is_binary(tool_use_id) and is_binary(system_prompt) and
+             is_binary(cycle_id) and is_binary(tool_use_id) and
+             is_binary(system_prompt) and
              is_map(input) do
     task_ids = Enum.filter(active_task_ids, &is_binary/1)
 
@@ -62,7 +67,9 @@ defmodule Froth.Tools.Await do
         end
 
       message_text = AwaitControl.render_message(reason, task_ids)
-      send_message_fun = Keyword.get(hooks, :send_message_fun, &BotAdapter.send_message/4)
+
+      send_message_fun =
+        Keyword.get(hooks, :send_message_fun, &BotAdapter.send_message/4)
 
       case send_message_fun.(session_id, chat_id, message_text,
              reply_to: reply_to,
@@ -105,7 +112,8 @@ defmodule Froth.Tools.Await do
                "sent_message" => sent
              }}
           else
-            {:error, reason} -> {:error, PendingAskSupport.format_error(reason)}
+            {:error, reason} ->
+              {:error, PendingAskSupport.format_error(reason)}
           end
 
         {:error, reason} ->
@@ -114,5 +122,6 @@ defmodule Froth.Tools.Await do
     end
   end
 
-  def execute(_ctx, _tool_call, _hooks), do: {:error, "await requires a full Telegram context"}
+  def execute(_ctx, _tool_call, _hooks),
+    do: {:error, "await requires a full Telegram context"}
 end

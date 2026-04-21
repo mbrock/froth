@@ -79,13 +79,17 @@ defmodule Froth.Tools.RunShell do
   end
 
   @impl true
-  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks) when is_map(input) do
+  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks)
+      when is_map(input) do
     shell_opts = [working_dir: Support.working_dir(input)]
 
     shell_opts =
       case ctx.bot_config do
         %BotConfig{id: bot_id} when is_binary(bot_id) ->
-          Keyword.put(shell_opts, :telegram, %{bot_id: bot_id, chat_id: Support.chat_id(ctx)})
+          Keyword.put(shell_opts, :telegram, %{
+            bot_id: bot_id,
+            chat_id: Support.chat_id(ctx)
+          })
 
         _ ->
           shell_opts

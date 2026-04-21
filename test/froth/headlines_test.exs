@@ -15,8 +15,17 @@ defmodule Froth.HeadlinesTest do
     chat_id = unique_chat_id()
     model = FakeLLM.claim()
 
-    insert_summary(chat_id, ~D[2026-03-20], "The group launched a new project.")
-    insert_summary(chat_id, ~D[2026-03-21], "A long debugging session fixed the outage.")
+    insert_summary(
+      chat_id,
+      ~D[2026-03-20],
+      "The group launched a new project."
+    )
+
+    insert_summary(
+      chat_id,
+      ~D[2026-03-21],
+      "A long debugging session fixed the outage."
+    )
 
     %Event{}
     |> Event.changeset(%{
@@ -42,7 +51,12 @@ defmodule Froth.HeadlinesTest do
 
     extract_task =
       Task.async(fn ->
-        Headlines.extract(bot: bot, chat_id: chat_id, provider: :fakeai, model: model)
+        Headlines.extract(
+          bot: bot,
+          chat_id: chat_id,
+          provider: :fakeai,
+          model: model
+        )
       end)
 
     {from, request} = receive_headlines_llm_request()
@@ -64,7 +78,9 @@ defmodule Froth.HeadlinesTest do
     assert prompt =~ "Old scandal"
 
     assert prompt =~ "<objective>"
-    assert prompt =~ "Write tabloid headlines for EVERY summary date in the context."
+
+    assert prompt =~
+             "Write tabloid headlines for EVERY summary date in the context."
 
     assert prompt =~
              "Existing registered headlines are included below in XML. Those days are already done."
@@ -124,9 +140,14 @@ defmodule Froth.HeadlinesTest do
     assert request.system == "You are a tabloid editor."
     assert request.provider_options["reasoning_effort"] == "medium"
     assert request.provider_options["reasoning_summary"] == "auto"
-    assert Enum.map(request.tools, & &1["name"]) == ["timeline", "register_headlines"]
 
-    register_headlines_tool = Enum.find(request.tools, &(&1["name"] == "register_headlines"))
+    assert Enum.map(request.tools, & &1["name"]) == [
+             "timeline",
+             "register_headlines"
+           ]
+
+    register_headlines_tool =
+      Enum.find(request.tools, &(&1["name"] == "register_headlines"))
 
     assert get_in(register_headlines_tool, [
              "input_schema",
@@ -146,14 +167,28 @@ defmodule Froth.HeadlinesTest do
     chat_id = unique_chat_id()
     model = FakeLLM.claim()
 
-    insert_summary(chat_id, ~D[2026-03-20], "The group launched a new project.")
-    insert_summary(chat_id, ~D[2026-03-21], "A long debugging session fixed the outage.")
+    insert_summary(
+      chat_id,
+      ~D[2026-03-20],
+      "The group launched a new project."
+    )
+
+    insert_summary(
+      chat_id,
+      ~D[2026-03-21],
+      "A long debugging session fixed the outage."
+    )
 
     %{bot: bot} = start_charlie_bot()
 
     extract_task =
       Task.async(fn ->
-        Headlines.extract_all(bot: bot, chat_id: chat_id, provider: :fakeai, model: model)
+        Headlines.extract_all(
+          bot: bot,
+          chat_id: chat_id,
+          provider: :fakeai,
+          model: model
+        )
       end)
 
     {from, request} = receive_headlines_llm_request()
@@ -165,7 +200,8 @@ defmodule Froth.HeadlinesTest do
              }
            ] = request.messages
 
-    assert prompt =~ "Write tabloid headlines for EVERY summary date in the context."
+    assert prompt =~
+             "Write tabloid headlines for EVERY summary date in the context."
 
     assert prompt =~ "You may register headlines in any order."
 
@@ -203,11 +239,22 @@ defmodule Froth.HeadlinesTest do
     chat_id = unique_chat_id()
     model = FakeLLM.claim()
 
-    insert_summary(chat_id, ~D[2026-03-20], "The group launched a new project.")
+    insert_summary(
+      chat_id,
+      ~D[2026-03-20],
+      "The group launched a new project."
+    )
 
     %{bot: bot} = start_charlie_bot()
 
-    {cycle, stream} = Headlines.start(bot: bot, chat_id: chat_id, provider: :fakeai, model: model)
+    {cycle, stream} =
+      Headlines.start(
+        bot: bot,
+        chat_id: chat_id,
+        provider: :fakeai,
+        model: model
+      )
+
     collector = Task.async(fn -> Enum.to_list(stream) end)
 
     assert is_binary(cycle.id)
@@ -285,14 +332,16 @@ defmodule Froth.HeadlinesTest do
                    %{
                      "emoji" => "🚀",
                      "title" => "Launch day",
-                     "sentence" => "The team rolled out the feature to production.",
+                     "sentence" =>
+                       "The team rolled out the feature to production.",
                      "from_time" => "2026-03-22T09:00:00Z",
                      "to_time" => "2026-03-22T09:45:00Z"
                    },
                    %{
                      "emoji" => "🛠️",
                      "title" => "Outage resolved",
-                     "sentence" => "A late-night fix restored the broken sync job.",
+                     "sentence" =>
+                       "A late-night fix restored the broken sync job.",
                      "from_time" => "2026-03-22T22:15:00Z",
                      "to_time" => "2026-03-22T23:05:00Z"
                    }
@@ -304,7 +353,11 @@ defmodule Froth.HeadlinesTest do
                bot_username: "charliebuddybot",
                cycle_id: "cycle-123",
                send_message_fun: fn session_id, sent_chat_id, text, opts ->
-                 send(test_pid, {:sent_message, session_id, sent_chat_id, text, opts})
+                 send(
+                   test_pid,
+                   {:sent_message, session_id, sent_chat_id, text, opts}
+                 )
+
                  {:ok, %{"id" => 1}}
                end
              )
@@ -314,7 +367,10 @@ defmodule Froth.HeadlinesTest do
     assert Froth.Context.Block.attr(block, :count) == 2
     assert Froth.Context.Block.attr(block, :next_unfinished) == "2026-03-21"
 
-    assert_receive {:telemetry, [:froth, :headlines, :registered], %{count: 2}, metadata}, 5_000
+    assert_receive {:telemetry, [:froth, :headlines, :registered],
+                    %{count: 2}, metadata},
+                   5_000
+
     assert metadata[:date] == "2026-03-22"
     assert metadata[:chat_id] == chat_id
     assert length(metadata[:headlines]) == 2
@@ -327,8 +383,14 @@ defmodule Froth.HeadlinesTest do
                "🛠️ Outage resolved (22:15-23:05 UTC)"
 
     assert length(opts[:entities]) == 3
-    assert Enum.all?(opts[:entities], &(get_in(&1, ["type", "@type"]) == "textEntityTypeBold"))
-    [date_entity, first_headline_entity, second_headline_entity] = opts[:entities]
+
+    assert Enum.all?(
+             opts[:entities],
+             &(get_in(&1, ["type", "@type"]) == "textEntityTypeBold")
+           )
+
+    [date_entity, first_headline_entity, second_headline_entity] =
+      opts[:entities]
 
     assert date_entity["offset"] == 0
     assert date_entity["length"] == utf16_length("2026-03-22")
@@ -337,11 +399,18 @@ defmodule Froth.HeadlinesTest do
     assert first_headline_entity["length"] == utf16_length("Launch day")
 
     assert second_headline_entity["offset"] ==
-             utf16_length("2026-03-22\n\n🚀 Launch day (09:00-09:45 UTC)\n\n🛠️ ")
+             utf16_length(
+               "2026-03-22\n\n🚀 Launch day (09:00-09:45 UTC)\n\n🛠️ "
+             )
 
     assert second_headline_entity["length"] == utf16_length("Outage resolved")
 
-    assert get_in(opts[:reply_markup], ["rows", Access.at(0), Access.at(0), "text"]) == "Open"
+    assert get_in(opts[:reply_markup], [
+             "rows",
+             Access.at(0),
+             Access.at(0),
+             "text"
+           ]) == "Open"
 
     assert get_in(opts[:reply_markup], [
              "rows",
@@ -349,7 +418,8 @@ defmodule Froth.HeadlinesTest do
              Access.at(0),
              "type",
              "url"
-           ]) == "https://t.me/charliebuddybot/tool?startapp=cycle_charlie_cycle-123"
+           ]) ==
+             "https://t.me/charliebuddybot/tool?startapp=cycle_charlie_cycle-123"
 
     assert [:froth, :headlines, :registered] in Froth.Telemetry.events()
   end
@@ -378,7 +448,9 @@ defmodule Froth.HeadlinesTest do
                },
                chat_id,
                session_id: "charlie",
-               send_message_fun: fn _session_id, _chat_id, _text, _opts -> {:ok, %{"id" => 1}} end
+               send_message_fun: fn _session_id, _chat_id, _text, _opts ->
+                 {:ok, %{"id" => 1}}
+               end
              )
 
     assert Froth.Context.Block.attr(block1, :date) == "2026-03-20"
@@ -403,7 +475,9 @@ defmodule Froth.HeadlinesTest do
                },
                chat_id,
                session_id: "charlie",
-               send_message_fun: fn _session_id, _chat_id, _text, _opts -> {:ok, %{"id" => 1}} end
+               send_message_fun: fn _session_id, _chat_id, _text, _opts ->
+                 {:ok, %{"id" => 1}}
+               end
              )
 
     assert Froth.Context.Block.attr(block2, :date) == "2026-03-21"
@@ -426,7 +500,8 @@ defmodule Froth.HeadlinesTest do
                    %{
                      "emoji" => "🧪",
                      "title" => "Dry run",
-                     "sentence" => "The headline was recorded without posting to Telegram.",
+                     "sentence" =>
+                       "The headline was recorded without posting to Telegram.",
                      "from_time" => "2026-03-20T09:00:00Z",
                      "to_time" => "2026-03-20T09:15:00Z"
                    }
@@ -451,7 +526,11 @@ defmodule Froth.HeadlinesTest do
                from(e in Event,
                  where:
                    e.event == "froth.headlines.registered" and
-                     fragment("?->>'chat_id' = ?", e.metadata, ^Integer.to_string(chat_id)),
+                     fragment(
+                       "?->>'chat_id' = ?",
+                       e.metadata,
+                       ^Integer.to_string(chat_id)
+                     ),
                  order_by: [desc: e.inserted_at]
                ),
                log: false
@@ -462,8 +541,12 @@ defmodule Froth.HeadlinesTest do
   end
 
   defp insert_summary(chat_id, date, text) do
-    from_unix = DateTime.new!(date, ~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
-    to_unix = DateTime.new!(Date.add(date, 1), ~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
+    from_unix =
+      DateTime.new!(date, ~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
+
+    to_unix =
+      DateTime.new!(Date.add(date, 1), ~T[00:00:00], "Etc/UTC")
+      |> DateTime.to_unix()
 
     %ChatSummary{}
     |> ChatSummary.changeset(%{
@@ -494,12 +577,14 @@ defmodule Froth.HeadlinesTest do
   # that don't match — this is useful because `Headlines.extract/1`
   # spawns a charlie bot context whose unrelated subsystems may also
   # issue LLM requests.
-  defp receive_headlines_llm_request(timeout \\ 5_000) when is_integer(timeout) and timeout > 0 do
+  defp receive_headlines_llm_request(timeout \\ 5_000)
+       when is_integer(timeout) and timeout > 0 do
     deadline_ms = System.monotonic_time(:millisecond) + timeout
     do_receive_headlines_llm_request(deadline_ms)
   end
 
-  defp do_receive_headlines_llm_request(deadline_ms) when is_integer(deadline_ms) do
+  defp do_receive_headlines_llm_request(deadline_ms)
+       when is_integer(deadline_ms) do
     remaining_ms = max(deadline_ms - System.monotonic_time(:millisecond), 0)
 
     receive do
@@ -517,7 +602,10 @@ defmodule Froth.HeadlinesTest do
 
   defp headlines_request?(%Request{system: system, tools: tools}) do
     system == "You are a tabloid editor." and
-      Enum.map(tools || [], & &1["name"]) == ["timeline", "register_headlines"]
+      Enum.map(tools || [], & &1["name"]) == [
+        "timeline",
+        "register_headlines"
+      ]
   end
 
   defp utf16_length(text) when is_binary(text) do

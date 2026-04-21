@@ -8,7 +8,9 @@ defmodule Froth.Analyzer.VoiceWorker do
   import Ecto.Query
 
   @impl true
-  def perform(%Oban.Job{args: %{"chat_id" => chat_id, "message_id" => message_id}}) do
+  def perform(%Oban.Job{
+        args: %{"chat_id" => chat_id, "message_id" => message_id}
+      }) do
     msg =
       Repo.one(
         from(m in "telegram_messages",
@@ -25,7 +27,13 @@ defmodule Froth.Analyzer.VoiceWorker do
       Froth.Analyzer.with_reactions(chat_id, message_id, fn ->
         case download_voice(chat_id, message_id) do
           {:ok, audio_data, mime_type, duration} ->
-            analyze_and_save(chat_id, message_id, audio_data, mime_type, duration)
+            analyze_and_save(
+              chat_id,
+              message_id,
+              audio_data,
+              mime_type,
+              duration
+            )
 
           {:discard, _} = d ->
             d
@@ -49,7 +57,8 @@ defmodule Froth.Analyzer.VoiceWorker do
       %{"@type" => "error", "message" => m} ->
         {:discard, "getMessage: #{m}"}
 
-      %{"content" => %{"@type" => type}} when type in ["messageVoiceNote", "messageAudio"] ->
+      %{"content" => %{"@type" => type}}
+      when type in ["messageVoiceNote", "messageAudio"] ->
         {file_id, mime, duration} = extract_voice_info(msg)
 
         if is_nil(file_id) do
@@ -105,7 +114,12 @@ defmodule Froth.Analyzer.VoiceWorker do
     prompt =
       "Transcribe this voice message and briefly describe the tone/context. Return the transcription first, then the analysis."
 
-    case API.gemini_with_inline("gemini-3-flash-preview", audio_data, mime_type, prompt) do
+    case API.gemini_with_inline(
+           "gemini-3-flash-preview",
+           audio_data,
+           mime_type,
+           prompt
+         ) do
       {:ok, text} ->
         %Analysis{}
         |> Analysis.changeset(%{

@@ -38,7 +38,10 @@ defmodule Froth.Follow.Source do
           query
 
         cycle_id ->
-          from(e in query, where: fragment("?->>'cycle_id' LIKE ?", e.metadata, ^"#{cycle_id}%"))
+          from(e in query,
+            where:
+              fragment("?->>'cycle_id' LIKE ?", e.metadata, ^"#{cycle_id}%")
+          )
       end
 
     query =

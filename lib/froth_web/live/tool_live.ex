@@ -73,7 +73,11 @@ defmodule FrothWeb.ToolLive do
     {:noreply, assign(socket, :follow_tail?, !socket.assigns.follow_tail?)}
   end
 
-  def handle_event("send_steer", %{"steer" => %{"prompt" => raw_prompt}}, socket) do
+  def handle_event(
+        "send_steer",
+        %{"steer" => %{"prompt" => raw_prompt}},
+        socket
+      ) do
     prompt = String.trim(raw_prompt || "")
 
     socket =
@@ -86,17 +90,24 @@ defmodule FrothWeb.ToolLive do
           socket.assigns.chat_id,
           socket.assigns.cycle_id
         ) ->
-          cast_bot(socket, {:start_inference_session, steer_message(socket, prompt)})
+          cast_bot(
+            socket,
+            {:start_inference_session, steer_message(socket, prompt)}
+          )
 
           socket
-          |> assign(:agent_events, socket.assigns.agent_events ++ [local_steer_event(prompt)])
+          |> assign(
+            :agent_events,
+            socket.assigns.agent_events ++ [local_steer_event(prompt)]
+          )
           |> assign(:loop_status, :running)
 
         true ->
           put_flash(socket, :error, "Steering is unavailable for this run.")
       end
 
-    {:noreply, assign(socket, :steer_form, to_form(%{"prompt" => ""}, as: :steer))}
+    {:noreply,
+     assign(socket, :steer_form, to_form(%{"prompt" => ""}, as: :steer))}
   end
 
   def handle_event("close", _, socket) do
@@ -121,12 +132,17 @@ defmodule FrothWeb.ToolLive do
      |> assign(:agent_events, events)
      |> assign(
        :loop_status,
-       derive_cycle_status(events, socket.assigns.live_thinking, socket.assigns.live_text)
+       derive_cycle_status(
+         events,
+         socket.assigns.live_thinking,
+         socket.assigns.live_text
+       )
      )}
   end
 
   def handle_info({:stream, {:thinking_start, _}}, socket) do
-    {:noreply, socket |> assign(:live_thinking, "") |> assign(:loop_status, :thinking)}
+    {:noreply,
+     socket |> assign(:live_thinking, "") |> assign(:loop_status, :thinking)}
   end
 
   def handle_info({:stream, {:thinking_delta, %{"delta" => delta}}}, socket)
@@ -137,7 +153,8 @@ defmodule FrothWeb.ToolLive do
      |> assign(:loop_status, :thinking)}
   end
 
-  def handle_info({:stream, {:text_delta, delta}}, socket) when is_binary(delta) do
+  def handle_info({:stream, {:text_delta, delta}}, socket)
+      when is_binary(delta) do
     {:noreply,
      socket
      |> assign(:live_text, socket.assigns.live_text <> delta)
@@ -147,10 +164,14 @@ defmodule FrothWeb.ToolLive do
   def handle_info({:stream, _}, socket), do: {:noreply, socket}
 
   def handle_info({:stream_event, {:thinking_start, _}}, socket) do
-    {:noreply, socket |> assign(:live_thinking, "") |> assign(:loop_status, :thinking)}
+    {:noreply,
+     socket |> assign(:live_thinking, "") |> assign(:loop_status, :thinking)}
   end
 
-  def handle_info({:stream_event, {:thinking_delta, %{"delta" => delta}}}, socket)
+  def handle_info(
+        {:stream_event, {:thinking_delta, %{"delta" => delta}}},
+        socket
+      )
       when is_binary(delta) do
     {:noreply,
      socket
@@ -158,7 +179,8 @@ defmodule FrothWeb.ToolLive do
      |> assign(:loop_status, :thinking)}
   end
 
-  def handle_info({:stream_event, {:text_delta, delta}}, socket) when is_binary(delta) do
+  def handle_info({:stream_event, {:text_delta, delta}}, socket)
+      when is_binary(delta) do
     {:noreply,
      socket
      |> assign(:live_text, socket.assigns.live_text <> delta)
@@ -167,11 +189,14 @@ defmodule FrothWeb.ToolLive do
 
   def handle_info({:io_chunk, text}, socket) when is_binary(text) do
     {:noreply,
-     socket |> assign(:live_io, socket.assigns.live_io <> text) |> assign(:loop_status, :running)}
+     socket
+     |> assign(:live_io, socket.assigns.live_io <> text)
+     |> assign(:loop_status, :running)}
   end
 
   def handle_info(
-        {:eval_done_detail, %{status: status, io_output: io_output, result: result}},
+        {:eval_done_detail,
+         %{status: status, io_output: io_output, result: result}},
         socket
       )
       when status in [:ok, :error] and is_binary(result) do
@@ -214,7 +239,10 @@ defmodule FrothWeb.ToolLive do
                   <span :if={is_binary(@cycle_id)} class="text-zinc-500">
                     {short_cycle_id(@cycle_id)}
                   </span>
-                  <span :if={tool_progress_label(@agent_events)} class="text-zinc-500">
+                  <span
+                    :if={tool_progress_label(@agent_events)}
+                    class="text-zinc-500"
+                  >
                     {tool_progress_label(@agent_events)}
                   </span>
                   <span
@@ -230,7 +258,10 @@ defmodule FrothWeb.ToolLive do
                 </p>
               </div>
 
-              <label class="mini-toggle shrink-0" data-active={to_string(@follow_tail?)}>
+              <label
+                class="mini-toggle shrink-0"
+                data-active={to_string(@follow_tail?)}
+              >
                 <input
                   id="tool-follow-tail"
                   type="checkbox"
@@ -278,10 +309,16 @@ defmodule FrothWeb.ToolLive do
               </div>
             <% end %>
 
-            <div :if={@loop_status == :not_found} class="py-8 text-center text-[12px] text-zinc-500">
+            <div
+              :if={@loop_status == :not_found}
+              class="py-8 text-center text-[12px] text-zinc-500"
+            >
               cycle not found
             </div>
-            <div :if={@loop_status == :loading} class="py-8 text-center text-[12px] text-zinc-500">
+            <div
+              :if={@loop_status == :loading}
+              class="py-8 text-center text-[12px] text-zinc-500"
+            >
               ...
             </div>
             <div id="tool-feed-end" data-scroll-end></div>
@@ -306,7 +343,9 @@ defmodule FrothWeb.ToolLive do
                 Refresh
               </button>
               <button
-                :if={@loop_status in [:done, :stopped, :stopping, :error, :not_found]}
+                :if={
+                  @loop_status in [:done, :stopped, :stopping, :error, :not_found]
+                }
                 id="loop-close"
                 phx-click="close"
                 class="mini-btn"
@@ -330,7 +369,11 @@ defmodule FrothWeb.ToolLive do
                 enterkeyhint="send"
                 class="mini-input min-h-[2.75rem] resize-none"
               />
-              <button id="loop-steer" type="submit" class="mini-btn mini-btn--accent min-h-[2.75rem]">
+              <button
+                id="loop-steer"
+                type="submit"
+                class="mini-btn mini-btn--accent min-h-[2.75rem]"
+              >
                 Steer
               </button>
             </.form>
@@ -405,7 +448,10 @@ defmodule FrothWeb.ToolLive do
       <div class="flex items-start justify-between gap-2">
         <div class="min-w-0 flex-1">
           <div class="flex items-center gap-1.5">
-            <.icon name="hero-wrench-screwdriver" class="size-3.5 shrink-0 text-amber-300/85" />
+            <.icon
+              name="hero-wrench-screwdriver"
+              class="size-3.5 shrink-0 text-amber-300/85"
+            />
             <p class="truncate text-[12px] font-semibold tracking-[0.02em] text-zinc-50">
               {queue_action_title(@item.name)}
             </p>
@@ -466,7 +512,9 @@ defmodule FrothWeb.ToolLive do
         </summary>
         <div class="space-y-2 border-t border-zinc-800/80 px-2 py-2">
           <div :if={@item.io_output != ""}>
-            <p class="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">IO</p>
+            <p class="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+              IO
+            </p>
             <pre class="max-h-56 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5 text-zinc-400/90">{@item.io_output}</pre>
           </div>
 
@@ -474,7 +522,10 @@ defmodule FrothWeb.ToolLive do
             <p class="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
               Result
             </p>
-            <.result_value result={@item.result || ""} is_error={tool_failure?(@item)} />
+            <.result_value
+              result={@item.result || ""}
+              is_error={tool_failure?(@item)}
+            />
           </div>
         </div>
       </details>
@@ -522,7 +573,10 @@ defmodule FrothWeb.ToolLive do
     end)
   end
 
-  defp apply_agent_event_to_timeline(%{id: event_id, role: role, blocks: blocks}, state)
+  defp apply_agent_event_to_timeline(
+         %{id: event_id, role: role, blocks: blocks},
+         state
+       )
        when role in [:agent, :user] and is_list(blocks) do
     blocks
     |> Enum.with_index()
@@ -533,27 +587,57 @@ defmodule FrothWeb.ToolLive do
 
   defp apply_agent_event_to_timeline(_, state), do: state
 
-  defp apply_agent_block(role, event_id, %{"type" => "thinking", "thinking" => text}, idx, state)
+  defp apply_agent_block(
+         role,
+         event_id,
+         %{"type" => "thinking", "thinking" => text},
+         idx,
+         state
+       )
        when role == :agent do
     append_timeline_text(state, :thinking, text, event_id, idx)
   end
 
-  defp apply_agent_block(role, event_id, %{"type" => "text", "text" => text}, idx, state)
+  defp apply_agent_block(
+         role,
+         event_id,
+         %{"type" => "text", "text" => text},
+         idx,
+         state
+       )
        when role == :agent do
     append_timeline_text(state, :assistant_text, text, event_id, idx)
   end
 
-  defp apply_agent_block(role, event_id, %{"type" => "text", "text" => text}, idx, state)
+  defp apply_agent_block(
+         role,
+         event_id,
+         %{"type" => "text", "text" => text},
+         idx,
+         state
+       )
        when role == :user do
     append_timeline_text(state, :user_text, text, event_id, idx)
   end
 
-  defp apply_agent_block(role, event_id, %{"type" => type} = block, idx, state)
+  defp apply_agent_block(
+         role,
+         event_id,
+         %{"type" => type} = block,
+         idx,
+         state
+       )
        when role == :agent and type in ["tool_use", "mcp_tool_use"] do
     apply_tool_use(state, event_id, idx, block)
   end
 
-  defp apply_agent_block(_role, event_id, %{"type" => type} = block, idx, state)
+  defp apply_agent_block(
+         _role,
+         event_id,
+         %{"type" => type} = block,
+         idx,
+         state
+       )
        when type in ["tool_result", "mcp_tool_result"] do
     apply_tool_result(state, event_id, idx, block)
   end
@@ -579,7 +663,11 @@ defmodule FrothWeb.ToolLive do
             })
         end
 
-      %{state | immediate_tool_ids: MapSet.put(state.immediate_tool_ids, tool_use_id)}
+      %{
+        state
+        | immediate_tool_ids:
+            MapSet.put(state.immediate_tool_ids, tool_use_id)
+      }
     else
       state
       |> upsert_timeline_card(tool_use_id, %{
@@ -603,13 +691,19 @@ defmodule FrothWeb.ToolLive do
     if MapSet.member?(state.immediate_tool_ids, key) do
       result_text =
         cond do
-          is_binary(parsed.result) and String.trim(parsed.result) != "" -> parsed.result
-          is_binary(parsed.io_output) and String.trim(parsed.io_output) != "" -> parsed.io_output
-          true -> nil
+          is_binary(parsed.result) and String.trim(parsed.result) != "" ->
+            parsed.result
+
+          is_binary(parsed.io_output) and String.trim(parsed.io_output) != "" ->
+            parsed.io_output
+
+          true ->
+            nil
         end
 
       if is_error or
-           (is_binary(result_text) and String.downcase(String.trim(result_text)) != "sent") do
+           (is_binary(result_text) and
+              String.downcase(String.trim(result_text)) != "sent") do
         append_timeline_entry(state, %{
           id: "#{event_id}-delivery-#{idx}",
           kind: :delivery_status,
@@ -638,7 +732,9 @@ defmodule FrothWeb.ToolLive do
     "#{server_name}/#{name}"
   end
 
-  defp format_tool_block_name(%{"name" => name}) when is_binary(name), do: name
+  defp format_tool_block_name(%{"name" => name}) when is_binary(name),
+    do: name
+
   defp format_tool_block_name(_block), do: "tool"
 
   defp finalize_tool_cards(state, assigns) do
@@ -661,7 +757,8 @@ defmodule FrothWeb.ToolLive do
 
         result =
           cond do
-            active and card.name == "elixir_eval" and is_binary(assigns.live_result) ->
+            active and card.name == "elixir_eval" and
+                is_binary(assigns.live_result) ->
               assigns.live_result
 
             true ->
@@ -670,7 +767,8 @@ defmodule FrothWeb.ToolLive do
 
         is_error =
           cond do
-            active and card.name == "elixir_eval" and is_binary(assigns.live_result) ->
+            active and card.name == "elixir_eval" and
+                is_binary(assigns.live_result) ->
               assigns.live_result_error
 
             true ->
@@ -696,7 +794,11 @@ defmodule FrothWeb.ToolLive do
         state
 
       body ->
-        append_timeline_entry(state, %{id: "#{event_id}-#{kind}-#{idx}", kind: kind, body: body})
+        append_timeline_entry(state, %{
+          id: "#{event_id}-#{kind}-#{idx}",
+          kind: kind,
+          body: body
+        })
     end
   end
 
@@ -833,7 +935,8 @@ defmodule FrothWeb.ToolLive do
 
   defp setup_loop(socket, _token), do: clear_cycle(socket, :not_found)
 
-  defp refresh_loop(%{assigns: %{cycle_id: cycle_id}} = socket) when is_binary(cycle_id) do
+  defp refresh_loop(%{assigns: %{cycle_id: cycle_id}} = socket)
+       when is_binary(cycle_id) do
     case Froth.Repo.get(Cycle, cycle_id) do
       nil ->
         clear_cycle(socket, :not_found)
@@ -848,7 +951,11 @@ defmodule FrothWeb.ToolLive do
         |> assign(:reply_to, cycle_link && cycle_link.reply_to)
         |> assign(
           :loop_status,
-          derive_cycle_status(events, socket.assigns.live_thinking, socket.assigns.live_text)
+          derive_cycle_status(
+            events,
+            socket.assigns.live_thinking,
+            socket.assigns.live_text
+          )
         )
     end
   end
@@ -963,7 +1070,11 @@ defmodule FrothWeb.ToolLive do
     Froth.Telegram.Bots.cast(socket.assigns.bot_id || "charlie", message)
   end
 
-  defp agent_event_from_message(%AgentMessage{id: id, role: role, content: content}) do
+  defp agent_event_from_message(%AgentMessage{
+         id: id,
+         role: role,
+         content: content
+       }) do
     %{
       id: id || Ecto.ULID.generate(),
       role: role,
@@ -971,7 +1082,8 @@ defmodule FrothWeb.ToolLive do
     }
   end
 
-  defp agent_event_from_message(_), do: %{id: Ecto.ULID.generate(), role: :user, blocks: []}
+  defp agent_event_from_message(_),
+    do: %{id: Ecto.ULID.generate(), role: :user, blocks: []}
 
   defp agent_event_blocks(blocks) when is_list(blocks), do: blocks
 
@@ -1006,8 +1118,11 @@ defmodule FrothWeb.ToolLive do
 
         Enum.reduce(blocks, acc, fn
           %{"type" => type, "id" => id, "name" => name}, pending
-          when type in ["tool_use", "mcp_tool_use"] and is_binary(id) and is_binary(name) ->
-            if name == "send_message", do: pending, else: MapSet.put(pending, id)
+          when type in ["tool_use", "mcp_tool_use"] and is_binary(id) and
+                 is_binary(name) ->
+            if name == "send_message",
+              do: pending,
+              else: MapSet.put(pending, id)
 
           %{"type" => type, "id" => id}, pending
           when type in ["tool_use", "mcp_tool_use"] and is_binary(id) ->
@@ -1051,19 +1166,25 @@ defmodule FrothWeb.ToolLive do
   end
 
   defp split_tool_result(nil), do: %{io_output: "", result: ""}
-  defp split_tool_result(content), do: %{io_output: "", result: inspect(content, limit: 30)}
 
-  defp tool_result_block_summary(%{"type" => "text", "text" => text}) when is_binary(text),
-    do: text
+  defp split_tool_result(content),
+    do: %{io_output: "", result: inspect(content, limit: 30)}
 
-  defp tool_result_block_summary(%{"type" => "image", "source" => source}) when is_map(source),
-    do: "[image #{source["media_type"] || "unknown"}]"
+  defp tool_result_block_summary(%{"type" => "text", "text" => text})
+       when is_binary(text),
+       do: text
+
+  defp tool_result_block_summary(%{"type" => "image", "source" => source})
+       when is_map(source),
+       do: "[image #{source["media_type"] || "unknown"}]"
 
   defp tool_result_block_summary(%{"type" => "document", "source" => source})
        when is_map(source),
        do: "[document #{source["media_type"] || "unknown"}]"
 
-  defp tool_result_block_summary(%{"type" => type}) when is_binary(type), do: "[#{type}]"
+  defp tool_result_block_summary(%{"type" => type}) when is_binary(type),
+    do: "[#{type}]"
+
   defp tool_result_block_summary(_), do: ""
 
   attr(:result, :string, required: true)
@@ -1076,7 +1197,10 @@ defmodule FrothWeb.ToolLive do
     ~H"""
     <%= if @doc_text do %>
       <div class="space-y-3 text-[13px] leading-relaxed text-zinc-200/90">
-        <p :for={paragraph <- doc_paragraphs(@doc_text)} class="whitespace-pre-wrap">
+        <p
+          :for={paragraph <- doc_paragraphs(@doc_text)}
+          class="whitespace-pre-wrap"
+        >
           {paragraph}
         </p>
       </div>
@@ -1122,12 +1246,14 @@ defmodule FrothWeb.ToolLive do
   end
 
   defp can_stop?(status, cycle_id)
-       when is_binary(cycle_id) and status not in [:stopped, :stopping, :not_found],
+       when is_binary(cycle_id) and
+              status not in [:stopped, :stopping, :not_found],
        do: true
 
   defp can_stop?(_status, _cycle_id), do: false
 
-  defp loop_working?(loop_status), do: loop_status in [:running, :thinking, :loading, :stopping]
+  defp loop_working?(loop_status),
+    do: loop_status in [:running, :thinking, :loading, :stopping]
 
   defp show_steer_input?(loop_status, chat_id, cycle_id),
     do:
@@ -1146,8 +1272,11 @@ defmodule FrothWeb.ToolLive do
     }
   end
 
-  defp dock_text(:loading, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} loading..."
-  defp dock_text(:running, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} running..."
+  defp dock_text(:loading, cycle_id) when is_binary(cycle_id),
+    do: "cycle #{cycle_id} loading..."
+
+  defp dock_text(:running, cycle_id) when is_binary(cycle_id),
+    do: "cycle #{cycle_id} running..."
 
   defp dock_text(:thinking, cycle_id) when is_binary(cycle_id),
     do: "cycle #{cycle_id} thinking..."
@@ -1155,11 +1284,20 @@ defmodule FrothWeb.ToolLive do
   defp dock_text(:stopping, cycle_id) when is_binary(cycle_id),
     do: "cycle #{cycle_id} stop requested..."
 
-  defp dock_text(:done, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} complete"
-  defp dock_text(:stopped, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} stopped"
-  defp dock_text(:error, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id} failed"
+  defp dock_text(:done, cycle_id) when is_binary(cycle_id),
+    do: "cycle #{cycle_id} complete"
+
+  defp dock_text(:stopped, cycle_id) when is_binary(cycle_id),
+    do: "cycle #{cycle_id} stopped"
+
+  defp dock_text(:error, cycle_id) when is_binary(cycle_id),
+    do: "cycle #{cycle_id} failed"
+
   defp dock_text(:not_found, _cycle_id), do: "cycle not found"
-  defp dock_text(_, cycle_id) when is_binary(cycle_id), do: "cycle #{cycle_id}"
+
+  defp dock_text(_, cycle_id) when is_binary(cycle_id),
+    do: "cycle #{cycle_id}"
+
   defp dock_text(_, _), do: "waiting"
 
   defp loop_status_badge_class(:running),
@@ -1236,7 +1374,8 @@ defmodule FrothWeb.ToolLive do
       "max-w-[96%] rounded-[0.9rem] border border-zinc-800/80 bg-zinc-950/70 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
 
   defp transcript_text_class(:assistant),
-    do: "mini-markdown md-prose font-sans text-[13px] leading-[1.48] text-zinc-100"
+    do:
+      "mini-markdown md-prose font-sans text-[13px] leading-[1.48] text-zinc-100"
 
   defp transcript_text_class(:user),
     do:
@@ -1247,7 +1386,8 @@ defmodule FrothWeb.ToolLive do
       "mini-markdown md-prose font-sans text-[13px] leading-[1.48] text-right text-emerald-50 [&_*]:text-right"
 
   defp transcript_text_class(_),
-    do: "mini-markdown md-prose font-sans text-[13px] leading-[1.48] text-zinc-100"
+    do:
+      "mini-markdown md-prose font-sans text-[13px] leading-[1.48] text-zinc-100"
 
   defp split_cost_footer(text) when is_binary(text) do
     trimmed = String.trim(text)
@@ -1301,12 +1441,15 @@ defmodule FrothWeb.ToolLive do
 
   defp tool_progress(events) when is_list(events) do
     {calls, resolved} =
-      Enum.reduce(events, {MapSet.new(), MapSet.new()}, fn event, {calls, resolved} ->
+      Enum.reduce(events, {MapSet.new(), MapSet.new()}, fn event,
+                                                           {calls, resolved} ->
         blocks = event[:blocks] || []
 
         Enum.reduce(blocks, {calls, resolved}, fn
-          %{"type" => type, "id" => id, "name" => name}, {call_acc, result_acc}
-          when type in ["tool_use", "mcp_tool_use"] and is_binary(id) and is_binary(name) ->
+          %{"type" => type, "id" => id, "name" => name},
+          {call_acc, result_acc}
+          when type in ["tool_use", "mcp_tool_use"] and is_binary(id) and
+                 is_binary(name) ->
             if name == "send_message",
               do: {call_acc, result_acc},
               else: {MapSet.put(call_acc, id), result_acc}
@@ -1325,7 +1468,9 @@ defmodule FrothWeb.ToolLive do
 
   defp tool_progress(_), do: {0, 0}
 
-  defp short_cycle_id(cycle_id) when is_binary(cycle_id), do: String.slice(cycle_id, 0, 12)
+  defp short_cycle_id(cycle_id) when is_binary(cycle_id),
+    do: String.slice(cycle_id, 0, 12)
+
   defp short_cycle_id(_), do: nil
 
   defp tool_card_class(item) do
@@ -1374,19 +1519,24 @@ defmodule FrothWeb.ToolLive do
     end
   end
 
-  defp tool_primary_summary(%{summary: summary}) when is_binary(summary) and summary != "",
-    do: summary
+  defp tool_primary_summary(%{summary: summary})
+       when is_binary(summary) and summary != "",
+       do: summary
 
-  defp tool_primary_summary(%{preview: preview}) when is_binary(preview) and preview != "",
-    do: preview
+  defp tool_primary_summary(%{preview: preview})
+       when is_binary(preview) and preview != "",
+       do: preview
 
   defp tool_primary_summary(_), do: nil
 
-  defp tool_has_input?(%{input_json: text}) when is_binary(text) and text != "", do: true
+  defp tool_has_input?(%{input_json: text})
+       when is_binary(text) and text != "", do: true
+
   defp tool_has_input?(_), do: false
 
   defp tool_has_output?(%{io_output: io_output, result: result}) do
-    (is_binary(io_output) and io_output != "") or (is_binary(result) and result != "")
+    (is_binary(io_output) and io_output != "") or
+      (is_binary(result) and result != "")
   end
 
   defp tool_has_output?(_), do: false
@@ -1467,7 +1617,10 @@ defmodule FrothWeb.ToolLive do
       trimmed ->
         lines = trimmed |> String.split("\n", trim: false) |> Enum.take(3)
         preview = Enum.join(lines, "\n")
-        if String.length(trimmed) > String.length(preview), do: preview <> "\n...", else: preview
+
+        if String.length(trimmed) > String.length(preview),
+          do: preview <> "\n...",
+          else: preview
     end
   end
 

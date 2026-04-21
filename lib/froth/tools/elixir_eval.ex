@@ -85,7 +85,8 @@ defmodule Froth.Tools.ElixirEval do
   end
 
   @impl true
-  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks) when is_map(input) do
+  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks)
+      when is_map(input) do
     case action(input) do
       "docs" ->
         ElixirDocs.query(input)
@@ -121,14 +122,27 @@ defmodule Froth.Tools.ElixirEval do
   end
 
   defp validate_eval_description(%{} = description) do
-    with :ok <- validate_description_string(description["action"], "description.action"),
-         :ok <- validate_description_list(description["goals"], "description.goals"),
-         :ok <- validate_description_list(description["assumptions"], "description.assumptions") do
+    with :ok <-
+           validate_description_string(
+             description["action"],
+             "description.action"
+           ),
+         :ok <-
+           validate_description_list(
+             description["goals"],
+             "description.goals"
+           ),
+         :ok <-
+           validate_description_list(
+             description["assumptions"],
+             "description.assumptions"
+           ) do
       :ok
     end
   end
 
-  defp validate_eval_description(_), do: {:error, "description must be an object for eval"}
+  defp validate_eval_description(_),
+    do: {:error, "description must be an object for eval"}
 
   defp validate_description_string(value, label) when is_binary(value) do
     if String.trim(value) == "" do
@@ -138,7 +152,8 @@ defmodule Froth.Tools.ElixirEval do
     end
   end
 
-  defp validate_description_string(_value, label), do: {:error, "#{label} must be a string"}
+  defp validate_description_string(_value, label),
+    do: {:error, "#{label} must be a string"}
 
   defp validate_description_list(values, label) when is_list(values) do
     if Enum.all?(values, &(is_binary(&1) and String.trim(&1) != "")) do

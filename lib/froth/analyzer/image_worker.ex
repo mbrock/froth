@@ -8,7 +8,9 @@ defmodule Froth.Analyzer.ImageWorker do
   import Ecto.Query
 
   @impl true
-  def perform(%Oban.Job{args: %{"chat_id" => chat_id, "message_id" => message_id}}) do
+  def perform(%Oban.Job{
+        args: %{"chat_id" => chat_id, "message_id" => message_id}
+      }) do
     msg =
       Repo.one(
         from(m in "telegram_messages",
@@ -25,7 +27,13 @@ defmodule Froth.Analyzer.ImageWorker do
       Froth.Analyzer.with_reactions(chat_id, message_id, fn ->
         case download_photo(chat_id, message_id) do
           {:ok, image_data, mime_type, caption} ->
-            analyze_and_save(chat_id, message_id, image_data, mime_type, caption)
+            analyze_and_save(
+              chat_id,
+              message_id,
+              image_data,
+              mime_type,
+              caption
+            )
 
           {:discard, _} = d ->
             d
@@ -78,7 +86,12 @@ defmodule Froth.Analyzer.ImageWorker do
           case file do
             %{"local" => %{"path" => path}} when path != "" ->
               data = File.read!(path)
-              mime = if String.ends_with?(path, ".png"), do: "image/png", else: "image/jpeg"
+
+              mime =
+                if String.ends_with?(path, ".png"),
+                  do: "image/png",
+                  else: "image/jpeg"
+
               {:ok, data, mime, caption}
 
             %{"@type" => "error", "message" => m} ->

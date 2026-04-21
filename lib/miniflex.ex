@@ -44,7 +44,12 @@ defmodule Miniflex do
 
   @type direction :: :row | :column
   @type justify ::
-          :start | :end | :center | :space_between | :space_around | :space_evenly
+          :start
+          | :end
+          | :center
+          | :space_between
+          | :space_around
+          | :space_evenly
   @type align :: :start | :end | :center | :stretch | :baseline
   @type overflow :: :visible | :hidden | :scroll
   @type wrap_mode :: :none | :word | :grapheme
@@ -52,7 +57,8 @@ defmodule Miniflex do
   @type edge_input ::
           non_neg_integer()
           | {non_neg_integer(), non_neg_integer()}
-          | {non_neg_integer(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
+          | {non_neg_integer(), non_neg_integer(), non_neg_integer(),
+             non_neg_integer()}
           | keyword()
           | map()
 
@@ -144,7 +150,8 @@ defmodule Miniflex do
   Strings inside `children` are automatically converted to text nodes.
   """
   @spec box([t() | String.t()], keyword()) :: t()
-  def box(children \\ [], opts \\ []) when is_list(children) and is_list(opts) do
+  def box(children \\ [], opts \\ [])
+      when is_list(children) and is_list(opts) do
     %__MODULE__{
       kind: :box,
       children: Enum.map(children, &coerce_child/1),
@@ -229,7 +236,8 @@ defmodule Miniflex do
   """
   @spec layout(t(), non_neg_integer(), non_neg_integer()) :: layout()
   def layout(%__MODULE__{} = node, width, height)
-      when is_integer(width) and width >= 0 and is_integer(height) and height >= 0 do
+      when is_integer(width) and width >= 0 and is_integer(height) and
+             height >= 0 do
     do_layout(node, %{x: 0, y: 0, width: width, height: height}, 0)
   end
 
@@ -244,7 +252,9 @@ defmodule Miniflex do
   defp do_layout(%__MODULE__{} = node, rect, layout_order) do
     content_rect = inner_rect(node, rect)
     text_layout = maybe_prepare_text(node, content_rect)
-    {children, content_size, scroll_offset_y} = layout_children(node, content_rect)
+
+    {children, content_size, scroll_offset_y} =
+      layout_children(node, content_rect)
 
     %{
       id: node.id,
@@ -253,7 +263,8 @@ defmodule Miniflex do
       node: node,
       rect: rect,
       content_rect: content_rect,
-      content_size: merge_content_size(node, content_rect, content_size, text_layout),
+      content_size:
+        merge_content_size(node, content_rect, content_size, text_layout),
       scroll_offset_y: scroll_offset_y,
       text: text_layout,
       children: children
@@ -283,12 +294,15 @@ defmodule Miniflex do
         %{
           child: child,
           source_index: source_index,
-          measured: intrinsic_size(child, content_rect.width, child_max_height)
+          measured:
+            intrinsic_size(child, content_rect.width, child_max_height)
         }
       end)
       |> Enum.sort_by(fn entry -> {entry.child.order, entry.source_index} end)
       |> Enum.with_index()
-      |> Enum.map(fn {entry, layout_order} -> Map.put(entry, :layout_order, layout_order) end)
+      |> Enum.map(fn {entry, layout_order} ->
+        Map.put(entry, :layout_order, layout_order)
+      end)
 
     main_available = main_extent(content_rect, node.direction)
     gap_total = node.gap * max(length(measured_children) - 1, 0)
@@ -300,22 +314,35 @@ defmodule Miniflex do
       end)
 
     total_grow =
-      Enum.reduce(measured_children, 0, fn entry, total -> total + entry.child.grow end)
+      Enum.reduce(measured_children, 0, fn entry, total ->
+        total + entry.child.grow
+      end)
 
     extra_space = main_available - base_main
-    extra_by_layout = distribute_grow(max(extra_space, 0), total_grow, measured_children)
+
+    extra_by_layout =
+      distribute_grow(max(extra_space, 0), total_grow, measured_children)
 
     distributed_growth =
-      Enum.reduce(extra_by_layout, 0, fn {_order, extra}, total -> total + extra end)
+      Enum.reduce(extra_by_layout, 0, fn {_order, extra}, total ->
+        total + extra
+      end)
 
     remaining_main = main_available - base_main - distributed_growth
 
     {leading_space, between_spaces} =
-      justify_spacing(node.justify, remaining_main, length(measured_children), node.gap)
+      justify_spacing(
+        node.justify,
+        remaining_main,
+        length(measured_children),
+        node.gap
+      )
 
     {laid_out_reversed, _, content_main_extent, content_cross_extent} =
       Enum.reduce(measured_children, {[], leading_space, 0, 0}, fn entry,
-                                                                   {acc, cursor, max_main,
+                                                                   {acc,
+                                                                    cursor,
+                                                                    max_main,
                                                                     max_cross} ->
         child = entry.child
         measured = entry.measured
@@ -332,13 +359,18 @@ defmodule Miniflex do
 
         cross_available =
           max(
-            cross_extent(content_rect, node.direction) - cross_start_margin - cross_end_margin,
+            cross_extent(content_rect, node.direction) - cross_start_margin -
+              cross_end_margin,
             0
           )
 
         cross_align = child.align_self || node.align_items
-        cross_size = aligned_cross_size(cross_align, child_cross, cross_available)
-        cross_offset = aligned_cross_offset(cross_align, cross_size, cross_available)
+
+        cross_size =
+          aligned_cross_size(cross_align, child_cross, cross_available)
+
+        cross_offset =
+          aligned_cross_offset(cross_align, cross_size, cross_available)
 
         child_rect =
           if node.direction == :row do
@@ -358,7 +390,10 @@ defmodule Miniflex do
           end
 
         child_layout = do_layout(child, child_rect, entry.layout_order)
-        next_cursor = cursor + main_start_margin + child_main + main_end_margin
+
+        next_cursor =
+          cursor + main_start_margin + child_main + main_end_margin
+
         trailing_space = Enum.at(between_spaces, entry.layout_order, 0)
         next_cursor = next_cursor + trailing_space
 
@@ -384,9 +419,15 @@ defmodule Miniflex do
 
     content_size =
       if node.direction == :row do
-        %{width: max(content_main_extent, 0), height: max(content_cross_extent, 0)}
+        %{
+          width: max(content_main_extent, 0),
+          height: max(content_cross_extent, 0)
+        }
       else
-        %{width: max(content_cross_extent, 0), height: max(content_main_extent, 0)}
+        %{
+          width: max(content_cross_extent, 0),
+          height: max(content_main_extent, 0)
+        }
       end
 
     scroll_offset_y =
@@ -415,7 +456,8 @@ defmodule Miniflex do
         height -> max(height - vertical_inset, 0)
       end
 
-    content_max_width = explicit_inner_width || shrink_limit(max_width, horizontal_inset)
+    content_max_width =
+      explicit_inner_width || shrink_limit(max_width, horizontal_inset)
 
     content_max_height =
       explicit_inner_height ||
@@ -460,31 +502,46 @@ defmodule Miniflex do
     {width, height} =
       if node.direction == :row do
         total_width =
-          Enum.reduce(Enum.zip(node.children, child_sizes), gap_total, fn {child, size}, total ->
-            total + size.width + child.margin.left + child.margin.right
-          end)
+          Enum.reduce(
+            Enum.zip(node.children, child_sizes),
+            gap_total,
+            fn {child, size}, total ->
+              total + size.width + child.margin.left + child.margin.right
+            end
+          )
 
         max_height =
-          Enum.reduce(Enum.zip(node.children, child_sizes), 0, fn {child, size}, best ->
+          Enum.reduce(Enum.zip(node.children, child_sizes), 0, fn {child,
+                                                                   size},
+                                                                  best ->
             max(best, size.height + child.margin.top + child.margin.bottom)
           end)
 
         {total_width, max_height}
       else
         max_width =
-          Enum.reduce(Enum.zip(node.children, child_sizes), 0, fn {child, size}, best ->
+          Enum.reduce(Enum.zip(node.children, child_sizes), 0, fn {child,
+                                                                   size},
+                                                                  best ->
             max(best, size.width + child.margin.left + child.margin.right)
           end)
 
         total_height =
-          Enum.reduce(Enum.zip(node.children, child_sizes), gap_total, fn {child, size}, total ->
-            total + size.height + child.margin.top + child.margin.bottom
-          end)
+          Enum.reduce(
+            Enum.zip(node.children, child_sizes),
+            gap_total,
+            fn {child, size}, total ->
+              total + size.height + child.margin.top + child.margin.bottom
+            end
+          )
 
         {max_width, total_height}
       end
 
-    %{width: clamp_size(width, max_width), height: clamp_size(height, max_height)}
+    %{
+      width: clamp_size(width, max_width),
+      height: clamp_size(height, max_height)
+    }
   end
 
   defp maybe_prepare_text(%__MODULE__{kind: :text} = node, content_rect) do
@@ -493,7 +550,12 @@ defmodule Miniflex do
 
   defp maybe_prepare_text(%__MODULE__{}, _content_rect), do: nil
 
-  defp merge_content_size(%__MODULE__{kind: :text}, _content_rect, content_size, text_layout) do
+  defp merge_content_size(
+         %__MODULE__{kind: :text},
+         _content_rect,
+         content_size,
+         text_layout
+       ) do
     if text_layout do
       %{width: text_layout.full_width, height: text_layout.full_height}
     else
@@ -501,8 +563,13 @@ defmodule Miniflex do
     end
   end
 
-  defp merge_content_size(%__MODULE__{}, _content_rect, content_size, _text_layout),
-    do: content_size
+  defp merge_content_size(
+         %__MODULE__{},
+         _content_rect,
+         content_size,
+         _text_layout
+       ),
+       do: content_size
 
   defp measure_text(%__MODULE__{} = node, max_width, max_height) do
     shaped = shape_text(node, max_width, max_height)
@@ -518,7 +585,11 @@ defmodule Miniflex do
          max_width,
          max_height
        ) do
-    all_lines = text |> wrap_text(max_width, wrap) |> apply_width_limit(max_width, overflow)
+    all_lines =
+      text
+      |> wrap_text(max_width, wrap)
+      |> apply_width_limit(max_width, overflow)
+
     full_width = max_line_width(all_lines)
     full_height = length(all_lines)
 
@@ -554,7 +625,8 @@ defmodule Miniflex do
     graphemes = String.graphemes(line)
 
     {lines_reversed, current, _current_width} =
-      Enum.reduce(graphemes, {[], "", 0}, fn grapheme, {lines, current, current_width} ->
+      Enum.reduce(graphemes, {[], "", 0}, fn grapheme,
+                                             {lines, current, current_width} ->
         grapheme_width = display_width(grapheme)
 
         cond do
@@ -615,7 +687,9 @@ defmodule Miniflex do
                 split = wrap_line(next_token, max_width, :grapheme)
                 trailing = List.last(split)
                 leading = Enum.drop(split, -1)
-                {Enum.reverse(leading, prepend_if_present(lines, emitted)), trailing}
+
+                {Enum.reverse(leading, prepend_if_present(lines, emitted)),
+                 trailing}
             end
         end
       end)
@@ -638,7 +712,9 @@ defmodule Miniflex do
     end)
   end
 
-  defp apply_height_limit(lines, nil, _max_width, _overflow), do: {lines, false}
+  defp apply_height_limit(lines, nil, _max_width, _overflow),
+    do: {lines, false}
+
   defp apply_height_limit(_lines, 0, _max_width, _overflow), do: {[], true}
 
   defp apply_height_limit(lines, max_height, max_width, overflow) do
@@ -687,7 +763,8 @@ defmodule Miniflex do
 
   defp take_display_width(line, max_width) do
     {parts, _width} =
-      Enum.reduce_while(String.graphemes(line), {[], 0}, fn grapheme, {parts, width} ->
+      Enum.reduce_while(String.graphemes(line), {[], 0}, fn grapheme,
+                                                            {parts, width} ->
         grapheme_width = display_width(grapheme)
 
         if width + grapheme_width <= max_width do
@@ -726,7 +803,8 @@ defmodule Miniflex do
   end
 
   defp codepoint_width(codepoint)
-       when codepoint == 0 or codepoint < 32 or (codepoint >= 0x7F and codepoint < 0xA0) do
+       when codepoint == 0 or codepoint < 32 or
+              (codepoint >= 0x7F and codepoint < 0xA0) do
     0
   end
 
@@ -1012,7 +1090,8 @@ defmodule Miniflex do
   defp justify_spacing(:center, remaining, count, gap),
     do: {div(remaining, 2), List.duplicate(gap, max(count - 1, 0))}
 
-  defp justify_spacing(:space_between, _remaining, count, _gap) when count <= 1 do
+  defp justify_spacing(:space_between, _remaining, count, _gap)
+       when count <= 1 do
     {0, []}
   end
 
@@ -1069,17 +1148,20 @@ defmodule Miniflex do
     end)
   end
 
-  defp distribute_grow(_available, total_grow, measured_children) when total_grow <= 0 do
+  defp distribute_grow(_available, total_grow, measured_children)
+       when total_grow <= 0 do
     Map.new(measured_children, fn entry -> {entry.layout_order, 0} end)
   end
 
-  defp distribute_grow(available, _total_grow, measured_children) when available <= 0 do
+  defp distribute_grow(available, _total_grow, measured_children)
+       when available <= 0 do
     Map.new(measured_children, fn entry -> {entry.layout_order, 0} end)
   end
 
   defp distribute_grow(available, total_grow, measured_children) do
     {base_allocations, remaining} =
-      Enum.reduce(measured_children, {%{}, available}, fn entry, {acc, remaining} ->
+      Enum.reduce(measured_children, {%{}, available}, fn entry,
+                                                          {acc, remaining} ->
         share = div(available * entry.child.grow, total_grow)
         {Map.put(acc, entry.layout_order, share), remaining - share}
       end)
@@ -1092,10 +1174,18 @@ defmodule Miniflex do
     distribute_remaining_grow(base_allocations, growable_orders, remaining, 0)
   end
 
-  defp distribute_remaining_grow(allocations, _growable_orders, 0, _cursor), do: allocations
-  defp distribute_remaining_grow(allocations, [], _remaining, _cursor), do: allocations
+  defp distribute_remaining_grow(allocations, _growable_orders, 0, _cursor),
+    do: allocations
 
-  defp distribute_remaining_grow(allocations, growable_orders, remaining, cursor) do
+  defp distribute_remaining_grow(allocations, [], _remaining, _cursor),
+    do: allocations
+
+  defp distribute_remaining_grow(
+         allocations,
+         growable_orders,
+         remaining,
+         cursor
+       ) do
     order = Enum.at(growable_orders, rem(cursor, length(growable_orders)))
     delta = if remaining > 0, do: 1, else: -1
 
@@ -1104,7 +1194,12 @@ defmodule Miniflex do
         current + delta
       end)
 
-    distribute_remaining_grow(allocations, growable_orders, remaining - delta, cursor + 1)
+    distribute_remaining_grow(
+      allocations,
+      growable_orders,
+      remaining - delta,
+      cursor + 1
+    )
   end
 
   defp inner_rect(%__MODULE__{} = node, rect) do
@@ -1148,22 +1243,38 @@ defmodule Miniflex do
   defp main_start_margin(%__MODULE__{margin: %{left: left}}, :row), do: left
   defp main_start_margin(%__MODULE__{margin: %{top: top}}, :column), do: top
   defp main_end_margin(%__MODULE__{margin: %{right: right}}, :row), do: right
-  defp main_end_margin(%__MODULE__{margin: %{bottom: bottom}}, :column), do: bottom
+
+  defp main_end_margin(%__MODULE__{margin: %{bottom: bottom}}, :column),
+    do: bottom
 
   defp main_margin(node, direction),
     do: main_start_margin(node, direction) + main_end_margin(node, direction)
 
   defp cross_start_margin(%__MODULE__{margin: %{top: top}}, :row), do: top
-  defp cross_start_margin(%__MODULE__{margin: %{left: left}}, :column), do: left
-  defp cross_end_margin(%__MODULE__{margin: %{bottom: bottom}}, :row), do: bottom
-  defp cross_end_margin(%__MODULE__{margin: %{right: right}}, :column), do: right
+
+  defp cross_start_margin(%__MODULE__{margin: %{left: left}}, :column),
+    do: left
+
+  defp cross_end_margin(%__MODULE__{margin: %{bottom: bottom}}, :row),
+    do: bottom
+
+  defp cross_end_margin(%__MODULE__{margin: %{right: right}}, :column),
+    do: right
 
   defp aligned_cross_size(:stretch, _natural, available), do: available
-  defp aligned_cross_size(:baseline, natural, available), do: min(natural, available)
-  defp aligned_cross_size(_align, natural, available), do: min(natural, available)
 
-  defp aligned_cross_offset(:center, size, available), do: div(max(available - size, 0), 2)
-  defp aligned_cross_offset(:end, size, available), do: max(available - size, 0)
+  defp aligned_cross_size(:baseline, natural, available),
+    do: min(natural, available)
+
+  defp aligned_cross_size(_align, natural, available),
+    do: min(natural, available)
+
+  defp aligned_cross_offset(:center, size, available),
+    do: div(max(available - size, 0), 2)
+
+  defp aligned_cross_offset(:end, size, available),
+    do: max(available - size, 0)
+
   defp aligned_cross_offset(:baseline, _size, _available), do: 0
   defp aligned_cross_offset(_align, _size, _available), do: 0
 
@@ -1178,13 +1289,15 @@ defmodule Miniflex do
   end
 
   defp normalize_edges({vertical, horizontal})
-       when is_integer(vertical) and vertical >= 0 and is_integer(horizontal) and horizontal >= 0 do
+       when is_integer(vertical) and vertical >= 0 and is_integer(horizontal) and
+              horizontal >= 0 do
     %{top: vertical, right: horizontal, bottom: vertical, left: horizontal}
   end
 
   defp normalize_edges({top, right, bottom, left})
        when is_integer(top) and top >= 0 and is_integer(right) and right >= 0 and
-              is_integer(bottom) and bottom >= 0 and is_integer(left) and left >= 0 do
+              is_integer(bottom) and bottom >= 0 and is_integer(left) and
+              left >= 0 do
     %{top: top, right: right, bottom: bottom, left: left}
   end
 
@@ -1195,8 +1308,10 @@ defmodule Miniflex do
 
     %{
       top: normalize_non_negative(Map.get(map, :top, Map.get(map, :t, y))),
-      right: normalize_non_negative(Map.get(map, :right, Map.get(map, :r, x))),
-      bottom: normalize_non_negative(Map.get(map, :bottom, Map.get(map, :b, y))),
+      right:
+        normalize_non_negative(Map.get(map, :right, Map.get(map, :r, x))),
+      bottom:
+        normalize_non_negative(Map.get(map, :bottom, Map.get(map, :b, y))),
       left: normalize_non_negative(Map.get(map, :left, Map.get(map, :l, x)))
     }
   end
@@ -1206,7 +1321,9 @@ defmodule Miniflex do
   defp normalize_optional_size(nil), do: nil
   defp normalize_optional_size(value), do: normalize_non_negative(value)
 
-  defp normalize_non_negative(value) when is_integer(value) and value >= 0, do: value
+  defp normalize_non_negative(value) when is_integer(value) and value >= 0,
+    do: value
+
   defp normalize_non_negative(value) when is_integer(value), do: max(value, 0)
 
   defp normalize_metadata(%{} = metadata), do: metadata

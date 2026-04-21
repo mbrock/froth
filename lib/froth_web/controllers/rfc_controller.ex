@@ -46,7 +46,13 @@ defmodule FrothWeb.RfcController do
             _ -> ""
           end
 
-        %{number: number, title: title, status: status, date: date, author: author}
+        %{
+          number: number,
+          title: title,
+          status: status,
+          date: date,
+          author: author
+        }
       end)
 
     html = render_index(rfcs)
@@ -100,7 +106,9 @@ defmodule FrothWeb.RfcController do
         if xml_path && File.exists?(xml_path) do
           case xslt_transform(xml_path) do
             {:ok, html} ->
-              conn |> put_resp_content_type("text/html") |> send_resp(200, html)
+              conn
+              |> put_resp_content_type("text/html")
+              |> send_resp(200, html)
 
             {:error, reason} ->
               conn |> send_resp(500, "XSLT error: #{reason}")

@@ -49,7 +49,12 @@ defmodule MiniflexTest do
     layout =
       Miniflex.row(
         [
-          Miniflex.box([], id: :child, width: 2, height: 1, margin: %{left: 1, right: 1})
+          Miniflex.box([],
+            id: :child,
+            width: 2,
+            height: 1,
+            margin: %{left: 1, right: 1}
+          )
         ],
         border: 1,
         padding: 1
@@ -57,7 +62,9 @@ defmodule MiniflexTest do
       |> Miniflex.layout({12, 5})
 
     assert %{x: 2, y: 2, width: 8, height: 1} = layout.content_rect
-    assert %{x: 3, y: 2, width: 2, height: 1} = find_layout(layout, :child).rect
+
+    assert %{x: 3, y: 2, width: 2, height: 1} =
+             find_layout(layout, :child).rect
   end
 
   test "wraps text and marks the final visible line with an ellipsis" do

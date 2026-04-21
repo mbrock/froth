@@ -15,7 +15,11 @@ defmodule Froth.Dataset do
   alias SPARQL.Query.Result
 
   @default_endpoint "http://localhost:3030/kg/sparql"
-  @default_query_options [raw_mode: true, request_method: :post, protocol_version: "1.1"]
+  @default_query_options [
+    raw_mode: true,
+    request_method: :post,
+    protocol_version: "1.1"
+  ]
   @graph_names_query """
   SELECT DISTINCT ?g
   WHERE { GRAPH ?g { ?s ?p ?o } }
@@ -90,13 +94,15 @@ defmodule Froth.Dataset do
   Returns the total number of statements visible to the endpoint.
   """
   def statement_count(opts \\ []) do
-    with {:ok, %Result{results: results}} <- select(@statement_count_query, opts),
+    with {:ok, %Result{results: results}} <-
+           select(@statement_count_query, opts),
          {:ok, count} <- count_from_results(results) do
       {:ok, count}
     end
   end
 
-  defp run_query(form, query_string, opts) when form in [:select, :ask, :construct, :describe] do
+  defp run_query(form, query_string, opts)
+       when form in [:select, :ask, :construct, :describe] do
     endpoint = Keyword.get(opts, :endpoint, endpoint())
 
     client_opts =
@@ -113,7 +119,8 @@ defmodule Froth.Dataset do
 
   defp query_form(query_string) do
     case Query.new(query_string) do
-      %Query{form: form} when form in [:select, :ask, :construct, :describe] ->
+      %Query{form: form}
+      when form in [:select, :ask, :construct, :describe] ->
         {:ok, form}
 
       {:error, _reason} ->
@@ -156,7 +163,9 @@ defmodule Froth.Dataset do
   end
 
   defp leading_query_form(query_string) do
-    case Regex.run(~r/^(SELECT|ASK|CONSTRUCT|DESCRIBE)\b/i, query_string, capture: :all_but_first) do
+    case Regex.run(~r/^(SELECT|ASK|CONSTRUCT|DESCRIBE)\b/i, query_string,
+           capture: :all_but_first
+         ) do
       [form] -> query_form_atom(form)
       _ -> nil
     end
@@ -173,7 +182,9 @@ defmodule Froth.Dataset do
 
   defp count_from_results([%{"count" => count} | _]), do: count_value(count)
   defp count_from_results([]), do: {:ok, 0}
-  defp count_from_results(_), do: {:error, "count query returned an unexpected result"}
+
+  defp count_from_results(_),
+    do: {:error, "count query returned an unexpected result"}
 
   defp count_value(%RDF.Literal{} = literal) do
     case RDF.Term.value(literal) do
@@ -200,7 +211,8 @@ defmodule Froth.Dataset do
     end
   end
 
-  defp count_value(_), do: {:error, "count query returned an unexpected value"}
+  defp count_value(_),
+    do: {:error, "count query returned an unexpected value"}
 
   defp query_options(opts) do
     @default_query_options

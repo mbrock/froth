@@ -88,7 +88,10 @@ defmodule Froth.Telegram.Bot.Config do
     config
   end
 
-  defp validate_prompt_source!(%__MODULE__{system_prompt: nil, system_prompt_fun: nil}) do
+  defp validate_prompt_source!(%__MODULE__{
+         system_prompt: nil,
+         system_prompt_fun: nil
+       }) do
     raise ArgumentError,
           "Bot.Config requires either :system_prompt (binary) or :system_prompt_fun (function)"
   end
@@ -127,7 +130,8 @@ defmodule Froth.Telegram.Bot.Config do
       _ ->
         case Map.get(bot_config, :tools_module) do
           module when is_atom(module) ->
-            if Code.ensure_loaded?(module) and function_exported?(module, :specs_for_api, 0) do
+            if Code.ensure_loaded?(module) and
+                 function_exported?(module, :specs_for_api, 0) do
               module.specs_for_api()
             else
               []
@@ -148,7 +152,8 @@ defmodule Froth.Telegram.Bot.Config do
   """
   @spec resolve_system_prompt(integer(), map() | nil, t() | map()) :: binary()
   def resolve_system_prompt(chat_id, msg, bot_config)
-      when is_integer(chat_id) and (is_map(msg) or is_nil(msg)) and is_map(bot_config) do
+      when is_integer(chat_id) and (is_map(msg) or is_nil(msg)) and
+             is_map(bot_config) do
     case bot_config.system_prompt_fun do
       prompt_fun when is_function(prompt_fun, 3) ->
         prompt_fun.(chat_id, bot_config, msg)

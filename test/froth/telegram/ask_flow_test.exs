@@ -35,12 +35,14 @@ defmodule Froth.Telegram.AskFlowTest do
                       "input_message_content" => %{
                         "text" => %{"text" => "Which option do you want?"}
                       },
-                      "reply_markup" => %{"@type" => "replyMarkupInlineKeyboard"}
+                      "reply_markup" => %{
+                        "@type" => "replyMarkupInlineKeyboard"
+                      }
                     }},
                    5_000
 
-    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id, ^chat_id,
-                    "Which option do you want?"},
+    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id,
+                    ^chat_id, "Which option do you want?"},
                    5_000
 
     assert_pending_ask_message_id(prompt_message_id)
@@ -74,7 +76,11 @@ defmodule Froth.Telegram.AskFlowTest do
     # Turn 2: the cycle resumes with tool_result "Beta" and the LLM ends the turn.
     assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5_000
 
-    assert [%LLMMessage{role: :user}, %LLMMessage{role: :assistant}, %LLMMessage{role: :user}] =
+    assert [
+             %LLMMessage{role: :user},
+             %LLMMessage{role: :assistant},
+             %LLMMessage{role: :user}
+           ] =
              request_2.messages
 
     last_message = List.last(request_2.messages)
@@ -87,7 +93,8 @@ defmodule Froth.Telegram.AskFlowTest do
              }
            ] = last_message.content
 
-    assert :sys.get_state(bot).cycle_state.cycle_runtime_pid == waiting_runtime_pid
+    assert :sys.get_state(bot).cycle_state.cycle_runtime_pid ==
+             waiting_runtime_pid
 
     FakeLLM.reply(turn_2, {:ok, text_response("Settled.")})
 
@@ -95,7 +102,9 @@ defmodule Froth.Telegram.AskFlowTest do
                     %{
                       "@type" => "sendMessage",
                       "chat_id" => ^chat_id,
-                      "input_message_content" => %{"text" => %{"text" => "Settled."}}
+                      "input_message_content" => %{
+                        "text" => %{"text" => "Settled."}
+                      }
                     }},
                    5_000
 
@@ -125,7 +134,9 @@ defmodule Froth.Telegram.AskFlowTest do
 
     send(bot, user_update("help", message_id: 10, chat_id: chat_id))
 
-    assert_receive {FakeLLM, turn_1, %Request{messages: [%LLMMessage{role: :user}]}}, 5_000
+    assert_receive {FakeLLM, turn_1,
+                    %Request{messages: [%LLMMessage{role: :user}]}},
+                   5_000
 
     FakeLLM.reply(
       turn_1,
@@ -143,12 +154,14 @@ defmodule Froth.Telegram.AskFlowTest do
                       "input_message_content" => %{
                         "text" => %{"text" => "Which option do you want?"}
                       },
-                      "reply_markup" => %{"@type" => "replyMarkupInlineKeyboard"}
+                      "reply_markup" => %{
+                        "@type" => "replyMarkupInlineKeyboard"
+                      }
                     }},
                    5_000
 
-    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id, ^chat_id,
-                    "Which option do you want?"},
+    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id,
+                    ^chat_id, "Which option do you want?"},
                    5_000
 
     assert_pending_ask_message_id(prompt_message_id)
@@ -179,7 +192,11 @@ defmodule Froth.Telegram.AskFlowTest do
 
     assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5_000
 
-    assert [%LLMMessage{role: :user}, %LLMMessage{role: :assistant}, %LLMMessage{role: :user}] =
+    assert [
+             %LLMMessage{role: :user},
+             %LLMMessage{role: :assistant},
+             %LLMMessage{role: :user}
+           ] =
              request_2.messages
 
     last_message = List.last(request_2.messages)
@@ -198,7 +215,9 @@ defmodule Froth.Telegram.AskFlowTest do
                     %{
                       "@type" => "sendMessage",
                       "chat_id" => ^chat_id,
-                      "input_message_content" => %{"text" => %{"text" => "Settled."}}
+                      "input_message_content" => %{
+                        "text" => %{"text" => "Settled."}
+                      }
                     }},
                    5_000
 
@@ -249,24 +268,28 @@ defmodule Froth.Telegram.AskFlowTest do
                     %{
                       "@type" => "sendMessage",
                       "chat_id" => ^chat_id,
-                      "input_message_content" => %{"text" => %{"text" => "Working on it."}}
+                      "input_message_content" => %{
+                        "text" => %{"text" => "Working on it."}
+                      }
                     }},
                    5_000
 
-    assert_receive {:message_send_succeeded, _temp_id, _visible_message_id, ^chat_id,
-                    "Working on it."},
+    assert_receive {:message_send_succeeded, _temp_id, _visible_message_id,
+                    ^chat_id, "Working on it."},
                    5_000
 
     assert_receive {:telegram_call,
                     %{
                       "@type" => "sendMessage",
                       "chat_id" => ^chat_id,
-                      "input_message_content" => %{"text" => %{"text" => "Choose a lane."}}
+                      "input_message_content" => %{
+                        "text" => %{"text" => "Choose a lane."}
+                      }
                     }},
                    5_000
 
-    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id, ^chat_id,
-                    "Choose a lane."},
+    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id,
+                    ^chat_id, "Choose a lane."},
                    5_000
 
     assert_pending_ask_message_id(prompt_message_id)
@@ -293,7 +316,9 @@ defmodule Froth.Telegram.AskFlowTest do
 
     # Turn 2: the resumed request carries BOTH tool_results atomically.
     assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5_000
-    assert :sys.get_state(bot).cycle_state.cycle_runtime_pid == waiting_runtime_pid
+
+    assert :sys.get_state(bot).cycle_state.cycle_runtime_pid ==
+             waiting_runtime_pid
 
     last_message = List.last(request_2.messages)
 
@@ -316,7 +341,9 @@ defmodule Froth.Telegram.AskFlowTest do
                     %{
                       "@type" => "sendMessage",
                       "chat_id" => ^chat_id,
-                      "input_message_content" => %{"text" => %{"text" => "Done."}}
+                      "input_message_content" => %{
+                        "text" => %{"text" => "Done."}
+                      }
                     }},
                    5_000
 
@@ -355,7 +382,9 @@ defmodule Froth.Telegram.AskFlowTest do
          "description" => %{
            "action" => "Starting a long-running shell task",
            "goals" => ["Start the task", "Observe it in the background"],
-           "assumptions" => ["The command should stay alive past the inline wait"]
+           "assumptions" => [
+             "The command should stay alive past the inline wait"
+           ]
          }
        })}
     )
@@ -393,9 +422,15 @@ defmodule Froth.Telegram.AskFlowTest do
                       "@type" => "sendMessage",
                       "chat_id" => ^chat_id,
                       "input_message_content" => %{
-                        "text" => %{"text" => "Awaiting background work" <> _ = await_text}
+                        "text" => %{
+                          "text" =>
+                            "Awaiting background work" <> _ = await_text
+                        }
                       },
-                      "reply_markup" => %{"@type" => "replyMarkupInlineKeyboard", "rows" => rows}
+                      "reply_markup" => %{
+                        "@type" => "replyMarkupInlineKeyboard",
+                        "rows" => rows
+                      }
                     }},
                    8_000
 
@@ -405,18 +440,23 @@ defmodule Froth.Telegram.AskFlowTest do
     assert get_in(rows, [Access.at(0), Access.at(2), "text"]) == "⏹️"
     assert get_in(rows, [Access.at(0), Access.at(3), "text"]) == "🧐"
 
-    assert_receive {:message_send_succeeded, _temp_id, await_message_id, ^chat_id,
-                    "Awaiting background work" <> _},
+    assert_receive {:message_send_succeeded, _temp_id, await_message_id,
+                    ^chat_id, "Awaiting background work" <> _},
                    5_000
 
     _await_pending_ask =
-      fetch_pending_ask_by_question("Awaiting background work", await_message_id)
+      fetch_pending_ask_by_question(
+        "Awaiting background work",
+        await_message_id
+      )
 
     waiting_state = :sys.get_state(bot)
     assert is_pid(waiting_state.cycle_state.cycle_runtime_pid)
     waiting_runtime_pid = waiting_state.cycle_state.cycle_runtime_pid
 
-    assert task_id in Froth.Agent.CycleRuntime.active_task_ids(waiting_state.cycle_state.cycle_id)
+    assert task_id in Froth.Agent.CycleRuntime.active_task_ids(
+             waiting_state.cycle_state.cycle_id
+           )
 
     callback_query_id = "3234567890123456789"
 
@@ -448,7 +488,9 @@ defmodule Froth.Telegram.AskFlowTest do
                       "@type" => "editMessageText",
                       "chat_id" => ^chat_id,
                       "message_id" => edited_message_id,
-                      "input_message_content" => %{"text" => %{"text" => edited_await_text}}
+                      "input_message_content" => %{
+                        "text" => %{"text" => edited_await_text}
+                      }
                     }},
                    5_000
 
@@ -457,7 +499,9 @@ defmodule Froth.Telegram.AskFlowTest do
 
     # Turn 3: the await resolves and the LLM ends the turn.
     assert_receive {FakeLLM, turn_3, %Request{} = request_3}, 5_000
-    assert :sys.get_state(bot).cycle_state.cycle_runtime_pid == waiting_runtime_pid
+
+    assert :sys.get_state(bot).cycle_state.cycle_runtime_pid ==
+             waiting_runtime_pid
 
     last_message = List.last(request_3.messages)
 
@@ -469,7 +513,9 @@ defmodule Froth.Telegram.AskFlowTest do
              }
            ] = last_message.content
 
-    assert await_resolution =~ "keep working while the background tasks continue"
+    assert await_resolution =~
+             "keep working while the background tasks continue"
+
     assert await_resolution =~ task_id
 
     FakeLLM.reply(turn_3, {:ok, text_response("Still working.")})
@@ -478,7 +524,9 @@ defmodule Froth.Telegram.AskFlowTest do
                     %{
                       "@type" => "sendMessage",
                       "chat_id" => ^chat_id,
-                      "input_message_content" => %{"text" => %{"text" => "Still working."}}
+                      "input_message_content" => %{
+                        "text" => %{"text" => "Still working."}
+                      }
                     }},
                    5_000
 
@@ -499,30 +547,41 @@ defmodule Froth.Telegram.AskFlowTest do
 
     FakeLLM.reply(
       main_turn_1,
-      {:ok, tool_use_response("toolu_failure_1", "run_shell", %{"command" => "false"})}
+      {:ok,
+       tool_use_response("toolu_failure_1", "run_shell", %{
+         "command" => "false"
+       })}
     )
 
     # The failure-report LLM gets asked to build a structured report.
     assert_receive {FakeLLM, report_turn, %Request{} = report_request}, 5_000
     assert report_request.model == report_model
     assert [%LLMMessage{role: :user}] = report_request.messages
-    assert Enum.map(report_request.tools, & &1["name"]) == ["deliver_failure_report"]
+
+    assert Enum.map(report_request.tools, & &1["name"]) == [
+             "deliver_failure_report"
+           ]
 
     FakeLLM.reply(
       report_turn,
       {:ok,
-       tool_use_response("toolu_failure_report_1", "deliver_failure_report", %{
-         "intention" => "Inspect the current directory.",
-         "situation" => "The agent tried one shell command and it failed immediately.",
-         "invocation" => "run_shell command=\"false\"",
-         "expectation" => "The shell command would succeed.",
-         "irritation" => "The shell returned \"exit code: 1\".",
-         "designation" => "minor shell stumble",
-         "intervention" => [
-           "Check the working directory before retrying.",
-           "Run pwd and then retry with the exact path."
-         ]
-       })}
+       tool_use_response(
+         "toolu_failure_report_1",
+         "deliver_failure_report",
+         %{
+           "intention" => "Inspect the current directory.",
+           "situation" =>
+             "The agent tried one shell command and it failed immediately.",
+           "invocation" => "run_shell command=\"false\"",
+           "expectation" => "The shell command would succeed.",
+           "irritation" => "The shell returned \"exit code: 1\".",
+           "designation" => "minor shell stumble",
+           "intervention" => [
+             "Check the working directory before retrying.",
+             "Run pwd and then retry with the exact path."
+           ]
+         }
+       )}
     )
 
     assert_receive {:telegram_call,
@@ -532,7 +591,10 @@ defmodule Froth.Telegram.AskFlowTest do
                       "input_message_content" => %{
                         "text" => %{"text" => report_text}
                       },
-                      "reply_markup" => %{"@type" => "replyMarkupInlineKeyboard", "rows" => rows}
+                      "reply_markup" => %{
+                        "@type" => "replyMarkupInlineKeyboard",
+                        "rows" => rows
+                      }
                     }},
                    5_000
 
@@ -544,8 +606,8 @@ defmodule Froth.Telegram.AskFlowTest do
     assert get_in(rows, [Access.at(1), Access.at(1), "text"]) == "🔍"
     assert get_in(rows, [Access.at(1), Access.at(2), "text"]) == "🙅"
 
-    assert_receive {:message_send_succeeded, _temp_id, report_message_id, ^chat_id,
-                    "Failure intervention" <> _},
+    assert_receive {:message_send_succeeded, _temp_id, report_message_id,
+                    ^chat_id, "Failure intervention" <> _},
                    5_000
 
     assert_pending_ask_message_id(report_message_id)
@@ -583,7 +645,10 @@ defmodule Froth.Telegram.AskFlowTest do
                       "input_message_content" => %{
                         "text" => %{"text" => edited_report_text}
                       },
-                      "reply_markup" => %{"@type" => "replyMarkupInlineKeyboard", "rows" => []}
+                      "reply_markup" => %{
+                        "@type" => "replyMarkupInlineKeyboard",
+                        "rows" => []
+                      }
                     }},
                    5_000
 
@@ -604,7 +669,10 @@ defmodule Froth.Telegram.AskFlowTest do
            ] = last_message.content
 
     assert resumed_content =~ "Failure report"
-    assert resumed_content =~ "Chosen intervention: Run pwd and then retry with the exact path."
+
+    assert resumed_content =~
+             "Chosen intervention: Run pwd and then retry with the exact path."
+
     assert resumed_content =~ "Original error"
     assert resumed_content =~ "exit code: 1"
 
@@ -614,7 +682,9 @@ defmodule Froth.Telegram.AskFlowTest do
                     %{
                       "@type" => "sendMessage",
                       "chat_id" => ^chat_id,
-                      "input_message_content" => %{"text" => %{"text" => "Settled."}}
+                      "input_message_content" => %{
+                        "text" => %{"text" => "Settled."}
+                      }
                     }},
                    5_000
 
@@ -635,7 +705,10 @@ defmodule Froth.Telegram.AskFlowTest do
 
     FakeLLM.reply(
       main_turn_1,
-      {:ok, tool_use_response("toolu_failure_reply_1", "run_shell", %{"command" => "false"})}
+      {:ok,
+       tool_use_response("toolu_failure_reply_1", "run_shell", %{
+         "command" => "false"
+       })}
     )
 
     assert_receive {FakeLLM, report_turn, %Request{} = report_request}, 5_000
@@ -645,29 +718,36 @@ defmodule Froth.Telegram.AskFlowTest do
     FakeLLM.reply(
       report_turn,
       {:ok,
-       tool_use_response("toolu_failure_report_2", "deliver_failure_report", %{
-         "intention" => "Run a shell command.",
-         "situation" => "The first shell command failed and the cycle stopped for review.",
-         "invocation" => "run_shell command=\"false\"",
-         "expectation" => "The shell command would succeed.",
-         "irritation" => "The shell returned \"exit code: 1\".",
-         "designation" => "shell derailment",
-         "intervention" => ["Check the cwd before retrying."]
-       })}
+       tool_use_response(
+         "toolu_failure_report_2",
+         "deliver_failure_report",
+         %{
+           "intention" => "Run a shell command.",
+           "situation" =>
+             "The first shell command failed and the cycle stopped for review.",
+           "invocation" => "run_shell command=\"false\"",
+           "expectation" => "The shell command would succeed.",
+           "irritation" => "The shell returned \"exit code: 1\".",
+           "designation" => "shell derailment",
+           "intervention" => ["Check the cwd before retrying."]
+         }
+       )}
     )
 
     assert_receive {:telegram_call,
                     %{
                       "@type" => "sendMessage",
                       "chat_id" => ^chat_id,
-                      "input_message_content" => %{"text" => %{"text" => report_text}}
+                      "input_message_content" => %{
+                        "text" => %{"text" => report_text}
+                      }
                     }},
                    5_000
 
     assert report_text =~ "Failure intervention"
 
-    assert_receive {:message_send_succeeded, _temp_id, report_message_id, ^chat_id,
-                    "Failure intervention" <> _},
+    assert_receive {:message_send_succeeded, _temp_id, report_message_id,
+                    ^chat_id, "Failure intervention" <> _},
                    5_000
 
     assert_pending_ask_message_id(report_message_id)
@@ -709,7 +789,9 @@ defmodule Froth.Telegram.AskFlowTest do
 
     assert resumed_content =~ "Failure report"
     assert resumed_content =~ "Custom intervention from user:777"
-    assert resumed_content =~ "Run pwd first and only retry if the cwd is right."
+
+    assert resumed_content =~
+             "Run pwd first and only retry if the cwd is right."
 
     FakeLLM.reply(main_turn_2, {:ok, text_response("Fixed.")})
 
@@ -717,7 +799,9 @@ defmodule Froth.Telegram.AskFlowTest do
                     %{
                       "@type" => "sendMessage",
                       "chat_id" => ^chat_id,
-                      "input_message_content" => %{"text" => %{"text" => "Fixed."}}
+                      "input_message_content" => %{
+                        "text" => %{"text" => "Fixed."}
+                      }
                     }},
                    5_000
 
@@ -792,7 +876,9 @@ defmodule Froth.Telegram.AskFlowTest do
 
   defp assert_pending_ask_message_id(message_id, attempts)
        when is_integer(message_id) and attempts > 0 do
-    case Repo.one(from(p in PendingAsk, select: p.message_id, limit: 1), log: false) do
+    case Repo.one(from(p in PendingAsk, select: p.message_id, limit: 1),
+           log: false
+         ) do
       ^message_id ->
         :ok
 
@@ -808,13 +894,24 @@ defmodule Froth.Telegram.AskFlowTest do
     flunk("pending ask did not sync to message_id #{message_id}")
   end
 
-  defp fetch_pending_ask_by_question(question_prefix, expected_message_id, attempts \\ 300)
+  defp fetch_pending_ask_by_question(
+         question_prefix,
+         expected_message_id,
+         attempts \\ 300
+       )
 
-  defp fetch_pending_ask_by_question(question_prefix, expected_message_id, attempts)
-       when is_binary(question_prefix) and is_integer(expected_message_id) and attempts > 0 do
+  defp fetch_pending_ask_by_question(
+         question_prefix,
+         expected_message_id,
+         attempts
+       )
+       when is_binary(question_prefix) and is_integer(expected_message_id) and
+              attempts > 0 do
     query =
       from(p in PendingAsk,
-        where: like(p.question, ^"#{question_prefix}%") and p.message_id == ^expected_message_id,
+        where:
+          like(p.question, ^"#{question_prefix}%") and
+            p.message_id == ^expected_message_id,
         limit: 1
       )
 
@@ -826,7 +923,11 @@ defmodule Froth.Telegram.AskFlowTest do
         receive do
         after
           20 ->
-            fetch_pending_ask_by_question(question_prefix, expected_message_id, attempts - 1)
+            fetch_pending_ask_by_question(
+              question_prefix,
+              expected_message_id,
+              attempts - 1
+            )
         end
     end
   end

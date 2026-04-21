@@ -55,7 +55,8 @@ defmodule Mix.Tasks.Froth.Context do
         opts = [
           telegram_session_id: config.session_id,
           bot_id: config.id,
-          chronicle_dir: if(only_messages, do: nil, else: config.chronicle_dir),
+          chronicle_dir:
+            if(only_messages, do: nil, else: config.chronicle_dir),
           only_nontrivial: no_trivial
         ]
 
@@ -68,7 +69,10 @@ defmodule Mix.Tasks.Froth.Context do
               :recent_window_target_hours,
               Map.get(config, :recent_window_target_hours)
             )
-            |> Keyword.put(:recent_window_min_hours, Map.get(config, :recent_window_min_hours))
+            |> Keyword.put(
+              :recent_window_min_hours,
+              Map.get(config, :recent_window_min_hours)
+            )
             |> Keyword.put(
               :recent_window_backfill_hours,
               Map.get(config, :recent_window_backfill_hours)
@@ -172,12 +176,16 @@ defmodule Mix.Tasks.Froth.Context do
     end
   end
 
-  defp maybe_add_conflict(conflicts, value, _flag) when value in [nil, false], do: conflicts
+  defp maybe_add_conflict(conflicts, value, _flag) when value in [nil, false],
+    do: conflicts
+
   defp maybe_add_conflict(conflicts, _value, flag), do: conflicts ++ [flag]
 
   @doc false
-  def render_cycle_request(%Cycle{} = cycle, messages) when is_list(messages) do
-    {request_messages, previous_response_id} = request_messages_for_cycle(cycle, messages)
+  def render_cycle_request(%Cycle{} = cycle, messages)
+      when is_list(messages) do
+    {request_messages, previous_response_id} =
+      request_messages_for_cycle(cycle, messages)
 
     header =
       [
@@ -195,7 +203,10 @@ defmodule Mix.Tasks.Froth.Context do
       [
         "request_messages=",
         Integer.to_string(length(request_messages)),
-        if(previous_response_id, do: " previous_response_id=#{previous_response_id}", else: ""),
+        if(previous_response_id,
+          do: " previous_response_id=#{previous_response_id}",
+          else: ""
+        ),
         " system_prompt=not_reconstructed"
       ]
       |> IO.iodata_to_binary()
@@ -219,11 +230,13 @@ defmodule Mix.Tasks.Froth.Context do
   end
 
   @doc false
-  def request_messages_for_cycle(%Cycle{provider: provider}, messages) when is_list(messages) do
+  def request_messages_for_cycle(%Cycle{provider: provider}, messages)
+      when is_list(messages) do
     if provider in ["openai", "fakeai"] do
       case latest_openai_response_boundary(messages) do
         {response_id, tail_messages}
-        when is_binary(response_id) and response_id != "" and is_list(tail_messages) and
+        when is_binary(response_id) and response_id != "" and
+               is_list(tail_messages) and
                tail_messages != [] ->
           {tail_messages, response_id}
 
@@ -267,8 +280,11 @@ defmodule Mix.Tasks.Froth.Context do
     |> Enum.reduce(nil, fn
       {%Message{role: :agent, metadata: metadata}, index}, _acc ->
         case openai_response_id(metadata) do
-          response_id when is_binary(response_id) and response_id != "" -> {response_id, index}
-          _ -> nil
+          response_id when is_binary(response_id) and response_id != "" ->
+            {response_id, index}
+
+          _ ->
+            nil
         end
 
       _, acc ->
@@ -293,11 +309,13 @@ defmodule Mix.Tasks.Froth.Context do
     end
   end
 
-  def resolve_cycle_selector(cycle_id) when is_binary(cycle_id) and cycle_id != "",
-    do: {:id, cycle_id}
+  def resolve_cycle_selector(cycle_id)
+      when is_binary(cycle_id) and cycle_id != "",
+      do: {:id, cycle_id}
 
   defp openai_response_id(metadata) when is_map(metadata) do
-    metadata["response_id"] || metadata[:response_id] || response_id_from_message_id(metadata)
+    metadata["response_id"] || metadata[:response_id] ||
+      response_id_from_message_id(metadata)
   end
 
   defp openai_response_id(_metadata), do: nil

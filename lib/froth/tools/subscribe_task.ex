@@ -23,7 +23,10 @@ defmodule Froth.Tools.SubscribeTask do
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
-          "task_id" => %{"type" => "string", "description" => "Task ID to subscribe to."},
+          "task_id" => %{
+            "type" => "string",
+            "description" => "Task ID to subscribe to."
+          },
           "expect_minutes" => %{
             "type" => "integer",
             "description" =>
@@ -37,7 +40,8 @@ defmodule Froth.Tools.SubscribeTask do
   end
 
   @impl true
-  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks) when is_map(input) do
+  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks)
+      when is_map(input) do
     task_id = input["task_id"]
     expect_minutes = input["expect_minutes"]
     task = Froth.Tasks.get(task_id)
@@ -50,7 +54,10 @@ defmodule Froth.Tools.SubscribeTask do
         {:ok, "Task #{task_id} already #{task.status}. No need to subscribe."}
 
       true ->
-        Froth.Tasks.subscribe_telegram(task_id, Support.bot_id(ctx), Support.chat_id(ctx),
+        Froth.Tasks.subscribe_telegram(
+          task_id,
+          Support.bot_id(ctx),
+          Support.chat_id(ctx),
           expect_minutes: expect_minutes,
           message_id: Support.reply_to(ctx)
         )
@@ -58,7 +65,11 @@ defmodule Froth.Tools.SubscribeTask do
         {:ok,
          [
            Block.new(
-             [kind: "subscribed", task_id: task_id, expect_minutes: expect_minutes],
+             [
+               kind: "subscribed",
+               task_id: task_id,
+               expect_minutes: expect_minutes
+             ],
              nil
            )
          ]}

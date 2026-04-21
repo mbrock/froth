@@ -10,23 +10,40 @@ defmodule Froth.LLM.Message do
 
   defstruct [:role, content: []]
 
-  def user(content), do: %__MODULE__{role: :user, content: normalize_content(content)}
-  def assistant(content), do: %__MODULE__{role: :assistant, content: normalize_content(content)}
-  def system(content), do: %__MODULE__{role: :system, content: normalize_content(content)}
+  def user(content),
+    do: %__MODULE__{role: :user, content: normalize_content(content)}
+
+  def assistant(content),
+    do: %__MODULE__{role: :assistant, content: normalize_content(content)}
+
+  def system(content),
+    do: %__MODULE__{role: :system, content: normalize_content(content)}
 
   def normalize(%__MODULE__{} = message) do
     {:ok,
-     %{message | role: normalize_role(message.role), content: normalize_content(message.content)}}
+     %{
+       message
+       | role: normalize_role(message.role),
+         content: normalize_content(message.content)
+     }}
   end
 
   def normalize(%{"role" => role, "content" => content}) do
-    {:ok, %__MODULE__{role: normalize_role(role), content: normalize_content(content)}}
+    {:ok,
+     %__MODULE__{
+       role: normalize_role(role),
+       content: normalize_content(content)
+     }}
   rescue
     ArgumentError -> :error
   end
 
   def normalize(%{role: role, content: content}) do
-    {:ok, %__MODULE__{role: normalize_role(role), content: normalize_content(content)}}
+    {:ok,
+     %__MODULE__{
+       role: normalize_role(role),
+       content: normalize_content(content)
+     }}
   rescue
     ArgumentError -> :error
   end
@@ -74,13 +91,15 @@ defmodule Froth.LLM.Message do
         [
           %{
             "type" => "text",
-            "text" => inspect(other, limit: :infinity, printable_limit: :infinity)
+            "text" =>
+              inspect(other, limit: :infinity, printable_limit: :infinity)
           }
         ]
     end)
   end
 
-  def normalize_content(content) when is_map(content), do: [normalize_block(content)]
+  def normalize_content(content) when is_map(content),
+    do: [normalize_block(content)]
 
   def normalize_content(content) do
     [%{"type" => "text", "text" => to_string(content)}]
@@ -99,7 +118,8 @@ defmodule Froth.LLM.Message do
       normalized ->
         %{
           "type" => "text",
-          "text" => inspect(normalized, limit: :infinity, printable_limit: :infinity)
+          "text" =>
+            inspect(normalized, limit: :infinity, printable_limit: :infinity)
         }
     end
   end
@@ -121,6 +141,8 @@ defmodule Froth.LLM.Message do
     end)
   end
 
-  defp deep_stringify_keys(list) when is_list(list), do: Enum.map(list, &deep_stringify_keys/1)
+  defp deep_stringify_keys(list) when is_list(list),
+    do: Enum.map(list, &deep_stringify_keys/1)
+
   defp deep_stringify_keys(value), do: value
 end

@@ -65,7 +65,8 @@ defmodule Froth.Telegram.CallsTest do
   end
 
   test "send_call_signaling_data_request accepts pre-encoded data" do
-    request = Calls.send_call_signaling_data_request(7, "AQID", data_is_base64: true)
+    request =
+      Calls.send_call_signaling_data_request(7, "AQID", data_is_base64: true)
 
     assert request == %{
              "@type" => "sendCallSignalingData",
@@ -85,10 +86,13 @@ defmodule Froth.Telegram.CallsTest do
   end
 
   test "route_tgcalls_update ignores unrelated updates" do
-    assert Calls.route_tgcalls_update("session", %{"@type" => "updateNewMessage"}) == :ignore
+    assert Calls.route_tgcalls_update("session", %{
+             "@type" => "updateNewMessage"
+           }) == :ignore
   end
 
   test "start_tgcalls_call rejects non-ready call updates before cnode interaction" do
-    assert Calls.start_tgcalls_call("session", %{"id" => 7}) == {:error, :call_not_ready}
+    assert Calls.start_tgcalls_call("session", %{"id" => 7}) ==
+             {:error, :call_not_ready}
   end
 end

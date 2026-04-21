@@ -15,23 +15,36 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
         "input" => encode_messages(request.messages),
         "stream" => true
       }
-      |> maybe_put("system_instruction", system_instruction(request.system), &non_empty_binary?/1)
+      |> maybe_put(
+        "system_instruction",
+        system_instruction(request.system),
+        &non_empty_binary?/1
+      )
       |> maybe_put("tools", encode_tools(request.tools), &non_empty_list?/1)
-      |> maybe_put("generation_config", generation_config(request), &non_empty_map?/1)
+      |> maybe_put(
+        "generation_config",
+        generation_config(request),
+        &non_empty_map?/1
+      )
       |> maybe_put(
         "response_modalities",
         normalize_response_modalities(request.response_modalities),
         &non_empty_list?/1
       )
       |> maybe_put("response_format", request.response_format, &is_map/1)
-      |> maybe_put("response_mime_type", request.response_mime_type, &non_empty_binary?/1)
+      |> maybe_put(
+        "response_mime_type",
+        request.response_mime_type,
+        &non_empty_binary?/1
+      )
 
     {:ok, %{url: request.endpoint, headers: request.headers, body: body}}
   end
 
   @impl true
   def decode_payload(
-        %{"event_type" => "interaction.start", "interaction" => interaction} = payload,
+        %{"event_type" => "interaction.start", "interaction" => interaction} =
+          payload,
         _store
       )
       when is_map(interaction) do
@@ -44,14 +57,25 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
   end
 
   def decode_payload(
-        %{"event_type" => "content.start", "index" => idx, "content" => content} = payload,
+        %{
+          "event_type" => "content.start",
+          "index" => idx,
+          "content" => content
+        } = payload,
         _store
       )
       when is_integer(idx) and is_map(content) do
     edits =
       case content_start_attrs(content) do
         attrs when is_map(attrs) ->
-          [%Edit{op: :open, resource: ["message", "blocks", idx], attrs: attrs, raw: payload}]
+          [
+            %Edit{
+              op: :open,
+              resource: ["message", "blocks", idx],
+              attrs: attrs,
+              raw: payload
+            }
+          ]
 
         _ ->
           []
@@ -61,7 +85,8 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
   end
 
   def decode_payload(
-        %{"event_type" => "content.delta", "index" => idx, "delta" => delta} = payload,
+        %{"event_type" => "content.delta", "index" => idx, "delta" => delta} =
+          payload,
         %Store{} = store
       )
       when is_integer(idx) and is_map(delta) do
@@ -78,8 +103,18 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
         type when type in @media_types ->
           []
           |> maybe_open_media_block(block_path, current_block, type, payload)
-          |> maybe_add_set(block_path, ["mime_type"], delta["mime_type"], payload)
-          |> maybe_add_set(block_path, ["resolution"], delta["resolution"], payload)
+          |> maybe_add_set(
+            block_path,
+            ["mime_type"],
+            delta["mime_type"],
+            payload
+          )
+          |> maybe_add_set(
+            block_path,
+            ["resolution"],
+            delta["resolution"],
+            payload
+          )
           |> maybe_add_set(block_path, ["uri"], delta["uri"], payload)
           |> maybe_add_append(block_path, ["data"], delta["data"], payload)
 
@@ -110,14 +145,24 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
           []
 
         true ->
-          [%Edit{op: :close, resource: block_path, attrs: current_block, raw: payload}]
+          [
+            %Edit{
+              op: :close,
+              resource: block_path,
+              attrs: current_block,
+              raw: payload
+            }
+          ]
       end
 
     {edits, false}
   end
 
   def decode_payload(
-        %{"event_type" => "interaction.complete", "interaction" => interaction} = payload,
+        %{
+          "event_type" => "interaction.complete",
+          "interaction" => interaction
+        } = payload,
         _store
       )
       when is_map(interaction) do
@@ -125,7 +170,12 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
       []
       |> maybe_add_set(["message"], ["id"], interaction["id"], payload)
       |> maybe_add_set(["message"], ["model"], interaction["model"], payload)
-      |> maybe_add_merge(["message"], ["usage"], normalize_usage(interaction["usage"]), payload)
+      |> maybe_add_merge(
+        ["message"],
+        ["usage"],
+        normalize_usage(interaction["usage"]),
+        payload
+      )
       |> maybe_add_set(
         ["message"],
         ["stop_reason"],
@@ -136,9 +186,13 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
     {edits, false}
   end
 
-  def decode_payload(%{"event_type" => "interaction.status_update"}, _store), do: {[], false}
+  def decode_payload(%{"event_type" => "interaction.status_update"}, _store),
+    do: {[], false}
 
-  def decode_payload(%{"event_type" => "error", "error" => error} = payload, _store)
+  def decode_payload(
+        %{"event_type" => "error", "error" => error} = payload,
+        _store
+      )
       when is_map(error) do
     {[
        %Edit{
@@ -194,11 +248,13 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
     end
   end
 
-  defp encode_normalized_message(%Message{role: :system}, tool_uses), do: {[], tool_uses}
+  defp encode_normalized_message(%Message{role: :system}, tool_uses),
+    do: {[], tool_uses}
 
   defp encode_normalized_message(%Message{role: role} = message, tool_uses)
        when role in [:user, :assistant] do
-    {content, tool_uses} = encode_content_blocks(Message.content_blocks(message), role, tool_uses)
+    {content, tool_uses} =
+      encode_content_blocks(Message.content_blocks(message), role, tool_uses)
 
     if content == [] do
       {[], tool_uses}
@@ -216,24 +272,34 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
         "model" -> :assistant
       end
 
-    {encoded_content, tool_uses} = encode_content_blocks(content, normalized_role, tool_uses)
+    {encoded_content, tool_uses} =
+      encode_content_blocks(content, normalized_role, tool_uses)
 
     if encoded_content == [] do
       {[], tool_uses}
     else
-      {[%{"role" => encode_role(normalized_role), "content" => encoded_content}], tool_uses}
+      {[
+         %{
+           "role" => encode_role(normalized_role),
+           "content" => encoded_content
+         }
+       ], tool_uses}
     end
   end
 
   defp encode_raw_message(_message, tool_uses), do: {[], tool_uses}
 
-  defp encode_content_blocks(content, _role, tool_uses) when is_binary(content) do
+  defp encode_content_blocks(content, _role, tool_uses)
+       when is_binary(content) do
     {[%{"type" => "text", "text" => content}], tool_uses}
   end
 
-  defp encode_content_blocks(content, role, tool_uses) when is_list(content) do
-    Enum.reduce(content, {[], tool_uses}, fn block, {encoded, current_tool_uses} ->
-      {content_block, next_tool_uses} = encode_content_block(block, role, current_tool_uses)
+  defp encode_content_blocks(content, role, tool_uses)
+       when is_list(content) do
+    Enum.reduce(content, {[], tool_uses}, fn block,
+                                             {encoded, current_tool_uses} ->
+      {content_block, next_tool_uses} =
+        encode_content_block(block, role, current_tool_uses)
 
       if is_nil(content_block) do
         {encoded, next_tool_uses}
@@ -243,11 +309,13 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
     end)
   end
 
-  defp encode_content_blocks(content, _role, tool_uses) when is_map(content) do
+  defp encode_content_blocks(content, _role, tool_uses)
+       when is_map(content) do
     {[
        %{
          "type" => "text",
-         "text" => inspect(content, limit: :infinity, printable_limit: :infinity)
+         "text" =>
+           inspect(content, limit: :infinity, printable_limit: :infinity)
        }
      ], tool_uses}
   end
@@ -256,13 +324,18 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
     {[%{"type" => "text", "text" => to_string(content)}], tool_uses}
   end
 
-  defp encode_content_block(%{"type" => "text", "text" => text}, _role, tool_uses)
+  defp encode_content_block(
+         %{"type" => "text", "text" => text},
+         _role,
+         tool_uses
+       )
        when is_binary(text) do
     {%{"type" => "text", "text" => text}, tool_uses}
   end
 
   defp encode_content_block(
-         %{"type" => "tool_use", "id" => id, "name" => name, "input" => input} = block,
+         %{"type" => "tool_use", "id" => id, "name" => name, "input" => input} =
+           block,
          :assistant,
          tool_uses
        )
@@ -299,7 +372,11 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
         "call_id" => tool_use_id,
         "result" => encode_tool_result_content(block["content"])
       }
-      |> maybe_put("name", block["name"] || tool_use["name"], &non_empty_binary?/1)
+      |> maybe_put(
+        "name",
+        block["name"] || tool_use["name"],
+        &non_empty_binary?/1
+      )
       |> maybe_put("is_error", block["is_error"], &(&1 == true))
       |> maybe_put(
         "signature",
@@ -311,7 +388,12 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
   end
 
   defp encode_content_block(
-         %{"type" => "function_call", "id" => id, "name" => name, "arguments" => arguments} =
+         %{
+           "type" => "function_call",
+           "id" => id,
+           "name" => name,
+           "arguments" => arguments
+         } =
            block,
          :assistant,
          tool_uses
@@ -324,15 +406,20 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
     {block, Map.put(tool_uses, id, tool_use)}
   end
 
-  defp encode_content_block(%{"type" => "function_result"} = block, :user, tool_uses),
-    do: {block, tool_uses}
+  defp encode_content_block(
+         %{"type" => "function_result"} = block,
+         :user,
+         tool_uses
+       ),
+       do: {block, tool_uses}
 
   defp encode_content_block(%{"type" => type} = block, _role, tool_uses)
        when type in @media_types do
     {encode_media_block(block), tool_uses}
   end
 
-  defp encode_content_block(%{"text" => text}, _role, tool_uses) when is_binary(text) do
+  defp encode_content_block(%{"text" => text}, _role, tool_uses)
+       when is_binary(text) do
     {%{"type" => "text", "text" => text}, tool_uses}
   end
 
@@ -341,7 +428,8 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
   defp encode_role(:user), do: "user"
   defp encode_role(:assistant), do: "model"
 
-  defp encode_media_block(%{"source" => source} = block) when is_map(source) do
+  defp encode_media_block(%{"source" => source} = block)
+       when is_map(source) do
     type = block["type"]
     media_type = source["media_type"] || source["mime_type"]
 
@@ -355,7 +443,8 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
     |> maybe_put("mime_type", media_type, &non_empty_binary?/1)
   end
 
-  defp encode_media_block(%{"type" => type} = block) when type in @media_types do
+  defp encode_media_block(%{"type" => type} = block)
+       when type in @media_types do
     block
     |> Map.take(["type", "data", "uri", "mime_type", "resolution"])
     |> maybe_put("type", type, &non_empty_binary?/1)
@@ -377,7 +466,10 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
   end
 
   defp encode_tool_result_content(content) when is_map(content), do: content
-  defp encode_tool_result_content(content) when is_binary(content), do: content
+
+  defp encode_tool_result_content(content) when is_binary(content),
+    do: content
+
   defp encode_tool_result_content(content), do: to_string(content)
 
   defp encode_tool_result_blocks(content) when is_list(content) do
@@ -438,9 +530,11 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
 
   defp encode_tool(_tool), do: nil
 
-  defp google_search_retrieval_tool(%{"google_search_retrieval" => _} = tool), do: tool
+  defp google_search_retrieval_tool(%{"google_search_retrieval" => _} = tool),
+    do: tool
 
-  defp google_search_retrieval_tool(%{"googleSearchRetrieval" => _} = tool), do: tool
+  defp google_search_retrieval_tool(%{"googleSearchRetrieval" => _} = tool),
+    do: tool
 
   defp google_search_retrieval_tool(tool) when is_map(tool) do
     config =
@@ -456,11 +550,19 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
 
   defp generation_config(%Request{} = request) do
     %{}
-    |> maybe_put("max_output_tokens", request.max_tokens, &positive_integer?/1)
+    |> maybe_put(
+      "max_output_tokens",
+      request.max_tokens,
+      &positive_integer?/1
+    )
   end
 
-  defp content_start_attrs(%{"type" => "text"}), do: %{"type" => "text", "text" => ""}
-  defp content_start_attrs(%{"type" => type}) when type in @media_types, do: %{"type" => type}
+  defp content_start_attrs(%{"type" => "text"}),
+    do: %{"type" => "text", "text" => ""}
+
+  defp content_start_attrs(%{"type" => type}) when type in @media_types,
+    do: %{"type" => type}
+
   defp content_start_attrs(_content), do: nil
 
   defp maybe_open_text_block(edits, block_path, current_block, payload) do
@@ -483,7 +585,15 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
     if current_block["type"] == type do
       edits
     else
-      edits ++ [%Edit{op: :open, resource: block_path, attrs: %{"type" => type}, raw: payload}]
+      edits ++
+        [
+          %Edit{
+            op: :open,
+            resource: block_path,
+            attrs: %{"type" => type},
+            raw: payload
+          }
+        ]
     end
   end
 
@@ -510,8 +620,11 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
 
   defp function_call_edits(_block_path, _delta, _payload), do: []
 
-  defp maybe_put_extra_content(attrs, %{"signature" => signature}) when is_binary(signature) do
-    Map.put(attrs, "extra_content", %{"google" => %{"thought_signature" => signature}})
+  defp maybe_put_extra_content(attrs, %{"signature" => signature})
+       when is_binary(signature) do
+    Map.put(attrs, "extra_content", %{
+      "google" => %{"thought_signature" => signature}
+    })
   end
 
   defp maybe_put_extra_content(attrs, _delta), do: attrs
@@ -523,7 +636,9 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
     signature
   end
 
-  defp google_signature(%{"signature" => signature}) when is_binary(signature), do: signature
+  defp google_signature(%{"signature" => signature})
+       when is_binary(signature), do: signature
+
   defp google_signature(_block), do: nil
 
   defp normalize_response_modalities(nil), do: []
@@ -586,7 +701,8 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
 
   defp normalize_stop_reason(_status), do: nil
 
-  defp normalize_output_block(%{"type" => type} = block) when type in @media_types do
+  defp normalize_output_block(%{"type" => type} = block)
+       when type in @media_types do
     source =
       cond do
         non_empty_binary?(block["data"]) ->
@@ -609,17 +725,23 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
 
     %{"type" => type}
     |> maybe_put("source", source, &is_map/1)
-    |> maybe_put("extra_content", media_extra_content(block), &non_empty_map?/1)
+    |> maybe_put(
+      "extra_content",
+      media_extra_content(block),
+      &non_empty_map?/1
+    )
   end
 
-  defp normalize_output_block(%{"type" => "text", "text" => text} = block) when is_binary(text) do
+  defp normalize_output_block(%{"type" => "text", "text" => text} = block)
+       when is_binary(text) do
     Map.put(block, "text", text)
   end
 
   defp normalize_output_block(block) when is_map(block), do: block
   defp normalize_output_block(_block), do: nil
 
-  defp media_extra_content(%{"resolution" => resolution}) when is_binary(resolution) do
+  defp media_extra_content(%{"resolution" => resolution})
+       when is_binary(resolution) do
     %{"google" => %{"resolution" => resolution}}
   end
 
@@ -663,37 +785,89 @@ defmodule Froth.LLM.Providers.GeminiInteractions do
 
   defp system_instruction(_system), do: nil
 
-  defp maybe_add_set(edits, resource, path, value, raw) when is_binary(value) do
-    edits ++ [%Edit{op: :set, resource: resource, path: path, value: value, raw: raw}]
+  defp maybe_add_set(edits, resource, path, value, raw)
+       when is_binary(value) do
+    edits ++
+      [
+        %Edit{
+          op: :set,
+          resource: resource,
+          path: path,
+          value: value,
+          raw: raw
+        }
+      ]
   end
 
-  defp maybe_add_set(edits, resource, path, value, raw) when is_integer(value) do
-    edits ++ [%Edit{op: :set, resource: resource, path: path, value: value, raw: raw}]
+  defp maybe_add_set(edits, resource, path, value, raw)
+       when is_integer(value) do
+    edits ++
+      [
+        %Edit{
+          op: :set,
+          resource: resource,
+          path: path,
+          value: value,
+          raw: raw
+        }
+      ]
   end
 
   defp maybe_add_set(edits, resource, path, value, raw) when is_map(value) do
-    edits ++ [%Edit{op: :set, resource: resource, path: path, value: value, raw: raw}]
+    edits ++
+      [
+        %Edit{
+          op: :set,
+          resource: resource,
+          path: path,
+          value: value,
+          raw: raw
+        }
+      ]
   end
 
   defp maybe_add_set(edits, _resource, _path, _value, _raw), do: edits
 
-  defp maybe_add_append(edits, resource, path, value, raw) when is_binary(value) do
-    edits ++ [%Edit{op: :append, resource: resource, path: path, value: value, raw: raw}]
+  defp maybe_add_append(edits, resource, path, value, raw)
+       when is_binary(value) do
+    edits ++
+      [
+        %Edit{
+          op: :append,
+          resource: resource,
+          path: path,
+          value: value,
+          raw: raw
+        }
+      ]
   end
 
   defp maybe_add_append(edits, _resource, _path, _value, _raw), do: edits
 
-  defp maybe_add_merge(edits, resource, path, value, raw) when is_map(value) do
-    edits ++ [%Edit{op: :merge, resource: resource, path: path, value: value, raw: raw}]
+  defp maybe_add_merge(edits, resource, path, value, raw)
+       when is_map(value) do
+    edits ++
+      [
+        %Edit{
+          op: :merge,
+          resource: resource,
+          path: path,
+          value: value,
+          raw: raw
+        }
+      ]
   end
 
   defp maybe_add_merge(edits, _resource, _path, _value, _raw), do: edits
 
-  defp maybe_put(body, key, value, predicate) when is_function(predicate, 1) do
+  defp maybe_put(body, key, value, predicate)
+       when is_function(predicate, 1) do
     if predicate.(value), do: Map.put(body, key, value), else: body
   end
 
-  defp non_empty_binary?(value), do: is_binary(value) and String.trim(value) != ""
+  defp non_empty_binary?(value),
+    do: is_binary(value) and String.trim(value) != ""
+
   defp non_empty_list?(value), do: is_list(value) and value != []
   defp non_empty_map?(value), do: is_map(value) and map_size(value) > 0
   defp positive_integer?(value), do: is_integer(value) and value > 0

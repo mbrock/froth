@@ -5,7 +5,10 @@ defmodule FrothWeb.ObjectStoreControllerTest do
 
   setup do
     root_dir =
-      Path.join(System.tmp_dir!(), "froth-object-store-#{System.unique_integer([:positive])}")
+      Path.join(
+        System.tmp_dir!(),
+        "froth-object-store-#{System.unique_integer([:positive])}"
+      )
 
     previous = Application.get_env(:froth, ObjectStore, [])
 
@@ -32,16 +35,19 @@ defmodule FrothWeb.ObjectStoreControllerTest do
       |> put_req_header("accept", "application/json")
       |> put("/froth/objects/video/test/hello.txt", "hello world")
 
-    assert %{"key" => "video/test/hello.txt", "url" => url} = json_response(put_conn, 200)
+    assert %{"key" => "video/test/hello.txt", "url" => url} =
+             json_response(put_conn, 200)
+
     assert url == "http://example.test/froth/objects/video/test/hello.txt"
 
     get_conn = get(build_conn(), "/froth/objects/video/test/hello.txt")
     assert response(get_conn, 200) == "hello world"
   end
 
-  test "POST uploads a content-addressed object and serves it back with stored content type", %{
-    conn: conn
-  } do
+  test "POST uploads a content-addressed object and serves it back with stored content type",
+       %{
+         conn: conn
+       } do
     body = "hello, content-addressed world"
     sha256 = sha256_hex(body)
 

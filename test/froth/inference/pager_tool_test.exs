@@ -31,7 +31,8 @@ defmodule Froth.Inference.PagerToolTest do
     defp single_block!({:ok, [%Block{} = block]}), do: block
 
     test "mode=stat returns a metadata-only block", %{blob_id: id} do
-      block = call(%{"id" => "blob:" <> id, "mode" => "stat"}) |> single_block!()
+      block =
+        call(%{"id" => "blob:" <> id, "mode" => "stat"}) |> single_block!()
 
       assert Block.attr(block, :kind) == "stat"
       assert Block.attr(block, :blob) == id
@@ -41,14 +42,16 @@ defmodule Froth.Inference.PagerToolTest do
     end
 
     test "mode=head returns the first N lines in the body", %{blob_id: id} do
-      block = call(%{"id" => id, "mode" => "head", "lines" => 3}) |> single_block!()
+      block =
+        call(%{"id" => id, "mode" => "head", "lines" => 3}) |> single_block!()
 
       assert Block.attr(block, :kind) == "head"
       assert block.body == "line 1\nline 2\nline 3"
     end
 
     test "mode=tail returns the last N lines in the body", %{blob_id: id} do
-      block = call(%{"id" => id, "mode" => "tail", "lines" => 3}) |> single_block!()
+      block =
+        call(%{"id" => id, "mode" => "tail", "lines" => 3}) |> single_block!()
 
       assert Block.attr(block, :kind) == "tail"
       assert block.body == "line 58\nline 59\nline 60"
@@ -74,14 +77,20 @@ defmodule Froth.Inference.PagerToolTest do
 
     test "mode=read past end marks the block empty", %{blob_id: id} do
       block =
-        call(%{"id" => id, "mode" => "read", "from_line" => 999, "lines" => 3})
+        call(%{
+          "id" => id,
+          "mode" => "read",
+          "from_line" => 999,
+          "lines" => 3
+        })
         |> single_block!()
 
       assert Block.attr(block, :empty) == true
       assert is_nil(block.body)
     end
 
-    test "mode=grep returns a block with total/shown attrs and matches body", %{blob_id: id} do
+    test "mode=grep returns a block with total/shown attrs and matches body",
+         %{blob_id: id} do
       block =
         call(%{"id" => id, "mode" => "grep", "pattern" => "^line 1$"})
         |> single_block!()
@@ -93,7 +102,9 @@ defmodule Froth.Inference.PagerToolTest do
       assert block.body =~ "line 1"
     end
 
-    test "mode=grep with no matches returns a metadata-only block", %{blob_id: id} do
+    test "mode=grep with no matches returns a metadata-only block", %{
+      blob_id: id
+    } do
       block =
         call(%{"id" => id, "mode" => "grep", "pattern" => "unobtanium"})
         |> single_block!()
@@ -111,7 +122,9 @@ defmodule Froth.Inference.PagerToolTest do
     end
 
     test "mode=grep rejects invalid regex", %{blob_id: id} do
-      assert {:error, msg} = call(%{"id" => id, "mode" => "grep", "pattern" => "("})
+      assert {:error, msg} =
+               call(%{"id" => id, "mode" => "grep", "pattern" => "("})
+
       assert msg =~ "invalid regex pattern"
     end
 

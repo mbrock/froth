@@ -29,10 +29,18 @@ defmodule Froth.LLM.Providers.AnthropicTest do
         Message.system("ignored inline system"),
         Message.user([
           %{"type" => "text", "text" => "hello"},
-          %{"type" => "tool_result", "tool_use_id" => "call_1", "content" => "echoed: hi"}
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "call_1",
+            "content" => "echoed: hi"
+          }
         ]),
         Message.assistant([
-          %{"type" => "thinking", "thinking" => "considering", "signature" => "sig_123"},
+          %{
+            "type" => "thinking",
+            "thinking" => "considering",
+            "signature" => "sig_123"
+          },
           %{
             "type" => "tool_use",
             "id" => "call_1",
@@ -57,13 +65,21 @@ defmodule Froth.LLM.Providers.AnthropicTest do
                "role" => "user",
                "content" => [
                  %{"type" => "text", "text" => "hello"},
-                 %{"type" => "tool_result", "tool_use_id" => "call_1", "content" => "echoed: hi"}
+                 %{
+                   "type" => "tool_result",
+                   "tool_use_id" => "call_1",
+                   "content" => "echoed: hi"
+                 }
                ]
              },
              %{
                "role" => "assistant",
                "content" => [
-                 %{"type" => "thinking", "thinking" => "considering", "signature" => "sig_123"},
+                 %{
+                   "type" => "thinking",
+                   "thinking" => "considering",
+                   "signature" => "sig_123"
+                 },
                  %{
                    "type" => "tool_use",
                    "id" => "call_1",
@@ -125,7 +141,10 @@ defmodule Froth.LLM.Providers.AnthropicTest do
                      "data" => "JVBERi0xLjQK"
                    }
                  },
-                 %{"type" => "text", "text" => "Compare the image and the PDF."}
+                 %{
+                   "type" => "text",
+                   "text" => "Compare the image and the PDF."
+                 }
                ]
              }
            ]
@@ -161,7 +180,11 @@ defmodule Froth.LLM.Providers.AnthropicTest do
     assert message["role"] == "user"
     assert map_result["type"] == "tool_result"
     assert map_result["tool_use_id"] == "call_map"
-    assert Jason.decode!(map_result["content"]) == %{"answer" => 42, "status" => "ok"}
+
+    assert Jason.decode!(map_result["content"]) == %{
+             "answer" => 42,
+             "status" => "ok"
+           }
 
     assert block_result == %{
              "type" => "tool_result",
@@ -220,7 +243,10 @@ defmodule Froth.LLM.Providers.AnthropicTest do
              %{
                "type" => "mcp_toolset",
                "mcp_server_name" => "wolfram",
-               "default_config" => %{"enabled" => false, "defer_loading" => true},
+               "default_config" => %{
+                 "enabled" => false,
+                 "defer_loading" => true
+               },
                "configs" => %{"compute" => %{"enabled" => true}}
              }
            ]

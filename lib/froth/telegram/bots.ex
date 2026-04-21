@@ -21,7 +21,12 @@ defmodule Froth.Telegram.Bots do
             ok
 
           {:error, reason} = error ->
-            Span.execute([:froth, :telegram, :bots, :autostart_failed], nil, %{reason: reason})
+            Span.execute(
+              [:froth, :telegram, :bots, :autostart_failed],
+              nil,
+              %{reason: reason}
+            )
+
             Supervisor.stop(pid)
             error
         end
@@ -41,7 +46,8 @@ defmodule Froth.Telegram.Bots do
     Supervisor.init(children, strategy: :one_for_all)
   end
 
-  def via(bot_id) when is_binary(bot_id), do: {:via, Registry, {@registry, bot_id}}
+  def via(bot_id) when is_binary(bot_id),
+    do: {:via, Registry, {@registry, bot_id}}
 
   def start_bot(config) when is_map(config) do
     bot_id = Map.fetch!(config, :id)

@@ -64,7 +64,10 @@ defmodule Froth.Web.Lightpanda do
   """
   @spec fetch(String.t(), fetch_opts()) ::
           {:ok, binary()}
-          | {:error, :timeout | :missing_executable | {:exit, non_neg_integer(), binary()}}
+          | {:error,
+             :timeout
+             | :missing_executable
+             | {:exit, non_neg_integer(), binary()}}
   def fetch(url, opts \\ []) when is_binary(url) and is_list(opts) do
     config = configured_options(opts)
     parent_id = Keyword.get(opts, :parent_id)
@@ -84,14 +87,21 @@ defmodule Froth.Web.Lightpanda do
 
       _ ->
         timeout_seconds = Integer.to_string(div(config.timeout_ms, 1000))
-        args = ["--signal=KILL", timeout_seconds, "lightpanda" | lightpanda_args(url, config)]
+
+        args = [
+          "--signal=KILL",
+          timeout_seconds,
+          "lightpanda" | lightpanda_args(url, config)
+        ]
 
         case System.cmd("timeout", args, stderr_to_stdout: false) do
           {body, 0} ->
-            {{:ok, body}, %{outcome: :ok, exit_code: 0, bytes: byte_size(body)}}
+            {{:ok, body},
+             %{outcome: :ok, exit_code: 0, bytes: byte_size(body)}}
 
           {_body, code} when code in [124, 137] ->
-            {{:error, :timeout}, %{outcome: :timeout, exit_code: code, bytes: 0}}
+            {{:error, :timeout},
+             %{outcome: :timeout, exit_code: code, bytes: 0}}
 
           {body, code} ->
             tail = body |> String.slice(-512..-1//1) |> to_string()
@@ -118,7 +128,10 @@ defmodule Froth.Web.Lightpanda do
 
     base
     |> maybe_append("--strip-mode", config.strip_mode)
-    |> maybe_append("--obey-robots", if(config.obey_robots, do: "true", else: nil))
+    |> maybe_append(
+      "--obey-robots",
+      if(config.obey_robots, do: "true", else: nil)
+    )
     |> Kernel.++(config.extra_args)
     |> Kernel.++([url])
   end
@@ -137,19 +150,32 @@ defmodule Froth.Web.Lightpanda do
     env = Application.get_env(:froth, __MODULE__, [])
 
     %{
-      format: Keyword.get(opts, :format, Keyword.get(env, :format, :markdown)),
+      format:
+        Keyword.get(opts, :format, Keyword.get(env, :format, :markdown)),
       timeout_ms:
-        Keyword.get(opts, :timeout_ms, Keyword.get(env, :timeout_ms, @default_timeout_ms)),
-      wait_ms: Keyword.get(opts, :wait_ms, Keyword.get(env, :wait_ms, @default_wait_ms)),
+        Keyword.get(
+          opts,
+          :timeout_ms,
+          Keyword.get(env, :timeout_ms, @default_timeout_ms)
+        ),
+      wait_ms:
+        Keyword.get(
+          opts,
+          :wait_ms,
+          Keyword.get(env, :wait_ms, @default_wait_ms)
+        ),
       http_timeout_ms:
         Keyword.get(
           opts,
           :http_timeout_ms,
           Keyword.get(env, :http_timeout_ms, @default_http_timeout_ms)
         ),
-      strip_mode: Keyword.get(opts, :strip_mode, Keyword.get(env, :strip_mode, "full")),
-      obey_robots: Keyword.get(opts, :obey_robots, Keyword.get(env, :obey_robots, true)),
-      extra_args: Keyword.get(opts, :extra_args, Keyword.get(env, :extra_args, []))
+      strip_mode:
+        Keyword.get(opts, :strip_mode, Keyword.get(env, :strip_mode, "full")),
+      obey_robots:
+        Keyword.get(opts, :obey_robots, Keyword.get(env, :obey_robots, true)),
+      extra_args:
+        Keyword.get(opts, :extra_args, Keyword.get(env, :extra_args, []))
     }
   end
 end

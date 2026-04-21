@@ -8,14 +8,16 @@ defmodule FrothWeb.ToolLiveTest do
   alias Froth.Repo
   alias Froth.Telegram.CycleLink
 
-  test "shows stop affordance for a loaded cycle even when transcript looks complete", %{
-    conn: conn
-  } do
+  test "shows stop affordance for a loaded cycle even when transcript looks complete",
+       %{
+         conn: conn
+       } do
     cycle = Repo.insert!(%Cycle{})
     message = Repo.insert!(Message.agent("complete enough to look done"))
     Agent.append_event(cycle, %{head_id: message.id, message_id: message.id})
 
-    {:ok, view, _html} = live(conn, ~p"/froth/mini/tool/cycle_missingbot_#{cycle.id}")
+    {:ok, view, _html} =
+      live(conn, ~p"/froth/mini/tool/cycle_missingbot_#{cycle.id}")
 
     assert has_element?(view, "#loop-stop")
     assert has_element?(view, "#loop-close")
@@ -28,9 +30,10 @@ defmodule FrothWeb.ToolLiveTest do
     assert has_element?(view, "#tool-loop-viewer", "stop requested")
   end
 
-  test "renders narration-first tool cards with compact raw sections and exit badges", %{
-    conn: conn
-  } do
+  test "renders narration-first tool cards with compact raw sections and exit badges",
+       %{
+         conn: conn
+       } do
     cycle = Repo.insert!(%Cycle{})
 
     tool_use =
@@ -68,17 +71,27 @@ defmodule FrothWeb.ToolLiveTest do
         | parent_id: tool_use.id
       })
 
-    Agent.append_event(cycle, %{head_id: tool_result.id, message_id: tool_result.id})
+    Agent.append_event(cycle, %{
+      head_id: tool_result.id,
+      message_id: tool_result.id
+    })
 
-    {:ok, view, _html} = live(conn, ~p"/froth/mini/tool/cycle_missingbot_#{cycle.id}")
+    {:ok, view, _html} =
+      live(conn, ~p"/froth/mini/tool/cycle_missingbot_#{cycle.id}")
 
-    assert has_element?(view, "#tool-feed", "Checking the shell output before replying.")
+    assert has_element?(
+             view,
+             "#tool-feed",
+             "Checking the shell output before replying."
+           )
+
     assert has_element?(view, "#tool-input-call_1[open]")
     assert has_element?(view, "#tool-output-call_1[open]")
     assert has_element?(view, "#tool-feed span", "exit 139")
   end
 
-  test "renders markdown transcript and steer controls for active telegram cycles", %{conn: conn} do
+  test "renders markdown transcript and steer controls for active telegram cycles",
+       %{conn: conn} do
     cycle = Repo.insert!(%Cycle{})
 
     Repo.insert!(%CycleLink{
@@ -103,14 +116,17 @@ defmodule FrothWeb.ToolLiveTest do
 
     Agent.append_event(cycle, %{head_id: message.id, message_id: message.id})
 
-    {:ok, view, _html} = live(conn, ~p"/froth/mini/tool/cycle_charlie_#{cycle.id}")
+    {:ok, view, _html} =
+      live(conn, ~p"/froth/mini/tool/cycle_charlie_#{cycle.id}")
 
     assert has_element?(view, "#tool-follow-tail")
     assert has_element?(view, "#tool-item-0 strong", "Bold")
     assert has_element?(view, "#loop-steer-form")
   end
 
-  test "renders xml-like transcript tags literally instead of as html", %{conn: conn} do
+  test "renders xml-like transcript tags literally instead of as html", %{
+    conn: conn
+  } do
     cycle = Repo.insert!(%Cycle{})
 
     message =
@@ -126,7 +142,8 @@ defmodule FrothWeb.ToolLiveTest do
 
     Agent.append_event(cycle, %{head_id: message.id, message_id: message.id})
 
-    {:ok, view, _html} = live(conn, ~p"/froth/mini/tool/cycle_missingbot_#{cycle.id}")
+    {:ok, view, _html} =
+      live(conn, ~p"/froth/mini/tool/cycle_missingbot_#{cycle.id}")
 
     assert has_element?(view, "#tool-item-0", ~s(<summary date="2026-03-22">))
     assert has_element?(view, "#tool-item-0", "</summary>")

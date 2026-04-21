@@ -19,7 +19,12 @@ defmodule Mix.Tasks.Froth.Telegram.Backfill do
   def run(args) do
     {opts, _positional, invalid} =
       OptionParser.parse(args,
-        strict: [session: :string, chat_id: :integer, chat_limit: :integer, verbose: :boolean]
+        strict: [
+          session: :string,
+          chat_id: :integer,
+          chat_limit: :integer,
+          verbose: :boolean
+        ]
       )
 
     if invalid != [] do
@@ -65,7 +70,9 @@ defmodule Mix.Tasks.Froth.Telegram.Backfill do
 
       case :erpc.call(node, Froth.RPC, :eval, [gl, code]) do
         {:ok, %{chats: chats, messages: messages}} ->
-          Mix.shell().info("Stored #{messages} messages across #{chats} chats")
+          Mix.shell().info(
+            "Stored #{messages} messages across #{chats} chats"
+          )
 
         other ->
           Mix.shell().error("Unexpected response: #{inspect(other)}")

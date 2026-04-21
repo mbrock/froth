@@ -53,7 +53,10 @@ defmodule Froth.LLM.Fake do
   """
   @spec claim() :: String.t()
   def claim do
-    model = "fakeai-slop-" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
+    model =
+      "fakeai-slop-" <>
+        Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
+
     {:ok, _} = Registry.register(@registry, model, nil)
     model
   end
@@ -66,8 +69,10 @@ defmodule Froth.LLM.Fake do
   The `on_event` callback is carried in the `from` handle so tests can
   invoke it via `emit/2` to simulate streaming deltas before replying.
   """
-  @spec stream(Request.t(), (term() -> any())) :: {:ok, map()} | {:error, term()}
-  def stream(%Request{model: model} = request, on_event) when is_function(on_event, 1) do
+  @spec stream(Request.t(), (term() -> any())) ::
+          {:ok, map()} | {:error, term()}
+  def stream(%Request{model: model} = request, on_event)
+      when is_function(on_event, 1) do
     case Registry.lookup(@registry, model) do
       [{pid, _}] ->
         ref = Process.monitor(pid)
@@ -104,7 +109,10 @@ defmodule Froth.LLM.Fake do
   bare `{pid, ref}` pair, so existing tests that pattern-match just the
   pid/ref still work.
   """
-  @spec reply({pid(), reference(), (term() -> any())} | {pid(), reference()}, term()) :: :ok
+  @spec reply(
+          {pid(), reference(), (term() -> any())} | {pid(), reference()},
+          term()
+        ) :: :ok
   def reply({pid, ref, _on_event}, result), do: reply({pid, ref}, result)
 
   def reply({pid, ref}, result) when is_pid(pid) and is_reference(ref) do
@@ -126,7 +134,8 @@ defmodule Froth.LLM.Fake do
   @doc false
   def registry_name, do: @registry
 
-  defp normalize_result({:ok, result}, %Request{model: model}) when is_map(result) do
+  defp normalize_result({:ok, result}, %Request{model: model})
+       when is_map(result) do
     {:ok,
      result
      |> Map.put_new(:text, "")

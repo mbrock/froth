@@ -8,7 +8,9 @@ defmodule Froth.Analyzer.PdfWorker do
   import Ecto.Query
 
   @impl true
-  def perform(%Oban.Job{args: %{"chat_id" => chat_id, "message_id" => message_id}}) do
+  def perform(%Oban.Job{
+        args: %{"chat_id" => chat_id, "message_id" => message_id}
+      }) do
     msg =
       Repo.one(
         from(m in "telegram_messages",

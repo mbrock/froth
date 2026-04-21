@@ -37,13 +37,17 @@ defmodule Mix.Tasks.Froth.Ls do
     Mix.shell().info("Inspecting #{node}...")
 
     case :erpc.call(node, Froth.RPC, :eval, [gl, rpc_code(limit, session_id)]) do
-      %{sessions: sessions, chats: chats} = payload when is_list(sessions) and is_list(chats) ->
+      %{sessions: sessions, chats: chats} = payload
+      when is_list(sessions) and is_list(chats) ->
         print_sessions(payload.sessions)
         IO.puts("")
         print_chats(payload.chats, limit, session_id)
 
       other ->
-        Mix.shell().error("Unexpected response: #{inspect(other, limit: :infinity)}")
+        Mix.shell().error(
+          "Unexpected response: #{inspect(other, limit: :infinity)}"
+        )
+
         System.halt(1)
     end
   end

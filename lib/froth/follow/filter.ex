@@ -43,7 +43,9 @@ defmodule Froth.Follow.Filter do
   end
 
   defp matches_prefix?(_entry, nil), do: true
-  defp matches_prefix?(%Entry{event: event}, prefix), do: String.starts_with?(event, prefix)
+
+  defp matches_prefix?(%Entry{event: event}, prefix),
+    do: String.starts_with?(event, prefix)
 
   defp matches_id?(_value, nil), do: true
   defp matches_id?(nil, _prefix), do: false

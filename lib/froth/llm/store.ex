@@ -84,13 +84,15 @@ defmodule Froth.LLM.Store do
     %{store | resources: Map.put(store.resources, resource_id, resource)}
   end
 
-  defp maybe_put_attrs(resource, attrs) when is_map(attrs) and map_size(attrs) > 0 do
+  defp maybe_put_attrs(resource, attrs)
+       when is_map(attrs) and map_size(attrs) > 0 do
     Map.put(resource, "attrs", attrs)
   end
 
   defp maybe_put_attrs(resource, _attrs), do: resource
 
-  defp update_doc(%__MODULE__{} = store, path, default, fun) when is_list(path) do
+  defp update_doc(%__MODULE__{} = store, path, default, fun)
+       when is_list(path) do
     %{store | doc: update_in_path(store.doc, path, default, fun)}
   end
 
@@ -105,7 +107,8 @@ defmodule Froth.LLM.Store do
 
   defp update_in_path(_doc, [], _default, fun), do: fun.(nil)
 
-  defp get_in_path(doc, [key], default) when is_map(doc), do: Map.get(doc, key, default)
+  defp get_in_path(doc, [key], default) when is_map(doc),
+    do: Map.get(doc, key, default)
 
   defp get_in_path(doc, [key | rest], default) when is_map(doc) do
     case Map.get(doc, key) do

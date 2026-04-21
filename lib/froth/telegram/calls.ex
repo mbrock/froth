@@ -116,21 +116,24 @@ defmodule Froth.Telegram.Calls do
   - `{:call_media_event, call_id, event_atom}`
   - `{:call_media_error, call_id, reason_binary}`
   """
-  def start_private_media(call_id, pid \\ self()) when is_integer(call_id) and is_pid(pid) do
+  def start_private_media(call_id, pid \\ self())
+      when is_integer(call_id) and is_pid(pid) do
     Cnode.start_private_media(call_id, pid)
   end
 
   @doc """
   Alias for `start_private_media/2`.
   """
-  def subscribe_call_audio(call_id, pid \\ self()) when is_integer(call_id) and is_pid(pid) do
+  def subscribe_call_audio(call_id, pid \\ self())
+      when is_integer(call_id) and is_pid(pid) do
     Cnode.subscribe_call_audio(call_id, pid)
   end
 
   @doc """
   Unsubscribe a process from call audio frames.
   """
-  def unsubscribe_call_audio(call_id, pid \\ self()) when is_integer(call_id) and is_pid(pid) do
+  def unsubscribe_call_audio(call_id, pid \\ self())
+      when is_integer(call_id) and is_pid(pid) do
     Cnode.unsubscribe_call_audio(call_id, pid)
   end
 
@@ -148,7 +151,8 @@ defmodule Froth.Telegram.Calls do
   - raw PCM16LE mono 48k (`.pcm` style)
   - WAV PCM16 mono 48k
   """
-  def feed_pcm_file(call_id, path) when is_integer(call_id) and is_binary(path) do
+  def feed_pcm_file(call_id, path)
+      when is_integer(call_id) and is_binary(path) do
     Cnode.feed_pcm_file(call_id, path)
   end
 
@@ -177,13 +181,18 @@ defmodule Froth.Telegram.Calls do
 
     with true <- is_pid(pid) or {:error, :invalid_pid},
          {:ok, call_id, ready_state, is_outgoing} <- extract_ready_call(call),
-         {:ok, status} when is_map(status) <- Cnode.tgcalls_status(status_timeout),
+         {:ok, status} when is_map(status) <-
+           Cnode.tgcalls_status(status_timeout),
          :ok <- ensure_tgcalls_engine_available(status),
-         {:ok, encryption_key} <- decode_tdlib_bytes(Map.get(ready_state, "encryption_key")),
-         true <- byte_size(encryption_key) == 256 or {:error, :invalid_encryption_key},
+         {:ok, encryption_key} <-
+           decode_tdlib_bytes(Map.get(ready_state, "encryption_key")),
+         true <-
+           byte_size(encryption_key) == 256 or
+             {:error, :invalid_encryption_key},
          {:ok, version} <- select_tgcalls_version(status, ready_state),
          servers <- encode_rtc_servers(Map.get(ready_state, "servers", [])),
-         custom_parameters <- normalize_binary(Map.get(ready_state, "custom_parameters", "")) do
+         custom_parameters <-
+           normalize_binary(Map.get(ready_state, "custom_parameters", "")) do
       Cnode.start_tgcalls_call(
         call_id,
         session_id,
@@ -276,15 +285,19 @@ defmodule Froth.Telegram.Calls do
     }
 
     case Keyword.fetch(opts, :is_video) do
-      {:ok, is_video} when is_boolean(is_video) -> Map.put(request, "is_video", is_video)
-      _ -> request
+      {:ok, is_video} when is_boolean(is_video) ->
+        Map.put(request, "is_video", is_video)
+
+      _ ->
+        request
     end
   end
 
   @doc """
   Build an `acceptCall` request map.
   """
-  def accept_call_request(call_id, protocol) when is_integer(call_id) and is_map(protocol) do
+  def accept_call_request(call_id, protocol)
+      when is_integer(call_id) and is_map(protocol) do
     %{
       "@type" => "acceptCall",
       "call_id" => call_id,
@@ -295,7 +308,8 @@ defmodule Froth.Telegram.Calls do
   @doc """
   Build a `sendCallSignalingData` request map.
   """
-  def send_call_signaling_data_request(call_id, data, opts \\ []) when is_integer(call_id) do
+  def send_call_signaling_data_request(call_id, data, opts \\ [])
+      when is_integer(call_id) do
     %{
       "@type" => "sendCallSignalingData",
       "call_id" => call_id,
@@ -319,7 +333,8 @@ defmodule Froth.Telegram.Calls do
   defp resolve_tgcalls_status(opts) do
     status_timeout = Keyword.get(opts, :status_timeout, 2_000)
 
-    with {:ok, status} when is_map(status) <- Cnode.tgcalls_status(status_timeout) do
+    with {:ok, status} when is_map(status) <-
+           Cnode.tgcalls_status(status_timeout) do
       status
     else
       _ -> %{}
@@ -339,13 +354,16 @@ defmodule Froth.Telegram.Calls do
 
   defp normalize_library_versions(_), do: @fallback_library_versions
 
-  defp normalize_max_layer(value) when is_integer(value) and value > 0, do: value
+  defp normalize_max_layer(value) when is_integer(value) and value > 0,
+    do: value
+
   defp normalize_max_layer(_), do: @default_max_layer
 
   defp ensure_tgcalls_engine_available(status) when is_map(status) do
     engine_available? =
       Map.get(status, "engine_available") == true or
-        (is_list(status["registered_versions"]) and status["registered_versions"] != [])
+        (is_list(status["registered_versions"]) and
+           status["registered_versions"] != [])
 
     if engine_available? do
       :ok
@@ -428,8 +446,8 @@ defmodule Froth.Telegram.Calls do
 
         [
           {id, normalize_binary(Map.get(server, "ip_address", "")),
-           normalize_binary(Map.get(server, "ipv6_address", "")), port, "", "", true,
-           Map.get(type, "is_tcp", false) == true, peer_tag}
+           normalize_binary(Map.get(server, "ipv6_address", "")), port, "",
+           "", true, Map.get(type, "is_tcp", false) == true, peer_tag}
         ]
 
       _ ->

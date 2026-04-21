@@ -100,7 +100,8 @@ defmodule Froth.SSEReplay do
   the Anthropic provider pipeline, invoking `on_event` for each
   projected event. Returns the provider's `finalize/1` result.
   """
-  def replay_fixture(path, on_event) when is_binary(path) and is_function(on_event, 1) do
+  def replay_fixture(path, on_event)
+      when is_binary(path) and is_function(on_event, 1) do
     case File.read(path) do
       {:ok, data} ->
         store =

@@ -35,7 +35,8 @@ defmodule Froth.Context.Block do
 
   @doc "Look up an attribute value."
   @spec attr(t(), atom(), term()) :: term()
-  def attr(%__MODULE__{attrs: attrs}, key, default \\ nil) when is_atom(key) do
+  def attr(%__MODULE__{attrs: attrs}, key, default \\ nil)
+      when is_atom(key) do
     Keyword.get(attrs, key, default)
   end
 
@@ -78,7 +79,9 @@ defmodule Froth.Context.Block do
   def from_map(_), do: nil
 
   defp encode_attrs(attrs) when is_list(attrs) do
-    Enum.map(attrs, fn {k, v} -> %{"k" => to_string(k), "v" => encode_value(v)} end)
+    Enum.map(attrs, fn {k, v} ->
+      %{"k" => to_string(k), "v" => encode_value(v)}
+    end)
   end
 
   defp encode_attrs(_), do: []
@@ -98,7 +101,8 @@ defmodule Froth.Context.Block do
   defp safe_atom(key) when is_atom(key), do: key
   defp safe_atom(key) when is_binary(key), do: String.to_atom(key)
 
-  defp encode_value(v) when is_binary(v) or is_integer(v) or is_boolean(v) or is_nil(v), do: v
+  defp encode_value(v)
+       when is_binary(v) or is_integer(v) or is_boolean(v) or is_nil(v), do: v
 
   defp encode_value(v) when is_list(v) do
     Enum.map(v, &encode_value/1)

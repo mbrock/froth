@@ -34,7 +34,12 @@ defmodule Froth.Codex.TaskTest do
 
     {:ok, snapshot} = FakeCodexSession.snapshot(session_id)
     assert is_binary(snapshot.active_turn_id)
-    assert :ok = FakeCodexSession.set_snapshot(session_id, %{snapshot | active_turn_id: nil})
+
+    assert :ok =
+             FakeCodexSession.set_snapshot(session_id, %{
+               snapshot
+               | active_turn_id: nil
+             })
 
     task_id = task.task_id
 
@@ -48,7 +53,8 @@ defmodule Froth.Codex.TaskTest do
   defp codex_task_for_session(session_id) do
     Repo.all(Task)
     |> Enum.find(fn task ->
-      task.type == "codex" and metadata_session_id(task.metadata) == session_id
+      task.type == "codex" and
+        metadata_session_id(task.metadata) == session_id
     end)
   end
 

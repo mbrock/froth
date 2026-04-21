@@ -25,17 +25,32 @@ defmodule Froth.DailyDigestTest do
                chat_id: chat_id,
                session_id: "charlie",
                digest_dir: digest_dir,
-               pending_summary_dates_fun: fn ^chat_id, ~D[2026-03-23] -> [date] end,
+               pending_summary_dates_fun: fn ^chat_id, ~D[2026-03-23] ->
+                 [date]
+               end,
                summarize_day_fun: fn ^chat_id, ^date ->
-                 {:ok, insert_summary(chat_id, date, "Charlie wrote the whole messy chronicle.")}
+                 {:ok,
+                  insert_summary(
+                    chat_id,
+                    date,
+                    "Charlie wrote the whole messy chronicle."
+                  )}
                end,
                extract_headlines_fun: fn ^chat_id, opts ->
                  send(test_pid, {:extract_headlines, opts})
-                 insert_headlines(chat_id, date, [%{"emoji" => "🚀", "title" => "Launch day"}])
+
+                 insert_headlines(chat_id, date, [
+                   %{"emoji" => "🚀", "title" => "Launch day"}
+                 ])
+
                  {:ok, :registered}
                end,
                send_document_fun: fn session_id, sent_chat_id, path, opts ->
-                 send(test_pid, {:send_document, session_id, sent_chat_id, path, opts})
+                 send(
+                   test_pid,
+                   {:send_document, session_id, sent_chat_id, path, opts}
+                 )
+
                  {:ok, %{"id" => 444}}
                end
              )
@@ -60,7 +75,11 @@ defmodule Froth.DailyDigestTest do
              from(e in Event,
                where:
                  e.event == "froth.daily_digest.sent" and
-                   fragment("?->>'chat_id' = ?", e.metadata, ^Integer.to_string(chat_id)) and
+                   fragment(
+                     "?->>'chat_id' = ?",
+                     e.metadata,
+                     ^Integer.to_string(chat_id)
+                   ) and
                    fragment("?->>'date' = ?", e.metadata, "2026-03-22"),
                select: 1
              ),
@@ -73,7 +92,13 @@ defmodule Froth.DailyDigestTest do
     chat_id = unique_chat_id()
     date = ~D[2026-03-21]
     digest_dir = unique_digest_dir()
-    summary = insert_summary(chat_id, date, "Stored summary waiting for Charlie to post it.")
+
+    summary =
+      insert_summary(
+        chat_id,
+        date,
+        "Stored summary waiting for Charlie to post it."
+      )
 
     insert_headlines(chat_id, date, [
       %{
@@ -92,8 +117,12 @@ defmodule Froth.DailyDigestTest do
                chat_id: chat_id,
                session_id: "charlie",
                digest_dir: digest_dir,
-               pending_summary_dates_fun: fn ^chat_id, ~D[2026-03-23] -> [] end,
-               summarize_day_fun: fn _chat_id, _date -> flunk("summarize_day should not run") end,
+               pending_summary_dates_fun: fn ^chat_id, ~D[2026-03-23] ->
+                 []
+               end,
+               summarize_day_fun: fn _chat_id, _date ->
+                 flunk("summarize_day should not run")
+               end,
                extract_headlines_fun: fn _chat_id, _opts ->
                  send(test_pid, :extract_called)
                  {:ok, :unexpected}
@@ -126,8 +155,12 @@ defmodule Froth.DailyDigestTest do
   end
 
   defp insert_summary(chat_id, date, text) do
-    from_unix = DateTime.new!(date, ~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
-    to_unix = DateTime.new!(Date.add(date, 1), ~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
+    from_unix =
+      DateTime.new!(date, ~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
+
+    to_unix =
+      DateTime.new!(Date.add(date, 1), ~T[00:00:00], "Etc/UTC")
+      |> DateTime.to_unix()
 
     %ChatSummary{}
     |> ChatSummary.changeset(%{
@@ -160,6 +193,9 @@ defmodule Froth.DailyDigestTest do
   end
 
   defp unique_digest_dir do
-    Path.join(System.tmp_dir!(), "froth-daily-digest-#{System.unique_integer([:positive])}")
+    Path.join(
+      System.tmp_dir!(),
+      "froth-daily-digest-#{System.unique_integer([:positive])}"
+    )
   end
 end

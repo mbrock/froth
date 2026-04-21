@@ -21,9 +21,34 @@ defmodule Froth.SummarizerTest do
 
     ensure_session(session_id)
     insert_summary(chat_id, 1_700_000_000, 1_700_000_600, "Earlier summary")
-    insert_telegram_message(session_id, chat_id, 101, 7, 1_700_000_700, "older context")
-    insert_telegram_message(session_id, chat_id, 102, 8, 1_700_000_800, "still older")
-    insert_telegram_message(session_id, chat_id, 103, 9, 1_700_000_900, "future context leak")
+
+    insert_telegram_message(
+      session_id,
+      chat_id,
+      101,
+      7,
+      1_700_000_700,
+      "older context"
+    )
+
+    insert_telegram_message(
+      session_id,
+      chat_id,
+      102,
+      8,
+      1_700_000_800,
+      "still older"
+    )
+
+    insert_telegram_message(
+      session_id,
+      chat_id,
+      103,
+      9,
+      1_700_000_900,
+      "future context leak"
+    )
+
     insert_username(7, "seven")
     insert_username(8, "eight")
 
@@ -52,7 +77,9 @@ defmodule Froth.SummarizerTest do
 
     refute Enum.join(parts, "") =~ "future context leak"
     refute Enum.join(parts, "") =~ "<summary"
-    assert Enum.join(BotContext.render_parts(chat_id, opts), "") == Enum.join(parts, "")
+
+    assert Enum.join(BotContext.render_parts(chat_id, opts), "") ==
+             Enum.join(parts, "")
   end
 
   test "pending_summary_dates returns missing days after the latest summary through yesterday" do
@@ -65,7 +92,9 @@ defmodule Froth.SummarizerTest do
       "March 7 summary"
     )
 
-    assert Summarizer.pending_summary_dates(chat_id, ~D[2026-03-09]) == [~D[2026-03-08]]
+    assert Summarizer.pending_summary_dates(chat_id, ~D[2026-03-09]) == [
+             ~D[2026-03-08]
+           ]
   end
 
   test "pending_summary_dates batches multiple missing days" do
@@ -95,7 +124,9 @@ defmodule Froth.SummarizerTest do
       "Partial March 7 summary"
     )
 
-    assert Summarizer.pending_summary_dates(chat_id, ~D[2026-03-09]) == [~D[2026-03-08]]
+    assert Summarizer.pending_summary_dates(chat_id, ~D[2026-03-09]) == [
+             ~D[2026-03-08]
+           ]
   end
 
   test "pending_summary_dates returns an empty list when yesterday is already covered" do
@@ -124,7 +155,14 @@ defmodule Froth.SummarizerTest do
     )
   end
 
-  defp insert_telegram_message(session_id, chat_id, message_id, sender_id, date, text) do
+  defp insert_telegram_message(
+         session_id,
+         chat_id,
+         message_id,
+         sender_id,
+         date,
+         text
+       ) do
     Repo.insert!(
       TelegramMessage.changeset(%TelegramMessage{}, %{
         telegram_session_id: session_id,

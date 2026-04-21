@@ -21,10 +21,14 @@ defmodule Froth.Agent.AwaitControl do
   def cancel_answer, do: @cancel_answer
   def check_answer, do: @check_answer
 
-  def await?(%PendingAsk{config: config}) when is_map(config), do: config["kind"] == "await"
+  def await?(%PendingAsk{config: config}) when is_map(config),
+    do: config["kind"] == "await"
+
   def await?(_pending_ask), do: false
 
-  def accepts_message_answer?(%PendingAsk{} = pending_ask), do: not await?(pending_ask)
+  def accepts_message_answer?(%PendingAsk{} = pending_ask),
+    do: not await?(pending_ask)
+
   def accepts_message_answer?(_pending_ask), do: true
 
   def alternatives do
@@ -51,7 +55,8 @@ defmodule Froth.Agent.AwaitControl do
     }
   end
 
-  def render_message(reason, task_ids) when is_binary(reason) and is_list(task_ids) do
+  def render_message(reason, task_ids)
+      when is_binary(reason) and is_list(task_ids) do
     task_block =
       task_ids
       |> Enum.map(&task_line/1)
@@ -93,7 +98,8 @@ defmodule Froth.Agent.AwaitControl do
   def maybe_finalize_message(%PendingAsk{} = pending_ask, session_id)
       when is_binary(session_id) do
     if await?(pending_ask) and is_integer(pending_ask.message_id) do
-      updated_text = pending_ask.question <> "\n\n" <> decision_line(pending_ask)
+      updated_text =
+        pending_ask.question <> "\n\n" <> decision_line(pending_ask)
 
       BotAdapter.edit_message_text(
         session_id,
@@ -143,9 +149,11 @@ defmodule Froth.Agent.AwaitControl do
     |> Enum.join("\n")
   end
 
-  defp task_status_block([], _opts), do: "No tracked background tasks were found."
+  defp task_status_block([], _opts),
+    do: "No tracked background tasks were found."
 
-  defp task_status_block(task_ids, opts) when is_list(task_ids) and is_list(opts) do
+  defp task_status_block(task_ids, opts)
+       when is_list(task_ids) and is_list(opts) do
     include_output? = Keyword.get(opts, :include_output?, false)
 
     Enum.map_join(task_ids, "\n\n", fn task_id ->

@@ -33,8 +33,15 @@ defmodule Froth.LLM.Providers.Anthropic do
   def decode_payload(%{"type" => "message_stop"}, _store), do: {[], true}
 
   def decode_payload(%{"type" => "error"} = payload, _store) do
-    {[%Edit{op: :set, resource: ["message"], path: ["error"], value: payload, raw: payload}],
-     true}
+    {[
+       %Edit{
+         op: :set,
+         resource: ["message"],
+         path: ["error"],
+         value: payload,
+         raw: payload
+       }
+     ], true}
   end
 
   def decode_payload(
@@ -45,7 +52,12 @@ defmodule Froth.LLM.Providers.Anthropic do
       [
         maybe_set(["message"], ["id"], message["id"], payload),
         maybe_set(["message"], ["model"], message["model"], payload),
-        maybe_merge(["message"], ["usage"], Map.get(message, "usage"), payload),
+        maybe_merge(
+          ["message"],
+          ["usage"],
+          Map.get(message, "usage"),
+          payload
+        ),
         %Edit{
           op: :open,
           resource: ["message"],
@@ -63,8 +75,18 @@ defmodule Froth.LLM.Providers.Anthropic do
 
     edits =
       [
-        maybe_set(["message"], ["stop_reason"], Map.get(delta, "stop_reason"), payload),
-        maybe_merge(["message"], ["usage"], Map.get(payload, "usage"), payload)
+        maybe_set(
+          ["message"],
+          ["stop_reason"],
+          Map.get(delta, "stop_reason"),
+          payload
+        ),
+        maybe_merge(
+          ["message"],
+          ["usage"],
+          Map.get(payload, "usage"),
+          payload
+        )
       ]
       |> Enum.reject(&is_nil/1)
 
@@ -262,8 +284,18 @@ defmodule Froth.LLM.Providers.Anthropic do
               value: signature,
               raw: payload
             },
-            %Edit{op: :delete, resource: block_path, path: ["__thinking_buf"], raw: payload},
-            %Edit{op: :delete, resource: block_path, path: ["__signature_buf"], raw: payload},
+            %Edit{
+              op: :delete,
+              resource: block_path,
+              path: ["__thinking_buf"],
+              raw: payload
+            },
+            %Edit{
+              op: :delete,
+              resource: block_path,
+              path: ["__signature_buf"],
+              raw: payload
+            },
             %Edit{
               op: :close,
               resource: block_path,
@@ -284,7 +316,8 @@ defmodule Froth.LLM.Providers.Anthropic do
               %{"input" => %{} = input} when map_size(input) > 0 ->
                 input
 
-              %{"__input_json_buf" => buf} when is_binary(buf) and buf != "" ->
+              %{"__input_json_buf" => buf}
+              when is_binary(buf) and buf != "" ->
                 case Jason.decode(buf) do
                   {:ok, %{} = input} -> input
                   _ -> %{}
@@ -295,15 +328,31 @@ defmodule Froth.LLM.Providers.Anthropic do
             end
 
           [
-            %Edit{op: :set, resource: block_path, path: ["input"], value: input, raw: payload},
-            %Edit{op: :delete, resource: block_path, path: ["__input_json_buf"], raw: payload},
+            %Edit{
+              op: :set,
+              resource: block_path,
+              path: ["input"],
+              value: input,
+              raw: payload
+            },
+            %Edit{
+              op: :delete,
+              resource: block_path,
+              path: ["__input_json_buf"],
+              raw: payload
+            },
             %Edit{
               op: :close,
               resource: block_path,
               attrs:
                 tool_block
                 |> Map.take(["server_name"])
-                |> Map.merge(%{"type" => type, "id" => id, "name" => name, "input" => input}),
+                |> Map.merge(%{
+                  "type" => type,
+                  "id" => id,
+                  "name" => name,
+                  "input" => input
+                }),
               raw: payload
             }
           ]
@@ -326,7 +375,11 @@ defmodule Froth.LLM.Providers.Anthropic do
             %Edit{
               op: :close,
               resource: block_path,
-              attrs: %{"type" => "text", "index" => idx, "text" => Map.get(block, "text", "")},
+              attrs: %{
+                "type" => "text",
+                "index" => idx,
+                "text" => Map.get(block, "text", "")
+              },
               raw: payload
             }
           ]
@@ -369,7 +422,8 @@ defmodule Froth.LLM.Providers.Anthropic do
         [
           %{
             "role" => encode_role(role),
-            "content" => encode_content_blocks(Message.content_blocks(normalized))
+            "content" =>
+              encode_content_blocks(Message.content_blocks(normalized))
           }
         ]
 
@@ -394,9 +448,13 @@ defmodule Froth.LLM.Providers.Anthropic do
     end)
   end
 
-  def extract_text_delta(%{"delta" => %{"text" => text}}) when is_binary(text), do: text
+  def extract_text_delta(%{"delta" => %{"text" => text}})
+      when is_binary(text), do: text
 
-  def extract_text_delta(%{"type" => "content_block_delta", "delta" => %{"text" => text}})
+  def extract_text_delta(%{
+        "type" => "content_block_delta",
+        "delta" => %{"text" => text}
+      })
       when is_binary(text),
       do: text
 
@@ -416,7 +474,8 @@ defmodule Froth.LLM.Providers.Anthropic do
     |> Enum.join()
   end
 
-  defp maybe_put(body, key, value, predicate) when is_function(predicate, 1) do
+  defp maybe_put(body, key, value, predicate)
+       when is_function(predicate, 1) do
     if predicate.(value), do: Map.put(body, key, value), else: body
   end
 
@@ -471,14 +530,21 @@ defmodule Froth.LLM.Providers.Anthropic do
       "url" => mcp_server_url(tool),
       "name" => mcp_server_name(tool)
     }
-    |> maybe_put("authorization_token", mcp_authorization_token(tool), &present_string?/1)
+    |> maybe_put(
+      "authorization_token",
+      mcp_authorization_token(tool),
+      &present_string?/1
+    )
   end
 
   defp encode_mcp_toolset(tool) when is_map(tool) do
     default_config =
       tool
       |> mcp_default_config()
-      |> maybe_put_map("enabled", if(allowlist_present?(tool), do: false, else: nil))
+      |> maybe_put_map(
+        "enabled",
+        if(allowlist_present?(tool), do: false, else: nil)
+      )
       |> maybe_put_map("defer_loading", Map.get(tool, "defer_loading", true))
 
     configs =
@@ -515,7 +581,8 @@ defmodule Froth.LLM.Providers.Anthropic do
       resolve_bearer_token_provider(Map.get(tool, "bearer_token_provider"))
   end
 
-  defp resolve_bearer_token_provider(provider) when is_binary(provider) and provider != "" do
+  defp resolve_bearer_token_provider(provider)
+       when is_binary(provider) and provider != "" do
     LLM.active_api_key(provider)
   end
 
@@ -532,7 +599,8 @@ defmodule Froth.LLM.Providers.Anthropic do
 
   defp maybe_enable_allowed_tools(configs, []), do: configs
 
-  defp maybe_enable_allowed_tools(configs, allowed_tools) when is_map(configs) do
+  defp maybe_enable_allowed_tools(configs, allowed_tools)
+       when is_map(configs) do
     Enum.reduce(allowed_tools, configs, fn tool_name, acc ->
       Map.update(acc, tool_name, %{"enabled" => true}, fn config ->
         Map.put_new(config, "enabled", true)
@@ -559,10 +627,14 @@ defmodule Froth.LLM.Providers.Anthropic do
   end
 
   defp stringify_map_value(%{} = map), do: stringify_map(map)
-  defp stringify_map_value(list) when is_list(list), do: Enum.map(list, &stringify_map_value/1)
+
+  defp stringify_map_value(list) when is_list(list),
+    do: Enum.map(list, &stringify_map_value/1)
+
   defp stringify_map_value(value), do: value
 
-  defp encode_tool_result_content(content) when is_binary(content), do: content
+  defp encode_tool_result_content(content) when is_binary(content),
+    do: content
 
   defp encode_tool_result_content(content) when is_list(content) do
     if Enum.all?(content, &content_block?/1) do
@@ -572,8 +644,12 @@ defmodule Froth.LLM.Providers.Anthropic do
     end
   end
 
-  defp encode_tool_result_content(%{"type" => _type} = block), do: [encode_content_block(block)]
-  defp encode_tool_result_content(%{"text" => _text} = block), do: [encode_content_block(block)]
+  defp encode_tool_result_content(%{"type" => _type} = block),
+    do: [encode_content_block(block)]
+
+  defp encode_tool_result_content(%{"text" => _text} = block),
+    do: [encode_content_block(block)]
+
   defp encode_tool_result_content(%{} = content), do: encode_jsonish(content)
   defp encode_tool_result_content(content), do: to_string(content)
 
@@ -590,7 +666,10 @@ defmodule Froth.LLM.Providers.Anthropic do
 
   defp encode_role(:user), do: "user"
   defp encode_role(:assistant), do: "assistant"
-  defp present_string?(value), do: is_binary(value) and String.trim(value) != ""
+
+  defp present_string?(value),
+    do: is_binary(value) and String.trim(value) != ""
+
   defp non_empty_list?(value), do: is_list(value) and value != []
   defp non_empty_map?(value), do: is_map(value) and map_size(value) > 0
 end

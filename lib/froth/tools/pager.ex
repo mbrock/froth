@@ -51,15 +51,18 @@ defmodule Froth.Tools.Pager do
           },
           "before" => %{
             "type" => "integer",
-            "description" => "For `grep`: lines of context before each match. Defaults to 0."
+            "description" =>
+              "For `grep`: lines of context before each match. Defaults to 0."
           },
           "after" => %{
             "type" => "integer",
-            "description" => "For `grep`: lines of context after each match. Defaults to 3."
+            "description" =>
+              "For `grep`: lines of context after each match. Defaults to 3."
           },
           "max" => %{
             "type" => "integer",
-            "description" => "For `grep`: cap on total matches reported. Defaults to 50."
+            "description" =>
+              "For `grep`: cap on total matches reported. Defaults to 50."
           },
           "case_sensitive" => %{
             "type" => "boolean",
@@ -74,7 +77,8 @@ defmodule Froth.Tools.Pager do
   end
 
   @impl true
-  def execute(%Context{}, %ToolUse{input: input}, _hooks) when is_map(input) do
+  def execute(%Context{}, %ToolUse{input: input}, _hooks)
+      when is_map(input) do
     id = input["id"]
     mode = input["mode"] || "read"
 
@@ -114,7 +118,17 @@ defmodule Froth.Tools.Pager do
     case Blobs.head(blob_id, lines) do
       {:ok, text} ->
         {:ok,
-         [Block.new([kind: "head", blob: blob_id, lines_requested: lines, no_fold: true], text)]}
+         [
+           Block.new(
+             [
+               kind: "head",
+               blob: blob_id,
+               lines_requested: lines,
+               no_fold: true
+             ],
+             text
+           )
+         ]}
 
       {:error, :not_found} ->
         {:error, "blob:#{blob_id} not found"}
@@ -127,7 +141,17 @@ defmodule Froth.Tools.Pager do
     case Blobs.tail(blob_id, lines) do
       {:ok, text} ->
         {:ok,
-         [Block.new([kind: "tail", blob: blob_id, lines_requested: lines, no_fold: true], text)]}
+         [
+           Block.new(
+             [
+               kind: "tail",
+               blob: blob_id,
+               lines_requested: lines,
+               no_fold: true
+             ],
+             text
+           )
+         ]}
 
       {:error, :not_found} ->
         {:error, "blob:#{blob_id} not found"}
@@ -140,7 +164,13 @@ defmodule Froth.Tools.Pager do
 
     case Blobs.page(blob_id, from_line: from_line, lines: lines) do
       {:ok, ""} ->
-        {:ok, [Block.new([kind: "page", blob: blob_id, from_line: from_line, empty: true], nil)]}
+        {:ok,
+         [
+           Block.new(
+             [kind: "page", blob: blob_id, from_line: from_line, empty: true],
+             nil
+           )
+         ]}
 
       {:ok, text} ->
         {:ok,
@@ -177,7 +207,13 @@ defmodule Froth.Tools.Pager do
 
       case Blobs.grep(blob_id, pattern, opts) do
         {:ok, %{total_matches: 0}} ->
-          {:ok, [Block.new([kind: "grep", blob: blob_id, pattern: pattern, total: 0], nil)]}
+          {:ok,
+           [
+             Block.new(
+               [kind: "grep", blob: blob_id, pattern: pattern, total: 0],
+               nil
+             )
+           ]}
 
         {:ok, %{total_matches: total, shown: shown, text: text}} ->
           {:ok,
@@ -209,12 +245,14 @@ defmodule Froth.Tools.Pager do
   end
 
   defp bounded_integer(value, default, lower_bound, upper_bound)
-       when is_integer(default) and is_integer(lower_bound) and is_integer(upper_bound) do
+       when is_integer(default) and is_integer(lower_bound) and
+              is_integer(upper_bound) do
     parsed = parse_positive_integer(value) || default
     parsed |> max(lower_bound) |> min(upper_bound)
   end
 
-  defp parse_positive_integer(value) when is_integer(value) and value > 0, do: value
+  defp parse_positive_integer(value) when is_integer(value) and value > 0,
+    do: value
 
   defp parse_positive_integer(value) when is_binary(value) do
     case Integer.parse(String.trim(value)) do

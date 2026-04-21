@@ -63,14 +63,24 @@ defmodule Froth.Telegram.Bot do
 
   def start_link(opts) when is_list(opts) do
     id = Keyword.fetch!(opts, :id)
-    name = Keyword.get(opts, :name, Module.concat(__MODULE__, String.capitalize(id)))
+
+    name =
+      Keyword.get(
+        opts,
+        :name,
+        Module.concat(__MODULE__, String.capitalize(id))
+      )
+
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
   @doc """
   Start a `CycleRuntime` under the resolved bot's private cycle supervisor.
   """
-  @spec start_cycle_runtime(String.t() | pid() | atom() | {:via, module(), term()}, keyword()) ::
+  @spec start_cycle_runtime(
+          String.t() | pid() | atom() | {:via, module(), term()},
+          keyword()
+        ) ::
           DynamicSupervisor.on_start_child() | {:error, :bot_not_running}
   def start_cycle_runtime(bot_ref, runtime_opts) when is_list(runtime_opts) do
     case resolve(bot_ref) do
@@ -87,7 +97,10 @@ defmodule Froth.Telegram.Bot do
     bot_config = BotConfig.build(opts)
     runtime_ref = Keyword.fetch!(opts, :runtime_ref)
 
-    Repo.allow(Froth.Telegram.Session.via(bot_config.session_id), "telegram bot")
+    Repo.allow(
+      Froth.Telegram.Session.via(bot_config.session_id),
+      "telegram bot"
+    )
 
     :ok = BotAdapter.subscribe(bot_config.session_id)
 
@@ -123,7 +136,13 @@ defmodule Froth.Telegram.Bot do
 
     if is_integer(chat_id) do
       MessageIdSync.put(state.bot_config.id, chat_id, old_id, new_id)
-      PendingAsks.sync_message_id(state.bot_config.id, chat_id, old_id, new_id)
+
+      PendingAsks.sync_message_id(
+        state.bot_config.id,
+        chat_id,
+        old_id,
+        new_id
+      )
     end
 
     :ok = CycleRuntime.sync_sent_message_id(old_id, new_id)
@@ -160,7 +179,10 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  def handle_info({:event, _event, %Message{role: :agent, content: content}}, state) do
+  def handle_info(
+        {:event, _event, %Message{role: :agent, content: content}},
+        state
+      ) do
     {:noreply, send_agent_response(state, content)}
   end
 
@@ -176,7 +198,12 @@ defmodule Froth.Telegram.Bot do
 
   def handle_info(
         {:DOWN, ref, :process, pid, _reason},
-        %{cycle_state: %CycleState{cycle_runtime_ref: ref, cycle_runtime_pid: pid}} = state
+        %{
+          cycle_state: %CycleState{
+            cycle_runtime_ref: ref,
+            cycle_runtime_pid: pid
+          }
+        } = state
       ) do
     {:noreply,
      state
@@ -198,8 +225,11 @@ defmodule Froth.Telegram.Bot do
   def handle_cast({:stop_loop, _inference_session_id}, state) do
     state =
       case state.cycle_state do
-        %CycleState{cycle_id: cycle_id} -> stop_cycle(state, cycle_id, notify?: true)
-        _ -> state
+        %CycleState{cycle_id: cycle_id} ->
+          stop_cycle(state, cycle_id, notify?: true)
+
+        _ ->
+          state
       end
 
     {:noreply, state}
@@ -221,7 +251,8 @@ defmodule Froth.Telegram.Bot do
     {:reply, start_cycle_runtime_child(state, runtime_opts), state}
   end
 
-  def handle_call(_, _from, state), do: {:reply, {:error, "unsupported"}, state}
+  def handle_call(_, _from, state),
+    do: {:reply, {:error, "unsupported"}, state}
 
   @doc """
   Look up a running Bot and return `{pid, %Froth.Telegram.Bot.Config{}}`.
@@ -229,7 +260,8 @@ defmodule Froth.Telegram.Bot do
   `bot_ref` can be a pid, a registered name (module atom or
   `{:via, ...}` tuple). Raises if the bot is not running.
   """
-  @spec snapshot(String.t() | pid() | atom() | {:via, module(), term()}) :: {pid(), BotConfig.t()}
+  @spec snapshot(String.t() | pid() | atom() | {:via, module(), term()}) ::
+          {pid(), BotConfig.t()}
   def snapshot(bot_ref) do
     pid =
       case resolve(bot_ref) do
@@ -267,11 +299,17 @@ defmodule Froth.Telegram.Bot do
     debounce_or_start(state, msg)
   end
 
-  defp dispatch_update_action(state, {:pending_ask_answer, pending_ask, answer, reply_to}) do
+  defp dispatch_update_action(
+         state,
+         {:pending_ask_answer, pending_ask, answer, reply_to}
+       ) do
     enqueue_or_resume_pending_ask(state, pending_ask, answer, reply_to)
   end
 
-  defp dispatch_update_action(state, {:callback_stop_cycle, query_id, cycle_id}) do
+  defp dispatch_update_action(
+         state,
+         {:callback_stop_cycle, query_id, cycle_id}
+       ) do
     BotAdapter.answer_callback(state.bot_config.session_id, query_id)
     stop_cycle(state, cycle_id, notify?: true)
   end
@@ -280,13 +318,24 @@ defmodule Froth.Telegram.Bot do
     BotAdapter.answer_callback(state.bot_config.session_id, query_id)
 
     case state.cycle_state do
-      %CycleState{cycle_id: cycle_id} -> stop_cycle(state, cycle_id, notify?: true)
-      _ -> state
+      %CycleState{cycle_id: cycle_id} ->
+        stop_cycle(state, cycle_id, notify?: true)
+
+      _ ->
+        state
     end
   end
 
-  defp dispatch_update_action(state, {:callback_game, query_id, _game_short_name}) do
-    BotAdapter.answer_callback_with_url(state.bot_config.session_id, query_id, @game_url)
+  defp dispatch_update_action(
+         state,
+         {:callback_game, query_id, _game_short_name}
+       ) do
+    BotAdapter.answer_callback_with_url(
+      state.bot_config.session_id,
+      query_id,
+      @game_url
+    )
+
     state
   end
 
@@ -298,14 +347,20 @@ defmodule Froth.Telegram.Bot do
     enqueue_or_resume_pending_ask(state, pending_ask, answer, reply_to)
   end
 
-  defp dispatch_update_action(state, {:callback_pending_ask_ignored, query_id}) do
+  defp dispatch_update_action(
+         state,
+         {:callback_pending_ask_ignored, query_id}
+       ) do
     BotAdapter.answer_callback(state.bot_config.session_id, query_id)
     state
   end
 
   defp dispatch_update_action(state, :ignore), do: state
 
-  defp route_update(%{"@type" => "updateNewMessage", "message" => msg}, bot_config)
+  defp route_update(
+         %{"@type" => "updateNewMessage", "message" => msg},
+         bot_config
+       )
        when is_map(msg) do
     sender = TgMessage.sender_user_id(msg)
     chat_id = TgMessage.chat_id(msg)
@@ -322,7 +377,11 @@ defmodule Froth.Telegram.Bot do
 
     allowed_chat? =
       is_integer(chat_id) and
-        BotAdapter.allowed_chat?(chat_id, bot_config.owner_user_id, bot_config.session_id)
+        BotAdapter.allowed_chat?(
+          chat_id,
+          bot_config.owner_user_id,
+          bot_config.session_id
+        )
 
     cond do
       sender == bot_config.bot_user_id ->
@@ -331,15 +390,28 @@ defmodule Froth.Telegram.Bot do
       not allowed_chat? ->
         :ignore
 
-      pending_ask = pending_ask_for_message(msg, bot_config, mentioned?, is_reply_to_bot) ->
+      pending_ask =
+          pending_ask_for_message(
+            msg,
+            bot_config,
+            mentioned?,
+            is_reply_to_bot
+          ) ->
         answer = pending_ask_answer_from_message(msg, bot_config)
         reply_to = msg["id"]
 
-        if is_binary(answer) and answer != "" and pending_ask_accepts_message_answer?(pending_ask) do
+        if is_binary(answer) and answer != "" and
+             pending_ask_accepts_message_answer?(pending_ask) do
           case PendingAsks.resolve(pending_ask, answer,
                  answer_message_id: msg["id"],
                  answered_via: "message",
-                 config_merge: resolution_config_for_message(msg, bot_config, pending_ask, answer)
+                 config_merge:
+                   resolution_config_for_message(
+                     msg,
+                     bot_config,
+                     pending_ask,
+                     answer
+                   )
                ) do
             {:ok, resolved_pending_ask} ->
               {:pending_ask_answer, resolved_pending_ask, answer, reply_to}
@@ -360,7 +432,10 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp route_update(%{"@type" => "updateNewCallbackQuery"} = query, bot_config) do
+  defp route_update(
+         %{"@type" => "updateNewCallbackQuery"} = query,
+         bot_config
+       ) do
     route_callback_query(query, bot_config)
   end
 
@@ -386,20 +461,28 @@ defmodule Froth.Telegram.Bot do
     case parse_callback_payload(query) do
       {:ok, "ask", index} ->
         with chat_id when is_integer(chat_id) <- TgMessage.chat_id(query),
-             message_id when is_integer(message_id) <- TgMessage.message_id(query),
+             message_id when is_integer(message_id) <-
+               TgMessage.message_id(query),
              %{} = pending_ask <-
-               PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, message_id),
+               PendingAsks.get_unresolved_by_message(
+                 bot_config.id,
+                 chat_id,
+                 message_id
+               ),
              alternative when is_binary(alternative) <-
                Enum.at(pending_ask.alternatives || [], index),
              {:ok, resolved_pending_ask} <-
                PendingAsks.resolve(pending_ask, alternative,
                  answered_via: "callback",
                  config_merge:
-                   resolution_config_for_callback(query, bot_config, pending_ask, alternative,
-                     index: index
-                   )
+                   resolution_config_for_callback(
+                     query,
+                     bot_config,
+                     pending_ask,
+                     alternative, index: index)
                ) do
-          {:callback_pending_ask, query_id, resolved_pending_ask, alternative, message_id}
+          {:callback_pending_ask, query_id, resolved_pending_ask, alternative,
+           message_id}
         else
           _ -> {:callback_pending_ask_ignored, query_id}
         end
@@ -412,17 +495,28 @@ defmodule Froth.Telegram.Bot do
           end
 
         with chat_id when is_integer(chat_id) <- TgMessage.chat_id(query),
-             message_id when is_integer(message_id) <- TgMessage.message_id(query),
+             message_id when is_integer(message_id) <-
+               TgMessage.message_id(query),
              %{} = pending_ask <-
-               PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, message_id),
+               PendingAsks.get_unresolved_by_message(
+                 bot_config.id,
+                 chat_id,
+                 message_id
+               ),
              true <- FailureIntervention.failure_intervention?(pending_ask),
              {:ok, resolved_pending_ask} <-
                PendingAsks.resolve(pending_ask, answer,
                  answered_via: "callback",
                  config_merge:
-                   resolution_config_for_callback(query, bot_config, pending_ask, answer)
+                   resolution_config_for_callback(
+                     query,
+                     bot_config,
+                     pending_ask,
+                     answer
+                   )
                ) do
-          {:callback_pending_ask, query_id, resolved_pending_ask, answer, message_id}
+          {:callback_pending_ask, query_id, resolved_pending_ask, answer,
+           message_id}
         else
           _ -> {:callback_pending_ask_ignored, query_id}
         end
@@ -439,17 +533,24 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp parse_callback_payload(%{
-         "payload" => %{"@type" => "callbackQueryPayloadData", "data" => data_b64}
+         "payload" => %{
+           "@type" => "callbackQueryPayloadData",
+           "data" => data_b64
+         }
        }) do
     with {:ok, data} <- Base.decode64(data_b64) do
       case String.split(data, ":", parts: 2) do
         ["ask", index] ->
           case Integer.parse(index) do
-            {parsed_index, ""} when parsed_index >= 0 -> {:ok, "ask", parsed_index}
-            _ -> :error
+            {parsed_index, ""} when parsed_index >= 0 ->
+              {:ok, "ask", parsed_index}
+
+            _ ->
+              :error
           end
 
-        [action, arg] when action in ["stopcycle", "stoploop", "askcarry", "askstop"] ->
+        [action, arg]
+        when action in ["stopcycle", "stoploop", "askcarry", "askstop"] ->
           {:ok, action, arg}
 
         _ ->
@@ -468,12 +569,18 @@ defmodule Froth.Telegram.Bot do
 
     cond do
       reply_message_id = TgMessage.reply_to_message_id(msg) ->
-        PendingAsks.get_unresolved_by_message(bot_config.id, chat_id, reply_message_id)
+        PendingAsks.get_unresolved_by_message(
+          bot_config.id,
+          chat_id,
+          reply_message_id
+        )
 
       (is_integer(chat_id) and chat_id > 0) or mentioned? or is_reply_to_bot ->
         case PendingAsks.latest_unresolved(bot_config.id, chat_id) do
           %{} = pending_ask ->
-            if FailureIntervention.reply_required?(pending_ask), do: nil, else: pending_ask
+            if FailureIntervention.reply_required?(pending_ask),
+              do: nil,
+              else: pending_ask
 
           other ->
             other
@@ -484,7 +591,12 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp pending_ask_for_message(_msg, _bot_config, _mentioned?, _is_reply_to_bot), do: nil
+  defp pending_ask_for_message(
+         _msg,
+         _bot_config,
+         _mentioned?,
+         _is_reply_to_bot
+       ), do: nil
 
   defp pending_ask_accepts_message_answer?(pending_ask) do
     AwaitControl.accepts_message_answer?(pending_ask)
@@ -494,7 +606,8 @@ defmodule Froth.Telegram.Bot do
     strip_bot_mention(TgMessage.text(msg), bot_config.bot_username)
   end
 
-  defp strip_bot_mention(text, bot_username) when is_binary(text) and is_binary(bot_username) do
+  defp strip_bot_mention(text, bot_username)
+       when is_binary(text) and is_binary(bot_username) do
     text
     |> String.trim()
     |> String.replace(~r/^@#{Regex.escape(bot_username)}[,:]?\s*/iu, "")
@@ -507,7 +620,8 @@ defmodule Froth.Telegram.Bot do
 
   defp strip_bot_mention(_text, _bot_username), do: nil
 
-  defp replied_to_bot?(msg, bot_user_id) when is_map(msg) and is_integer(bot_user_id) do
+  defp replied_to_bot?(msg, bot_user_id)
+       when is_map(msg) and is_integer(bot_user_id) do
     case msg do
       %{
         "reply_to" => %{
@@ -565,7 +679,14 @@ defmodule Froth.Telegram.Bot do
     start_cycle(state, chat_id, reply_to, text, user_content, system_prompt)
   end
 
-  defp start_cycle(state, chat_id, reply_to, text, user_content, system_prompt)
+  defp start_cycle(
+         state,
+         chat_id,
+         reply_to,
+         text,
+         user_content,
+         system_prompt
+       )
        when is_integer(chat_id) and (is_integer(reply_to) or is_nil(reply_to)) and
               is_binary(text) and is_binary(system_prompt) do
     bc = state.bot_config
@@ -616,12 +737,22 @@ defmodule Froth.Telegram.Bot do
         reply_to: reply_to
       })
 
-    Froth.broadcast(Froth.Telegram.chat_topic(chat_id), {:cycle_linked, chat_id, cycle_link})
+    Froth.broadcast(
+      Froth.Telegram.chat_topic(chat_id),
+      {:cycle_linked, chat_id, cycle_link}
+    )
 
     launch_cycle_worker(state, cycle, base_config, chat_id, reply_to)
   end
 
-  defp start_cycle(state, _chat_id, _reply_to, _text, _user_content, _system_prompt), do: state
+  defp start_cycle(
+         state,
+         _chat_id,
+         _reply_to,
+         _text,
+         _user_content,
+         _system_prompt
+       ), do: state
 
   defp launch_cycle_worker(
          state,
@@ -671,7 +802,8 @@ defmodule Froth.Telegram.Bot do
     }
   end
 
-  defp start_cycle_runtime_child(state, runtime_opts) when is_list(runtime_opts) do
+  defp start_cycle_runtime_child(state, runtime_opts)
+       when is_list(runtime_opts) do
     runtime_opts =
       runtime_opts
       |> Keyword.put_new(:bot_id, state.bot_config.id)
@@ -718,7 +850,8 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
-  defp append_response_instruction([]), do: [String.trim(@response_instruction)]
+  defp append_response_instruction([]),
+    do: [String.trim(@response_instruction)]
 
   defp append_response_instruction(parts) do
     {last, rest} = List.pop_at(parts, -1)
@@ -732,12 +865,18 @@ defmodule Froth.Telegram.Bot do
     active? = match?(%CycleState{cycle_id: ^cycle_id}, cs)
 
     if notify? and active? do
-      BotAdapter.send_italic(state.bot_config.session_id, cs.chat_id, cs.reply_to, "stopped")
+      BotAdapter.send_italic(
+        state.bot_config.session_id,
+        cs.chat_id,
+        cs.reply_to,
+        "stopped"
+      )
     end
 
     # Capture task ids before terminating the runtime; once it's dead,
     # its `active_tasks` state is gone along with its Registry entry.
-    task_ids = if active?, do: CycleRuntime.active_task_ids(cycle_id), else: []
+    task_ids =
+      if active?, do: CycleRuntime.active_task_ids(cycle_id), else: []
 
     state =
       if active? do
@@ -758,7 +897,9 @@ defmodule Froth.Telegram.Bot do
 
   defp maybe_resume_pending_ask(%{pending_ask_resumes: []} = state), do: state
 
-  defp maybe_resume_pending_ask(%{pending_ask_resumes: [resume | rest]} = state) do
+  defp maybe_resume_pending_ask(
+         %{pending_ask_resumes: [resume | rest]} = state
+       ) do
     state
     |> Map.put(:pending_ask_resumes, rest)
     |> resume_pending_ask(resume)
@@ -779,7 +920,12 @@ defmodule Froth.Telegram.Bot do
 
   defp enqueue_or_resume_pending_ask(state, pending_ask, answer, reply_to)
        when is_map(pending_ask) and is_binary(answer) do
-    _ = maybe_finalize_pending_ask_message(pending_ask, state.bot_config.session_id)
+    _ =
+      maybe_finalize_pending_ask_message(
+        pending_ask,
+        state.bot_config.session_id
+      )
+
     resume = %{pending_ask: pending_ask, answer: answer, reply_to: reply_to}
 
     cond do
@@ -805,7 +951,8 @@ defmodule Froth.Telegram.Bot do
 
       {:tool_result, %ToolResult{} = tool_result} ->
         with %Cycle{} = cycle <- Repo.get(Cycle, pending_ask.cycle_id),
-             %Config{} = config <- pending_ask_worker_config(state, pending_ask, reply_to),
+             %Config{} = config <-
+               pending_ask_worker_config(state, pending_ask, reply_to),
              {_message, _head_id} <-
                Agent.append_message(
                  cycle,
@@ -813,7 +960,10 @@ defmodule Froth.Telegram.Bot do
                  :user,
                  [ToolResult.to_api(tool_result)]
                ) do
-          BotAdapter.send_typing(state.bot_config.session_id, pending_ask.chat_id)
+          BotAdapter.send_typing(
+            state.bot_config.session_id,
+            pending_ask.chat_id
+          )
 
           launch_cycle_worker(
             clear_pending_ask_wait(state),
@@ -854,7 +1004,11 @@ defmodule Froth.Telegram.Bot do
         end
 
       {:tool_result, %ToolResult{} = tool_result} ->
-        BotAdapter.send_typing(state.bot_config.session_id, pending_ask.chat_id)
+        BotAdapter.send_typing(
+          state.bot_config.session_id,
+          pending_ask.chat_id
+        )
+
         state = clear_pending_ask_wait(state)
 
         try do
@@ -893,8 +1047,12 @@ defmodule Froth.Telegram.Bot do
     cond do
       FailureIntervention.failure_intervention?(pending_ask) ->
         case FailureIntervention.resume_tool_result(pending_ask) do
-          :stop -> {:stop_cycle, :stop}
-          tool_result -> {:tool_result, api_tool_result(tool_result, pending_ask.tool_use_id)}
+          :stop ->
+            {:stop_cycle, :stop}
+
+          tool_result ->
+            {:tool_result,
+             api_tool_result(tool_result, pending_ask.tool_use_id)}
         end
 
       AwaitControl.await?(pending_ask) ->
@@ -907,7 +1065,8 @@ defmodule Froth.Telegram.Bot do
         end
 
       true ->
-        {:tool_result, ToolResult.new(pending_ask.tool_use_id, pending_ask.answer || "")}
+        {:tool_result,
+         ToolResult.new(pending_ask.tool_use_id, pending_ask.answer || "")}
     end
   end
 
@@ -922,9 +1081,14 @@ defmodule Froth.Telegram.Bot do
     ToolResult.new(tool_use_id, content, is_error: result["is_error"] == true)
   end
 
-  defp api_tool_result(_other, tool_use_id), do: ToolResult.new(tool_use_id, "")
+  defp api_tool_result(_other, tool_use_id),
+    do: ToolResult.new(tool_use_id, "")
 
-  defp stop_pending_ask_cycle(state, %{cycle_id: cycle_id} = pending_ask, mode)
+  defp stop_pending_ask_cycle(
+         state,
+         %{cycle_id: cycle_id} = pending_ask,
+         mode
+       )
        when is_binary(cycle_id) do
     state =
       state
@@ -959,7 +1123,10 @@ defmodule Froth.Telegram.Bot do
 
       :detach ->
         Enum.each(task_ids, fn task_id ->
-          Froth.Tasks.subscribe_telegram(task_id, state.bot_config.id, pending_ask.chat_id,
+          Froth.Tasks.subscribe_telegram(
+            task_id,
+            state.bot_config.id,
+            pending_ask.chat_id,
             message_id: AwaitControl.reply_to(pending_ask)
           )
         end)
@@ -1001,9 +1168,20 @@ defmodule Froth.Telegram.Bot do
     )
   end
 
-  defp resolution_config_for_message(_msg, _bot_config, _pending_ask, _answer), do: %{}
+  defp resolution_config_for_message(
+         _msg,
+         _bot_config,
+         _pending_ask,
+         _answer
+       ), do: %{}
 
-  defp resolution_config_for_callback(query, bot_config, pending_ask, answer, opts \\ [])
+  defp resolution_config_for_callback(
+         query,
+         bot_config,
+         pending_ask,
+         answer,
+         opts \\ []
+       )
        when is_map(query) and is_map(bot_config) and is_list(opts) do
     actor_id = TgMessage.sender_user_id(query)
 
@@ -1034,7 +1212,10 @@ defmodule Froth.Telegram.Bot do
       %{
         "resolution" =>
           %{}
-          |> maybe_put_resolution_value("source", pending_ask_resolution_source(opts[:source]))
+          |> maybe_put_resolution_value(
+            "source",
+            pending_ask_resolution_source(opts[:source])
+          )
           |> maybe_put_resolution_value("actor_id", opts[:actor_id])
           |> maybe_put_resolution_value("actor_label", actor_label)
       }
@@ -1044,10 +1225,13 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp maybe_put_resolution_value(map, _key, nil), do: map
-  defp maybe_put_resolution_value(map, key, value), do: Map.put(map, key, value)
 
-  defp pending_ask_resolution_source(source) when source in [:message, :callback],
-    do: Atom.to_string(source)
+  defp maybe_put_resolution_value(map, key, value),
+    do: Map.put(map, key, value)
+
+  defp pending_ask_resolution_source(source)
+       when source in [:message, :callback],
+       do: Atom.to_string(source)
 
   defp pending_ask_resolution_source(_source), do: nil
 
@@ -1095,7 +1279,10 @@ defmodule Froth.Telegram.Bot do
   defdelegate resolve_system_prompt(chat_id, msg, bot_config), to: BotConfig
 
   defp send_agent_response(
-         %{cycle_state: %CycleState{chat_id: chat_id, reply_to: reply_to}, bot_config: bc} = state,
+         %{
+           cycle_state: %CycleState{chat_id: chat_id, reply_to: reply_to},
+           bot_config: bc
+         } = state,
          content
        )
        when is_integer(chat_id) do
@@ -1121,7 +1308,9 @@ defmodule Froth.Telegram.Bot do
     text
     |> BotAdapter.split_long_text()
     |> Enum.each(fn chunk ->
-      case BotAdapter.send_message(session_id, chat_id, chunk, reply_to: reply_to) do
+      case BotAdapter.send_message(session_id, chat_id, chunk,
+             reply_to: reply_to
+           ) do
         {:ok, sent} when is_binary(cycle_id) ->
           CycleRuntime.track_sent_message(cycle_id, sent, chunk)
 

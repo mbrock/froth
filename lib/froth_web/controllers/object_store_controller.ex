@@ -57,7 +57,9 @@ defmodule FrothWeb.ObjectStoreController do
          {:ok, key} <- normalize_segments(segments),
          {:ok, body, conn} <- read_full_body(conn),
          {:ok, _stored} <-
-           ObjectStore.put_bytes(key, body, content_type: request_content_type(conn)) do
+           ObjectStore.put_bytes(key, body,
+             content_type: request_content_type(conn)
+           ) do
       json(conn, %{key: key, url: public_object_url(conn, key)})
     else
       {:error, :unauthorized} ->
@@ -132,7 +134,11 @@ defmodule FrothWeb.ObjectStoreController do
   end
 
   defp put_raw_content_type(conn, content_type) do
-    put_resp_header(conn, "content-type", content_type || "application/octet-stream")
+    put_resp_header(
+      conn,
+      "content-type",
+      content_type || "application/octet-stream"
+    )
   end
 
   defp public_object_url(conn, key) do
@@ -143,9 +149,14 @@ defmodule FrothWeb.ObjectStoreController do
   end
 
   defp forwarded_origin(conn) do
-    with host when is_binary(host) and host != "" <- forwarded_header(conn, "x-forwarded-host"),
+    with host when is_binary(host) and host != "" <-
+           forwarded_header(conn, "x-forwarded-host"),
          scheme <- forwarded_header(conn, "x-forwarded-proto") || "https" do
-      forwarded_origin_url(scheme, host, forwarded_header(conn, "x-forwarded-port"))
+      forwarded_origin_url(
+        scheme,
+        host,
+        forwarded_header(conn, "x-forwarded-port")
+      )
     else
       _ -> nil
     end
@@ -195,7 +206,9 @@ defmodule FrothWeb.ObjectStoreController do
   end
 
   defp maybe_put_etag(conn, nil), do: conn
-  defp maybe_put_etag(conn, sha256), do: put_resp_header(conn, "etag", ~s|"sha256-#{sha256}"|)
+
+  defp maybe_put_etag(conn, sha256),
+    do: put_resp_header(conn, "etag", ~s|"sha256-#{sha256}"|)
 
   defp read_full_body(conn, acc \\ []) do
     case read_body(conn) do

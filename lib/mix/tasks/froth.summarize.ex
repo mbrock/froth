@@ -63,7 +63,8 @@ defmodule Mix.Tasks.Froth.Summarize do
   end
 
   defp summarize_pending_days(node, gl, chat_id) do
-    dates = :erpc.call(node, Froth.Summarizer, :pending_summary_dates, [chat_id])
+    dates =
+      :erpc.call(node, Froth.Summarizer, :pending_summary_dates, [chat_id])
 
     case dates do
       [] ->
@@ -95,7 +96,9 @@ defmodule Mix.Tasks.Froth.Summarize do
   defp summarize_one_day(node, gl, chat_id, %Date{} = date) do
     date_str = Date.to_iso8601(date)
 
-    Mix.shell().info("Summarizing chat #{chat_id} for #{date_str} on #{node}...")
+    Mix.shell().info(
+      "Summarizing chat #{chat_id} for #{date_str} on #{node}..."
+    )
 
     code = "Froth.Summarizer.summarize_day(#{chat_id}, ~D[#{date_str}])"
 
@@ -105,7 +108,10 @@ defmodule Mix.Tasks.Froth.Summarize do
         :ok
 
       {:error, :no_messages} ->
-        Mix.shell().info("No messages found for chat #{chat_id} on #{date_str}; skipping.")
+        Mix.shell().info(
+          "No messages found for chat #{chat_id} on #{date_str}; skipping."
+        )
+
         :ok
 
       {:error, reason} ->

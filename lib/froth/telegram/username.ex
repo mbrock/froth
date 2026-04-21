@@ -16,7 +16,14 @@ defmodule Froth.Telegram.Username do
 
   def changeset(username, attrs) do
     username
-    |> cast(attrs, [:user_id, :username, :first_name, :last_name, :label, :source_session_id])
+    |> cast(attrs, [
+      :user_id,
+      :username,
+      :first_name,
+      :last_name,
+      :label,
+      :source_session_id
+    ])
     |> validate_required([:user_id, :label])
   end
 end

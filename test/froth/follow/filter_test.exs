@@ -14,7 +14,11 @@ defmodule Froth.Follow.FilterTest do
         }
       )
 
-    assert Filter.matches?(entry, Filter.new(event_prefix: "froth.agent", cycle_id: "01KMDKN3"))
+    assert Filter.matches?(
+             entry,
+             Filter.new(event_prefix: "froth.agent", cycle_id: "01KMDKN3")
+           )
+
     refute Filter.matches?(entry, Filter.new(event_prefix: "froth.telegram"))
     refute Filter.matches?(entry, Filter.new(cycle_id: "01OTHER"))
   end

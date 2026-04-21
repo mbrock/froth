@@ -45,21 +45,32 @@ defmodule Froth.Tools.RegisterHeadlines do
                   "type" => "string",
                   "description" => "A single relevant emoji for the headline"
                 },
-                "title" => %{"type" => "string", "description" => "Short headline title"},
+                "title" => %{
+                  "type" => "string",
+                  "description" => "Short headline title"
+                },
                 "sentence" => %{
                   "type" => "string",
                   "description" => "One sentence expanding on the headline"
                 },
                 "from_time" => %{
                   "type" => "string",
-                  "description" => "Approximate event start time, ISO 8601 UTC datetime string"
+                  "description" =>
+                    "Approximate event start time, ISO 8601 UTC datetime string"
                 },
                 "to_time" => %{
                   "type" => "string",
-                  "description" => "Approximate event end time, ISO 8601 UTC datetime string"
+                  "description" =>
+                    "Approximate event end time, ISO 8601 UTC datetime string"
                 }
               },
-              "required" => ["emoji", "title", "sentence", "from_time", "to_time"],
+              "required" => [
+                "emoji",
+                "title",
+                "sentence",
+                "from_time",
+                "to_time"
+              ],
               "additionalProperties" => false
             }
           }
@@ -81,9 +92,18 @@ defmodule Froth.Tools.RegisterHeadlines do
     session_id = Support.session_id(ctx)
 
     with {:ok, normalized_headlines} <- normalize_headlines(headlines) do
-      case maybe_send_headlines_message(ctx, date, normalized_headlines, hooks) do
+      case maybe_send_headlines_message(
+             ctx,
+             date,
+             normalized_headlines,
+             hooks
+           ) do
         {:ok, _sent} ->
-          store_headlines_registered_event(date, chat_id, normalized_headlines)
+          store_headlines_registered_event(
+            date,
+            chat_id,
+            normalized_headlines
+          )
 
           Span.execute(
             [:froth, :headlines, :registered],
@@ -123,13 +143,21 @@ defmodule Froth.Tools.RegisterHeadlines do
   def execute(_ctx, _tool_call, _hooks),
     do: {:error, "register_headlines requires date and headlines"}
 
-  defp maybe_send_headlines_message(%Context{} = ctx, date, normalized_headlines, hooks)
+  defp maybe_send_headlines_message(
+         %Context{} = ctx,
+         date,
+         normalized_headlines,
+         hooks
+       )
        when is_binary(date) and is_list(normalized_headlines) do
     if ctx.spam do
       chat_id = Support.chat_id(ctx)
       session_id = Support.session_id(ctx)
       {text, entities} = format_headlines_message(date, normalized_headlines)
-      send_message_fun = Keyword.get(hooks, :send_message_fun, &BotAdapter.send_message/4)
+
+      send_message_fun =
+        Keyword.get(hooks, :send_message_fun, &BotAdapter.send_message/4)
+
       reply_markup = headlines_reply_markup(ctx)
 
       send_message_opts =
@@ -147,8 +175,11 @@ defmodule Froth.Tools.RegisterHeadlines do
     |> Enum.with_index()
     |> Enum.reduce_while({:ok, []}, fn {headline, index}, {:ok, acc} ->
       case normalize_headline(headline) do
-        {:ok, normalized} -> {:cont, {:ok, acc ++ [normalized]}}
-        {:error, reason} -> {:halt, {:error, "headline #{index + 1}: #{reason}"}}
+        {:ok, normalized} ->
+          {:cont, {:ok, acc ++ [normalized]}}
+
+        {:error, reason} ->
+          {:halt, {:error, "headline #{index + 1}: #{reason}"}}
       end
     end)
   end
@@ -178,9 +209,12 @@ defmodule Froth.Tools.RegisterHeadlines do
   end
 
   defp normalize_headline(_headline),
-    do: {:error, "expected emoji, title, sentence, from_time, and to_time strings"}
+    do:
+      {:error,
+       "expected emoji, title, sentence, from_time, and to_time strings"}
 
-  defp format_headlines_message(date, headlines) when is_binary(date) and is_list(headlines) do
+  defp format_headlines_message(date, headlines)
+       when is_binary(date) and is_list(headlines) do
     separator = "\n\n"
 
     body =
@@ -197,14 +231,18 @@ defmodule Froth.Tools.RegisterHeadlines do
 
     entities =
       headlines
-      |> Enum.reduce({header_entities, utf16_length(date <> separator)}, fn headline,
-                                                                            {acc, offset} ->
-        title = headline["title"]
-        line = headline_line(headline)
-        title_offset = offset + headline_title_offset(headline)
-        next_offset = offset + utf16_length(line) + utf16_length(separator)
-        {acc ++ [bold_entity(title_offset, utf16_length(title))], next_offset}
-      end)
+      |> Enum.reduce(
+        {header_entities, utf16_length(date <> separator)},
+        fn headline, {acc, offset} ->
+          title = headline["title"]
+          line = headline_line(headline)
+          title_offset = offset + headline_title_offset(headline)
+          next_offset = offset + utf16_length(line) + utf16_length(separator)
+
+          {acc ++ [bold_entity(title_offset, utf16_length(title))],
+           next_offset}
+        end
+      )
       |> elem(0)
 
     {text, entities}
@@ -229,7 +267,8 @@ defmodule Froth.Tools.RegisterHeadlines do
     with {:ok, normalized_emoji} <- normalize_headline_emoji(emoji),
          {:ok, normalized_from_time, from_datetime} <-
            normalize_iso8601_datetime(from_time, "from_time"),
-         {:ok, normalized_to_time, to_datetime} <- normalize_iso8601_datetime(to_time, "to_time"),
+         {:ok, normalized_to_time, to_datetime} <-
+           normalize_iso8601_datetime(to_time, "to_time"),
          :ok <- validate_headline_time_range(from_datetime, to_datetime) do
       {:ok,
        %{
@@ -277,14 +316,18 @@ defmodule Froth.Tools.RegisterHeadlines do
 
       {:error, _reason} ->
         case NaiveDateTime.from_iso8601(value) do
-          {:ok, naive_datetime} -> {:ok, DateTime.from_naive!(naive_datetime, "Etc/UTC")}
-          {:error, _reason} -> :error
+          {:ok, naive_datetime} ->
+            {:ok, DateTime.from_naive!(naive_datetime, "Etc/UTC")}
+
+          {:error, _reason} ->
+            :error
         end
     end
   end
 
   defp validate_headline_time_range(from_datetime, to_datetime)
-       when is_struct(from_datetime, DateTime) and is_struct(to_datetime, DateTime) do
+       when is_struct(from_datetime, DateTime) and
+              is_struct(to_datetime, DateTime) do
     case DateTime.compare(from_datetime, to_datetime) do
       :gt -> {:error, "from_time must be before or equal to to_time"}
       _ -> :ok
@@ -334,7 +377,9 @@ defmodule Froth.Tools.RegisterHeadlines do
       done_days: MapSet.size(registered_dates),
       total_days: length(summary_dates),
       next_unfinished:
-        Enum.find(summary_dates, fn date -> not MapSet.member?(registered_dates, date) end)
+        Enum.find(summary_dates, fn date ->
+          not MapSet.member?(registered_dates, date)
+        end)
     }
   end
 
@@ -342,9 +387,12 @@ defmodule Froth.Tools.RegisterHeadlines do
     Repo.all(
       from(s in ChatSummary,
         where: s.chat_id == ^chat_id,
-        distinct: fragment("timezone('UTC', to_timestamp(?))::date", s.from_date),
-        order_by: fragment("timezone('UTC', to_timestamp(?))::date", s.from_date),
-        select: fragment("timezone('UTC', to_timestamp(?))::date", s.from_date)
+        distinct:
+          fragment("timezone('UTC', to_timestamp(?))::date", s.from_date),
+        order_by:
+          fragment("timezone('UTC', to_timestamp(?))::date", s.from_date),
+        select:
+          fragment("timezone('UTC', to_timestamp(?))::date", s.from_date)
       ),
       log: false
     )
@@ -368,13 +416,16 @@ defmodule Froth.Tools.RegisterHeadlines do
   end
 
   defp maybe_put_send_message_opt(keyword, _key, nil), do: keyword
-  defp maybe_put_send_message_opt(keyword, key, value), do: Keyword.put(keyword, key, value)
+
+  defp maybe_put_send_message_opt(keyword, key, value),
+    do: Keyword.put(keyword, key, value)
 
   defp headlines_reply_markup(%Context{
          cycle_id: cycle_id,
          bot_config: %BotConfig{id: bot_id, bot_username: bot_username}
        })
-       when is_binary(cycle_id) and cycle_id != "" and is_binary(bot_id) and bot_id != "" and
+       when is_binary(cycle_id) and cycle_id != "" and is_binary(bot_id) and
+              bot_id != "" and
               is_binary(bot_username) and bot_username != "" do
     %{
       "@type" => "replyMarkupInlineKeyboard",
@@ -385,7 +436,8 @@ defmodule Froth.Tools.RegisterHeadlines do
             "text" => "Open",
             "type" => %{
               "@type" => "inlineKeyboardButtonTypeUrl",
-              "url" => "https://t.me/#{bot_username}/tool?startapp=cycle_#{bot_id}_#{cycle_id}"
+              "url" =>
+                "https://t.me/#{bot_username}/tool?startapp=cycle_#{bot_id}_#{cycle_id}"
             }
           }
         ]
@@ -395,7 +447,8 @@ defmodule Froth.Tools.RegisterHeadlines do
 
   defp headlines_reply_markup(_ctx), do: nil
 
-  defp bold_entity(offset, length) when is_integer(offset) and is_integer(length) do
+  defp bold_entity(offset, length)
+       when is_integer(offset) and is_integer(length) do
     %{
       "@type" => "textEntity",
       "offset" => offset,

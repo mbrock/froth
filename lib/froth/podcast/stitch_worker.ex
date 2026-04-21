@@ -53,14 +53,33 @@ defmodule Froth.Podcast.StitchWorker do
       if missing != [] do
         {:error, "missing segments: #{inspect(missing)}"}
       else
-        stitch_and_send(seg_paths, pause_ms, chat_id, label, bot_token, batch_id)
+        stitch_and_send(
+          seg_paths,
+          pause_ms,
+          chat_id,
+          label,
+          bot_token,
+          batch_id
+        )
       end
     end
   end
 
-  defp stitch_and_send(seg_paths, pause_ms, chat_id, label, bot_token, batch_id) do
+  defp stitch_and_send(
+         seg_paths,
+         pause_ms,
+         chat_id,
+         label,
+         bot_token,
+         batch_id
+       ) do
     total = length(seg_paths)
-    send_progress(bot_token, chat_id, "#{label} — stitching #{total} segments...")
+
+    send_progress(
+      bot_token,
+      chat_id,
+      "#{label} — stitching #{total} segments..."
+    )
 
     # Generate pause file
     pause_path = "/tmp/podcast_pause_#{pause_ms}ms.mp3"
@@ -135,9 +154,16 @@ defmodule Froth.Podcast.StitchWorker do
     duration = probe |> String.trim() |> String.to_float() |> round()
     minutes = div(duration, 60)
     seconds = rem(duration, 60)
-    duration_str = "#{minutes}:#{String.pad_leading(Integer.to_string(seconds), 2, "0")}"
 
-    send_progress(bot_token, chat_id, "#{label} — uploading #{duration_str}...")
+    duration_str =
+      "#{minutes}:#{String.pad_leading(Integer.to_string(seconds), 2, "0")}"
+
+    send_progress(
+      bot_token,
+      chat_id,
+      "#{label} — uploading #{duration_str}..."
+    )
+
     Froth.Telegram.send_audio("charlie", chat_id, output_path, caption: label)
 
     # Copy to static directory for HTTP serving (less.rest/audio/hourly/{batch_id}.mp3)
@@ -150,7 +176,11 @@ defmodule Froth.Podcast.StitchWorker do
       set: [status: "done", audio_url: "/audio/hourly/#{batch_id}.mp3"]
     )
 
-    send_progress(bot_token, chat_id, "#{label} — done. #{total} segments, #{duration_str}.")
+    send_progress(
+      bot_token,
+      chat_id,
+      "#{label} — done. #{total} segments, #{duration_str}."
+    )
 
     # Cleanup
     File.rm(concat_path)

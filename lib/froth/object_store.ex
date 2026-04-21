@@ -17,7 +17,11 @@ defmodule Froth.ObjectStore do
       put_bytes(
         normalized_key,
         body,
-        Keyword.put_new(opts, :content_type, MIME.from_path(src_path) || @default_content_type)
+        Keyword.put_new(
+          opts,
+          :content_type,
+          MIME.from_path(src_path) || @default_content_type
+        )
       )
     end
   end
@@ -26,7 +30,8 @@ defmodule Froth.ObjectStore do
     sha256 = sha256_hex(body)
 
     with {:ok, key} <- content_address_key(@sha256_algorithm, sha256),
-         {:ok, stored} <- put_bytes(key, body, Keyword.put(opts, :sha256, sha256)) do
+         {:ok, stored} <-
+           put_bytes(key, body, Keyword.put(opts, :sha256, sha256)) do
       {:ok, Map.put(stored, :sha256, sha256)}
     end
   end
@@ -59,7 +64,10 @@ defmodule Froth.ObjectStore do
             [{"content-type", content_type}]
             |> maybe_put_write_token()
 
-          case Req.put(internal_url(normalized_key), headers: req_headers, body: body) do
+          case Req.put(internal_url(normalized_key),
+                 headers: req_headers,
+                 body: body
+               ) do
             {:ok, %{status: status}} when status in 200..299 ->
               {:ok,
                %{
@@ -220,7 +228,8 @@ defmodule Froth.ObjectStore do
          key: normalized_key,
          path: located.path,
          body: body,
-         metadata: Map.put_new(located.metadata, :content_length, byte_size(body))
+         metadata:
+           Map.put_new(located.metadata, :content_length, byte_size(body))
        }}
     end
   end
@@ -281,7 +290,8 @@ defmodule Froth.ObjectStore do
     end
   end
 
-  defp normalize_metadata(metadata, normalized_key, path) when is_map(metadata) do
+  defp normalize_metadata(metadata, normalized_key, path)
+       when is_map(metadata) do
     %{
       key: normalized_key,
       content_type:
@@ -289,22 +299,28 @@ defmodule Froth.ObjectStore do
           metadata[:content_type] ||
           MIME.from_path(path || normalized_key) || @default_content_type,
       content_length:
-        metadata["content_length"] || metadata["content-length"] || metadata[:content_length],
-      sha256: metadata["sha256"] || metadata[:sha256] || sha256_from_key(normalized_key)
+        metadata["content_length"] || metadata["content-length"] ||
+          metadata[:content_length],
+      sha256:
+        metadata["sha256"] || metadata[:sha256] ||
+          sha256_from_key(normalized_key)
     }
   end
 
   defp fallback_metadata(normalized_key, path) do
     %{
       key: normalized_key,
-      content_type: MIME.from_path(path || normalized_key) || @default_content_type,
+      content_type:
+        MIME.from_path(path || normalized_key) || @default_content_type,
       content_length: nil,
       sha256: sha256_from_key(normalized_key)
     }
   end
 
   defp metadata_path(normalized_key) do
-    Path.join([metadata_root_dir() | String.split(normalized_key, "/", trim: true)]) <> ".json"
+    Path.join([
+      metadata_root_dir() | String.split(normalized_key, "/", trim: true)
+    ]) <> ".json"
   end
 
   defp metadata_root_dir do

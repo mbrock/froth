@@ -55,10 +55,12 @@ defmodule Froth.Context.Markup do
     |> Enum.reject(&is_nil/1)
   end
 
-  defp drop_phx_attrs({tag, attrs, children}) when is_list(attrs) and is_list(children) do
+  defp drop_phx_attrs({tag, attrs, children})
+       when is_list(attrs) and is_list(children) do
     clean_attrs =
       Enum.reject(attrs, fn {name, _value} ->
-        String.starts_with?(name, "phx-") or String.starts_with?(name, "data-phx-")
+        String.starts_with?(name, "phx-") or
+          String.starts_with?(name, "data-phx-")
       end)
 
     {tag, clean_attrs, drop_phx_attrs(children)}
@@ -158,9 +160,11 @@ defmodule Froth.Context.Markup do
 
   defp render_node(other, _pretty?, _depth), do: to_string(other)
 
-  defp inline_children?([text], tag, rendered_attrs, depth) when is_binary(text) do
+  defp inline_children?([text], tag, rendered_attrs, depth)
+       when is_binary(text) do
     not String.contains?(text, "\n") and
-      depth * 2 + String.length(tag) * 2 + IO.iodata_length(rendered_attrs) + String.length(text) +
+      depth * 2 + String.length(tag) * 2 + IO.iodata_length(rendered_attrs) +
+        String.length(text) +
         5 <= 80
   end
 
@@ -179,7 +183,8 @@ defmodule Froth.Context.Markup do
   end
 
   defp needs_quotes?(value) do
-    value == "" or String.contains?(value, [" ", "\t", "\n", "\"", "'", "<", ">", "="])
+    value == "" or
+      String.contains?(value, [" ", "\t", "\n", "\"", "'", "<", ">", "="])
   end
 
   defp escape_text(text) when is_binary(text) do

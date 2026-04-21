@@ -40,7 +40,8 @@ defmodule Froth.Telemetry.Logger do
   defp normalize_measurements(m) do
     Map.new(m, fn
       {:duration, native} when is_integer(native) ->
-        {:duration_ms, System.convert_time_unit(native, :native, :millisecond)}
+        {:duration_ms,
+         System.convert_time_unit(native, :native, :millisecond)}
 
       {:system_time, native} when is_integer(native) ->
         {:system_time, native}

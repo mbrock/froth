@@ -33,7 +33,13 @@ defmodule Froth.Codex.TaskWatcher do
   end
 
   @impl true
-  def init(%{task_id: task_id, session_id: session_id, session_module: session_module} = args) do
+  def init(
+        %{
+          task_id: task_id,
+          session_id: session_id,
+          session_module: session_module
+        } = args
+      ) do
     Froth.Repo.allow(args[:caller], "codex task watcher")
 
     with :ok <- session_module.subscribe(session_id),
@@ -57,12 +63,18 @@ defmodule Froth.Codex.TaskWatcher do
   end
 
   @impl true
-  def handle_info({:codex_session_updated, session_id}, %{session_id: session_id} = state) do
+  def handle_info(
+        {:codex_session_updated, session_id},
+        %{session_id: session_id} = state
+      ) do
     case state.session_module.snapshot(session_id) do
       {:ok, snapshot} ->
         new_entries = new_entries(snapshot, state.last_entry_sequence)
         now_working? = working_snapshot?(snapshot)
-        saw_working? = state.saw_working? or now_working? or saw_working_entry?(new_entries)
+
+        saw_working? =
+          state.saw_working? or now_working? or
+            saw_working_entry?(new_entries)
 
         completed_turn? =
           not now_working? and saw_completed_turn_entry?(new_entries)
@@ -76,12 +88,20 @@ defmodule Froth.Codex.TaskWatcher do
             {:stop, :normal, state}
 
           idle_after_turn? or completed_turn? ->
-            Froth.Tasks.complete(state.task_id, completion_metadata(snapshot, state.session_id))
+            Froth.Tasks.complete(
+              state.task_id,
+              completion_metadata(snapshot, state.session_id)
+            )
+
             {:stop, :normal, state}
 
           true ->
             {:noreply,
-             %{state | saw_working?: saw_working?, last_entry_sequence: last_entry_sequence}}
+             %{
+               state
+               | saw_working?: saw_working?,
+                 last_entry_sequence: last_entry_sequence
+             }}
         end
 
       {:error, reason} ->
@@ -111,7 +131,10 @@ defmodule Froth.Codex.TaskWatcher do
   end
 
   defp working_snapshot?(snapshot) when is_map(snapshot) do
-    active_turn_id = Map.get(snapshot, :active_turn_id) || Map.get(snapshot, "active_turn_id")
+    active_turn_id =
+      Map.get(snapshot, :active_turn_id) ||
+        Map.get(snapshot, "active_turn_id")
+
     is_binary(active_turn_id)
   end
 
@@ -129,7 +152,10 @@ defmodule Froth.Codex.TaskWatcher do
 
   defp new_entries(snapshot, last_entry_sequence)
        when is_map(snapshot) and is_integer(last_entry_sequence) do
-    Enum.filter(snapshot_entries(snapshot), &(entry_sequence(&1) > last_entry_sequence))
+    Enum.filter(
+      snapshot_entries(snapshot),
+      &(entry_sequence(&1) > last_entry_sequence)
+    )
   end
 
   defp saw_working_entry?(entries) when is_list(entries) do
@@ -141,7 +167,8 @@ defmodule Froth.Codex.TaskWatcher do
   end
 
   defp completion_metadata(snapshot, session_id) when is_map(snapshot) do
-    thread_id = Map.get(snapshot, :thread_id) || Map.get(snapshot, "thread_id")
+    thread_id =
+      Map.get(snapshot, :thread_id) || Map.get(snapshot, "thread_id")
 
     %{session_id: session_id, thread_id: thread_id}
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
@@ -183,7 +210,8 @@ defmodule Froth.Codex.TaskWatcher do
     Map.get(entry, :sequence) || Map.get(entry, "sequence") || 0
   end
 
-  defp entry_body_starts_with?(entry, prefix) when is_map(entry) and is_binary(prefix) do
+  defp entry_body_starts_with?(entry, prefix)
+       when is_map(entry) and is_binary(prefix) do
     body = Map.get(entry, :body) || Map.get(entry, "body")
     is_binary(body) and String.starts_with?(body, prefix)
   end

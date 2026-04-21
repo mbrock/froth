@@ -2,7 +2,9 @@ defmodule FrothWeb.SyntaxHighlight do
   @moduledoc false
 
   @css_class "froth-highlight"
-  @mobile_line_length String.length(~s|for f <- ["phoenix.ex", "ecto.ex", "logs.ex", "|)
+  @mobile_line_length String.length(
+                        ~s|for f <- ["phoenix.ex", "ecto.ex", "logs.ex", "|
+                      )
   @stylesheet """
   .#{@css_class},
   .#{@css_class} .hll,

@@ -54,14 +54,22 @@ defmodule Froth.Telegram.BotContextHTML do
               optional(:narration) => String.t() | nil
             }
             | %{:kind => :return, :outcome => tool_outcome()}
-            | %{:kind => :intervention, optional(:data) => map(), optional(:text) => String.t()}
+            | %{
+                :kind => :intervention,
+                optional(:data) => map(),
+                optional(:text) => String.t()
+              }
 
     @type tool_outcome ::
             {:ok, [Froth.Context.Block.t()] | String.t() | term()}
             | {:error, String.t()}
             | {:await, map()}
             | {:yield, String.t()}
-    @type cycle_trace :: %{cycle_id: String.t(), inserted_at: any(), entries: [cycle_entry()]}
+    @type cycle_trace :: %{
+            cycle_id: String.t(),
+            inserted_at: any(),
+            entries: [cycle_entry()]
+          }
 
     @type t :: %__MODULE__{
             chapters: [chapter()],
@@ -141,11 +149,17 @@ defmodule Froth.Telegram.BotContextHTML do
       |> Map.put(:participants, participants)
       |> Map.put(:now_utc, Calendar.strftime(now, "%Y-%m-%d %H:%M UTC"))
       |> Map.put(:now_latvia, Calendar.strftime(latvia, "%Y-%m-%d %H:%M %Z"))
-      |> Map.put(:now_thailand, Calendar.strftime(thailand, "%Y-%m-%d %H:%M %Z"))
+      |> Map.put(
+        :now_thailand,
+        Calendar.strftime(thailand, "%Y-%m-%d %H:%M %Z")
+      )
 
     ~H"""
     <info>
-      <chat name={@chat_context.chat_name} id={"tg:" <> to_string(@chat_context.chat_id)} />
+      <chat
+        name={@chat_context.chat_name}
+        id={"tg:" <> to_string(@chat_context.chat_id)}
+      />
       <date>{@now_utc}</date>
       <date>{@now_latvia}</date>
       <date>{@now_thailand}</date>
@@ -280,7 +294,11 @@ defmodule Froth.Telegram.BotContextHTML do
   end
 
   def trace_entry(%{entry: %{kind: :intervention} = entry} = assigns) do
-    assigns = assign(assigns, data: Map.get(entry, :data, %{}), text: Map.get(entry, :text))
+    assigns =
+      assign(assigns,
+        data: Map.get(entry, :data, %{}),
+        text: Map.get(entry, :text)
+      )
 
     ~H"""
     <.intervention data={@data} text={@text} />
@@ -288,7 +306,10 @@ defmodule Froth.Telegram.BotContextHTML do
   end
 
   def trace_entry(assigns) do
-    assigns = assign(assigns, fallback: inspect(assigns.entry, limit: 10, printable_limit: 500))
+    assigns =
+      assign(assigns,
+        fallback: inspect(assigns.entry, limit: 10, printable_limit: 500)
+      )
 
     ~H"""
     <unknown_entry>{@fallback}</unknown_entry>
@@ -363,11 +384,18 @@ defmodule Froth.Telegram.BotContextHTML do
     {attr_pairs, body_pairs} = split_fields(v)
 
     assigns =
-      assign(assigns, attr_pairs: to_attr_list(attr_pairs), body_pairs: body_pairs)
+      assign(assigns,
+        attr_pairs: to_attr_list(attr_pairs),
+        body_pairs: body_pairs
+      )
 
     ~H"""
     <.field_tag name={@name} extra={@attr_pairs}>
-      <.input_field :for={{k, val} <- @body_pairs} name={to_string(k)} value={val} />
+      <.input_field
+        :for={{k, val} <- @body_pairs}
+        name={to_string(k)}
+        value={val}
+      />
     </.field_tag>
     """
   end
@@ -470,7 +498,8 @@ defmodule Froth.Telegram.BotContextHTML do
   end
 
   def tool_return(%{outcome: {:ok, value}} = assigns) do
-    assigns = assign(assigns, value: inspect(value, limit: 20, printable_limit: 500))
+    assigns =
+      assign(assigns, value: inspect(value, limit: 20, printable_limit: 500))
 
     ~H"""
     <return>{@value}</return>
@@ -500,7 +529,10 @@ defmodule Froth.Telegram.BotContextHTML do
   end
 
   def tool_return(assigns) do
-    assigns = assign(assigns, fallback: inspect(assigns.outcome, limit: 10, printable_limit: 500))
+    assigns =
+      assign(assigns,
+        fallback: inspect(assigns.outcome, limit: 10, printable_limit: 500)
+      )
 
     ~H"""
     <return>{@fallback}</return>
@@ -521,7 +553,11 @@ defmodule Froth.Telegram.BotContextHTML do
       )
 
     ~H"""
-    <intervention designation={@designation} reason={@reason} pending_ask={@pending_ask_id}>
+    <intervention
+      designation={@designation}
+      reason={@reason}
+      pending_ask={@pending_ask_id}
+    >
       awaiting user decision on failure intervention
     </intervention>
     """
@@ -568,11 +604,15 @@ defmodule Froth.Telegram.BotContextHTML do
   defp format_time(_), do: "unknown"
 
   defp format_datetime(%DateTime{} = dt) do
-    dt |> DateTime.shift_zone!("Etc/UTC") |> Calendar.strftime("%Y-%m-%d %H:%M:%S UTC")
+    dt
+    |> DateTime.shift_zone!("Etc/UTC")
+    |> Calendar.strftime("%Y-%m-%d %H:%M:%S UTC")
   end
 
   defp format_datetime(%NaiveDateTime{} = ndt) do
-    ndt |> DateTime.from_naive!("Etc/UTC") |> Calendar.strftime("%Y-%m-%d %H:%M:%S UTC")
+    ndt
+    |> DateTime.from_naive!("Etc/UTC")
+    |> Calendar.strftime("%Y-%m-%d %H:%M:%S UTC")
   end
 
   defp format_datetime(other), do: to_string(other)
@@ -595,18 +635,29 @@ defmodule Froth.Telegram.BotContextHTML do
                 %{
                   kind: :call,
                   tool: "timeline",
-                  input: %{"query" => ["context", "builder"], "before" => 2, "after" => 2}
+                  input: %{
+                    "query" => ["context", "builder"],
+                    "before" => 2,
+                    "after" => 2
+                  }
                 },
-                %{kind: :return, outcome: {:ok, "found 3 relevant log entries"}},
+                %{
+                  kind: :return,
+                  outcome: {:ok, "found 3 relevant log entries"}
+                },
                 %{
                   kind: :call,
                   tool: "timeline",
-                  input: %{"from_date" => "2026-03-06", "to_date" => "2026-03-06"}
+                  input: %{
+                    "from_date" => "2026-03-06",
+                    "to_date" => "2026-03-06"
+                  }
                 },
                 %{
                   kind: :return,
                   outcome:
-                    {:ok, "2026-03-06 08:41 summarizer completed chat -100123 (47 messages)"}
+                    {:ok,
+                     "2026-03-06 08:41 summarizer completed chat -100123 (47 messages)"}
                 }
               ]
             }
@@ -621,7 +672,8 @@ defmodule Froth.Telegram.BotContextHTML do
             %{
               id: 91_003,
               type: "xpost",
-              text: "GitHub issue reference and fix details extracted from linked commit."
+              text:
+                "GitHub issue reference and fix details extracted from linked commit."
             }
           ]
         },
@@ -634,7 +686,8 @@ defmodule Froth.Telegram.BotContextHTML do
             %{
               id: 91_004,
               type: "vision",
-              text: "Screenshot shows missing newline separators between XML blocks."
+              text:
+                "Screenshot shows missing newline separators between XML blocks."
             }
           ],
           cycles: [
@@ -649,7 +702,9 @@ defmodule Froth.Telegram.BotContextHTML do
                 },
                 %{
                   kind: :return,
-                  outcome: {:ok, "message 4401: \"morning, checking the logs now\" from @mikkel"}
+                  outcome:
+                    {:ok,
+                     "message 4401: \"morning, checking the logs now\" from @mikkel"}
                 }
               ]
             }

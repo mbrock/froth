@@ -39,12 +39,14 @@ defmodule Froth.Telegram.RecentWindow do
         }
 
   @spec fetch_recent(integer(), integer() | :infinity, keyword()) :: [row()]
-  def fetch_recent(chat_id, range_end, opts) when is_integer(chat_id) and is_list(opts) do
+  def fetch_recent(chat_id, range_end, opts)
+      when is_integer(chat_id) and is_list(opts) do
     session_id = context_session_id(chat_id, opts)
 
     case time_mass_config(opts) do
       {:ok, config} ->
-        from_unix = max(range_end_unix(range_end) - config.backfill_hours * 3600, 0)
+        from_unix =
+          max(range_end_unix(range_end) - config.backfill_hours * 3600, 0)
 
         chat_id
         |> fetch_rows(session_id, from_unix, range_end)
@@ -55,8 +57,11 @@ defmodule Froth.Telegram.RecentWindow do
     end
   end
 
-  @spec select_rows([row()], integer() | :infinity, time_mass_config()) :: [row()]
-  def select_rows(rows, range_end, config) when is_list(rows) and is_map(config) do
+  @spec select_rows([row()], integer() | :infinity, time_mass_config()) :: [
+          row()
+        ]
+  def select_rows(rows, range_end, config)
+      when is_list(rows) and is_map(config) do
     range_end_unix = range_end_unix(range_end)
     bucket_seconds = config.bucket_minutes * 60
     min_start_unix = max(range_end_unix - config.min_hours * 3600, 0)
@@ -90,7 +95,9 @@ defmodule Froth.Telegram.RecentWindow do
   def time_mass_config(opts) when is_list(opts) do
     with target_hours when is_integer(target_hours) and target_hours > 0 <-
            opt_positive_int(opts[:recent_window_target_hours]),
-         min_hours when is_integer(min_hours) and min_hours > 0 and min_hours <= target_hours <-
+         min_hours
+         when is_integer(min_hours) and min_hours > 0 and
+                min_hours <= target_hours <-
            opt_positive_int(opts[:recent_window_min_hours]),
          backfill_hours
          when is_integer(backfill_hours) and backfill_hours >= target_hours <-
@@ -112,10 +119,16 @@ defmodule Froth.Telegram.RecentWindow do
     end
   end
 
-  defp fetch_rows(chat_id, session_id, from_unix, range_end) when is_integer(chat_id) do
+  defp fetch_rows(chat_id, session_id, from_unix, range_end)
+       when is_integer(chat_id) do
     cond do
       is_binary(session_id) and session_id != "" ->
-        Queries.fetch_session_messages(session_id, chat_id, from_unix, range_end)
+        Queries.fetch_session_messages(
+          session_id,
+          chat_id,
+          from_unix,
+          range_end
+        )
 
       true ->
         Queries.fetch_messages(chat_id, from_unix, range_end)
@@ -127,25 +140,40 @@ defmodule Froth.Telegram.RecentWindow do
     anchor_size = opt_positive_int(opts[:recent_message_anchor_size])
 
     cond do
-      is_binary(session_id) and session_id != "" and is_integer(recent_limit) and recent_limit > 0 and
+      is_binary(session_id) and session_id != "" and is_integer(recent_limit) and
+        recent_limit > 0 and
         is_integer(anchor_size) and anchor_size > 1 ->
         keep_count =
           Queries.count_session_messages(session_id, chat_id, 0, range_end)
           |> anchored_keep_count(recent_limit, anchor_size)
 
         if keep_count > 0 do
-          Queries.fetch_recent_session_messages(session_id, chat_id, 0, range_end, keep_count)
+          Queries.fetch_recent_session_messages(
+            session_id,
+            chat_id,
+            0,
+            range_end,
+            keep_count
+          )
         else
           []
         end
 
-      is_binary(session_id) and session_id != "" and is_integer(recent_limit) and recent_limit > 0 ->
-        Queries.fetch_recent_session_messages(session_id, chat_id, 0, range_end, recent_limit)
+      is_binary(session_id) and session_id != "" and is_integer(recent_limit) and
+          recent_limit > 0 ->
+        Queries.fetch_recent_session_messages(
+          session_id,
+          chat_id,
+          0,
+          range_end,
+          recent_limit
+        )
 
       is_binary(session_id) and session_id != "" ->
         Queries.fetch_session_messages(session_id, chat_id, 0, range_end)
 
-      is_integer(recent_limit) and recent_limit > 0 and is_integer(anchor_size) and
+      is_integer(recent_limit) and recent_limit > 0 and
+        is_integer(anchor_size) and
           anchor_size > 1 ->
         keep_count =
           Queries.count_messages(chat_id, 0, range_end)
@@ -165,7 +193,8 @@ defmodule Froth.Telegram.RecentWindow do
     end
   end
 
-  defp bucket_rows(rows, bucket_seconds) when is_list(rows) and is_integer(bucket_seconds) do
+  defp bucket_rows(rows, bucket_seconds)
+       when is_list(rows) and is_integer(bucket_seconds) do
     rows
     |> Enum.group_by(
       fn row -> bucket_start(row.date, bucket_seconds) end,
@@ -173,12 +202,21 @@ defmodule Froth.Telegram.RecentWindow do
     )
     |> Enum.sort_by(fn {start_unix, _rows} -> start_unix end)
     |> Enum.map(fn {start_unix, bucket_rows} ->
-      %{start_unix: start_unix, rows: bucket_rows, chars: rows_chars(bucket_rows)}
+      %{
+        start_unix: start_unix,
+        rows: bucket_rows,
+        chars: rows_chars(bucket_rows)
+      }
     end)
   end
 
   defp trim_to_budget(buckets, min_start_unix, char_budget) do
-    trim_to_budget(buckets, min_start_unix, char_budget, bucket_chars(buckets))
+    trim_to_budget(
+      buckets,
+      min_start_unix,
+      char_budget,
+      bucket_chars(buckets)
+    )
   end
 
   defp trim_to_budget([], _min_start_unix, _char_budget, _total_chars), do: []
@@ -203,7 +241,9 @@ defmodule Froth.Telegram.RecentWindow do
   defp oldest_bucket_start([]), do: 0
 
   defp bucket_chars(buckets) when is_list(buckets) do
-    Enum.reduce(buckets, 0, fn bucket, acc -> acc + Map.get(bucket, :chars, 0) end)
+    Enum.reduce(buckets, 0, fn bucket, acc ->
+      acc + Map.get(bucket, :chars, 0)
+    end)
   end
 
   defp rows_chars(rows) when is_list(rows) do
@@ -239,7 +279,8 @@ defmodule Froth.Telegram.RecentWindow do
   defp range_end_unix(nil), do: System.os_time(:second)
   defp range_end_unix(unix) when is_integer(unix), do: unix
 
-  defp bucket_start(unix, bucket_seconds) when is_integer(unix) and is_integer(bucket_seconds) do
+  defp bucket_start(unix, bucket_seconds)
+       when is_integer(unix) and is_integer(bucket_seconds) do
     unix - rem(unix, bucket_seconds)
   end
 
@@ -254,7 +295,8 @@ defmodule Froth.Telegram.RecentWindow do
 
   defp opt_positive_int(_value), do: nil
 
-  defp context_session_id(chat_id, opts) when is_integer(chat_id) and is_list(opts) do
+  defp context_session_id(chat_id, opts)
+       when is_integer(chat_id) and is_list(opts) do
     configured = opt_session_id(opts)
 
     if chat_id < 0 do

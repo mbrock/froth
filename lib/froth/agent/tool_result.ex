@@ -35,7 +35,13 @@ defmodule Froth.Agent.ToolResult do
 
   def to_api(%__MODULE__{} = result) do
     content = normalize_content(result.content)
-    map = %{"type" => "tool_result", "tool_use_id" => result.tool_use_id, "content" => content}
+
+    map = %{
+      "type" => "tool_result",
+      "tool_use_id" => result.tool_use_id,
+      "content" => content
+    }
+
     if result.is_error, do: Map.put(map, "is_error", true), else: map
   end
 
@@ -120,7 +126,8 @@ defmodule Froth.Agent.ToolResult do
     end
   end
 
-  defp block_bytes(%Froth.Context.Block{body: body}) when is_binary(body), do: {:ok, body}
+  defp block_bytes(%Froth.Context.Block{body: body}) when is_binary(body),
+    do: {:ok, body}
 
   defp block_bytes(%Froth.Context.Block{} = block) do
     case Froth.Context.Block.attr(block, :blob) do

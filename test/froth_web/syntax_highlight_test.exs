@@ -4,7 +4,8 @@ defmodule FrothWeb.SyntaxHighlightTest do
   alias FrothWeb.SyntaxHighlight
 
   test "formats a narrower mobile variant for long valid elixir input" do
-    source = ~s|for f <- ["phoenix.ex", "ecto.ex", "logs.ex", "eval.ex"] do\n  f\nend|
+    source =
+      ~s|for f <- ["phoenix.ex", "ecto.ex", "logs.ex", "eval.ex"] do\n  f\nend|
 
     htmls = SyntaxHighlight.elixir_htmls(source)
 
@@ -20,7 +21,8 @@ defmodule FrothWeb.SyntaxHighlightTest do
 
     htmls = SyntaxHighlight.elixir_htmls(source)
 
-    assert normalize_group_ids(htmls.desktop_html) == normalize_group_ids(htmls.mobile_html)
+    assert normalize_group_ids(htmls.desktop_html) ==
+             normalize_group_ids(htmls.mobile_html)
   end
 
   defp normalize_group_ids(html) do

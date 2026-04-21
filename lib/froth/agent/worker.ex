@@ -54,7 +54,9 @@ defmodule Froth.Agent.Worker do
           reply_sent?: boolean(),
           saw_tool_use?: boolean(),
           finalized?: boolean(),
-          pending_ask_resolutions: %{optional(String.t()) => pending_ask_resolution()}
+          pending_ask_resolutions: %{
+            optional(String.t()) => pending_ask_resolution()
+          }
         }
 
   @type pending_ask_resolution ::
@@ -91,7 +93,11 @@ defmodule Froth.Agent.Worker do
 
   def resolve_pending_ask(pid, pending_ask_id, resolution)
       when is_pid(pid) and is_binary(pending_ask_id) do
-    GenServer.call(pid, {:resolve_pending_ask, pending_ask_id, resolution}, :infinity)
+    GenServer.call(
+      pid,
+      {:resolve_pending_ask, pending_ask_id, resolution},
+      :infinity
+    )
   end
 
   @impl true
@@ -107,13 +113,15 @@ defmodule Froth.Agent.Worker do
       Span.start_span([:froth, :agent, :cycle], config.parent_span_id, %{
         cycle_id: cycle.id,
         model: cycle.model || config.model || snapshot[:model],
-        provider: cycle.provider || resolved_provider(config) || snapshot[:provider]
+        provider:
+          cycle.provider || resolved_provider(config) || snapshot[:provider]
       })
 
     cycle =
       Agent.update_cycle(cycle, %{
         status: :running,
-        provider: cycle.provider || resolved_provider(config) || snapshot[:provider],
+        provider:
+          cycle.provider || resolved_provider(config) || snapshot[:provider],
         model: cycle.model || config.model || snapshot[:model],
         root_span_id: span_id,
         parent_span_id: config.parent_span_id,
@@ -158,7 +166,11 @@ defmodule Froth.Agent.Worker do
   end
 
   @impl true
-  def handle_call({:resolve_pending_ask, pending_ask_id, resolution}, _from, worker) do
+  def handle_call(
+        {:resolve_pending_ask, pending_ask_id, resolution},
+        _from,
+        worker
+      ) do
     with {:ok, resolution} <- normalize_pending_ask_resolution(resolution) do
       case resolve_pending_ask_in_worker(worker, pending_ask_id, resolution) do
         {:stop, reason, worker} ->
@@ -174,7 +186,10 @@ defmodule Froth.Agent.Worker do
   end
 
   @impl true
-  def handle_info({ref, {:ok, response}}, %{phase: {:thinking, %{ref: ref}}} = worker) do
+  def handle_info(
+        {ref, {:ok, response}},
+        %{phase: {:thinking, %{ref: ref}}} = worker
+      ) do
     Process.demonitor(ref, [:flush])
     response_diagnostics = response_diagnostics(response)
 
@@ -186,24 +201,33 @@ defmodule Froth.Agent.Worker do
 
     worker = emit_think_stop(worker)
     worker = persist_llm_completion(worker, response, response_metadata)
-    worker = persist_agent_message(worker, response.content, response_metadata)
+
+    worker =
+      persist_agent_message(worker, response.content, response_metadata)
 
     tool_uses = parse_tool_uses(response.content)
 
     cond do
       tool_uses != [] ->
-        maybe_tools_done(start_tools(%{worker | saw_tool_use?: true}, tool_uses))
+        maybe_tools_done(
+          start_tools(%{worker | saw_tool_use?: true}, tool_uses)
+        )
 
       continue_after_provider_tools?(response_metadata, response.content) ->
         cycle = Agent.update_cycle(worker.cycle, %{status: :running})
 
-        {:noreply, %{worker | cycle: cycle, phase: :continuing, saw_tool_use?: true},
+        {:noreply,
+         %{worker | cycle: cycle, phase: :continuing, saw_tool_use?: true},
          {:continue, :think}}
 
       true ->
         worker =
           %{worker | phase: :done}
-          |> maybe_emit_silent_stop(response, response_metadata, response_diagnostics)
+          |> maybe_emit_silent_stop(
+            response,
+            response_metadata,
+            response_diagnostics
+          )
           |> finalize_cycle(:completed, :normal, %{
             "stop_reason" => response_metadata["stop_reason"],
             "usage" => response_metadata["usage"] || %{}
@@ -213,7 +237,10 @@ defmodule Froth.Agent.Worker do
     end
   end
 
-  def handle_info({ref, {:error, reason}}, %{phase: {:thinking, %{ref: ref}}} = worker) do
+  def handle_info(
+        {ref, {:error, reason}},
+        %{phase: {:thinking, %{ref: ref}}} = worker
+      ) do
     Process.demonitor(ref, [:flush])
     log_llm_error(worker, reason)
     worker = emit_think_stop(worker, %{error: format_reason(reason)})
@@ -222,7 +249,11 @@ defmodule Froth.Agent.Worker do
 
   def handle_info(
         {ref, {:tool_result, tool_use_id, result}},
-        %{phase: {:working, %{invocations: invocations, ignored_refs: ignored_refs}}} = worker
+        %{
+          phase:
+            {:working,
+             %{invocations: invocations, ignored_refs: ignored_refs}}
+        } = worker
       ) do
     case find_invocation_in_list(invocations, ref) do
       %{tool_use: %ToolUse{id: ^tool_use_id}} = invocation ->
@@ -234,7 +265,9 @@ defmodule Froth.Agent.Worker do
         # text-shaped blocks carry JSON-safe text, so sanitize is
         # effectively only doing its job on non-block tool results
         # (error strings, await data, yield reasons).
-        result = result |> materialize_result_blocks() |> sanitize_tool_result()
+        result =
+          result |> materialize_result_blocks() |> sanitize_tool_result()
+
         worker = emit_tool_result_event(worker, invocation, result)
 
         worker
@@ -369,7 +402,8 @@ defmodule Froth.Agent.Worker do
     {request_messages, previous_response_id} =
       llm_request_messages(cycle.provider, raw_messages)
 
-    api_messages = Enum.map(request_messages, &Froth.Agent.Message.to_llm_message/1)
+    api_messages =
+      Enum.map(request_messages, &Froth.Agent.Message.to_llm_message/1)
 
     worker =
       %{worker | cycle: cycle}
@@ -414,7 +448,9 @@ defmodule Froth.Agent.Worker do
       Task.Supervisor.async_nolink(Froth.Agent.TaskSupervisor, fn ->
         LLM.stream_single(
           api_messages,
-          fn event -> Froth.broadcast("cycle:#{cycle_id}", {:stream, event}) end,
+          fn event ->
+            Froth.broadcast("cycle:#{cycle_id}", {:stream, event})
+          end,
           opts
         )
       end)
@@ -498,7 +534,8 @@ defmodule Froth.Agent.Worker do
       |> Map.merge(worker.config.context || %{})
 
     {invocations, worker} =
-      Enum.map_reduce(tool_uses, %{worker | cycle: cycle}, fn %ToolUse{id: id} = tool_use,
+      Enum.map_reduce(tool_uses, %{worker | cycle: cycle}, fn %ToolUse{id: id} =
+                                                                tool_use,
                                                               worker ->
         started_at = System.monotonic_time()
         span_id = generate_span_id()
@@ -509,7 +546,10 @@ defmodule Froth.Agent.Worker do
         task =
           Task.Supervisor.async_nolink(Froth.Agent.TaskSupervisor, fn ->
             Froth.Repo.allow(parent, "tool task")
-            result = execute_tool(worker.config.tool_executor, tool_use, context)
+
+            result =
+              execute_tool(worker.config.tool_executor, tool_use, context)
+
             {:tool_result, id, result}
           end)
 
@@ -517,7 +557,8 @@ defmodule Froth.Agent.Worker do
           ref: task.ref,
           task: task,
           tool_use: tool_use,
-          timer_ref: Process.send_after(self(), {:tool_timeout, task.ref}, timeout_ms),
+          timer_ref:
+            Process.send_after(self(), {:tool_timeout, task.ref}, timeout_ms),
           timeout_ms: timeout_ms,
           started_at: started_at,
           span_id: span_id
@@ -543,7 +584,10 @@ defmodule Froth.Agent.Worker do
        )
        when phase_name in [:working, :awaiting_user_input] do
     tool_result = tool_result_from_execution(tool_use_id, result)
-    {worker, tool_result} = maybe_apply_pending_resolution(worker, tool_result)
+
+    {worker, tool_result} =
+      maybe_apply_pending_resolution(worker, tool_result)
+
     batch = put_in(batch.results[tool_use_id], tool_result)
     %{worker | phase: {phase_name, batch}}
   end
@@ -578,14 +622,19 @@ defmodule Froth.Agent.Worker do
     {:stop, reason, worker}
   end
 
-  defp resolve_pending_ask_in_worker(%{phase: phase} = worker, pending_ask_id, resolution)
+  defp resolve_pending_ask_in_worker(
+         %{phase: phase} = worker,
+         pending_ask_id,
+         resolution
+       )
        when is_binary(pending_ask_id) do
     case resolve_pending_ask_in_phase(phase, pending_ask_id, resolution) do
       {:ok, phase} ->
         {:ok, %{worker | phase: phase}}
 
       :not_found ->
-        {:ok, store_pending_ask_resolution(worker, pending_ask_id, resolution)}
+        {:ok,
+         store_pending_ask_resolution(worker, pending_ask_id, resolution)}
     end
   end
 
@@ -598,20 +647,26 @@ defmodule Froth.Agent.Worker do
     case find_pending_tool_use_id(batch, pending_ask_id) do
       tool_use_id when is_binary(tool_use_id) ->
         updated_tool_result = %{tool_result | tool_use_id: tool_use_id}
-        {:ok, {phase_name, put_in(batch.results[tool_use_id], updated_tool_result)}}
+
+        {:ok,
+         {phase_name, put_in(batch.results[tool_use_id], updated_tool_result)}}
 
       _ ->
         :not_found
     end
   end
 
-  defp resolve_pending_ask_in_phase(_phase, _pending_ask_id, _resolution), do: :not_found
+  defp resolve_pending_ask_in_phase(_phase, _pending_ask_id, _resolution),
+    do: :not_found
 
-  defp normalize_pending_ask_resolution({:tool_result, %ToolResult{} = tool_result}) do
+  defp normalize_pending_ask_resolution(
+         {:tool_result, %ToolResult{} = tool_result}
+       ) do
     {:ok, {:tool_result, tool_result}}
   end
 
-  defp normalize_pending_ask_resolution({:stop, reason}), do: {:ok, {:stop, reason}}
+  defp normalize_pending_ask_resolution({:stop, reason}),
+    do: {:ok, {:stop, reason}}
 
   defp normalize_pending_ask_resolution(_resolution),
     do: {:error, :invalid_pending_ask_resolution}
@@ -625,7 +680,8 @@ defmodule Froth.Agent.Worker do
     case pending_ask_id_for_result(tool_result) do
       pending_ask_id when is_binary(pending_ask_id) ->
         case Map.pop(worker.pending_ask_resolutions, pending_ask_id) do
-          {{:tool_result, %ToolResult{} = resolved_tool_result}, pending_ask_resolutions} ->
+          {{:tool_result, %ToolResult{} = resolved_tool_result},
+           pending_ask_resolutions} ->
             {%{worker | pending_ask_resolutions: pending_ask_resolutions},
              %{resolved_tool_result | tool_use_id: tool_result.tool_use_id}}
 
@@ -633,7 +689,8 @@ defmodule Froth.Agent.Worker do
             {worker, tool_result}
 
           {_other, pending_ask_resolutions} ->
-            {%{worker | pending_ask_resolutions: pending_ask_resolutions}, tool_result}
+            {%{worker | pending_ask_resolutions: pending_ask_resolutions},
+             tool_result}
         end
 
       _ ->
@@ -648,7 +705,9 @@ defmodule Froth.Agent.Worker do
 
   defp pending_ask_id_for_result(_tool_result), do: nil
 
-  defp batch_transition(%{phase: {phase_name, %{invocations: []} = batch}} = worker)
+  defp batch_transition(
+         %{phase: {phase_name, %{invocations: []} = batch}} = worker
+       )
        when phase_name in [:working, :awaiting_user_input] do
     results = ordered_results(batch)
     has_yield = Enum.any?(results, &(&1.control_outcome == "yield"))
@@ -661,7 +720,11 @@ defmodule Froth.Agent.Worker do
           |> persist_batch_results(results)
           |> then(fn worker ->
             Enum.reduce(results, %{worker | phase: :done}, fn
-              %ToolResult{control_outcome: "yield", control_data: data, tool_use_id: tool_use_id},
+              %ToolResult{
+                control_outcome: "yield",
+                control_data: data,
+                tool_use_id: tool_use_id
+              },
               acc ->
                 emit_control_outcome(
                   acc,
@@ -675,7 +738,9 @@ defmodule Froth.Agent.Worker do
                 acc
             end)
           end)
-          |> finalize_cycle(:completed, :normal, %{"control_outcome" => "yield"})
+          |> finalize_cycle(:completed, :normal, %{
+            "control_outcome" => "yield"
+          })
 
         {:stop, :normal, %{worker | phase: :done}}
 
@@ -683,7 +748,8 @@ defmodule Froth.Agent.Worker do
         worker =
           if phase_name == :working do
             Enum.reduce(unresolved, worker, fn
-              %ToolResult{control_data: data, tool_use_id: tool_use_id}, acc ->
+              %ToolResult{control_data: data, tool_use_id: tool_use_id},
+              acc ->
                 emit_control_outcome(
                   acc,
                   "await_user_input",
@@ -697,9 +763,13 @@ defmodule Froth.Agent.Worker do
           end
 
         cycle =
-          Agent.update_cycle(worker.cycle, %{status: :awaiting_user_input, finished_at: nil})
+          Agent.update_cycle(worker.cycle, %{
+            status: :awaiting_user_input,
+            finished_at: nil
+          })
 
-        {:noreply, %{worker | cycle: cycle, phase: {:awaiting_user_input, batch}}}
+        {:noreply,
+         %{worker | cycle: cycle, phase: {:awaiting_user_input, batch}}}
 
       true ->
         worker = persist_batch_results(worker, results)
@@ -738,7 +808,9 @@ defmodule Froth.Agent.Worker do
   defp find_pending_tool_use_id(%{results: results}, pending_ask_id)
        when is_map(results) and is_binary(pending_ask_id) do
     Enum.find_value(results, fn {tool_use_id, result} ->
-      if pending_ask_id_for_result(result) == pending_ask_id, do: tool_use_id, else: nil
+      if pending_ask_id_for_result(result) == pending_ask_id,
+        do: tool_use_id,
+        else: nil
     end)
   end
 
@@ -800,23 +872,39 @@ defmodule Froth.Agent.Worker do
   # externalized to blobs here, which keeps raw bytes — and, in
   # particular, NUL bytes that Postgres refuses inside JSON text —
   # out of the event row we persist a few lines later.
-  defp materialize_result_blocks({:ok, content}), do: {:ok, materialize_if_blocks(content)}
-  defp materialize_result_blocks({:error, content}), do: {:error, materialize_if_blocks(content)}
+  defp materialize_result_blocks({:ok, content}),
+    do: {:ok, materialize_if_blocks(content)}
+
+  defp materialize_result_blocks({:error, content}),
+    do: {:error, materialize_if_blocks(content)}
+
   defp materialize_result_blocks(other), do: other
 
-  defp format_yield_reason(reason) when is_binary(reason), do: "Yielding: #{reason}"
+  defp format_yield_reason(reason) when is_binary(reason),
+    do: "Yielding: #{reason}"
 
   defp format_yield_reason(reason),
-    do: "Yielding: #{inspect(reason, limit: :infinity, printable_limit: :infinity)}"
+    do:
+      "Yielding: #{inspect(reason, limit: :infinity, printable_limit: :infinity)}"
 
-  defp await_reason(%{"reason" => reason}) when is_binary(reason) and reason != "", do: reason
-  defp await_reason(%{reason: reason}) when is_binary(reason) and reason != "", do: reason
+  defp await_reason(%{"reason" => reason})
+       when is_binary(reason) and reason != "", do: reason
+
+  defp await_reason(%{reason: reason})
+       when is_binary(reason) and reason != "", do: reason
+
   defp await_reason(_data), do: "Waiting for user input."
 
   defp sanitize_tool_result({:ok, content}), do: {:ok, sanitize_utf8(content)}
-  defp sanitize_tool_result({:error, reason}), do: {:error, sanitize_utf8(reason)}
+
+  defp sanitize_tool_result({:error, reason}),
+    do: {:error, sanitize_utf8(reason)}
+
   defp sanitize_tool_result({:await, data}), do: {:await, sanitize_utf8(data)}
-  defp sanitize_tool_result({:yield, reason}), do: {:yield, sanitize_utf8(reason)}
+
+  defp sanitize_tool_result({:yield, reason}),
+    do: {:yield, sanitize_utf8(reason)}
+
   defp sanitize_tool_result(result), do: sanitize_utf8(result)
 
   # JSON-text safety for values bound for JSONB persistence. Fix up
@@ -832,7 +920,8 @@ defmodule Froth.Agent.Worker do
     |> strip_nul()
   end
 
-  defp sanitize_utf8(value) when is_list(value), do: Enum.map(value, &sanitize_utf8/1)
+  defp sanitize_utf8(value) when is_list(value),
+    do: Enum.map(value, &sanitize_utf8/1)
 
   defp sanitize_utf8(%Froth.Context.Block{} = block) do
     %Froth.Context.Block{
@@ -866,7 +955,9 @@ defmodule Froth.Agent.Worker do
   end
 
   defp strip_nul(value) when is_binary(value) do
-    if String.contains?(value, <<0>>), do: String.replace(value, <<0>>, ""), else: value
+    if String.contains?(value, <<0>>),
+      do: String.replace(value, <<0>>, ""),
+      else: value
   end
 
   defp find_invocation({:working, %{invocations: invocations}}, ref) do
@@ -879,7 +970,8 @@ defmodule Froth.Agent.Worker do
     Enum.find(invocations, &(&1.ref == ref))
   end
 
-  defp cancel_invocation_timer(worker, %{timer_ref: timer_ref}) when is_reference(timer_ref) do
+  defp cancel_invocation_timer(worker, %{timer_ref: timer_ref})
+       when is_reference(timer_ref) do
     Process.cancel_timer(timer_ref)
     worker
   end
@@ -902,11 +994,13 @@ defmodule Froth.Agent.Worker do
     %{worker | phase: {:working, batch}}
   end
 
-  defp timeout_error(tool_timeout_ms) when is_integer(tool_timeout_ms) and tool_timeout_ms > 0 do
+  defp timeout_error(tool_timeout_ms)
+       when is_integer(tool_timeout_ms) and tool_timeout_ms > 0 do
     "tool timed out after #{tool_timeout_ms}ms"
   end
 
-  defp tool_timeout_ms(%Config{} = config, %ToolUse{name: name}) when is_binary(name) do
+  defp tool_timeout_ms(%Config{} = config, %ToolUse{name: name})
+       when is_binary(name) do
     cond do
       is_integer(config.tool_timeout_ms) and config.tool_timeout_ms > 0 ->
         config.tool_timeout_ms
@@ -924,7 +1018,11 @@ defmodule Froth.Agent.Worker do
   end
 
   defp tool_timeout_overrides do
-    Application.get_env(:froth, :tool_timeout_overrides, @default_tool_timeout_overrides)
+    Application.get_env(
+      :froth,
+      :tool_timeout_overrides,
+      @default_tool_timeout_overrides
+    )
   end
 
   defp emit_tool_started_event(worker, %ToolUse{} = tool_use, span_id) do
@@ -955,7 +1053,9 @@ defmodule Froth.Agent.Worker do
       [:froth, :agent, :tool, :completed],
       worker.cycle_span_id,
       Map.put(
-        tool_event_meta(worker, invocation.tool_use, %{result_type: tool_result_type(result)}),
+        tool_event_meta(worker, invocation.tool_use, %{
+          result_type: tool_result_type(result)
+        }),
         :span_id,
         invocation.span_id
       ),
@@ -1000,7 +1100,9 @@ defmodule Froth.Agent.Worker do
       [:froth, :agent, :tool, :failed],
       worker.cycle_span_id,
       Map.put(
-        tool_event_meta(worker, invocation.tool_use, %{error: truncate_tool_detail(reason)}),
+        tool_event_meta(worker, invocation.tool_use, %{
+          error: truncate_tool_detail(reason)
+        }),
         :span_id,
         invocation.span_id
       ),
@@ -1146,7 +1248,8 @@ defmodule Froth.Agent.Worker do
 
   defp tool_duration(_), do: 0
 
-  defp tool_duration_ms(%{started_at: started_at}) when is_integer(started_at) do
+  defp tool_duration_ms(%{started_at: started_at})
+       when is_integer(started_at) do
     System.monotonic_time()
     |> Kernel.-(started_at)
     |> System.convert_time_unit(:native, :millisecond)
@@ -1168,16 +1271,27 @@ defmodule Froth.Agent.Worker do
   defp tool_result_type(content) when is_binary(content), do: "text"
   defp tool_result_type(content) when is_list(content), do: "blocks"
   defp tool_result_type(content) when is_map(content), do: "map"
-  defp tool_result_type(content) when is_atom(content), do: Atom.to_string(content)
+
+  defp tool_result_type(content) when is_atom(content),
+    do: Atom.to_string(content)
+
   defp tool_result_type(_content), do: "value"
 
-  defp normalize_tool_event_result({:ok, [%Froth.Context.Block{} | _] = blocks}),
-    do: %{"blocks" => Enum.map(blocks, &Froth.Context.Block.to_map/1)}
+  defp normalize_tool_event_result(
+         {:ok, [%Froth.Context.Block{} | _] = blocks}
+       ),
+       do: %{"blocks" => Enum.map(blocks, &Froth.Context.Block.to_map/1)}
 
   defp normalize_tool_event_result({:ok, content}), do: content
-  defp normalize_tool_event_result({:await, data}), do: %{"await" => summarize_value(data)}
-  defp normalize_tool_event_result({:yield, reason}), do: %{"yield" => format_reason(reason)}
-  defp normalize_tool_event_result({:error, reason}), do: %{"error" => format_reason(reason)}
+
+  defp normalize_tool_event_result({:await, data}),
+    do: %{"await" => summarize_value(data)}
+
+  defp normalize_tool_event_result({:yield, reason}),
+    do: %{"yield" => format_reason(reason)}
+
+  defp normalize_tool_event_result({:error, reason}),
+    do: %{"error" => format_reason(reason)}
 
   defp normalize_tool_event_result([%Froth.Context.Block{} | _] = blocks),
     do: %{"blocks" => Enum.map(blocks, &Froth.Context.Block.to_map/1)}
@@ -1245,7 +1359,8 @@ defmodule Froth.Agent.Worker do
        when provider in ["openai", "fakeai"] and is_list(messages) do
     case latest_openai_response_boundary(messages) do
       {response_id, tail_messages}
-      when is_binary(response_id) and response_id != "" and is_list(tail_messages) and
+      when is_binary(response_id) and response_id != "" and
+             is_list(tail_messages) and
              tail_messages != [] ->
         {tail_messages, response_id}
 
@@ -1254,7 +1369,8 @@ defmodule Froth.Agent.Worker do
     end
   end
 
-  defp llm_request_messages(_provider, messages) when is_list(messages), do: {messages, nil}
+  defp llm_request_messages(_provider, messages) when is_list(messages),
+    do: {messages, nil}
 
   defp latest_openai_response_boundary(messages) when is_list(messages) do
     messages
@@ -1262,8 +1378,11 @@ defmodule Froth.Agent.Worker do
     |> Enum.reduce(nil, fn
       {%Froth.Agent.Message{role: :agent, metadata: metadata}, index}, _acc ->
         case openai_response_id(metadata) do
-          response_id when is_binary(response_id) and response_id != "" -> {response_id, index}
-          _ -> nil
+          response_id when is_binary(response_id) and response_id != "" ->
+            {response_id, index}
+
+          _ ->
+            nil
         end
 
       _, acc ->
@@ -1279,7 +1398,8 @@ defmodule Froth.Agent.Worker do
   end
 
   defp openai_response_id(metadata) when is_map(metadata) do
-    metadata["response_id"] || metadata[:response_id] || response_id_from_message_id(metadata)
+    metadata["response_id"] || metadata[:response_id] ||
+      response_id_from_message_id(metadata)
   end
 
   defp openai_response_id(_metadata), do: nil
@@ -1294,10 +1414,16 @@ defmodule Froth.Agent.Worker do
   defp response_id_from_message_id(_metadata), do: nil
 
   defp assistant_output_block?(%{"type" => type})
-       when type in ["tool_use", "mcp_tool_use", "mcp_tool_result", "thinking"],
+       when type in [
+              "tool_use",
+              "mcp_tool_use",
+              "mcp_tool_result",
+              "thinking"
+            ],
        do: false
 
-  defp assistant_output_block?(%{"type" => "text", "text" => text}) when is_binary(text) do
+  defp assistant_output_block?(%{"type" => "text", "text" => text})
+       when is_binary(text) do
     String.trim(text) != ""
   end
 
@@ -1324,10 +1450,14 @@ defmodule Froth.Agent.Worker do
 
   defp response_diagnostics(_response), do: %{}
 
-  defp maybe_put_stream_diagnostics(metadata, diagnostics) when is_map(metadata) do
+  defp maybe_put_stream_diagnostics(metadata, diagnostics)
+       when is_map(metadata) do
     case stream_diagnostics_summary(diagnostics) do
-      %{} = summary when map_size(summary) > 0 -> Map.put(metadata, "stream_diagnostics", summary)
-      _ -> metadata
+      %{} = summary when map_size(summary) > 0 ->
+        Map.put(metadata, "stream_diagnostics", summary)
+
+      _ ->
+        metadata
     end
   end
 
@@ -1339,12 +1469,18 @@ defmodule Froth.Agent.Worker do
     )
     |> maybe_put_summary_value(
       "json_decode_error_count",
-      diagnostics[:json_decode_error_count] || diagnostics["json_decode_error_count"]
+      diagnostics[:json_decode_error_count] ||
+        diagnostics["json_decode_error_count"]
     )
-    |> maybe_put_summary_value("saw_done", diagnostics[:saw_done] || diagnostics["saw_done"])
+    |> maybe_put_summary_value(
+      "saw_done",
+      diagnostics[:saw_done] || diagnostics["saw_done"]
+    )
     |> maybe_put_summary_value(
       "trailing_buffer_bytes",
-      diagnostic_size(diagnostics[:trailing_buffer] || diagnostics["trailing_buffer"])
+      diagnostic_size(
+        diagnostics[:trailing_buffer] || diagnostics["trailing_buffer"]
+      )
     )
   end
 
@@ -1353,7 +1489,9 @@ defmodule Froth.Agent.Worker do
   defp maybe_put_summary_value(summary, _key, nil), do: summary
   defp maybe_put_summary_value(summary, _key, false), do: summary
   defp maybe_put_summary_value(summary, _key, 0), do: summary
-  defp maybe_put_summary_value(summary, key, value), do: Map.put(summary, key, value)
+
+  defp maybe_put_summary_value(summary, key, value),
+    do: Map.put(summary, key, value)
 
   defp diagnostic_size(value) when is_binary(value), do: byte_size(value)
   defp diagnostic_size(_value), do: nil
@@ -1394,7 +1532,9 @@ defmodule Froth.Agent.Worker do
             message_id: metadata["message_id"],
             response: %{
               "text" => Map.get(response, :text) || Map.get(response, "text"),
-              "content" => Map.get(response, :content) || Map.get(response, "content") || []
+              "content" =>
+                Map.get(response, :content) || Map.get(response, "content") ||
+                  []
             },
             stream_diagnostics: summarize_value(diagnostics)
           },
@@ -1472,7 +1612,14 @@ defmodule Froth.Agent.Worker do
 
   defp append_message(worker, role, content, metadata \\ nil) do
     {_msg, head_id} =
-      Agent.append_message(worker.cycle, worker.head_id, role, content, metadata, worker.seq)
+      Agent.append_message(
+        worker.cycle,
+        worker.head_id,
+        role,
+        content,
+        metadata,
+        worker.seq
+      )
 
     %{worker | head_id: head_id, seq: worker.seq + 1}
   end
@@ -1482,10 +1629,15 @@ defmodule Froth.Agent.Worker do
     %{worker | seq: worker.seq + 1}
   end
 
-  defp await_user_input_result?(%ToolResult{control_outcome: "await_user_input"}), do: true
+  defp await_user_input_result?(%ToolResult{
+         control_outcome: "await_user_input"
+       }), do: true
+
   defp await_user_input_result?(_result), do: false
 
-  defp cycle_error_for(:failed, _reason, extra), do: extra["error"] || extra[:error]
+  defp cycle_error_for(:failed, _reason, extra),
+    do: extra["error"] || extra[:error]
+
   defp cycle_error_for(_status, _reason, _extra), do: nil
 
   defp phase_done?(:done), do: true
@@ -1510,8 +1662,11 @@ defmodule Froth.Agent.Worker do
 
   defp cleanup_phase({:working, %{invocations: invocations}}) do
     Enum.each(invocations, fn invocation ->
-      if is_reference(invocation.timer_ref), do: Process.cancel_timer(invocation.timer_ref)
-      if is_pid(invocation.task.pid), do: Process.exit(invocation.task.pid, :kill)
+      if is_reference(invocation.timer_ref),
+        do: Process.cancel_timer(invocation.timer_ref)
+
+      if is_pid(invocation.task.pid),
+        do: Process.exit(invocation.task.pid, :kill)
     end)
   end
 
@@ -1562,7 +1717,10 @@ defmodule Froth.Agent.Worker do
   defp stringify_map(_value), do: %{}
 
   defp stringify_value(value) when is_map(value), do: stringify_map(value)
-  defp stringify_value(value) when is_list(value), do: Enum.map(value, &stringify_value/1)
+
+  defp stringify_value(value) when is_list(value),
+    do: Enum.map(value, &stringify_value/1)
+
   defp stringify_value(value) when is_atom(value), do: Atom.to_string(value)
   defp stringify_value(value), do: value
 
@@ -1571,7 +1729,11 @@ defmodule Froth.Agent.Worker do
   end
 
   defp execute_tool(tool_executor, %ToolUse{} = tool_use, context) do
-    case GenServer.call(tool_executor, {:prepare_tool, tool_use, context}, :infinity) do
+    case GenServer.call(
+           tool_executor,
+           {:prepare_tool, tool_use, context},
+           :infinity
+         ) do
       {:ok, prepared} ->
         outcome = run_prepared_tool(prepared)
 
@@ -1582,10 +1744,18 @@ defmodule Froth.Agent.Worker do
         )
 
       {:error, :unsupported} ->
-        GenServer.call(tool_executor, {:execute, tool_use, context}, :infinity)
+        GenServer.call(
+          tool_executor,
+          {:execute, tool_use, context},
+          :infinity
+        )
 
       {:error, "unsupported"} ->
-        GenServer.call(tool_executor, {:execute, tool_use, context}, :infinity)
+        GenServer.call(
+          tool_executor,
+          {:execute, tool_use, context},
+          :infinity
+        )
 
       {:error, _} = error ->
         error
@@ -1604,7 +1774,10 @@ defmodule Froth.Agent.Worker do
 
   defp normalize_reason(:normal), do: "normal"
   defp normalize_reason(:shutdown), do: "shutdown"
-  defp normalize_reason({:shutdown, reason}), do: "shutdown:#{format_reason(reason)}"
+
+  defp normalize_reason({:shutdown, reason}),
+    do: "shutdown:#{format_reason(reason)}"
+
   defp normalize_reason({:error, reason}), do: format_reason(reason)
   defp normalize_reason(other), do: format_reason(other)
 
@@ -1645,7 +1818,8 @@ defmodule Froth.Agent.Worker do
 
   defp resolved_provider(%Config{} = config) do
     cond do
-      is_atom(config.provider) and config.provider in [:anthropic, :openai, :grok, :gemini] ->
+      is_atom(config.provider) and
+          config.provider in [:anthropic, :openai, :grok, :gemini] ->
         Atom.to_string(config.provider)
 
       is_binary(config.provider) and String.trim(config.provider) != "" ->

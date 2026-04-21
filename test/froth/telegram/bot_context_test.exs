@@ -50,7 +50,9 @@ defmodule Froth.Telegram.BotContextTest do
           "id" => 10,
           "sender_id" => 0,
           "date" => 1_700_000_100,
-          "content" => %{"text" => %{"text" => "[Task completed] agent:123 completed."}}
+          "content" => %{
+            "text" => %{"text" => "[Task completed] agent:123 completed."}
+          }
         },
         bot_config()
       )
@@ -72,7 +74,14 @@ defmodule Froth.Telegram.BotContextTest do
       "older context"
     )
 
-    insert_telegram_message(bot_config.session_id, chat_id, 102, 8, 1_700_000_800, "still older")
+    insert_telegram_message(
+      bot_config.session_id,
+      chat_id,
+      102,
+      8,
+      1_700_000_800,
+      "still older"
+    )
 
     insert_telegram_message(
       bot_config.session_id,
@@ -155,9 +164,32 @@ defmodule Froth.Telegram.BotContextTest do
     chat_id = unique_chat_id()
     bot_config = bot_config(recent_message_limit: 2)
 
-    insert_telegram_message(bot_config.session_id, chat_id, 101, 7, 1_700_000_100, "too old")
-    insert_telegram_message(bot_config.session_id, chat_id, 102, 8, 1_700_000_200, "older")
-    insert_telegram_message(bot_config.session_id, chat_id, 103, 9, 1_700_000_300, "newer")
+    insert_telegram_message(
+      bot_config.session_id,
+      chat_id,
+      101,
+      7,
+      1_700_000_100,
+      "too old"
+    )
+
+    insert_telegram_message(
+      bot_config.session_id,
+      chat_id,
+      102,
+      8,
+      1_700_000_200,
+      "older"
+    )
+
+    insert_telegram_message(
+      bot_config.session_id,
+      chat_id,
+      103,
+      9,
+      1_700_000_300,
+      "newer"
+    )
 
     parts =
       BotContext.for_message(
@@ -188,11 +220,50 @@ defmodule Froth.Telegram.BotContextTest do
       recent_message_anchor_size: 2
     ]
 
-    insert_telegram_message("test-session", chat_id, 101, 7, 1_700_000_100, "m1")
-    insert_telegram_message("test-session", chat_id, 102, 7, 1_700_000_200, "m2")
-    insert_telegram_message("test-session", chat_id, 103, 7, 1_700_000_300, "m3")
-    insert_telegram_message("test-session", chat_id, 104, 7, 1_700_000_400, "m4")
-    insert_telegram_message("test-session", chat_id, 105, 7, 1_700_000_500, "m5")
+    insert_telegram_message(
+      "test-session",
+      chat_id,
+      101,
+      7,
+      1_700_000_100,
+      "m1"
+    )
+
+    insert_telegram_message(
+      "test-session",
+      chat_id,
+      102,
+      7,
+      1_700_000_200,
+      "m2"
+    )
+
+    insert_telegram_message(
+      "test-session",
+      chat_id,
+      103,
+      7,
+      1_700_000_300,
+      "m3"
+    )
+
+    insert_telegram_message(
+      "test-session",
+      chat_id,
+      104,
+      7,
+      1_700_000_400,
+      "m4"
+    )
+
+    insert_telegram_message(
+      "test-session",
+      chat_id,
+      105,
+      7,
+      1_700_000_500,
+      "m5"
+    )
 
     parts_before =
       chat_id
@@ -205,7 +276,14 @@ defmodule Froth.Telegram.BotContextTest do
     assert prompt_before =~ "m4"
     assert prompt_before =~ "m5"
 
-    insert_telegram_message("test-session", chat_id, 106, 7, 1_700_000_600, "m6")
+    insert_telegram_message(
+      "test-session",
+      chat_id,
+      106,
+      7,
+      1_700_000_600,
+      "m6"
+    )
 
     parts_after_append =
       chat_id
@@ -218,11 +296,20 @@ defmodule Froth.Telegram.BotContextTest do
     assert prompt_after_append =~ "m6"
 
     stable_before = Enum.take(parts_before, length(parts_before) - 1)
-    stable_after_append = Enum.take(parts_after_append, length(parts_before) - 1)
+
+    stable_after_append =
+      Enum.take(parts_after_append, length(parts_before) - 1)
 
     assert stable_after_append == stable_before
 
-    insert_telegram_message("test-session", chat_id, 107, 7, 1_700_000_700, "m7")
+    insert_telegram_message(
+      "test-session",
+      chat_id,
+      107,
+      7,
+      1_700_000_700,
+      "m7"
+    )
 
     prompt_after_roll =
       chat_id
@@ -291,12 +378,46 @@ defmodule Froth.Telegram.BotContextTest do
     bot_config = bot_config(recent_message_limit: 10)
     tied_inserted_at = ~N[2026-03-28 12:44:43]
 
-    insert_telegram_message(bot_config.session_id, chat_id, 200, 7, 1_700_000_100, "first")
-    insert_telegram_message(bot_config.session_id, chat_id, 202, 7, 1_700_000_200, "higher id")
-    insert_telegram_message(bot_config.session_id, chat_id, 201, 8, 1_700_000_200, "lower id")
+    insert_telegram_message(
+      bot_config.session_id,
+      chat_id,
+      200,
+      7,
+      1_700_000_100,
+      "first"
+    )
 
-    set_message_inserted_at(bot_config.session_id, chat_id, 202, tied_inserted_at)
-    set_message_inserted_at(bot_config.session_id, chat_id, 201, tied_inserted_at)
+    insert_telegram_message(
+      bot_config.session_id,
+      chat_id,
+      202,
+      7,
+      1_700_000_200,
+      "higher id"
+    )
+
+    insert_telegram_message(
+      bot_config.session_id,
+      chat_id,
+      201,
+      8,
+      1_700_000_200,
+      "lower id"
+    )
+
+    set_message_inserted_at(
+      bot_config.session_id,
+      chat_id,
+      202,
+      tied_inserted_at
+    )
+
+    set_message_inserted_at(
+      bot_config.session_id,
+      chat_id,
+      201,
+      tied_inserted_at
+    )
 
     parts =
       BotContext.for_message(
@@ -336,7 +457,12 @@ defmodule Froth.Telegram.BotContextTest do
       "older context"
     )
 
-    insert_analysis(chat_id, 101, "vision", "observed   cat  on    desk with notes")
+    insert_analysis(
+      chat_id,
+      101,
+      "vision",
+      "observed   cat  on    desk with notes"
+    )
 
     parts =
       BotContext.for_message(
@@ -361,9 +487,19 @@ defmodule Froth.Telegram.BotContextTest do
     session_id = "test-session-#{System.unique_integer([:positive])}"
 
     chronicle_dir =
-      chronicle_dir_fixture("ch01-founding": "The founding story", "ch02-war": "The war chapter")
+      chronicle_dir_fixture(
+        "ch01-founding": "The founding story",
+        "ch02-war": "The war chapter"
+      )
 
-    insert_telegram_message(session_id, chat_id, 101, 8, 1_700_000_700, "recent context")
+    insert_telegram_message(
+      session_id,
+      chat_id,
+      101,
+      8,
+      1_700_000_700,
+      "recent context"
+    )
 
     parts =
       BotContext.for_message(
@@ -374,7 +510,11 @@ defmodule Froth.Telegram.BotContextTest do
           text: "fresh message",
           date: 1_700_000_850
         ),
-        Map.put(bot_config(session_id: session_id), :chronicle_dir, chronicle_dir)
+        Map.put(
+          bot_config(session_id: session_id),
+          :chronicle_dir,
+          chronicle_dir
+        )
       )
 
     prompt = Enum.join(parts, "")
@@ -418,7 +558,11 @@ defmodule Froth.Telegram.BotContextTest do
           }
         ],
         result_blocks: [
-          %{"type" => "tool_result", "tool_use_id" => "toolu_send", "content" => "sent"},
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "toolu_send",
+            "content" => "sent"
+          },
           %{
             "type" => "tool_result",
             "tool_use_id" => "toolu_search",
@@ -476,7 +620,11 @@ defmodule Froth.Telegram.BotContextTest do
         }
       ],
       result_blocks: [
-        %{"type" => "tool_result", "tool_use_id" => "toolu_send", "content" => "sent"}
+        %{
+          "type" => "tool_result",
+          "tool_use_id" => "toolu_send",
+          "content" => "sent"
+        }
       ]
     )
 
@@ -506,12 +654,17 @@ defmodule Froth.Telegram.BotContextTest do
       id: Keyword.get(opts, :id, "charlie"),
       session_id: Keyword.get(opts, :session_id, "test-session"),
       recent_message_limit: Keyword.get(opts, :recent_message_limit),
-      recent_message_anchor_size: Keyword.get(opts, :recent_message_anchor_size),
-      recent_window_target_hours: Keyword.get(opts, :recent_window_target_hours),
+      recent_message_anchor_size:
+        Keyword.get(opts, :recent_message_anchor_size),
+      recent_window_target_hours:
+        Keyword.get(opts, :recent_window_target_hours),
       recent_window_min_hours: Keyword.get(opts, :recent_window_min_hours),
-      recent_window_backfill_hours: Keyword.get(opts, :recent_window_backfill_hours),
-      recent_window_char_budget: Keyword.get(opts, :recent_window_char_budget),
-      recent_window_bucket_minutes: Keyword.get(opts, :recent_window_bucket_minutes)
+      recent_window_backfill_hours:
+        Keyword.get(opts, :recent_window_backfill_hours),
+      recent_window_char_budget:
+        Keyword.get(opts, :recent_window_char_budget),
+      recent_window_bucket_minutes:
+        Keyword.get(opts, :recent_window_bucket_minutes)
     }
   end
 
@@ -541,7 +694,14 @@ defmodule Froth.Telegram.BotContextTest do
     )
   end
 
-  defp insert_telegram_message(session_id, chat_id, message_id, sender_id, date, text) do
+  defp insert_telegram_message(
+         session_id,
+         chat_id,
+         message_id,
+         sender_id,
+         date,
+         text
+       ) do
     ensure_session(session_id)
 
     Repo.insert!(
@@ -584,7 +744,8 @@ defmodule Froth.Telegram.BotContextTest do
     |> Repo.update_all(set: [inserted_at: inserted_at])
   end
 
-  defp match_index(haystack, needle) when is_binary(haystack) and is_binary(needle) do
+  defp match_index(haystack, needle)
+       when is_binary(haystack) and is_binary(needle) do
     case :binary.match(haystack, needle) do
       {idx, _len} -> idx
       :nomatch -> nil
@@ -632,7 +793,10 @@ defmodule Froth.Telegram.BotContextTest do
         parent_id: assistant_msg.id
       })
 
-    Agent.append_event(cycle, %{head_id: result_msg.id, message_id: result_msg.id})
+    Agent.append_event(cycle, %{
+      head_id: result_msg.id,
+      message_id: result_msg.id
+    })
 
     Repo.insert!(%CycleLink{
       cycle_id: cycle.id,

@@ -33,7 +33,9 @@ defmodule Froth.TasksTest do
     chat_id = 4242
     task_id = Tasks.generate_id("codex")
 
-    start_supervised!({FakeBot, test_pid: self(), name: Froth.Telegram.Bots.via(bot_id)})
+    start_supervised!(
+      {FakeBot, test_pid: self(), name: Froth.Telegram.Bots.via(bot_id)}
+    )
 
     assert {:ok, _task} =
              Tasks.create(%{
@@ -43,8 +45,14 @@ defmodule Froth.TasksTest do
                metadata: %{session_id: "codex-session-1"}
              })
 
-    assert %Froth.TaskEvent{} = Tasks.append_output(task_id, "task output preview")
-    assert {:ok, _link} = Tasks.subscribe_telegram(task_id, bot_id, chat_id, message_id: 999)
+    assert %Froth.TaskEvent{} =
+             Tasks.append_output(task_id, "task output preview")
+
+    assert {:ok, _link} =
+             Tasks.subscribe_telegram(task_id, bot_id, chat_id,
+               message_id: 999
+             )
+
     assert :ok = Tasks.complete(task_id)
 
     assert_receive {:fake_bot_cast,
@@ -65,7 +73,8 @@ defmodule Froth.TasksTest do
     assert Repo.exists?(
              from(link in TaskTelegramLink,
                where:
-                 link.task_id == ^task_id and link.bot_id == ^bot_id and link.chat_id == ^chat_id and
+                 link.task_id == ^task_id and link.bot_id == ^bot_id and
+                   link.chat_id == ^chat_id and
                    not is_nil(link.notified_at)
              )
            )
@@ -76,7 +85,9 @@ defmodule Froth.TasksTest do
     chat_id = 5252
     task_id = Tasks.generate_id("shell")
 
-    start_supervised!({FakeBot, test_pid: self(), name: Froth.Telegram.Bots.via(bot_id)})
+    start_supervised!(
+      {FakeBot, test_pid: self(), name: Froth.Telegram.Bots.via(bot_id)}
+    )
 
     assert {:ok, _task} =
              Tasks.create(%{
@@ -111,7 +122,13 @@ defmodule Froth.TasksTest do
 
     test "binary stdout lands as a [binary: …] placeholder event" do
       task_id = Tasks.generate_id("shell")
-      {:ok, _} = Tasks.create(%{task_id: task_id, type: "shell", label: "cat logo.png"})
+
+      {:ok, _} =
+        Tasks.create(%{
+          task_id: task_id,
+          type: "shell",
+          label: "cat logo.png"
+        })
 
       png = <<0x89, "PNG\r\n", 0x1A, 0x0A, 0, 0, 0, 13, "IHDR">>
       event = Tasks.append_output(task_id, png)
@@ -125,7 +142,9 @@ defmodule Froth.TasksTest do
 
     test "NUL-bearing stdout without a known signature falls back to octet-stream" do
       task_id = Tasks.generate_id("shell")
-      {:ok, _} = Tasks.create(%{task_id: task_id, type: "shell", label: "printf ..."})
+
+      {:ok, _} =
+        Tasks.create(%{task_id: task_id, type: "shell", label: "printf ..."})
 
       chunk = <<0xAB, 0xCD, 0x00, 0x01, 0x02>>
       event = Tasks.append_output(task_id, chunk)
@@ -136,7 +155,9 @@ defmodule Froth.TasksTest do
 
     test "text stdout passes through unchanged" do
       task_id = Tasks.generate_id("shell")
-      {:ok, _} = Tasks.create(%{task_id: task_id, type: "shell", label: "echo hello"})
+
+      {:ok, _} =
+        Tasks.create(%{task_id: task_id, type: "shell", label: "echo hello"})
 
       event = Tasks.append_output(task_id, "hello world\n")
 

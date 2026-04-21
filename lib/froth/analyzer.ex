@@ -37,7 +37,8 @@ defmodule Froth.Analyzer do
       "@type" => "setMessageReactions",
       "chat_id" => chat_id,
       "message_id" => message_id,
-      "reaction_types" => Enum.map(emojis, &%{"@type" => "reactionTypeEmoji", "emoji" => &1}),
+      "reaction_types" =>
+        Enum.map(emojis, &%{"@type" => "reactionTypeEmoji", "emoji" => &1}),
       "is_big" => false
     })
   end

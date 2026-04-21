@@ -12,8 +12,10 @@ defmodule Froth.Agent do
   @preview_string_limit 320
   @preview_list_limit 8
 
-  @spec run(Message.t() | Cycle.t(), Config.t()) :: {Cycle.t(), Enumerable.t()}
-  def run(%Message{id: id} = message, %Config{} = config) when not is_nil(id) do
+  @spec run(Message.t() | Cycle.t(), Config.t()) ::
+          {Cycle.t(), Enumerable.t()}
+  def run(%Message{id: id} = message, %Config{} = config)
+      when not is_nil(id) do
     message
     |> begin_cycle(config)
     |> run(config)
@@ -24,7 +26,8 @@ defmodule Froth.Agent do
   end
 
   @spec begin_cycle(Message.t(), Config.t()) :: Cycle.t()
-  def begin_cycle(%Message{id: id} = message, %Config{} = config) when not is_nil(id) do
+  def begin_cycle(%Message{id: id} = message, %Config{} = config)
+      when not is_nil(id) do
     cycle =
       %Cycle{}
       |> Cycle.changeset(cycle_snapshot_attrs(config))
@@ -82,7 +85,8 @@ defmodule Froth.Agent do
 
   @doc false
   @spec cycle_snapshot_attrs(Config.t()) :: map()
-  def cycle_snapshot_attrs(%Config{} = config), do: initial_cycle_attrs(config)
+  def cycle_snapshot_attrs(%Config{} = config),
+    do: initial_cycle_attrs(config)
 
   @spec append_event(Cycle.t(), map()) :: Event.t()
   def append_event(%Cycle{} = cycle, attrs) when is_map(attrs) do
@@ -105,7 +109,10 @@ defmodule Froth.Agent do
         "cycle_id" => cycle_id,
         "seq" => seq
       })
-      |> maybe_put_metadata("head_id", Map.get(attrs, :head_id) || Map.get(attrs, "head_id"))
+      |> maybe_put_metadata(
+        "head_id",
+        Map.get(attrs, :head_id) || Map.get(attrs, "head_id")
+      )
       |> maybe_put_metadata(
         "message_id",
         Map.get(attrs, :message_id) || Map.get(attrs, "message_id")
@@ -119,9 +126,14 @@ defmodule Froth.Agent do
     %Event{}
     |> Event.changeset(%{
       event: agent_event_name(kind),
-      span_id: stringify_or_nil(Map.get(attrs, :span_id) || Map.get(attrs, "span_id")),
+      span_id:
+        stringify_or_nil(
+          Map.get(attrs, :span_id) || Map.get(attrs, "span_id")
+        ),
       parent_id:
-        stringify_or_nil(Map.get(attrs, :parent_span_id) || Map.get(attrs, "parent_span_id")),
+        stringify_or_nil(
+          Map.get(attrs, :parent_span_id) || Map.get(attrs, "parent_span_id")
+        ),
       measurements: event_measurements(metadata),
       metadata: metadata
     })
@@ -138,7 +150,8 @@ defmodule Froth.Agent do
   def merge_cycle_usage(%Cycle{} = cycle, _usage), do: cycle
 
   @spec describe_cycle_stop(Cycle.t() | String.t()) :: String.t() | nil
-  def describe_cycle_stop(%Cycle{id: cycle_id}), do: describe_cycle_stop(cycle_id)
+  def describe_cycle_stop(%Cycle{id: cycle_id}),
+    do: describe_cycle_stop(cycle_id)
 
   def describe_cycle_stop(cycle_id) when is_binary(cycle_id) do
     cycle = Repo.get(Cycle, cycle_id)
@@ -149,7 +162,9 @@ defmodule Froth.Agent do
           where:
             e.event == "froth.agent.control.outcome" and
               fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id),
-          order_by: [desc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)],
+          order_by: [
+            desc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)
+          ],
           limit: 1,
           select: e.metadata
         )
@@ -159,7 +174,8 @@ defmodule Froth.Agent do
       is_map(outcome) ->
         describe_control_outcome(outcome)
 
-      cycle && cycle.status == :failed && is_binary(cycle.error) && cycle.error != "" ->
+      cycle && cycle.status == :failed && is_binary(cycle.error) &&
+          cycle.error != "" ->
         cycle.error
 
       cycle && cycle.status == :cancelled ->
@@ -209,7 +225,9 @@ defmodule Froth.Agent do
           ),
           log: false
         )
-        |> Map.new(fn %{cycle_id: cycle_id, head_id: head_id} -> {cycle_id, head_id} end)
+        |> Map.new(fn %{cycle_id: cycle_id, head_id: head_id} ->
+          {cycle_id, head_id}
+        end)
     end
   end
 
@@ -219,7 +237,10 @@ defmodule Froth.Agent do
 
   def load_messages(head_id) do
     seed = Message |> where([m], m.id == ^head_id)
-    recurse = Message |> join(:inner, [m], c in "chain", on: m.id == c.parent_id)
+
+    recurse =
+      Message |> join(:inner, [m], c in "chain", on: m.id == c.parent_id)
+
     chain = seed |> union_all(^recurse)
 
     {"chain", Message}
@@ -309,7 +330,9 @@ defmodule Froth.Agent do
   from the message transcript and doesn't depend on the stringified
   tool_result.content.
   """
-  @spec cycle_traces_from_events([String.t()]) :: %{optional(String.t()) => [map()]}
+  @spec cycle_traces_from_events([String.t()]) :: %{
+          optional(String.t()) => [map()]
+        }
   def cycle_traces_from_events(cycle_ids) when is_list(cycle_ids) do
     cycle_ids = normalize_cycle_ids(cycle_ids)
 
@@ -359,7 +382,8 @@ defmodule Froth.Agent do
 
   defp trace_entries_for_event(%{"tool_name" => "send_message"}), do: []
 
-  defp trace_entries_for_event(%{"tool_name" => tool_name} = meta) when is_binary(tool_name) do
+  defp trace_entries_for_event(%{"tool_name" => tool_name} = meta)
+       when is_binary(tool_name) do
     input = meta["input"] || %{}
 
     call_entry = %{
@@ -416,7 +440,8 @@ defmodule Froth.Agent do
     {:blocks, [frame_map_to_block(map)]}
   end
 
-  defp decode_event_result(%{"blocks" => block_maps}) when is_list(block_maps) do
+  defp decode_event_result(%{"blocks" => block_maps})
+       when is_list(block_maps) do
     blocks =
       block_maps
       |> Enum.map(&Froth.Context.Block.from_map/1)
@@ -502,7 +527,8 @@ defmodule Froth.Agent do
 
       %{"role" => "user", "content" => content} when is_list(content) ->
         Enum.flat_map(content, fn
-          %{"type" => type, "content" => result_content, "tool_use_id" => _id} = block
+          %{"type" => type, "content" => result_content, "tool_use_id" => _id} =
+              block
           when type in ["tool_result", "mcp_tool_result"] ->
             text = tool_result_text(result_content)
             is_error? = block["is_error"] == true
@@ -544,7 +570,8 @@ defmodule Froth.Agent do
     "#{server_name}/#{name}"
   end
 
-  defp format_trace_tool_name(%{"name" => name}) when is_binary(name), do: name
+  defp format_trace_tool_name(%{"name" => name}) when is_binary(name),
+    do: name
 
   defp normalize_cycle_ids(cycle_ids) do
     cycle_ids
@@ -554,7 +581,8 @@ defmodule Froth.Agent do
 
   @doc false
   @spec next_event_seq(Cycle.t()) :: non_neg_integer()
-  def next_event_seq(%Cycle{id: cycle_id}) when is_binary(cycle_id), do: next_event_seq(cycle_id)
+  def next_event_seq(%Cycle{id: cycle_id}) when is_binary(cycle_id),
+    do: next_event_seq(cycle_id)
 
   @doc false
   @spec next_event_seq(String.t()) :: non_neg_integer()
@@ -564,7 +592,8 @@ defmodule Froth.Agent do
         where:
           like(e.event, "froth.agent.%") and
             fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id),
-        select: fragment("COALESCE(MAX((?->>'seq')::bigint), -1) + 1", e.metadata)
+        select:
+          fragment("COALESCE(MAX((?->>'seq')::bigint), -1) + 1", e.metadata)
       )
     )
     |> case do
@@ -581,7 +610,13 @@ defmodule Froth.Agent do
     append_message(cycle, head_id, role, content, nil, nil)
   end
 
-  @spec append_message(Cycle.t(), String.t() | nil, :user | :agent, term(), map() | nil) ::
+  @spec append_message(
+          Cycle.t(),
+          String.t() | nil,
+          :user | :agent,
+          term(),
+          map() | nil
+        ) ::
           {Message.t(), String.t()}
   def append_message(%Cycle{} = cycle, head_id, role, content, metadata)
       when is_map(metadata) or is_nil(metadata) do
@@ -598,7 +633,8 @@ defmodule Froth.Agent do
         ) ::
           {Message.t(), String.t()}
   def append_message(%Cycle{} = cycle, head_id, role, content, metadata, seq)
-      when (is_map(metadata) or is_nil(metadata)) and (is_integer(seq) or is_nil(seq)) do
+      when (is_map(metadata) or is_nil(metadata)) and
+             (is_integer(seq) or is_nil(seq)) do
     saved =
       Repo.insert!(%Message{
         role: role,
@@ -628,7 +664,10 @@ defmodule Froth.Agent do
     {provider, provider_module} = resolve_provider_details(config)
     system_prompt = config.system || ""
     system_prompt_hash = hash_binary(system_prompt)
-    system_prompt_ref = maybe_store_system_prompt(system_prompt, system_prompt_hash)
+
+    system_prompt_ref =
+      maybe_store_system_prompt(system_prompt, system_prompt_hash)
+
     toolset_hash = hash_value(config.tools || [])
 
     %{
@@ -682,11 +721,20 @@ defmodule Froth.Agent do
     ArgumentError ->
       attrs
       |> Enum.reduce(%{}, fn
-        {"config", value}, acc when is_map(value) -> Map.put(acc, :config, stringify_map(value))
-        {"usage", value}, acc when is_map(value) -> Map.put(acc, :usage, stringify_map(value))
-        {"error", value}, acc -> Map.put(acc, :error, error_string(value))
-        {key, value}, acc when is_atom(key) -> Map.put(acc, key, value)
-        {_key, _value}, acc -> acc
+        {"config", value}, acc when is_map(value) ->
+          Map.put(acc, :config, stringify_map(value))
+
+        {"usage", value}, acc when is_map(value) ->
+          Map.put(acc, :usage, stringify_map(value))
+
+        {"error", value}, acc ->
+          Map.put(acc, :error, error_string(value))
+
+        {key, value}, acc when is_atom(key) ->
+          Map.put(acc, key, value)
+
+        {_key, _value}, acc ->
+          acc
       end)
   end
 
@@ -697,7 +745,8 @@ defmodule Froth.Agent do
     blob? = contains_blob?(normalized)
 
     case Jason.encode(normalized) do
-      {:ok, encoded} when byte_size(encoded) > @payload_blob_threshold or blob? ->
+      {:ok, encoded}
+      when byte_size(encoded) > @payload_blob_threshold or blob? ->
         preview = summarize_payload(normalized)
 
         case ObjectStore.put_bytes(event_blob_key(cycle_id, kind), encoded,
@@ -712,14 +761,19 @@ defmodule Froth.Agent do
     end
   end
 
-  defp normalize_event_seq(value) when is_integer(value) and value >= 0, do: value
-  defp normalize_event_seq(value) when is_float(value) and value >= 0, do: trunc(value)
+  defp normalize_event_seq(value) when is_integer(value) and value >= 0,
+    do: value
+
+  defp normalize_event_seq(value) when is_float(value) and value >= 0,
+    do: trunc(value)
+
   defp normalize_event_seq(_value), do: nil
 
   defp maybe_store_system_prompt("", _hash), do: nil
 
   defp maybe_store_system_prompt(system_prompt, hash)
-       when is_binary(system_prompt) and byte_size(system_prompt) > @payload_blob_threshold do
+       when is_binary(system_prompt) and
+              byte_size(system_prompt) > @payload_blob_threshold do
     case ObjectStore.put_bytes(
            "agent/system-prompts/#{hash}.txt",
            system_prompt,
@@ -736,12 +790,15 @@ defmodule Froth.Agent do
     %{
       "role" => to_string(message.role),
       "content_kind" => message_content_kind(message.content),
-      "text_preview" => truncate(Message.extract_text(message), @preview_string_limit),
+      "text_preview" =>
+        truncate(Message.extract_text(message), @preview_string_limit),
       "metadata" => summarize_payload(message.metadata || %{})
     }
   end
 
-  defp message_content_kind(content) when is_list(content), do: "#{length(content)} blocks"
+  defp message_content_kind(content) when is_list(content),
+    do: "#{length(content)} blocks"
+
   defp message_content_kind(content) when is_binary(content), do: "text"
   defp message_content_kind(nil), do: "empty"
   defp message_content_kind(_content), do: "value"
@@ -749,7 +806,8 @@ defmodule Froth.Agent do
   defp resolve_provider_details(%Config{} = config) do
     provider =
       cond do
-        is_atom(config.provider) and config.provider in [:anthropic, :openai, :grok, :gemini] ->
+        is_atom(config.provider) and
+            config.provider in [:anthropic, :openai, :grok, :gemini] ->
           Atom.to_string(config.provider)
 
         is_binary(config.provider) and String.trim(config.provider) != "" ->
@@ -792,10 +850,17 @@ defmodule Froth.Agent do
   defp tool_result_text(content),
     do: inspect(content, limit: 50, printable_limit: 2000)
 
-  defp tool_result_block_text(%{"type" => "text", "text" => text}) when is_binary(text), do: text
-  defp tool_result_block_text(%{"text" => text}) when is_binary(text), do: text
-  defp tool_result_block_text(%{"type" => type}) when is_binary(type), do: "[#{type}]"
-  defp tool_result_block_text(other), do: inspect(other, limit: 20, printable_limit: 300)
+  defp tool_result_block_text(%{"type" => "text", "text" => text})
+       when is_binary(text), do: text
+
+  defp tool_result_block_text(%{"text" => text}) when is_binary(text),
+    do: text
+
+  defp tool_result_block_text(%{"type" => type}) when is_binary(type),
+    do: "[#{type}]"
+
+  defp tool_result_block_text(other),
+    do: inspect(other, limit: 20, printable_limit: 300)
 
   defp safe_json(map) when is_map(map) do
     Map.new(map, fn {k, v} -> {to_string(k), safe_value(v)} end)
@@ -822,7 +887,10 @@ defmodule Froth.Agent do
   defp stringify_map(_value), do: %{}
 
   defp stringify_value(value) when is_map(value), do: stringify_map(value)
-  defp stringify_value(value) when is_list(value), do: Enum.map(value, &stringify_value/1)
+
+  defp stringify_value(value) when is_list(value),
+    do: Enum.map(value, &stringify_value/1)
+
   defp stringify_value(value) when is_boolean(value), do: value
   defp stringify_value(value) when is_atom(value), do: to_string(value)
   defp stringify_value(value), do: value
@@ -834,7 +902,10 @@ defmodule Froth.Agent do
   end
 
   defp summarize_payload(value) when is_list(value) do
-    preview = value |> Enum.take(@preview_list_limit) |> Enum.map(&summarize_payload/1)
+    preview =
+      value
+      |> Enum.take(@preview_list_limit)
+      |> Enum.map(&summarize_payload/1)
 
     if length(value) > @preview_list_limit do
       preview ++ [%{"truncated_items" => length(value) - @preview_list_limit}]
@@ -845,15 +916,22 @@ defmodule Froth.Agent do
 
   defp summarize_payload(value) when is_map(value) do
     value
-    |> Enum.map(fn {key, item} -> {to_string(key), summarize_entry(key, item)} end)
+    |> Enum.map(fn {key, item} ->
+      {to_string(key), summarize_entry(key, item)}
+    end)
     |> Map.new()
   end
 
   defp summarize_payload(value), do: safe_value(value)
 
   defp summarize_entry(key, value)
-       when key in ["data", :data] and is_binary(value) and byte_size(value) > 128 do
-    %{"bytes" => byte_size(value), "sha256" => hash_binary(value), "stored" => true}
+       when key in ["data", :data] and is_binary(value) and
+              byte_size(value) > 128 do
+    %{
+      "bytes" => byte_size(value),
+      "sha256" => hash_binary(value),
+      "stored" => true
+    }
   end
 
   defp summarize_entry(_key, value), do: summarize_payload(value)
@@ -867,7 +945,9 @@ defmodule Froth.Agent do
 
   defp contains_blob?(value) when is_map(value) do
     Enum.any?(value, fn
-      {key, inner} when key in ["data", :data] and is_binary(inner) and byte_size(inner) > 128 ->
+      {key, inner}
+      when key in ["data", :data] and is_binary(inner) and
+             byte_size(inner) > 128 ->
         true
 
       {_key, inner} ->
@@ -895,7 +975,8 @@ defmodule Froth.Agent do
     Map.put(metadata, key, stringify_or_nil(value))
   end
 
-  defp event_measurements(%{"duration_ms" => duration_ms}) when is_number(duration_ms) do
+  defp event_measurements(%{"duration_ms" => duration_ms})
+       when is_number(duration_ms) do
     %{"duration_ms" => duration_ms}
   end
 
@@ -922,11 +1003,15 @@ defmodule Froth.Agent do
 
   defp canonical_term(value) when is_map(value) do
     value
-    |> Enum.map(fn {key, inner} -> {to_string(key), canonical_term(inner)} end)
+    |> Enum.map(fn {key, inner} ->
+      {to_string(key), canonical_term(inner)}
+    end)
     |> Enum.sort()
   end
 
-  defp canonical_term(value) when is_list(value), do: Enum.map(value, &canonical_term/1)
+  defp canonical_term(value) when is_list(value),
+    do: Enum.map(value, &canonical_term/1)
+
   defp canonical_term(value), do: value
 
   defp merge_usage_maps(left, right) when is_map(left) and is_map(right) do
@@ -946,7 +1031,8 @@ defmodule Froth.Agent do
 
   defp merge_usage_maps(_left, right), do: right
 
-  defp estimate_usage_cost_usd(usage, model) when is_map(usage) and is_binary(model) do
+  defp estimate_usage_cost_usd(usage, model)
+       when is_map(usage) and is_binary(model) do
     case model_pricing_rates(model) do
       nil ->
         nil
@@ -954,7 +1040,10 @@ defmodule Froth.Agent do
       rates ->
         input_tokens = usage_int(usage["input_tokens"])
         output_tokens = usage_int(usage["output_tokens"])
-        cache_creation_tokens = usage_int(usage["cache_creation_input_tokens"])
+
+        cache_creation_tokens =
+          usage_int(usage["cache_creation_input_tokens"])
+
         cache_read_tokens = usage_int(usage["cache_read_input_tokens"])
 
         (input_tokens * rates.input +
@@ -1015,22 +1104,33 @@ defmodule Froth.Agent do
     detail
   end
 
-  defp describe_control_outcome(%{"outcome" => "waiting_on_subscription", "reason" => reason})
+  defp describe_control_outcome(%{
+         "outcome" => "waiting_on_subscription",
+         "reason" => reason
+       })
        when is_binary(reason) and reason != "" do
     reason
   end
 
-  defp describe_control_outcome(%{"outcome" => "tool_error", "error" => error})
+  defp describe_control_outcome(%{
+         "outcome" => "tool_error",
+         "error" => error
+       })
        when is_binary(error) and error != "" do
     error
   end
 
-  defp describe_control_outcome(%{"outcome" => "cycle_error", "error" => error})
+  defp describe_control_outcome(%{
+         "outcome" => "cycle_error",
+         "error" => error
+       })
        when is_binary(error) and error != "" do
     error
   end
 
-  defp describe_control_outcome(%{"outcome" => outcome}) when is_binary(outcome), do: outcome
+  defp describe_control_outcome(%{"outcome" => outcome})
+       when is_binary(outcome), do: outcome
+
   defp describe_control_outcome(_outcome), do: nil
 
   defp error_string(value) when is_binary(value), do: value

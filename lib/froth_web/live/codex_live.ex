@@ -29,7 +29,8 @@ defmodule FrothWeb.CodexLive do
       )
 
     if session_route?(params) do
-      {session_id, requested_thread_id, session_pinned?} = resolve_session_context(params)
+      {session_id, requested_thread_id, session_pinned?} =
+        resolve_session_context(params)
 
       socket =
         socket
@@ -108,19 +109,29 @@ defmodule FrothWeb.CodexLive do
   end
 
   @impl true
-  def handle_event("refresh_sessions", _, %{assigns: %{mode: :index}} = socket) do
+  def handle_event(
+        "refresh_sessions",
+        _,
+        %{assigns: %{mode: :index}} = socket
+      ) do
     {:noreply, assign(socket, :sessions, list_sessions())}
   end
 
   def handle_event("new_session", _, %{assigns: %{mode: :index}} = socket) do
-    {:noreply, push_navigate(socket, to: ~p"/froth/mini/codex/#{random_session_id()}")}
+    {:noreply,
+     push_navigate(socket, to: ~p"/froth/mini/codex/#{random_session_id()}")}
   end
 
-  def handle_event("prompt_changed", %{"codex" => params}, socket) when is_map(params) do
+  def handle_event("prompt_changed", %{"codex" => params}, socket)
+      when is_map(params) do
     {:noreply, assign(socket, :prompt_form, to_form(params, as: :codex))}
   end
 
-  def handle_event("send_prompt", %{"codex" => %{"prompt" => raw_prompt}}, socket) do
+  def handle_event(
+        "send_prompt",
+        %{"codex" => %{"prompt" => raw_prompt}},
+        socket
+      ) do
     prompt = String.trim(raw_prompt || "")
     pending_image_count = pending_image_count(socket)
 
@@ -137,7 +148,11 @@ defmodule FrothWeb.CodexLive do
           socket
 
         pending_image_count > 0 ->
-          put_flash(socket, :error, "wait for pasted images to finish uploading")
+          put_flash(
+            socket,
+            :error,
+            "wait for pasted images to finish uploading"
+          )
 
         true ->
           Span.execute([:froth, :web, :send_prompt], nil, %{
@@ -157,7 +172,8 @@ defmodule FrothWeb.CodexLive do
           end
       end
 
-    {:noreply, assign(socket, :prompt_form, to_form(%{"prompt" => ""}, as: :codex))}
+    {:noreply,
+     assign(socket, :prompt_form, to_form(%{"prompt" => ""}, as: :codex))}
   end
 
   def handle_event("cancel_image_upload", %{"ref" => ref}, socket) do
@@ -180,14 +196,20 @@ defmodule FrothWeb.CodexLive do
         {:noreply, socket}
 
       true ->
-        case CodexSession.set_reasoning_effort(socket.assigns.session_id, effort) do
+        case CodexSession.set_reasoning_effort(
+               socket.assigns.session_id,
+               effort
+             ) do
           :ok ->
             {:noreply, refresh_snapshot(socket)}
 
           {:error, reason} ->
             {:noreply,
              socket
-             |> put_flash(:error, "reasoning update failed: #{inspect(reason)}")
+             |> put_flash(
+               :error,
+               "reasoning update failed: #{inspect(reason)}"
+             )
              |> refresh_snapshot()}
         end
     end
@@ -198,9 +220,20 @@ defmodule FrothWeb.CodexLive do
         %{"model" => %{"model" => raw_model}},
         %{assigns: %{mode: :session}} = socket
       ) do
-    socket = assign(socket, :model_form, model_form(raw_model, socket.assigns.available_models))
+    socket =
+      assign(
+        socket,
+        :model_form,
+        model_form(raw_model, socket.assigns.available_models)
+      )
+
     model = normalize_model_value(raw_model)
-    allowed_models = allowed_model_values(socket.assigns.runtime, socket.assigns.available_models)
+
+    allowed_models =
+      allowed_model_values(
+        socket.assigns.runtime,
+        socket.assigns.available_models
+      )
 
     cond do
       is_nil(model) ->
@@ -209,7 +242,8 @@ defmodule FrothWeb.CodexLive do
       model not in allowed_models ->
         {:noreply, put_flash(socket, :error, "unsupported model")}
 
-      current_model(socket.assigns.runtime, socket.assigns.available_models) == model ->
+      current_model(socket.assigns.runtime, socket.assigns.available_models) ==
+          model ->
         {:noreply, socket}
 
       true ->
@@ -227,7 +261,9 @@ defmodule FrothWeb.CodexLive do
   end
 
   def handle_event("new_thread", _, socket) do
-    Span.execute([:froth, :web, :new_thread], nil, %{session_id: socket.assigns.session_id})
+    Span.execute([:froth, :web, :new_thread], nil, %{
+      session_id: socket.assigns.session_id
+    })
 
     case CodexSession.new_thread(socket.assigns.session_id) do
       :ok ->
@@ -242,7 +278,9 @@ defmodule FrothWeb.CodexLive do
   end
 
   def handle_event("interrupt_turn", _, socket) do
-    Span.execute([:froth, :web, :interrupt_turn], nil, %{session_id: socket.assigns.session_id})
+    Span.execute([:froth, :web, :interrupt_turn], nil, %{
+      session_id: socket.assigns.session_id
+    })
 
     case CodexSession.interrupt_turn(socket.assigns.session_id) do
       :ok ->
@@ -250,7 +288,9 @@ defmodule FrothWeb.CodexLive do
 
       {:error, reason} ->
         {:noreply,
-         socket |> put_flash(:error, "interrupt failed: #{inspect(reason)}") |> refresh_snapshot()}
+         socket
+         |> put_flash(:error, "interrupt failed: #{inspect(reason)}")
+         |> refresh_snapshot()}
     end
   end
 
@@ -288,9 +328,13 @@ defmodule FrothWeb.CodexLive do
           <div class="mx-auto w-full max-w-4xl">
             <div class="mb-4 flex items-center justify-between gap-2">
               <div>
-                <p class="text-[10px] uppercase tracking-[0.2em] text-cyan-300/80">Codex Live</p>
+                <p class="text-[10px] uppercase tracking-[0.2em] text-cyan-300/80">
+                  Codex Live
+                </p>
                 <h1 class="text-[16px] text-zinc-100">Sessions</h1>
-                <p class="text-[12px] text-zinc-400">Pick one session or start a new one.</p>
+                <p class="text-[12px] text-zinc-400">
+                  Pick one session or start a new one.
+                </p>
               </div>
               <div class="flex items-center gap-2">
                 <button
@@ -324,8 +368,12 @@ defmodule FrothWeb.CodexLive do
                 class="block rounded-2xl border border-zinc-800 bg-zinc-900/60 px-4 py-3 transition hover:border-zinc-600 hover:bg-zinc-900/80"
               >
                 <div class="flex items-center justify-between gap-3">
-                  <p class="min-w-0 truncate text-[12px] text-zinc-100">{session.session_id}</p>
-                  <span class="shrink-0 text-[11px] text-zinc-500">{session.last_seen_at}</span>
+                  <p class="min-w-0 truncate text-[12px] text-zinc-100">
+                    {session.session_id}
+                  </p>
+                  <span class="shrink-0 text-[11px] text-zinc-500">
+                    {session.last_seen_at}
+                  </span>
                 </div>
                 <p class="mt-1 line-clamp-2 text-[12px] text-zinc-400">
                   {session_preview_text(session)}
@@ -351,7 +399,11 @@ defmodule FrothWeb.CodexLive do
               phx-update="stream"
               class="mx-auto flex w-full max-w-[72rem] flex-col gap-2 px-3 py-3"
             >
-              <div :for={{dom_id, entry} <- @streams.entries} id={dom_id} data-codex-entry>
+              <div
+                :for={{dom_id, entry} <- @streams.entries}
+                id={dom_id}
+                data-codex-entry
+              >
                 <%= cond do %>
                   <% entry.kind == :user -> %>
                     <.codex_message
@@ -401,7 +453,9 @@ defmodule FrothWeb.CodexLive do
                   class="flex items-center justify-between gap-2 rounded-[1.35rem] border border-white/10 bg-black/60 px-2 py-2 shadow-[0_10px_35px_rgba(0,0,0,0.28)]"
                 >
                   <div class="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-                    <span class={session_status_text_class(@codex_status, @active_turn_id)}>
+                    <span class={
+                      session_status_text_class(@codex_status, @active_turn_id)
+                    }>
                       {session_status_text(@codex_status, @active_turn_id)}
                     </span>
                     <span
@@ -470,7 +524,10 @@ defmodule FrothWeb.CodexLive do
                       :for={entry <- @uploads.images.entries}
                       class="group relative h-14 w-14 shrink-0 overflow-hidden bg-black/55 ring-1 ring-white/8"
                     >
-                      <.live_img_preview entry={entry} class="h-full w-full object-cover" />
+                      <.live_img_preview
+                        entry={entry}
+                        class="h-full w-full object-cover"
+                      />
                       <button
                         type="button"
                         phx-click="cancel_image_upload"
@@ -598,10 +655,24 @@ defmodule FrothWeb.CodexLive do
       |> assign(:html, message_body_html(text, assigns.streaming?))
 
     ~H"""
-    <div :if={@text || @footer || @image_urls != [] || @streaming?} class={codex_message_class(@tone)}>
-      <div :if={@image_urls != []} class="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-        <div :for={image <- @image_urls} class="overflow-hidden border border-white/10 bg-black/40">
-          <img src={image.url} alt={image.alt} class="h-auto w-full object-cover" loading="lazy" />
+    <div
+      :if={@text || @footer || @image_urls != [] || @streaming?}
+      class={codex_message_class(@tone)}
+    >
+      <div
+        :if={@image_urls != []}
+        class="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3"
+      >
+        <div
+          :for={image <- @image_urls}
+          class="overflow-hidden border border-white/10 bg-black/40"
+        >
+          <img
+            src={image.url}
+            alt={image.alt}
+            class="h-auto w-full object-cover"
+            loading="lazy"
+          />
         </div>
       </div>
       <div :if={@text || @streaming?} class={codex_message_text_class(@tone)}>
@@ -724,7 +795,9 @@ defmodule FrothWeb.CodexLive do
     ~H"""
     <div class={status_entry_class(@descriptor.tone)}>
       <div class="flex flex-wrap items-center gap-2">
-        <span class={status_entry_kicker_class(@descriptor.tone)}>{@descriptor.badge}</span>
+        <span class={status_entry_kicker_class(@descriptor.tone)}>
+          {@descriptor.badge}
+        </span>
         <p class="font-[IBM_Plex_Sans,ui-sans-serif,system-ui,sans-serif] text-[12px] leading-5 text-zinc-100">
           {@descriptor.title}
         </p>
@@ -746,7 +819,9 @@ defmodule FrothWeb.CodexLive do
           <span class={plan_step_status_class(step.status)}>
             {plan_step_status_text(step.status)}
           </span>
-          <p class="min-w-0 flex-1 text-[12px] leading-5 text-zinc-200">{step.step}</p>
+          <p class="min-w-0 flex-1 text-[12px] leading-5 text-zinc-200">
+            {step.step}
+          </p>
         </div>
       </div>
     </div>
@@ -760,7 +835,8 @@ defmodule FrothWeb.CodexLive do
         _ -> []
       end
 
-    with {:ok, _pid} <- CodexSession.ensure_started(socket.assigns.session_id, opts),
+    with {:ok, _pid} <-
+           CodexSession.ensure_started(socket.assigns.session_id, opts),
          :ok <- CodexSession.subscribe(socket.assigns.session_id),
          {:ok, snapshot} <- CodexSession.snapshot(socket.assigns.session_id) do
       socket
@@ -779,10 +855,13 @@ defmodule FrothWeb.CodexLive do
     end
   end
 
-  defp maybe_pin_session_url(%{assigns: %{session_pinned?: true}} = socket), do: socket
+  defp maybe_pin_session_url(%{assigns: %{session_pinned?: true}} = socket),
+    do: socket
 
   defp maybe_pin_session_url(socket) do
-    push_navigate(socket, to: ~p"/froth/mini/codex/#{socket.assigns.session_id}")
+    push_navigate(socket,
+      to: ~p"/froth/mini/codex/#{socket.assigns.session_id}"
+    )
   end
 
   defp refresh_snapshot(socket) do
@@ -834,7 +913,8 @@ defmodule FrothWeb.CodexLive do
     runtime = Map.get(snapshot, :runtime) || Map.get(snapshot, "runtime")
 
     available_models =
-      Map.get(snapshot, :available_models) || Map.get(snapshot, "available_models") || []
+      Map.get(snapshot, :available_models) ||
+        Map.get(snapshot, "available_models") || []
 
     available_models_checked? =
       Map.get(snapshot, :available_models_checked?) ||
@@ -842,17 +922,24 @@ defmodule FrothWeb.CodexLive do
         available_models != [] ||
         socket.assigns.available_models_refresh_attempted?
 
-    entries = normalize_entries(Map.get(snapshot, :entries) || Map.get(snapshot, "entries"))
+    entries =
+      normalize_entries(
+        Map.get(snapshot, :entries) || Map.get(snapshot, "entries")
+      )
 
     socket
     |> assign(
       :codex_status,
       Map.get(snapshot, :status) || Map.get(snapshot, "status") || :unknown
     )
-    |> assign(:thread_id, Map.get(snapshot, :thread_id) || Map.get(snapshot, "thread_id"))
+    |> assign(
+      :thread_id,
+      Map.get(snapshot, :thread_id) || Map.get(snapshot, "thread_id")
+    )
     |> assign(
       :active_turn_id,
-      Map.get(snapshot, :active_turn_id) || Map.get(snapshot, "active_turn_id")
+      Map.get(snapshot, :active_turn_id) ||
+        Map.get(snapshot, "active_turn_id")
     )
     |> assign(
       :active_turn_started_at_ms,
@@ -864,7 +951,8 @@ defmodule FrothWeb.CodexLive do
     |> assign(
       :last_turn_elapsed_ms,
       normalize_optional_integer(
-        Map.get(snapshot, :last_turn_elapsed_ms) || Map.get(snapshot, "last_turn_elapsed_ms")
+        Map.get(snapshot, :last_turn_elapsed_ms) ||
+          Map.get(snapshot, "last_turn_elapsed_ms")
       )
     )
     |> assign(
@@ -874,8 +962,14 @@ defmodule FrothWeb.CodexLive do
           Map.get(snapshot, "active_assistant_entry_id")
       )
     )
-    |> assign(:token_usage, Map.get(snapshot, :token_usage) || Map.get(snapshot, "token_usage"))
-    |> assign(:rate_limits, Map.get(snapshot, :rate_limits) || Map.get(snapshot, "rate_limits"))
+    |> assign(
+      :token_usage,
+      Map.get(snapshot, :token_usage) || Map.get(snapshot, "token_usage")
+    )
+    |> assign(
+      :rate_limits,
+      Map.get(snapshot, :rate_limits) || Map.get(snapshot, "rate_limits")
+    )
     |> assign(:auth, Map.get(snapshot, :auth) || Map.get(snapshot, "auth"))
     |> assign(:runtime, runtime)
     |> assign(:available_models, available_models)
@@ -895,7 +989,10 @@ defmodule FrothWeb.CodexLive do
   defp normalize_entries(_), do: []
 
   defp normalize_entry(entry) when is_map(entry) do
-    id = Map.get(entry, :id) || Map.get(entry, "id") || "entry-#{:erlang.phash2(entry)}"
+    id =
+      Map.get(entry, :id) || Map.get(entry, "id") ||
+        "entry-#{:erlang.phash2(entry)}"
+
     kind = Map.get(entry, :kind) || Map.get(entry, "kind")
     body = Map.get(entry, :body) || Map.get(entry, "body") || ""
     status = Map.get(entry, :status) || Map.get(entry, "status")
@@ -909,14 +1006,21 @@ defmodule FrothWeb.CodexLive do
       body: to_string(body),
       status: normalize_optional_text(status),
       output: normalize_optional_text(output),
-      images: normalize_entry_images(Map.get(entry, :images) || Map.get(entry, "images")),
+      images:
+        normalize_entry_images(
+          Map.get(entry, :images) || Map.get(entry, "images")
+        ),
       label: normalize_optional_text(label),
       sequence: normalize_optional_sequence(sequence)
     }
   end
 
   defp normalize_entry(other),
-    do: %{id: "entry-#{:erlang.phash2(other)}", kind: :event, body: inspect(other)}
+    do: %{
+      id: "entry-#{:erlang.phash2(other)}",
+      kind: :event,
+      body: inspect(other)
+    }
 
   defp hidden_entry?(%{kind: :status, body: body}) when is_binary(body),
     do: String.starts_with?(String.trim_leading(body), "working")
@@ -924,7 +1028,16 @@ defmodule FrothWeb.CodexLive do
   defp hidden_entry?(_), do: false
 
   defp normalize_entry_kind(kind)
-       when kind in [:assistant, :error, :event, :reasoning, :status, :system, :tool, :user],
+       when kind in [
+              :assistant,
+              :error,
+              :event,
+              :reasoning,
+              :status,
+              :system,
+              :tool,
+              :user
+            ],
        do: kind
 
   defp normalize_entry_kind(kind) when is_binary(kind),
@@ -933,8 +1046,13 @@ defmodule FrothWeb.CodexLive do
   defp normalize_entry_kind(_), do: :event
 
   defp normalize_optional_text(nil), do: nil
-  defp normalize_optional_text(value) when is_binary(value) and value != "", do: value
-  defp normalize_optional_text(value) when is_atom(value), do: Atom.to_string(value)
+
+  defp normalize_optional_text(value) when is_binary(value) and value != "",
+    do: value
+
+  defp normalize_optional_text(value) when is_atom(value),
+    do: Atom.to_string(value)
+
   defp normalize_optional_text(_), do: nil
 
   defp normalize_entry_images(images) when is_list(images) do
@@ -966,12 +1084,21 @@ defmodule FrothWeb.CodexLive do
 
   defp normalize_optional_sequence(_), do: nil
 
-  defp assistant_entry_streaming?(entry, active_assistant_entry_id, active_turn_id)
-       when is_map(entry) and is_binary(active_assistant_entry_id) and is_binary(active_turn_id) do
+  defp assistant_entry_streaming?(
+         entry,
+         active_assistant_entry_id,
+         active_turn_id
+       )
+       when is_map(entry) and is_binary(active_assistant_entry_id) and
+              is_binary(active_turn_id) do
     entry.id == active_assistant_entry_id
   end
 
-  defp assistant_entry_streaming?(_entry, _active_assistant_entry_id, _active_turn_id), do: false
+  defp assistant_entry_streaming?(
+         _entry,
+         _active_assistant_entry_id,
+         _active_turn_id
+       ), do: false
 
   defp normalize_optional_integer(value) when is_integer(value), do: value
 
@@ -984,7 +1111,8 @@ defmodule FrothWeb.CodexLive do
 
   defp normalize_optional_integer(_), do: nil
 
-  defp empty_session_stats, do: %{tool_total: 0, tool_completed: 0, tool_running: 0}
+  defp empty_session_stats,
+    do: %{tool_total: 0, tool_completed: 0, tool_running: 0}
 
   defp build_session_stats(entries) when is_list(entries) do
     Enum.reduce(entries, empty_session_stats(), fn
@@ -1001,8 +1129,9 @@ defmodule FrothWeb.CodexLive do
 
   defp build_session_stats(_), do: empty_session_stats()
 
-  defp maybe_increment_completed(stats, status) when status in ["ok", "done", "error"],
-    do: Map.update!(stats, :tool_completed, &(&1 + 1))
+  defp maybe_increment_completed(stats, status)
+       when status in ["ok", "done", "error"],
+       do: Map.update!(stats, :tool_completed, &(&1 + 1))
 
   defp maybe_increment_completed(stats, _status), do: stats
 
@@ -1015,7 +1144,8 @@ defmodule FrothWeb.CodexLive do
     do: "codex-note border-l border-zinc-700/65 bg-zinc-950/68 px-2.5 py-2"
 
   defp codex_message_class(:user),
-    do: "codex-note border-l border-emerald-400/45 bg-emerald-500/[0.06] px-2.5 py-2"
+    do:
+      "codex-note border-l border-emerald-400/45 bg-emerald-500/[0.06] px-2.5 py-2"
 
   defp codex_message_class(_),
     do: "codex-note border-l border-zinc-700/65 bg-zinc-950/68 px-2.5 py-2"
@@ -1066,7 +1196,11 @@ defmodule FrothWeb.CodexLive do
 
         %{
           badge: "turn",
-          tone: if(turn_status in ["completed", "done"], do: :success, else: :neutral),
+          tone:
+            if(turn_status in ["completed", "done"],
+              do: :success,
+              else: :neutral
+            ),
           title: "Turn #{turn_status}",
           subtitle: subtitle,
           details: details,
@@ -1096,7 +1230,8 @@ defmodule FrothWeb.CodexLive do
           spinner?: false
         }
 
-      String.starts_with?(body, "resumed thread ") or String.starts_with?(body, "thread resumed") ->
+      String.starts_with?(body, "resumed thread ") or
+          String.starts_with?(body, "thread resumed") ->
         %{
           badge: "thread",
           tone: :success,
@@ -1132,12 +1267,15 @@ defmodule FrothWeb.CodexLive do
     }
 
   defp parse_received_status(body, _details, subtitle) when is_binary(body) do
-    case Regex.run(~r/^received\s+([^\s]+)\s*(.*)$/s, body, capture: :all_but_first) do
+    case Regex.run(~r/^received\s+([^\s]+)\s*(.*)$/s, body,
+           capture: :all_but_first
+         ) do
       [method, raw] ->
         plan_steps = protocol_plan_steps(raw)
 
         %{
-          badge: if(String.contains?(method, "plan"), do: "plan", else: "event"),
+          badge:
+            if(String.contains?(method, "plan"), do: "plan", else: "event"),
           tone: protocol_tone(method, plan_steps),
           title: protocol_title(method),
           subtitle: protocol_summary(method, raw) || subtitle,
@@ -1171,13 +1309,15 @@ defmodule FrothWeb.CodexLive do
         extract_quoted_value(raw, "EXPLANATION")
 
       true ->
-        extract_quoted_value(raw, "message") || extract_quoted_value(raw, "status")
+        extract_quoted_value(raw, "message") ||
+          extract_quoted_value(raw, "status")
     end
   end
 
   defp protocol_summary(_method, _raw), do: nil
 
-  defp protocol_tone(method, plan_steps) when is_binary(method) and is_list(plan_steps) do
+  defp protocol_tone(method, plan_steps)
+       when is_binary(method) and is_list(plan_steps) do
     cond do
       Enum.any?(plan_steps, &(&1.status == "in_progress")) -> :warning
       String.contains?(method, "plan") -> :neutral
@@ -1202,7 +1342,8 @@ defmodule FrothWeb.CodexLive do
 
   defp protocol_plan_steps(_), do: []
 
-  defp extract_quoted_value(text, key) when is_binary(text) and is_binary(key) do
+  defp extract_quoted_value(text, key)
+       when is_binary(text) and is_binary(key) do
     pattern = ~r/"#{Regex.escape(key)}"\s*=>\s*"([^"]+)"/
 
     case Regex.run(pattern, text, capture: :all_but_first) do
@@ -1224,10 +1365,12 @@ defmodule FrothWeb.CodexLive do
   defp entry_tone(_), do: :neutral
 
   defp status_entry_class(:warning),
-    do: "codex-note border-l border-amber-400/40 bg-amber-950/10 px-2.5 py-1.5"
+    do:
+      "codex-note border-l border-amber-400/40 bg-amber-950/10 px-2.5 py-1.5"
 
   defp status_entry_class(:success),
-    do: "codex-note border-l border-emerald-400/40 bg-emerald-950/10 px-2.5 py-1.5"
+    do:
+      "codex-note border-l border-emerald-400/40 bg-emerald-950/10 px-2.5 py-1.5"
 
   defp status_entry_class(:error),
     do: "codex-note border-l border-rose-400/40 bg-rose-950/10 px-2.5 py-1.5"
@@ -1235,9 +1378,11 @@ defmodule FrothWeb.CodexLive do
   defp status_entry_class(_),
     do: "codex-note border-l border-zinc-700/55 bg-zinc-950/60 px-2.5 py-1.5"
 
-  defp status_entry_kicker_class(:warning), do: "codex-kicker text-amber-300/80"
+  defp status_entry_kicker_class(:warning),
+    do: "codex-kicker text-amber-300/80"
 
-  defp status_entry_kicker_class(:success), do: "codex-kicker text-emerald-300/80"
+  defp status_entry_kicker_class(:success),
+    do: "codex-kicker text-emerald-300/80"
 
   defp status_entry_kicker_class(:error), do: "codex-kicker text-rose-300/80"
 
@@ -1275,7 +1420,9 @@ defmodule FrothWeb.CodexLive do
   defp tool_status_text("done"), do: "done"
   defp tool_status_text(_), do: "update"
 
-  defp modeline_model(runtime) when is_map(runtime), do: runtime_field(runtime, :model, "model")
+  defp modeline_model(runtime) when is_map(runtime),
+    do: runtime_field(runtime, :model, "model")
+
   defp modeline_model(_), do: nil
 
   defp model_field(model, atom_key, string_key) when is_map(model) do
@@ -1290,7 +1437,9 @@ defmodule FrothWeb.CodexLive do
       |> List.wrap()
       |> Enum.map(&normalize_model_choice/1)
       |> Enum.reject(&is_nil/1)
-      |> Enum.reject(fn choice -> choice.hidden? and choice.value != current_model end)
+      |> Enum.reject(fn choice ->
+        choice.hidden? and choice.value != current_model
+      end)
       |> Enum.uniq_by(& &1.value)
 
     choices =
@@ -1298,7 +1447,10 @@ defmodule FrothWeb.CodexLive do
            Enum.any?(choices, &(&1.value == current_model)) do
         choices
       else
-        [%{label: current_model_label(current_model), value: current_model} | choices]
+        [
+          %{label: current_model_label(current_model), value: current_model}
+          | choices
+        ]
       end
 
     Enum.map(choices, &{&1.label, &1.value})
@@ -1325,7 +1477,8 @@ defmodule FrothWeb.CodexLive do
 
   defp model_choice_value(_), do: nil
 
-  defp model_choice_label(model, value) when is_map(model) and is_binary(value) do
+  defp model_choice_label(model, value)
+       when is_map(model) and is_binary(value) do
     model_field(model, :displayName, "displayName") ||
       model_field(model, :display_name, "display_name") ||
       value
@@ -1334,7 +1487,8 @@ defmodule FrothWeb.CodexLive do
   defp model_choice_label(_model, value), do: value
 
   defp model_choice_default?(model) when is_map(model) do
-    model_flag?(model, :isDefault, "isDefault") || model_flag?(model, :is_default, "is_default")
+    model_flag?(model, :isDefault, "isDefault") ||
+      model_flag?(model, :is_default, "is_default")
   end
 
   defp model_choice_default?(_), do: false
@@ -1365,7 +1519,8 @@ defmodule FrothWeb.CodexLive do
     normalize_model_value(model) || default_model(available_models)
   end
 
-  defp current_model(_runtime, available_models), do: default_model(available_models)
+  defp current_model(_runtime, available_models),
+    do: default_model(available_models)
 
   defp default_model(available_models) do
     case Enum.find(List.wrap(available_models), &model_choice_default?/1) do
@@ -1380,10 +1535,13 @@ defmodule FrothWeb.CodexLive do
   end
 
   defp model_form(runtime_or_model, available_models) do
-    to_form(%{"model" => current_model(runtime_or_model, available_models)}, as: :model)
+    to_form(%{"model" => current_model(runtime_or_model, available_models)},
+      as: :model
+    )
   end
 
-  defp current_model_label(current_model) when is_binary(current_model), do: current_model
+  defp current_model_label(current_model) when is_binary(current_model),
+    do: current_model
 
   defp current_model_label(_), do: @default_model
 
@@ -1409,7 +1567,9 @@ defmodule FrothWeb.CodexLive do
   end
 
   defp reasoning_form(runtime_or_effort) do
-    to_form(%{"effort" => current_reasoning_effort(runtime_or_effort)}, as: :reasoning)
+    to_form(%{"effort" => current_reasoning_effort(runtime_or_effort)},
+      as: :reasoning
+    )
   end
 
   defp current_reasoning_effort(runtime) when is_map(runtime) do
@@ -1467,21 +1627,41 @@ defmodule FrothWeb.CodexLive do
     end
   end
 
-  defp elapsed_badge(active_turn_id, started_at_ms, _last_turn_elapsed_ms, now_ms)
-       when is_binary(active_turn_id) and is_integer(started_at_ms) and is_integer(now_ms) do
+  defp elapsed_badge(
+         active_turn_id,
+         started_at_ms,
+         _last_turn_elapsed_ms,
+         now_ms
+       )
+       when is_binary(active_turn_id) and is_integer(started_at_ms) and
+              is_integer(now_ms) do
     format_elapsed_ms(max(now_ms - started_at_ms, 0))
   end
 
-  defp elapsed_badge(_active_turn_id, _started_at_ms, last_turn_elapsed_ms, _now_ms)
+  defp elapsed_badge(
+         _active_turn_id,
+         _started_at_ms,
+         last_turn_elapsed_ms,
+         _now_ms
+       )
        when is_integer(last_turn_elapsed_ms) do
     "last #{format_elapsed_ms(last_turn_elapsed_ms)}"
   end
 
-  defp elapsed_badge(_active_turn_id, _started_at_ms, _last_turn_elapsed_ms, _now_ms), do: nil
+  defp elapsed_badge(
+         _active_turn_id,
+         _started_at_ms,
+         _last_turn_elapsed_ms,
+         _now_ms
+       ), do: nil
 
   defp tool_progress_badge(%{tool_total: 0}), do: nil
 
-  defp tool_progress_badge(%{tool_total: total, tool_completed: completed, tool_running: running})
+  defp tool_progress_badge(%{
+         tool_total: total,
+         tool_completed: completed,
+         tool_running: running
+       })
        when running > 0 do
     "#{completed}/#{total} tools"
   end
@@ -1573,7 +1753,11 @@ defmodule FrothWeb.CodexLive do
   defp persist_prompt_images(socket) do
     consume_uploaded_entries(socket, :images, fn %{path: path}, entry ->
       dest =
-        codex_upload_destination(socket.assigns.session_id, entry.client_name, entry.client_type)
+        codex_upload_destination(
+          socket.assigns.session_id,
+          entry.client_name,
+          entry.client_type
+        )
 
       File.mkdir_p!(Path.dirname(dest.path))
       File.cp!(path, dest.path)
@@ -1590,7 +1774,15 @@ defmodule FrothWeb.CodexLive do
   defp codex_upload_destination(session_id, client_name, client_type) do
     filename = unique_upload_filename(client_name, client_type)
     relative_path = Path.join([session_id, filename])
-    absolute_path = Path.join([File.cwd!(), "priv", "static", "codex_uploads", relative_path])
+
+    absolute_path =
+      Path.join([
+        File.cwd!(),
+        "priv",
+        "static",
+        "codex_uploads",
+        relative_path
+      ])
 
     %{
       path: absolute_path,
@@ -1690,7 +1882,8 @@ defmodule FrothWeb.CodexLive do
 
   defp format_last_seen(_), do: "-"
 
-  defp truncate(value, max) when is_binary(value) and is_integer(max) and max > 0 do
+  defp truncate(value, max)
+       when is_binary(value) and is_integer(max) and max > 0 do
     if String.length(value) > max do
       String.slice(value, 0, max) <> "..."
     else

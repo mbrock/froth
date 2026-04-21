@@ -76,7 +76,8 @@ defmodule Froth.Tools.Timeline do
   end
 
   @impl true
-  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks) when is_map(input) do
+  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks)
+      when is_map(input) do
     chat_id = ctx_chat_id(ctx)
     render_opts = render_opts(ctx)
     queries = search_phrases(input["query"])
@@ -89,18 +90,29 @@ defmodule Froth.Tools.Timeline do
       end
 
     case rows do
-      [] -> {:ok, empty_result_message(queries)}
-      rows -> {:ok, BotContext.render_for_messages(chat_id, rows, render_opts)}
+      [] ->
+        {:ok, empty_result_message(queries)}
+
+      rows ->
+        {:ok, BotContext.render_for_messages(chat_id, rows, render_opts)}
     end
   end
 
   def execute(%Context{}, %ToolUse{}, _hooks),
     do: {:error, "Could not load timeline for the given input."}
 
-  defp browse_rows(chat_id, input) when is_integer(chat_id) and is_map(input) do
+  defp browse_rows(chat_id, input)
+       when is_integer(chat_id) and is_map(input) do
     from_unix = parse_datetime(input["from_date"])
     to_unix = parse_to_datetime(input["to_date"])
-    limit = bounded_integer(input["limit"], @default_browse_limit, 1, @max_browse_limit)
+
+    limit =
+      bounded_integer(
+        input["limit"],
+        @default_browse_limit,
+        1,
+        @max_browse_limit
+      )
 
     query =
       chat_id
@@ -124,7 +136,11 @@ defmodule Froth.Tools.Timeline do
 
         _ ->
           query
-          |> order_by([m], desc: m.date, desc: m.inserted_at, desc: m.message_id)
+          |> order_by([m],
+            desc: m.date,
+            desc: m.inserted_at,
+            desc: m.message_id
+          )
           |> limit(^limit)
           |> Repo.all(log: false)
           |> Enum.reverse()
@@ -137,12 +153,25 @@ defmodule Froth.Tools.Timeline do
        when is_integer(chat_id) and is_map(input) and is_list(queries) do
     from_unix = parse_datetime(input["from_date"])
     to_unix = parse_to_datetime(input["to_date"])
-    hit_limit = bounded_integer(input["limit"], @default_hit_limit, 1, @max_hit_limit)
+
+    hit_limit =
+      bounded_integer(input["limit"], @default_hit_limit, 1, @max_hit_limit)
 
     before_count =
-      bounded_integer(input["before"], @default_context_before, 0, @max_context_window)
+      bounded_integer(
+        input["before"],
+        @default_context_before,
+        0,
+        @max_context_window
+      )
 
-    after_count = bounded_integer(input["after"], @default_context_after, 0, @max_context_window)
+    after_count =
+      bounded_integer(
+        input["after"],
+        @default_context_after,
+        0,
+        @max_context_window
+      )
 
     hit_query =
       chat_id
@@ -162,15 +191,34 @@ defmodule Froth.Tools.Timeline do
 
     hits
     |> Enum.flat_map(fn hit ->
-      before_rows = surrounding_rows(chat_id, from_unix, to_unix, hit, before_count, :before)
-      after_rows = surrounding_rows(chat_id, from_unix, to_unix, hit, after_count, :after)
+      before_rows =
+        surrounding_rows(
+          chat_id,
+          from_unix,
+          to_unix,
+          hit,
+          before_count,
+          :before
+        )
+
+      after_rows =
+        surrounding_rows(
+          chat_id,
+          from_unix,
+          to_unix,
+          hit,
+          after_count,
+          :after
+        )
+
       before_rows ++ [hit] ++ after_rows
     end)
     |> dedupe_messages()
     |> Enum.sort_by(&message_sort_key/1)
   end
 
-  defp surrounding_rows(_chat_id, _from_unix, _to_unix, _hit, 0, _direction), do: []
+  defp surrounding_rows(_chat_id, _from_unix, _to_unix, _hit, 0, _direction),
+    do: []
 
   defp surrounding_rows(chat_id, from_unix, to_unix, hit, count, :before) do
     chat_id
@@ -251,7 +299,8 @@ defmodule Froth.Tools.Timeline do
   end
 
   defp message_sort_key(msg) do
-    {msg.date || 0, msg.inserted_at || ~U[1970-01-01 00:00:00Z], msg.message_id || 0}
+    {msg.date || 0, msg.inserted_at || ~U[1970-01-01 00:00:00Z],
+     msg.message_id || 0}
   end
 
   defp dedupe_messages(messages) when is_list(messages) do
@@ -265,7 +314,10 @@ defmodule Froth.Tools.Timeline do
     |> Enum.map(&elem(&1, 1))
   end
 
-  defp render_opts(%Context{surface: %{session_id: session_id}, bot_config: bot_config}) do
+  defp render_opts(%Context{
+         surface: %{session_id: session_id},
+         bot_config: bot_config
+       }) do
     []
     |> maybe_put_render_opt(:telegram_session_id, session_id)
     |> maybe_put_render_opt(:bot_id, Map.get(bot_config || %{}, :id))
@@ -273,9 +325,12 @@ defmodule Froth.Tools.Timeline do
 
   defp maybe_put_render_opt(opts, _key, nil), do: opts
   defp maybe_put_render_opt(opts, _key, ""), do: opts
-  defp maybe_put_render_opt(opts, key, value), do: Keyword.put(opts, key, value)
 
-  defp empty_result_message([]), do: "No timeline entries found for the given input."
+  defp maybe_put_render_opt(opts, key, value),
+    do: Keyword.put(opts, key, value)
+
+  defp empty_result_message([]),
+    do: "No timeline entries found for the given input."
 
   defp empty_result_message(queries),
     do: "No timeline entries found matching #{inspect(queries)}."
@@ -299,12 +354,14 @@ defmodule Froth.Tools.Timeline do
   defp normalize_phrase(_), do: nil
 
   defp bounded_integer(value, default, lower_bound, upper_bound)
-       when is_integer(default) and is_integer(lower_bound) and is_integer(upper_bound) do
+       when is_integer(default) and is_integer(lower_bound) and
+              is_integer(upper_bound) do
     parsed = parse_positive_integer(value) || default
     parsed |> max(lower_bound) |> min(upper_bound)
   end
 
-  defp parse_positive_integer(value) when is_integer(value) and value > 0, do: value
+  defp parse_positive_integer(value) when is_integer(value) and value > 0,
+    do: value
 
   defp parse_positive_integer(value) when is_binary(value) do
     case Integer.parse(String.trim(value)) do
@@ -330,8 +387,13 @@ defmodule Froth.Tools.Timeline do
 
           _ ->
             case Date.from_iso8601(value) do
-              {:ok, date} -> date |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
-              _ -> nil
+              {:ok, date} ->
+                date
+                |> DateTime.new!(~T[00:00:00], "Etc/UTC")
+                |> DateTime.to_unix()
+
+              _ ->
+                nil
             end
         end
     end
@@ -359,6 +421,8 @@ defmodule Froth.Tools.Timeline do
     end
   end
 
-  defp ctx_chat_id(%Context{surface: %{chat_id: chat_id}}) when is_integer(chat_id), do: chat_id
+  defp ctx_chat_id(%Context{surface: %{chat_id: chat_id}})
+       when is_integer(chat_id), do: chat_id
+
   defp ctx_chat_id(_ctx), do: 0
 end

@@ -49,7 +49,10 @@ defmodule Froth.Telemetry.Store do
   rescue
     e ->
       require Logger
-      Logger.warning("Telemetry store persist failed: #{Exception.message(e)}")
+
+      Logger.warning(
+        "Telemetry store persist failed: #{Exception.message(e)}"
+      )
   end
 
   defp safe_json(map) when is_map(map) do

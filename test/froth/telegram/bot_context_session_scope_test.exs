@@ -17,13 +17,39 @@ defmodule Froth.Telegram.BotContextSessionScopeTest do
     ensure_session("charlie")
     ensure_session("mbrockman")
 
-    insert_telegram_message("charlie", chat_id, 101, 7, 1_700_000_100, "charlie only older")
-    insert_telegram_message("mbrockman", chat_id, 201, 8, 1_700_000_200, "mbrockman only newer")
-    insert_telegram_message("charlie", chat_id, 102, 7, 1_700_000_300, "charlie only newest")
+    insert_telegram_message(
+      "charlie",
+      chat_id,
+      101,
+      7,
+      1_700_000_100,
+      "charlie only older"
+    )
+
+    insert_telegram_message(
+      "mbrockman",
+      chat_id,
+      201,
+      8,
+      1_700_000_200,
+      "mbrockman only newer"
+    )
+
+    insert_telegram_message(
+      "charlie",
+      chat_id,
+      102,
+      7,
+      1_700_000_300,
+      "charlie only newest"
+    )
 
     prompt =
       chat_id
-      |> BotContext.render_parts(telegram_session_id: "charlie", recent_message_limit: 10)
+      |> BotContext.render_parts(
+        telegram_session_id: "charlie",
+        recent_message_limit: 10
+      )
       |> Enum.join("\n")
 
     assert prompt =~ "charlie only older"
@@ -36,15 +62,57 @@ defmodule Froth.Telegram.BotContextSessionScopeTest do
     ensure_session("charlie")
     ensure_session("mbrockman")
 
-    insert_telegram_message("charlie", chat_id, 101, 7, 1_700_000_100, "charlie oldest")
-    insert_telegram_message("charlie", chat_id, 102, 7, 1_700_000_200, "charlie middle")
-    insert_telegram_message("mbrockman", chat_id, 201, 8, 1_700_000_250, "mbrockman interloper")
-    insert_telegram_message("charlie", chat_id, 103, 7, 1_700_000_300, "charlie newest")
-    insert_telegram_message("mbrockman", chat_id, 202, 8, 1_700_000_350, "mbrockman latest")
+    insert_telegram_message(
+      "charlie",
+      chat_id,
+      101,
+      7,
+      1_700_000_100,
+      "charlie oldest"
+    )
+
+    insert_telegram_message(
+      "charlie",
+      chat_id,
+      102,
+      7,
+      1_700_000_200,
+      "charlie middle"
+    )
+
+    insert_telegram_message(
+      "mbrockman",
+      chat_id,
+      201,
+      8,
+      1_700_000_250,
+      "mbrockman interloper"
+    )
+
+    insert_telegram_message(
+      "charlie",
+      chat_id,
+      103,
+      7,
+      1_700_000_300,
+      "charlie newest"
+    )
+
+    insert_telegram_message(
+      "mbrockman",
+      chat_id,
+      202,
+      8,
+      1_700_000_350,
+      "mbrockman latest"
+    )
 
     prompt =
       chat_id
-      |> BotContext.render_parts(telegram_session_id: "charlie", recent_message_limit: 2)
+      |> BotContext.render_parts(
+        telegram_session_id: "charlie",
+        recent_message_limit: 2
+      )
       |> Enum.join("\n")
 
     refute prompt =~ "charlie oldest"
@@ -59,7 +127,14 @@ defmodule Froth.Telegram.BotContextSessionScopeTest do
     ensure_session("charlie")
     ensure_user_session("mbrockman")
 
-    insert_telegram_message("charlie", chat_id, 101, 7, 1_700_000_100, "charlie group view")
+    insert_telegram_message(
+      "charlie",
+      chat_id,
+      101,
+      7,
+      1_700_000_100,
+      "charlie group view"
+    )
 
     insert_telegram_message(
       "mbrockman",
@@ -72,7 +147,10 @@ defmodule Froth.Telegram.BotContextSessionScopeTest do
 
     prompt =
       chat_id
-      |> BotContext.render_parts(telegram_session_id: "charlie", recent_message_limit: 10)
+      |> BotContext.render_parts(
+        telegram_session_id: "charlie",
+        recent_message_limit: 10
+      )
       |> Enum.join("\n")
 
     assert prompt =~ "user session group view"
@@ -115,7 +193,14 @@ defmodule Froth.Telegram.BotContextSessionScopeTest do
     end
   end
 
-  defp insert_telegram_message(session_id, chat_id, message_id, sender_id, date, text) do
+  defp insert_telegram_message(
+         session_id,
+         chat_id,
+         message_id,
+         sender_id,
+         date,
+         text
+       ) do
     Repo.insert!(
       TelegramMessage.changeset(%TelegramMessage{}, %{
         telegram_session_id: session_id,

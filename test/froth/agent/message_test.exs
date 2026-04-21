@@ -5,7 +5,10 @@ defmodule Froth.Agent.MessageTest do
   alias Froth.LLM.Message, as: LLMMessage
 
   test "to_llm_message converts user text into normalized llm content" do
-    assert %LLMMessage{role: :user, content: [%{"type" => "text", "text" => "hello"}]} =
+    assert %LLMMessage{
+             role: :user,
+             content: [%{"type" => "text", "text" => "hello"}]
+           } =
              Message.user("hello")
              |> Message.to_llm_message()
   end

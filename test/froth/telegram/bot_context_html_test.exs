@@ -10,7 +10,10 @@ defmodule Froth.Telegram.BotContextHTMLTest do
 
   describe "chapter/1" do
     test "renders a chapter with name" do
-      html = render(BotContextHTML.chapter(%{name: "2026-03-05", text: "A quiet day."}))
+      html =
+        render(
+          BotContextHTML.chapter(%{name: "2026-03-05", text: "A quiet day."})
+        )
 
       assert html =~ ~s(<chapter name=2026-03-05>)
       assert html =~ "A quiet day."
@@ -21,7 +24,12 @@ defmodule Froth.Telegram.BotContextHTMLTest do
   describe "recent/1" do
     test "renders recent messages with structured msg tags" do
       messages = [
-        %{date: 1_772_788_320, sender: "@mikkel", message_id: 4401, text: "morning"}
+        %{
+          date: 1_772_788_320,
+          sender: "@mikkel",
+          message_id: 4401,
+          text: "morning"
+        }
       ]
 
       html = render(BotContextHTML.recent(%{messages: messages}))
@@ -51,7 +59,9 @@ defmodule Froth.Telegram.BotContextHTMLTest do
           })
         )
 
-      assert html =~ ~s(<cycle id=abc for=tg:4401 time="2026-03-06 09:21:33 UTC">)
+      assert html =~
+               ~s(<cycle id=abc for=tg:4401 time="2026-03-06 09:21:33 UTC">)
+
       assert html =~ ~s(<call tool=search>)
       assert html =~ "<query>"
       assert html =~ "froth"
@@ -209,7 +219,10 @@ defmodule Froth.Telegram.BotContextHTMLTest do
 
   describe "context/1 (top-level)" do
     test "renders the sample context with recent messages and cycles" do
-      html = render(BotContextHTML.context(%{ctx: BotContextHTML.sample_context()}))
+      html =
+        render(
+          BotContextHTML.context(%{ctx: BotContextHTML.sample_context()})
+        )
 
       # recent
       assert html =~ "@mikkel"
@@ -301,8 +314,18 @@ defmodule Froth.Telegram.BotContextHTMLTest do
           omitted_count: 1
         },
         recent_messages: [
-          %{date: 1_741_252_320, sender: "@mikkel", message_id: 4401, text: "hi"},
-          %{date: 1_741_252_380, sender: "@luna", message_id: 4402, text: "hey"}
+          %{
+            date: 1_741_252_320,
+            sender: "@mikkel",
+            message_id: 4401,
+            text: "hi"
+          },
+          %{
+            date: 1_741_252_380,
+            sender: "@luna",
+            message_id: 4402,
+            text: "hey"
+          }
         ]
       }
 

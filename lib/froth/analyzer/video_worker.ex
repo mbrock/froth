@@ -8,7 +8,9 @@ defmodule Froth.Analyzer.VideoWorker do
   import Ecto.Query
 
   @impl true
-  def perform(%Oban.Job{args: %{"chat_id" => chat_id, "message_id" => message_id}}) do
+  def perform(%Oban.Job{
+        args: %{"chat_id" => chat_id, "message_id" => message_id}
+      }) do
     msg =
       Repo.one(
         from(m in "telegram_messages",
@@ -25,7 +27,13 @@ defmodule Froth.Analyzer.VideoWorker do
       Froth.Analyzer.with_reactions(chat_id, message_id, fn ->
         case download_video(chat_id, message_id) do
           {:ok, video_data, mime_type, duration} ->
-            analyze_and_save(chat_id, message_id, video_data, mime_type, duration)
+            analyze_and_save(
+              chat_id,
+              message_id,
+              video_data,
+              mime_type,
+              duration
+            )
 
           {:discard, _} = d ->
             d
@@ -92,7 +100,12 @@ defmodule Froth.Analyzer.VideoWorker do
         prompt =
           "Analyze this video. Describe what you see — people, actions, setting, text overlays, audio if any. Be observant and concise."
 
-        case API.gemini_with_file("gemini-3-flash-preview", file_uri, mime_type, prompt) do
+        case API.gemini_with_file(
+               "gemini-3-flash-preview",
+               file_uri,
+               mime_type,
+               prompt
+             ) do
           {:ok, text} ->
             %Analysis{}
             |> Analysis.changeset(%{
@@ -124,7 +137,9 @@ defmodule Froth.Analyzer.VideoWorker do
 
   defp upload_to_gemini(data, mime_type) do
     api_key = Froth.LLM.active_api_key(["gemini", "google"])
-    url = "https://generativelanguage.googleapis.com/upload/v1beta/files?key=#{api_key}"
+
+    url =
+      "https://generativelanguage.googleapis.com/upload/v1beta/files?key=#{api_key}"
 
     headers = [
       {"content-type", mime_type},
@@ -162,7 +177,9 @@ defmodule Froth.Analyzer.VideoWorker do
     if attempts >= 30 do
       {:error, "file did not become ACTIVE after 30 attempts"}
     else
-      url = "https://generativelanguage.googleapis.com/v1beta/#{name}?key=#{api_key}"
+      url =
+        "https://generativelanguage.googleapis.com/v1beta/#{name}?key=#{api_key}"
+
       req = Finch.build(:get, url, [])
 
       case Finch.request(req, Froth.Finch, receive_timeout: 30_000) do

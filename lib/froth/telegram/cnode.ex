@@ -37,11 +37,13 @@ defmodule Froth.Telegram.Cnode do
     call_safe(:connected?)
   end
 
-  def tgcalls_status(timeout \\ 2_000) when is_integer(timeout) and timeout > 0 do
+  def tgcalls_status(timeout \\ 2_000)
+      when is_integer(timeout) and timeout > 0 do
     call_safe({:tgcalls_status, timeout}, timeout + 1_000)
   end
 
-  def start_private_media(call_id, pid \\ self()) when is_integer(call_id) and is_pid(pid) do
+  def start_private_media(call_id, pid \\ self())
+      when is_integer(call_id) and is_pid(pid) do
     call_safe({:start_private_media, call_id, pid})
   end
 
@@ -49,19 +51,23 @@ defmodule Froth.Telegram.Cnode do
     call_safe({:stop_private_media, call_id})
   end
 
-  def feed_pcm_file(call_id, path) when is_integer(call_id) and is_binary(path) do
+  def feed_pcm_file(call_id, path)
+      when is_integer(call_id) and is_binary(path) do
     call_safe({:feed_pcm_file, call_id, path})
   end
 
-  def feed_pcm_frame(call_id, pcm_frame) when is_integer(call_id) and is_binary(pcm_frame) do
+  def feed_pcm_frame(call_id, pcm_frame)
+      when is_integer(call_id) and is_binary(pcm_frame) do
     call_safe({:feed_pcm_frame, call_id, pcm_frame})
   end
 
-  def subscribe_call_audio(call_id, pid \\ self()) when is_integer(call_id) and is_pid(pid) do
+  def subscribe_call_audio(call_id, pid \\ self())
+      when is_integer(call_id) and is_pid(pid) do
     call_safe({:subscribe_call_audio, call_id, pid})
   end
 
-  def unsubscribe_call_audio(call_id, pid \\ self()) when is_integer(call_id) and is_pid(pid) do
+  def unsubscribe_call_audio(call_id, pid \\ self())
+      when is_integer(call_id) and is_pid(pid) do
     call_safe({:unsubscribe_call_audio, call_id, pid})
   end
 
@@ -76,12 +82,14 @@ defmodule Froth.Telegram.Cnode do
         custom_parameters,
         pid \\ self()
       )
-      when is_integer(call_id) and is_binary(session_id) and is_binary(version) and
-             is_boolean(is_outgoing) and is_boolean(allow_p2p) and is_binary(encryption_key) and
+      when is_integer(call_id) and is_binary(session_id) and
+             is_binary(version) and
+             is_boolean(is_outgoing) and is_boolean(allow_p2p) and
+             is_binary(encryption_key) and
              is_list(servers) and is_binary(custom_parameters) and is_pid(pid) do
     call_safe(
-      {:start_tgcalls_call, call_id, session_id, version, is_outgoing, allow_p2p, encryption_key,
-       servers, custom_parameters, pid}
+      {:start_tgcalls_call, call_id, session_id, version, is_outgoing,
+       allow_p2p, encryption_key, servers, custom_parameters, pid}
     )
   end
 
@@ -170,7 +178,10 @@ defmodule Froth.Telegram.Cnode do
   def handle_call({:send, session_id, json}, _from, state) do
     case Map.fetch(state.sessions, session_id) do
       :error ->
-        Span.execute([:froth, :telegram, :cnode, :unknown_session], nil, %{session: session_id})
+        Span.execute([:froth, :telegram, :cnode, :unknown_session], nil, %{
+          session: session_id
+        })
+
         {:reply, {:error, :unknown_session}, state}
 
       {:ok, _session} ->
@@ -178,17 +189,28 @@ defmodule Froth.Telegram.Cnode do
           send_to_cnode(state, {:send, session_id, json})
           {:reply, :ok, state}
         else
-          Span.execute([:froth, :telegram, :cnode, :not_connected], nil, %{session: session_id})
+          Span.execute([:froth, :telegram, :cnode, :not_connected], nil, %{
+            session: session_id
+          })
+
           {:reply, {:error, :not_connected}, state}
         end
     end
   end
 
-  def handle_call({:tgcalls_status, _timeout}, _from, %{connected?: false} = state) do
+  def handle_call(
+        {:tgcalls_status, _timeout},
+        _from,
+        %{connected?: false} = state
+      ) do
     {:reply, {:error, :not_connected}, state}
   end
 
-  def handle_call({:tgcalls_status, _timeout}, _from, %{pending_tgcalls_status: pending} = state)
+  def handle_call(
+        {:tgcalls_status, _timeout},
+        _from,
+        %{pending_tgcalls_status: pending} = state
+      )
       when not is_nil(pending) do
     {:reply, {:error, :status_request_in_flight}, state}
   end
@@ -225,24 +247,38 @@ defmodule Froth.Telegram.Cnode do
   end
 
   def handle_call(
-        {:start_tgcalls_call, call_id, session_id, version, is_outgoing, allow_p2p,
-         encryption_key, servers, custom_parameters, pid},
+        {:start_tgcalls_call, call_id, session_id, version, is_outgoing,
+         allow_p2p, encryption_key, servers, custom_parameters, pid},
         _from,
         state
       ) do
     relay_media_command(
       state,
-      {:start_tgcalls_call, call_id, session_id, version, is_outgoing, allow_p2p, encryption_key,
-       servers, custom_parameters, pid}
+      {:start_tgcalls_call, call_id, session_id, version, is_outgoing,
+       allow_p2p, encryption_key, servers, custom_parameters, pid}
     )
   end
 
-  def handle_call({:start_tgcalls_group_call, group_call_id, session_id, pid}, _from, state) do
-    relay_media_command(state, {:start_tgcalls_group_call, group_call_id, session_id, pid})
+  def handle_call(
+        {:start_tgcalls_group_call, group_call_id, session_id, pid},
+        _from,
+        state
+      ) do
+    relay_media_command(
+      state,
+      {:start_tgcalls_group_call, group_call_id, session_id, pid}
+    )
   end
 
-  def handle_call({:set_tgcalls_group_join_response, group_call_id, payload}, _from, state) do
-    relay_media_command(state, {:set_tgcalls_group_join_response, group_call_id, payload})
+  def handle_call(
+        {:set_tgcalls_group_join_response, group_call_id, payload},
+        _from,
+        state
+      ) do
+    relay_media_command(
+      state,
+      {:set_tgcalls_group_join_response, group_call_id, payload}
+    )
   end
 
   def handle_call({:stop_tgcalls_group_call, group_call_id}, _from, state) do
@@ -253,13 +289,24 @@ defmodule Froth.Telegram.Cnode do
     relay_media_command(state, {:stop_tgcalls_call, call_id})
   end
 
-  def handle_call({:receive_tgcalls_signaling_data, call_id, data}, _from, state) do
-    relay_media_command(state, {:receive_tgcalls_signaling_data, call_id, data})
+  def handle_call(
+        {:receive_tgcalls_signaling_data, call_id, data},
+        _from,
+        state
+      ) do
+    relay_media_command(
+      state,
+      {:receive_tgcalls_signaling_data, call_id, data}
+    )
   end
 
   @impl true
   def handle_cast({:unregister_session, session_id, pid}, state) do
-    Span.execute([:froth, :telegram, :cnode, :unregister], nil, %{session: session_id, pid: pid})
+    Span.execute([:froth, :telegram, :cnode, :unregister], nil, %{
+      session: session_id,
+      pid: pid
+    })
+
     {state, removed?} = remove_session(state, session_id, pid)
 
     if removed? and state.connected? do
@@ -276,7 +323,10 @@ defmodule Froth.Telegram.Cnode do
 
   def handle_info(:telegram_connect, state) do
     if Node.connect(state.cnode_node) do
-      Span.execute([:froth, :telegram, :cnode, :connected], nil, %{node: state.cnode_node})
+      Span.execute([:froth, :telegram, :cnode, :connected], nil, %{
+        node: state.cnode_node
+      })
+
       state = %{state | connected?: true, connect_attempts: 0}
       {:noreply, reinit_sessions(state)}
     else
@@ -292,7 +342,9 @@ defmodule Froth.Telegram.Cnode do
       delay = min(200 * attempt, 2_000)
 
       if rem(attempt, 10) == 0 do
-        Span.execute([:froth, :telegram, :cnode, :connect_retry], nil, %{attempt: attempt})
+        Span.execute([:froth, :telegram, :cnode, :connect_retry], nil, %{
+          attempt: attempt
+        })
       end
 
       Process.send_after(self(), :telegram_connect, delay)
@@ -331,12 +383,19 @@ defmodule Froth.Telegram.Cnode do
     {:noreply, state}
   end
 
-  def handle_info({port, {:data, data}}, %{port: port} = state) when is_binary(data) do
-    Span.execute([:froth, :telegram, :cnode, :output], nil, %{data: String.trim_trailing(data)})
+  def handle_info({port, {:data, data}}, %{port: port} = state)
+      when is_binary(data) do
+    Span.execute([:froth, :telegram, :cnode, :output], nil, %{
+      data: String.trim_trailing(data)
+    })
+
     {:noreply, state}
   end
 
-  def handle_info({:tgcalls_status, payload}, %{pending_tgcalls_status: pending} = state)
+  def handle_info(
+        {:tgcalls_status, payload},
+        %{pending_tgcalls_status: pending} = state
+      )
       when is_binary(payload) and not is_nil(pending) do
     Process.cancel_timer(pending.timer_ref)
 
@@ -350,7 +409,10 @@ defmodule Froth.Telegram.Cnode do
     {:noreply, %{state | pending_tgcalls_status: nil}}
   end
 
-  def handle_info(:tgcalls_status_timeout, %{pending_tgcalls_status: pending} = state)
+  def handle_info(
+        :tgcalls_status_timeout,
+        %{pending_tgcalls_status: pending} = state
+      )
       when not is_nil(pending) do
     GenServer.reply(pending.from, {:error, :timeout})
     {:noreply, %{state | pending_tgcalls_status: nil}}
@@ -373,7 +435,10 @@ defmodule Froth.Telegram.Cnode do
   end
 
   def handle_info(msg, state) do
-    Span.execute([:froth, :telegram, :cnode, :unexpected], nil, %{message: msg})
+    Span.execute([:froth, :telegram, :cnode, :unexpected], nil, %{
+      message: msg
+    })
+
     {:noreply, state}
   end
 
@@ -396,7 +461,9 @@ defmodule Froth.Telegram.Cnode do
   end
 
   defp reinit_sessions(state) do
-    Span.execute([:froth, :telegram, :cnode, :reinit], nil, %{count: map_size(state.sessions)})
+    Span.execute([:froth, :telegram, :cnode, :reinit], nil, %{
+      count: map_size(state.sessions)
+    })
 
     Enum.each(state.sessions, fn {session_id, %{pid: pid}} ->
       Span.execute([:froth, :telegram, :cnode, :reinit_session], nil, %{
@@ -432,9 +499,15 @@ defmodule Froth.Telegram.Cnode do
     %{state | connected?: false}
   end
 
-  defp fail_pending_tgcalls_status(%{pending_tgcalls_status: nil} = state, _reason), do: state
+  defp fail_pending_tgcalls_status(
+         %{pending_tgcalls_status: nil} = state,
+         _reason
+       ), do: state
 
-  defp fail_pending_tgcalls_status(%{pending_tgcalls_status: pending} = state, reason) do
+  defp fail_pending_tgcalls_status(
+         %{pending_tgcalls_status: pending} = state,
+         reason
+       ) do
     Process.cancel_timer(pending.timer_ref)
     GenServer.reply(pending.from, {:error, reason})
     %{state | pending_tgcalls_status: nil}
@@ -485,7 +558,10 @@ defmodule Froth.Telegram.Cnode do
     exe = state.executable
 
     if not is_binary(exe) or exe == "" or not File.exists?(exe) do
-      Span.execute([:froth, :telegram, :cnode, :missing_executable], nil, %{path: exe})
+      Span.execute([:froth, :telegram, :cnode, :missing_executable], nil, %{
+        path: exe
+      })
+
       state
     else
       kill_stale_cnode(state.cnode_node)
@@ -512,7 +588,11 @@ defmodule Froth.Telegram.Cnode do
             port_opts
 
           plugin_path ->
-            [{:env, [{~c"FROTH_TGCALLS_PLUGIN", String.to_charlist(plugin_path)}]} | port_opts]
+            [
+              {:env,
+               [{~c"FROTH_TGCALLS_PLUGIN", String.to_charlist(plugin_path)}]}
+              | port_opts
+            ]
         end
 
       port =
@@ -584,14 +664,21 @@ defmodule Froth.Telegram.Cnode do
   end
 
   defp default_tgcalls_plugin_path do
-    path = Application.app_dir(:froth, "priv/native/tdlib_cnode/libfroth_tgcalls_register.so")
+    path =
+      Application.app_dir(
+        :froth,
+        "priv/native/tdlib_cnode/libfroth_tgcalls_register.so"
+      )
+
     if File.exists?(path), do: path, else: nil
   end
 
   defp kill_stale_cnode(cnode_node) do
     node_str = Atom.to_string(cnode_node)
 
-    case System.cmd("pgrep", ["-f", "--node #{node_str}"], stderr_to_stdout: true) do
+    case System.cmd("pgrep", ["-f", "--node #{node_str}"],
+           stderr_to_stdout: true
+         ) do
       {pids, 0} ->
         pids
         |> String.split("\n", trim: true)

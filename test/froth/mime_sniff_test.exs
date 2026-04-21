@@ -5,11 +5,13 @@ defmodule Froth.MimeSniffTest do
 
   describe "sniff/1 — images" do
     test "recognizes PNG" do
-      assert MimeSniff.sniff(<<0x89, "PNG\r\n", 0x1A, 0x0A, 0, 0>>) == "image/png"
+      assert MimeSniff.sniff(<<0x89, "PNG\r\n", 0x1A, 0x0A, 0, 0>>) ==
+               "image/png"
     end
 
     test "recognizes JPEG" do
-      assert MimeSniff.sniff(<<0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10>>) == "image/jpeg"
+      assert MimeSniff.sniff(<<0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10>>) ==
+               "image/jpeg"
     end
 
     test "recognizes GIF87a and GIF89a" do

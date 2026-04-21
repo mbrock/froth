@@ -61,10 +61,17 @@ defmodule FrothWeb.FollowLive do
   end
 
   @impl true
-  def handle_info({:telemetry_event, event_name, measurements, metadata}, socket) do
+  def handle_info(
+        {:telemetry_event, event_name, measurements, metadata},
+        socket
+      ) do
     entry = Projector.from_live(event_name, measurements, metadata)
 
-    if matches_entry?(entry, socket.assigns.follow_filter, socket.assigns.filter_text) do
+    if matches_entry?(
+         entry,
+         socket.assigns.follow_filter,
+         socket.assigns.filter_text
+       ) do
       entries =
         socket.assigns.entries
         |> Kernel.++([entry])
@@ -81,7 +88,8 @@ defmodule FrothWeb.FollowLive do
 
   @impl true
   def handle_event("search", %{"filters" => %{"q" => q}}, socket) do
-    {:noreply, push_patch(socket, to: follow_path(socket, q: q), replace: true)}
+    {:noreply,
+     push_patch(socket, to: follow_path(socket, q: q), replace: true)}
   end
 
   def handle_event("set-mode", %{"mode" => mode}, socket) do
@@ -104,15 +112,18 @@ defmodule FrothWeb.FollowLive do
   end
 
   def handle_event("pin-cycle", %{"cycle" => cycle_id}, socket) do
-    {:noreply, push_patch(socket, to: follow_path(socket, cycle: cycle_id, span: nil))}
+    {:noreply,
+     push_patch(socket, to: follow_path(socket, cycle: cycle_id, span: nil))}
   end
 
   def handle_event("pin-span", %{"span" => span_id}, socket) do
-    {:noreply, push_patch(socket, to: follow_path(socket, cycle: nil, span: span_id))}
+    {:noreply,
+     push_patch(socket, to: follow_path(socket, cycle: nil, span: span_id))}
   end
 
   def handle_event("clear-scope", _, socket) do
-    {:noreply, push_patch(socket, to: follow_path(socket, cycle: nil, span: nil))}
+    {:noreply,
+     push_patch(socket, to: follow_path(socket, cycle: nil, span: nil))}
   end
 
   def handle_event("clear", _, socket) do
@@ -243,8 +254,16 @@ defmodule FrothWeb.FollowLive do
           </div>
         </div>
 
-        <div id="follow-feed" class="min-h-0 flex-1 overflow-y-auto" data-scroll-body>
-          <table id="follow-entries" phx-update="stream" class="w-full border-collapse">
+        <div
+          id="follow-feed"
+          class="min-h-0 flex-1 overflow-y-auto"
+          data-scroll-body
+        >
+          <table
+            id="follow-entries"
+            phx-update="stream"
+            class="w-full border-collapse"
+          >
             <tbody :if={@entry_count == 0} id="follow-empty-state">
               <tr>
                 <td class="px-2 py-3 text-[12px] text-zinc-500">
@@ -269,7 +288,11 @@ defmodule FrothWeb.FollowLive do
   end
 
   defp load_recent_entries(%Filter{} = follow_filter, text_filter) do
-    Source.recent_entries(filter: follow_filter, text: text_filter, limit: @page_size)
+    Source.recent_entries(
+      filter: follow_filter,
+      text: text_filter,
+      limit: @page_size
+    )
     |> Enum.reverse()
   end
 
@@ -350,7 +373,9 @@ defmodule FrothWeb.FollowLive do
         </td>
         <td class="border-b border-white/10 px-2 py-0.5 text-right text-[10px] leading-4 text-zinc-500">
           <div :if={@item.entry.duration_ms}>{@item.entry.duration_ms}ms</div>
-          <div :if={exit_value} class={exit_badge_class(exit_value)}>exit {exit_value}</div>
+          <div :if={exit_value} class={exit_badge_class(exit_value)}>
+            exit {exit_value}
+          </div>
         </td>
       </tr>
     </tbody>
@@ -360,11 +385,19 @@ defmodule FrothWeb.FollowLive do
   defp sync_entries(socket) do
     matching_entries =
       socket.assigns.entries
-      |> matching_entries(socket.assigns.follow_filter, socket.assigns.filter_text)
+      |> matching_entries(
+        socket.assigns.follow_filter,
+        socket.assigns.filter_text
+      )
 
-    visible_entries = Enum.filter(matching_entries, &Entry.visible?(&1, socket.assigns.view_mode))
+    visible_entries =
+      Enum.filter(
+        matching_entries,
+        &Entry.visible?(&1, socket.assigns.view_mode)
+      )
 
-    selected_entry = selected_entry_state(visible_entries, socket.assigns.selected_entry_id)
+    selected_entry =
+      selected_entry_state(visible_entries, socket.assigns.selected_entry_id)
 
     selected_entry_id = selected_entry && entry_id(selected_entry)
 
@@ -380,7 +413,8 @@ defmodule FrothWeb.FollowLive do
 
   defp matching_entries(entries, %Filter{} = follow_filter, text_filter) do
     Enum.filter(entries, fn entry ->
-      Filter.matches?(entry, follow_filter) and matches_text?(entry, text_filter)
+      Filter.matches?(entry, follow_filter) and
+        matches_text?(entry, text_filter)
     end)
   end
 
@@ -401,8 +435,13 @@ defmodule FrothWeb.FollowLive do
     items
   end
 
-  defp matches_entry?(%Entry{} = entry, %Filter{} = follow_filter, text_filter) do
-    Filter.matches?(entry, follow_filter) and matches_text?(entry, text_filter)
+  defp matches_entry?(
+         %Entry{} = entry,
+         %Filter{} = follow_filter,
+         text_filter
+       ) do
+    Filter.matches?(entry, follow_filter) and
+      matches_text?(entry, text_filter)
   end
 
   defp matches_text?(_entry, nil), do: true
@@ -418,8 +457,16 @@ defmodule FrothWeb.FollowLive do
         entry.scope,
         entry.summary,
         entry.detail,
-        inspect(entry.measurements, pretty: false, printable_limit: 400, limit: 20),
-        inspect(entry.metadata, pretty: false, printable_limit: 400, limit: 20)
+        inspect(entry.measurements,
+          pretty: false,
+          printable_limit: 400,
+          limit: 20
+        ),
+        inspect(entry.metadata,
+          pretty: false,
+          printable_limit: 400,
+          limit: 20
+        )
       ]
       |> Enum.reject(&is_nil/1)
       |> Enum.map(&String.downcase/1)
@@ -460,8 +507,12 @@ defmodule FrothWeb.FollowLive do
     end)
   end
 
-  defp normalize_query_value(:mode, value), do: mode_param(parse_view_mode(value))
-  defp normalize_query_value("mode", value), do: mode_param(parse_view_mode(value))
+  defp normalize_query_value(:mode, value),
+    do: mode_param(parse_view_mode(value))
+
+  defp normalize_query_value("mode", value),
+    do: mode_param(parse_view_mode(value))
+
   defp normalize_query_value(_key, value), do: normalize_filter_value(value)
 
   defp mode_param(:raw), do: "raw"
@@ -477,9 +528,11 @@ defmodule FrothWeb.FollowLive do
     end
   end
 
-  defp search_form(filter_text), do: to_form(%{"q" => filter_text || ""}, as: :filters)
+  defp search_form(filter_text),
+    do: to_form(%{"q" => filter_text || ""}, as: :filters)
 
-  defp telemetry_handler_id(socket), do: "follow-live-#{inspect(socket.root_pid || self())}"
+  defp telemetry_handler_id(socket),
+    do: "follow-live-#{inspect(socket.root_pid || self())}"
 
   defp entry_id(%Entry{id: id}), do: to_string(id)
 
@@ -501,7 +554,8 @@ defmodule FrothWeb.FollowLive do
     ])
   end
 
-  defp entry_secondary_text(%Entry{} = entry, mode) when mode in [:smart, :errors] do
+  defp entry_secondary_text(%Entry{} = entry, mode)
+       when mode in [:smart, :errors] do
     join_sentence([
       entry.detail,
       smart_context(entry)
@@ -538,7 +592,8 @@ defmodule FrothWeb.FollowLive do
     context
   end
 
-  defp raw_measurements(measurements) when map_size(measurements) == 0, do: nil
+  defp raw_measurements(measurements) when map_size(measurements) == 0,
+    do: nil
 
   defp raw_measurements(measurements) do
     measurements
@@ -562,7 +617,10 @@ defmodule FrothWeb.FollowLive do
 
   defp format_value(value) when is_binary(value), do: value
   defp format_value(value) when is_atom(value), do: Atom.to_string(value)
-  defp format_value(value) when is_integer(value), do: Integer.to_string(value)
+
+  defp format_value(value) when is_integer(value),
+    do: Integer.to_string(value)
+
   defp format_value(value) when is_float(value), do: Float.to_string(value)
   defp format_value(true), do: "true"
   defp format_value(false), do: "false"
@@ -627,11 +685,19 @@ defmodule FrothWeb.FollowLive do
   end
 
   defp group_key(nil), do: nil
-  defp group_key(%Entry{cycle_id: cycle_id}) when is_binary(cycle_id), do: {:cycle, cycle_id}
-  defp group_key(%Entry{span_id: span_id}) when is_binary(span_id), do: {:span, span_id}
-  defp group_key(%Entry{family: family}), do: {:family, family_group_key(family)}
 
-  defp group_kind(%Entry{cycle_id: cycle_id}) when is_binary(cycle_id), do: :cycle
+  defp group_key(%Entry{cycle_id: cycle_id}) when is_binary(cycle_id),
+    do: {:cycle, cycle_id}
+
+  defp group_key(%Entry{span_id: span_id}) when is_binary(span_id),
+    do: {:span, span_id}
+
+  defp group_key(%Entry{family: family}),
+    do: {:family, family_group_key(family)}
+
+  defp group_kind(%Entry{cycle_id: cycle_id}) when is_binary(cycle_id),
+    do: :cycle
+
   defp group_kind(%Entry{span_id: span_id}) when is_binary(span_id), do: :span
   defp group_kind(%Entry{family: family}), do: family_group_key(family)
 
@@ -641,7 +707,8 @@ defmodule FrothWeb.FollowLive do
   defp group_label(%Entry{span_id: span_id}) when is_binary(span_id),
     do: "span #{truncate_id(span_id, 12)}"
 
-  defp group_label(%Entry{family: family}), do: "#{family_label(family)} stream"
+  defp group_label(%Entry{family: family}),
+    do: "#{family_label(family)} stream"
 
   defp group_label_class(:cycle),
     do: "text-[9px] uppercase tracking-[0.18em] text-sky-100"
@@ -667,7 +734,8 @@ defmodule FrothWeb.FollowLive do
   defp scope_column_class(%Entry{family: "think"}),
     do: "whitespace-normal text-[11px] leading-5 text-cyan-200/70"
 
-  defp scope_column_class(%Entry{}), do: "whitespace-normal text-[11px] leading-5 text-zinc-400"
+  defp scope_column_class(%Entry{}),
+    do: "whitespace-normal text-[11px] leading-5 text-zinc-400"
 
   defp summary_class(%Entry{level: :error}),
     do: "text-[11px] font-semibold leading-4 text-rose-200"
@@ -693,7 +761,8 @@ defmodule FrothWeb.FollowLive do
   defp summary_class(%Entry{family: "task"}),
     do: "text-[11px] font-semibold leading-4 text-teal-100"
 
-  defp summary_class(%Entry{}), do: "text-[11px] font-semibold leading-4 text-zinc-50"
+  defp summary_class(%Entry{}),
+    do: "text-[11px] font-semibold leading-4 text-zinc-50"
 
   defp secondary_text_class(%Entry{family: "think"}),
     do:
@@ -737,8 +806,9 @@ defmodule FrothWeb.FollowLive do
   defp family_column_palette(%Entry{family: "think"}), do: "text-cyan-100/75"
   defp family_column_palette(%Entry{family: "tool"}), do: "text-emerald-100"
 
-  defp family_column_palette(%Entry{family: family}) when family in ["llm", "codex"],
-    do: "text-fuchsia-100"
+  defp family_column_palette(%Entry{family: family})
+       when family in ["llm", "codex"],
+       do: "text-fuchsia-100"
 
   defp family_column_palette(%Entry{family: "telegram"}), do: "text-sky-100"
   defp family_column_palette(%Entry{family: "task"}), do: "text-teal-100"
@@ -766,8 +836,9 @@ defmodule FrothWeb.FollowLive do
   defp exit_badge_class(_code),
     do: "text-[10px] uppercase tracking-[0.18em] text-zinc-300"
 
-  defp family_group_key(family) when family in ["cycle", "think", "control", "message"],
-    do: :agent
+  defp family_group_key(family)
+       when family in ["cycle", "think", "control", "message"],
+       do: :agent
 
   defp family_group_key("tool"), do: :tool
   defp family_group_key("llm"), do: :llm

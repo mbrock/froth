@@ -11,7 +11,8 @@ defmodule Froth.Replicate.SyncWorker do
 
   @impl true
   def perform(%Oban.Job{}) do
-    req = Finch.build(:get, "#{@api_base}/collections", Froth.Replicate.headers())
+    req =
+      Finch.build(:get, "#{@api_base}/collections", Froth.Replicate.headers())
 
     case Finch.request(req, Froth.Finch, receive_timeout: 30_000) do
       {:ok, %Finch.Response{status: 200, body: body}} ->

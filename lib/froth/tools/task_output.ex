@@ -22,10 +22,14 @@ defmodule Froth.Tools.TaskOutput do
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
-          "task_id" => %{"type" => "string", "description" => "Task ID (e.g. shell:a3f8c1)."},
+          "task_id" => %{
+            "type" => "string",
+            "description" => "Task ID (e.g. shell:a3f8c1)."
+          },
           "lines" => %{
             "type" => "integer",
-            "description" => "Number of recent output lines to return. Default 50."
+            "description" =>
+              "Number of recent output lines to return. Default 50."
           }
         },
         "required" => ["task_id"],
@@ -35,7 +39,8 @@ defmodule Froth.Tools.TaskOutput do
   end
 
   @impl true
-  def execute(%Context{}, %ToolUse{input: input}, _hooks) when is_map(input) do
+  def execute(%Context{}, %ToolUse{input: input}, _hooks)
+      when is_map(input) do
     task_id = input["task_id"]
     limit = input["lines"] || 50
     events = Froth.Tasks.recent_output(task_id, limit)

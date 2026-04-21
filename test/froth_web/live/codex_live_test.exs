@@ -15,7 +15,9 @@ defmodule FrothWeb.CodexLiveTest do
   end
 
   test "route without session id lists persisted sessions", %{conn: conn} do
-    session_id = "s_test_" <> Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+    session_id =
+      "s_test_" <>
+        Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
 
     Repo.insert!(%Event{
       session_id: session_id,
@@ -31,8 +33,12 @@ defmodule FrothWeb.CodexLiveTest do
     assert has_element?(view, ~s|a[href="/froth/mini/codex/#{session_id}"]|)
   end
 
-  test "session timeline stays visible across ordinary rerenders", %{conn: conn} do
-    session_id = "s_test_" <> Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+  test "session timeline stays visible across ordinary rerenders", %{
+    conn: conn
+  } do
+    session_id =
+      "s_test_" <>
+        Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
 
     start_supervised!(
       {FakeCodexSession,
@@ -64,7 +70,9 @@ defmodule FrothWeb.CodexLiveTest do
   end
 
   test "renders markdown messages and structured plan cards", %{conn: conn} do
-    session_id = "s_test_" <> Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+    session_id =
+      "s_test_" <>
+        Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
 
     start_supervised!(
       {FakeCodexSession,
@@ -74,7 +82,11 @@ defmodule FrothWeb.CodexLiveTest do
          thread_id: "thread-#{session_id}",
          active_turn_id: "turn-live-1",
          active_assistant_entry_id: "entry-1",
-         runtime: %{model: "gpt-5.4", reasoning_effort: "xhigh", sandbox: "danger-full-access"},
+         runtime: %{
+           model: "gpt-5.4",
+           reasoning_effort: "xhigh",
+           sandbox: "danger-full-access"
+         },
          available_models: [
            %{
              "displayName" => "gpt-5.4",
@@ -91,8 +103,14 @@ defmodule FrothWeb.CodexLiveTest do
              "model" => "gpt-5.4-mini"
            }
          ],
-         token_usage: %{last: %{totalTokens: 198_500}, total: %{totalTokens: 9_400_000}},
-         rate_limits: %{primary: %{usedPercent: 14}, secondary: %{usedPercent: 28}},
+         token_usage: %{
+           last: %{totalTokens: 198_500},
+           total: %{totalTokens: 9_400_000}
+         },
+         rate_limits: %{
+           primary: %{usedPercent: 14},
+           secondary: %{usedPercent: 28}
+         },
          entries: [
            %{
              id: "entry-1",
@@ -120,7 +138,8 @@ defmodule FrothWeb.CodexLiveTest do
              kind: :tool,
              body: "rg --files lib",
              status: "ok",
-             output: "lib/froth_web/live/codex_live.ex\nlib/froth/codex/session.ex",
+             output:
+               "lib/froth_web/live/codex_live.ex\nlib/froth/codex/session.ex",
              sequence: 4
            }
          ]
@@ -131,7 +150,12 @@ defmodule FrothWeb.CodexLiveTest do
 
     assert has_element?(view, "#codex-working-dock")
     assert has_element?(view, "#codex-interrupt", "Stop")
-    assert has_element?(view, "#codex-reasoning-effort option[selected][value='xhigh']")
+
+    assert has_element?(
+             view,
+             "#codex-reasoning-effort option[selected][value='xhigh']"
+           )
+
     refute has_element?(view, "#codex-prompt-form")
     refute has_element?(view, "#codex-upload-image")
     refute has_element?(view, "#codex-model-form")
@@ -151,11 +175,18 @@ defmodule FrothWeb.CodexLiveTest do
     |> form("#codex-reasoning-form", reasoning: %{effort: "high"})
     |> render_change()
 
-    assert has_element?(view, "#codex-reasoning-effort option[selected][value='high']")
+    assert has_element?(
+             view,
+             "#codex-reasoning-effort option[selected][value='high']"
+           )
   end
 
-  test "refreshes model options when a session snapshot is missing them", %{conn: conn} do
-    session_id = "s_test_" <> Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+  test "refreshes model options when a session snapshot is missing them", %{
+    conn: conn
+  } do
+    session_id =
+      "s_test_" <>
+        Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
 
     start_supervised!(
       {FakeCodexSession,
@@ -179,9 +210,15 @@ defmodule FrothWeb.CodexLiveTest do
     assert snapshot.available_models != []
   end
 
-  test "pasted image uploads can be submitted with the prompt form", %{conn: conn} do
-    session_id = "s_test_" <> Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
-    upload_dir = Path.join([File.cwd!(), "priv", "static", "codex_uploads", session_id])
+  test "pasted image uploads can be submitted with the prompt form", %{
+    conn: conn
+  } do
+    session_id =
+      "s_test_" <>
+        Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+
+    upload_dir =
+      Path.join([File.cwd!(), "priv", "static", "codex_uploads", session_id])
 
     on_exit(fn -> File.rm_rf(upload_dir) end)
 
@@ -214,6 +251,9 @@ defmodule FrothWeb.CodexLiveTest do
     |> form("#codex-prompt-form", codex: %{prompt: ""})
     |> render_submit()
 
-    assert has_element?(view, "#codex-feed-list img[src^=\"/froth/codex_uploads/\"]")
+    assert has_element?(
+             view,
+             "#codex-feed-list img[src^=\"/froth/codex_uploads/\"]"
+           )
   end
 end

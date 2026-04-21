@@ -33,7 +33,10 @@ defmodule Mix.Tasks.RecordFixtures do
       "max_tokens" => 256,
       "stream" => true,
       "messages" => [
-        %{"role" => "user", "content" => "What year was the transistor invented? One sentence."}
+        %{
+          "role" => "user",
+          "content" => "What year was the transistor invented? One sentence."
+        }
       ]
     })
 
@@ -56,7 +59,8 @@ defmodule Mix.Tasks.RecordFixtures do
       "messages" => [
         %{
           "role" => "user",
-          "content" => "Use the froth_echo tool to echo back the text \"test message\"."
+          "content" =>
+            "Use the froth_echo tool to echo back the text \"test message\"."
         }
       ],
       "tools" => [tool],
@@ -64,12 +68,18 @@ defmodule Mix.Tasks.RecordFixtures do
     })
 
     # Extract tool_use_id from turn_0 for turn_1
-    turn_0_data = File.read!(Path.join(@fixtures_dir, "tool_use_echo/turn_0.sse"))
+    turn_0_data =
+      File.read!(Path.join(@fixtures_dir, "tool_use_echo/turn_0.sse"))
 
     tool_use_id =
       case Regex.run(~r/"id":"(toolu_[^"]+)"/, turn_0_data) do
-        [_, id] -> id
-        _ -> Mix.raise("Could not extract tool_use_id from tool_use_echo/turn_0.sse")
+        [_, id] ->
+          id
+
+        _ ->
+          Mix.raise(
+            "Could not extract tool_use_id from tool_use_echo/turn_0.sse"
+          )
       end
 
     Mix.shell().info("  tool_use_id: #{tool_use_id}")
@@ -82,7 +92,8 @@ defmodule Mix.Tasks.RecordFixtures do
       "messages" => [
         %{
           "role" => "user",
-          "content" => "Use the froth_echo tool to echo back the text \"test message\"."
+          "content" =>
+            "Use the froth_echo tool to echo back the text \"test message\"."
         },
         %{
           "role" => "assistant",
@@ -98,7 +109,11 @@ defmodule Mix.Tasks.RecordFixtures do
         %{
           "role" => "user",
           "content" => [
-            %{"type" => "tool_result", "tool_use_id" => tool_use_id, "content" => "test message"}
+            %{
+              "type" => "tool_result",
+              "tool_use_id" => tool_use_id,
+              "content" => "test message"
+            }
           ]
         }
       ],
@@ -111,7 +126,9 @@ defmodule Mix.Tasks.RecordFixtures do
       "max_tokens" => 4096,
       "stream" => true,
       "thinking" => %{"type" => "enabled", "budget_tokens" => 1024},
-      "messages" => [%{"role" => "user", "content" => "What is 2+2? Think about it first."}]
+      "messages" => [
+        %{"role" => "user", "content" => "What is 2+2? Think about it first."}
+      ]
     })
 
     Mix.shell().info("Done. All fixtures recorded with model=#{model}")
@@ -138,9 +155,14 @@ defmodule Mix.Tasks.RecordFixtures do
         {:cont, acc}
     end
 
-    case Finch.stream_while(req, Froth.Finch, nil, fun, receive_timeout: 60_000) do
-      {:ok, _} -> :ok
-      {:error, err} -> Mix.raise("Failed to record #{fixture_path}: #{inspect(err)}")
+    case Finch.stream_while(req, Froth.Finch, nil, fun,
+           receive_timeout: 60_000
+         ) do
+      {:ok, _} ->
+        :ok
+
+      {:error, err} ->
+        Mix.raise("Failed to record #{fixture_path}: #{inspect(err)}")
     end
 
     File.close(file)

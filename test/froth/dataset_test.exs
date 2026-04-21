@@ -30,7 +30,9 @@ defmodule Froth.DatasetTest do
   end
 
   test "sparql/1 dispatches SELECT queries through the endpoint client in raw mode" do
-    assert {:ok, %Result{} = result} = Froth.Dataset.sparql("SELECT ?s WHERE { ?s ?p ?o }")
+    assert {:ok, %Result{} = result} =
+             Froth.Dataset.sparql("SELECT ?s WHERE { ?s ?p ?o }")
+
     assert result.results == []
 
     assert_received {:dataset_client_call, :select, query, endpoint, opts}

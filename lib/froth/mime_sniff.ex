@@ -69,7 +69,9 @@ defmodule Froth.MimeSniff do
   defp do_sniff(<<"RIFF", _::32, "AVI ", _::binary>>), do: "video/x-msvideo"
   defp do_sniff(<<"fLaC", _::binary>>), do: "audio/flac"
   defp do_sniff(<<"ID3", _::binary>>), do: "audio/mpeg"
-  defp do_sniff(<<0xFF, b, _::binary>>) when b in [0xFB, 0xF3, 0xF2], do: "audio/mpeg"
+
+  defp do_sniff(<<0xFF, b, _::binary>>) when b in [0xFB, 0xF3, 0xF2],
+    do: "audio/mpeg"
 
   # Documents
   defp do_sniff(<<"%PDF-", _::binary>>), do: "application/pdf"
@@ -90,18 +92,30 @@ defmodule Froth.MimeSniff do
   defp do_sniff(<<"ustar", _::binary>>), do: "application/x-tar"
 
   # POSIX tar: "ustar" magic lives at offset 257 of the first 512-byte block.
-  defp do_sniff(<<_::binary-size(257), "ustar", _::binary>>), do: "application/x-tar"
+  defp do_sniff(<<_::binary-size(257), "ustar", _::binary>>),
+    do: "application/x-tar"
 
   # Executables / objects
   defp do_sniff(<<0x7F, "ELF", _::binary>>), do: "application/x-elf"
-  defp do_sniff(<<"MZ", _::binary>>), do: "application/vnd.microsoft.portable-executable"
-  defp do_sniff(<<0xCA, 0xFE, 0xBA, 0xBE, _::binary>>), do: "application/java-vm"
-  defp do_sniff(<<0xFE, 0xED, 0xFA, 0xCE, _::binary>>), do: "application/x-mach-binary"
-  defp do_sniff(<<0xFE, 0xED, 0xFA, 0xCF, _::binary>>), do: "application/x-mach-binary"
-  defp do_sniff(<<0xCF, 0xFA, 0xED, 0xFE, _::binary>>), do: "application/x-mach-binary"
+
+  defp do_sniff(<<"MZ", _::binary>>),
+    do: "application/vnd.microsoft.portable-executable"
+
+  defp do_sniff(<<0xCA, 0xFE, 0xBA, 0xBE, _::binary>>),
+    do: "application/java-vm"
+
+  defp do_sniff(<<0xFE, 0xED, 0xFA, 0xCE, _::binary>>),
+    do: "application/x-mach-binary"
+
+  defp do_sniff(<<0xFE, 0xED, 0xFA, 0xCF, _::binary>>),
+    do: "application/x-mach-binary"
+
+  defp do_sniff(<<0xCF, 0xFA, 0xED, 0xFE, _::binary>>),
+    do: "application/x-mach-binary"
 
   # SQLite database
-  defp do_sniff(<<"SQLite format 3", 0, _::binary>>), do: "application/vnd.sqlite3"
+  defp do_sniff(<<"SQLite format 3", 0, _::binary>>),
+    do: "application/vnd.sqlite3"
 
   defp do_sniff(_), do: nil
 end

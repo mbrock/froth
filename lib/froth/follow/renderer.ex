@@ -104,7 +104,10 @@ defmodule Froth.Follow.Renderer do
     ])
   end
 
-  defp cycle_summary_primary_line(%{status_level: status_level} = summary, cycle_id) do
+  defp cycle_summary_primary_line(
+         %{status_level: status_level} = summary,
+         cycle_id
+       ) do
     status_level = status_level || :info
 
     compact([
@@ -196,8 +199,10 @@ defmodule Froth.Follow.Renderer do
     [
       llm_summary(summary[:provider], summary[:model]),
       is_integer(summary[:tool_count]) && "tools=#{summary[:tool_count]}",
-      is_integer(summary[:llm_count]) && summary[:llm_count] > 0 && "reqs=#{summary[:llm_count]}",
-      is_integer(summary[:elapsed_ms]) && "elapsed=#{format_elapsed(summary[:elapsed_ms])}"
+      is_integer(summary[:llm_count]) && summary[:llm_count] > 0 &&
+        "reqs=#{summary[:llm_count]}",
+      is_integer(summary[:elapsed_ms]) &&
+        "elapsed=#{format_elapsed(summary[:elapsed_ms])}"
     ]
     |> Enum.reject(&is_nil/1)
     |> Enum.join(" ")
@@ -209,13 +214,19 @@ defmodule Froth.Follow.Renderer do
 
   defp format_value(value) when is_binary(value), do: single_line(value)
   defp format_value(value) when is_atom(value), do: Atom.to_string(value)
-  defp format_value(value) when is_integer(value), do: Integer.to_string(value)
+
+  defp format_value(value) when is_integer(value),
+    do: Integer.to_string(value)
+
   defp format_value(value) when is_float(value), do: Float.to_string(value)
   defp format_value(true), do: "true"
   defp format_value(false), do: "false"
 
   defp format_value(value),
-    do: single_line(inspect(value, limit: :infinity, printable_limit: :infinity))
+    do:
+      single_line(
+        inspect(value, limit: :infinity, printable_limit: :infinity)
+      )
 
   defp level_color(:error), do: @red
   defp level_color(:warn), do: @yellow
@@ -245,10 +256,13 @@ defmodule Froth.Follow.Renderer do
 
   defp format_elapsed(value), do: "#{value}ms"
 
-  defp llm_summary(provider, model) when is_binary(provider) and is_binary(model),
-    do: "llm=#{provider}:#{model}"
+  defp llm_summary(provider, model)
+       when is_binary(provider) and is_binary(model),
+       do: "llm=#{provider}:#{model}"
 
-  defp llm_summary(provider, _model) when is_binary(provider), do: "llm=#{provider}"
+  defp llm_summary(provider, _model) when is_binary(provider),
+    do: "llm=#{provider}"
+
   defp llm_summary(_provider, _model), do: nil
 
   defp short_id(nil), do: nil
@@ -294,7 +308,15 @@ defmodule Froth.Follow.Renderer do
     kind = kind || ""
     summary = single_line(summary || "")
 
-    kind in ["stop", "stopped", "completed", "finished", "failed", "cancelled", "timed_out"] or
+    kind in [
+      "stop",
+      "stopped",
+      "completed",
+      "finished",
+      "failed",
+      "cancelled",
+      "timed_out"
+    ] or
       summary in [
         "completed",
         "thinking completed",
@@ -313,7 +335,9 @@ defmodule Froth.Follow.Renderer do
   end
 
   defp tree_prefix_chunks(""), do: []
-  defp tree_prefix_chunks(tree_prefix), do: [@dim, tree_indent(tree_prefix), @reset]
+
+  defp tree_prefix_chunks(tree_prefix),
+    do: [@dim, tree_indent(tree_prefix), @reset]
 
   defp tree_indent(tree_prefix) do
     tree_prefix

@@ -81,12 +81,18 @@ defmodule Froth.Podcast do
   @default_pause_ms 300
   @yt_dlp Path.expand("~/.local/bin/yt-dlp")
   @yt_cookies Path.expand("~/.config/yt_cookies.txt")
-  @yt_env [{"PATH", "#{Path.expand("~/.deno/bin")}:#{System.get_env("PATH")}"}]
+  @yt_env [
+    {"PATH", "#{Path.expand("~/.deno/bin")}:#{System.get_env("PATH")}"}
+  ]
 
-  defp docroot, do: Application.get_env(:froth, __MODULE__, [])[:docroot] || "/tmp/podcast"
+  defp docroot,
+    do:
+      Application.get_env(:froth, __MODULE__, [])[:docroot] || "/tmp/podcast"
 
   defp public_base,
-    do: Application.get_env(:froth, __MODULE__, [])[:public_base] || "https://example.com"
+    do:
+      Application.get_env(:froth, __MODULE__, [])[:public_base] ||
+        "https://example.com"
 
   # --- Podcast discovery ---
 
@@ -185,7 +191,10 @@ defmodule Froth.Podcast do
     public_url = "#{public_base()}/#{filename}"
 
     if File.exists?(local_path) do
-      Span.execute([:froth, :podcast, :already_downloaded], nil, %{path: local_path})
+      Span.execute([:froth, :podcast, :already_downloaded], nil, %{
+        path: local_path
+      })
+
       {:ok, %{local_path: local_path, public_url: public_url}}
     else
       Span.execute([:froth, :podcast, :downloading], nil, %{
@@ -303,7 +312,13 @@ defmodule Froth.Podcast do
 
   defp youtube_url?(url) do
     uri = URI.parse(url)
-    uri.host in ["www.youtube.com", "youtube.com", "youtu.be", "m.youtube.com"]
+
+    uri.host in [
+      "www.youtube.com",
+      "youtube.com",
+      "youtu.be",
+      "m.youtube.com"
+    ]
   end
 
   # --- YouTube ---
@@ -401,7 +416,10 @@ defmodule Froth.Podcast do
     public_url = "#{public_base()}/#{filename}"
 
     if File.exists?(local_path) do
-      Span.execute([:froth, :podcast, :already_downloaded], nil, %{path: local_path})
+      Span.execute([:froth, :podcast, :already_downloaded], nil, %{
+        path: local_path
+      })
+
       {:ok, %{local_path: local_path, public_url: public_url}}
     else
       # Download via mikaels-mac-mini-2 which has working yt-dlp
@@ -412,7 +430,10 @@ defmodule Froth.Podcast do
         "yt-dlp --extract-audio --audio-format mp3 --audio-quality 0 " <>
           "-o '#{remote_template}' '#{youtube_url}'"
 
-      {output, exit} = System.cmd("ssh", ["mikaels-mac-mini-2", ssh_cmd], stderr_to_stdout: true)
+      {output, exit} =
+        System.cmd("ssh", ["mikaels-mac-mini-2", ssh_cmd],
+          stderr_to_stdout: true
+        )
 
       if exit == 0 do
         # scp the file back
@@ -422,7 +443,9 @@ defmodule Froth.Podcast do
           )
 
         # clean up remote
-        System.cmd("ssh", ["mikaels-mac-mini-2", "rm -f #{remote_tmp}"], stderr_to_stdout: true)
+        System.cmd("ssh", ["mikaels-mac-mini-2", "rm -f #{remote_tmp}"],
+          stderr_to_stdout: true
+        )
 
         if scp_exit == 0 and File.exists?(local_path) do
           {:ok, %{local_path: local_path, public_url: public_url}}
@@ -474,7 +497,8 @@ defmodule Froth.Podcast do
     sample_url = "#{public_base()}/#{sample_filename}"
 
     with :ok <- cut_and_concat(source_path, segments, sample_path),
-         {:ok, prediction} <- run_voice_clone(sample_url, noise_reduction, clone_model),
+         {:ok, prediction} <-
+           run_voice_clone(sample_url, noise_reduction, clone_model),
          {:ok, done} <- Froth.Replicate.await(prediction.id, 300_000) do
       voice_id = get_in(done.output, ["voice_id"]) || done.output
 
@@ -489,7 +513,8 @@ defmodule Froth.Podcast do
     end
   end
 
-  defp cut_and_concat(source_path, segments, output_path) when length(segments) == 1 do
+  defp cut_and_concat(source_path, segments, output_path)
+       when length(segments) == 1 do
     [{start_s, end_s}] = segments
     duration = end_s - start_s
 
@@ -523,7 +548,12 @@ defmodule Froth.Podcast do
       segments
       |> Enum.with_index()
       |> Enum.map(fn {{start_s, end_s}, i} ->
-        seg_path = Path.join(tmp_dir, "seg_#{String.pad_leading(to_string(i), 3, "0")}.mp3")
+        seg_path =
+          Path.join(
+            tmp_dir,
+            "seg_#{String.pad_leading(to_string(i), 3, "0")}.mp3"
+          )
+
         duration = end_s - start_s
 
         {_, 0} =
@@ -583,7 +613,8 @@ defmodule Froth.Podcast do
       need_noise_reduction: noise_reduction
     }
 
-    input = if clone_model, do: Map.put(input, :model, clone_model), else: input
+    input =
+      if clone_model, do: Map.put(input, :model, clone_model), else: input
 
     Froth.Replicate.create_prediction("minimax/voice-cloning", input)
     |> case do
@@ -613,7 +644,10 @@ defmodule Froth.Podcast do
     |> Enum.with_index()
     |> Enum.map(fn {[_, item], i} ->
       title =
-        case Regex.run(~r/<title>(?:<!\[CDATA\[)?(.+?)(?:\]\]>)?<\/title>/, item) do
+        case Regex.run(
+               ~r/<title>(?:<!\[CDATA\[)?(.+?)(?:\]\]>)?<\/title>/,
+               item
+             ) do
           [_, t] -> String.trim(t)
           _ -> "Episode #{i}"
         end
@@ -721,7 +755,11 @@ defmodule Froth.Podcast do
               "is_file" => true
             }
 
-            args = if bot_token, do: Map.put(args, "bot_token", bot_token), else: args
+            args =
+              if bot_token,
+                do: Map.put(args, "bot_token", bot_token),
+                else: args
+
             job = Froth.Podcast.TtsWorker.new(args)
             {[job | acc], 0}
 
@@ -742,8 +780,14 @@ defmodule Froth.Podcast do
               "pause_ms" => pause_ms
             }
 
-            args = if emotion, do: Map.put(args, "emotion", emotion), else: args
-            args = if bot_token, do: Map.put(args, "bot_token", bot_token), else: args
+            args =
+              if emotion, do: Map.put(args, "emotion", emotion), else: args
+
+            args =
+              if bot_token,
+                do: Map.put(args, "bot_token", bot_token),
+                else: args
+
             {[Froth.Podcast.TtsWorker.new(args) | acc], 0}
         end
       end)
@@ -769,7 +813,8 @@ defmodule Froth.Podcast do
        do: {speaker, text, []}
 
   defp normalize_item({speaker, text, opts})
-       when (is_atom(speaker) or is_binary(speaker)) and is_binary(text) and is_list(opts),
+       when (is_atom(speaker) or is_binary(speaker)) and is_binary(text) and
+              is_list(opts),
        do: {speaker, text, opts}
 
   defp send_progress(_bot_token, chat_id, text) do

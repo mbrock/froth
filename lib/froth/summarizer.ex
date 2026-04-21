@@ -51,7 +51,10 @@ defmodule Froth.Summarizer do
       prompt = build_prompt(transcript, prior, from_unix, prompt_to_unix)
 
       config = %Config{system: @system_prompt, model: @model, tools: []}
-      user_msg = Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
+
+      user_msg =
+        Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
+
       {cycle, stream} = Agent.run(user_msg, config)
 
       text =
@@ -79,7 +82,14 @@ defmodule Froth.Summarizer do
       IO.write("\n")
 
       if text do
-        save(chat_id, from_unix, covered_to_unix, text, length(messages), cycle.id)
+        save(
+          chat_id,
+          from_unix,
+          covered_to_unix,
+          text,
+          length(messages),
+          cycle.id
+        )
       else
         {:error, :no_response}
       end
@@ -87,8 +97,15 @@ defmodule Froth.Summarizer do
   end
 
   def summarize_day(chat_id, %Date{} = date) do
-    from_unix = date |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
-    to_unix = date |> Date.add(1) |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
+    from_unix =
+      date |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
+
+    to_unix =
+      date
+      |> Date.add(1)
+      |> DateTime.new!(~T[00:00:00], "Etc/UTC")
+      |> DateTime.to_unix()
+
     summarize(chat_id, from_unix, to_unix)
   end
 
@@ -125,7 +142,11 @@ defmodule Froth.Summarizer do
       from(s in ChatSummary,
         where: s.chat_id == ^chat_id and s.to_date <= ^before_unix,
         order_by: [asc: s.from_date],
-        select: %{from_date: s.from_date, to_date: s.to_date, summary_text: s.summary_text}
+        select: %{
+          from_date: s.from_date,
+          to_date: s.to_date,
+          summary_text: s.summary_text
+        }
       ),
       log: false
     )
@@ -149,16 +170,25 @@ defmodule Froth.Summarizer do
   end
 
   defp build_prompt(transcript, prior_summaries, from_unix, to_unix) do
-    from_str = DateTime.from_unix!(from_unix) |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
-    to_str = DateTime.from_unix!(to_unix) |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
+    from_str =
+      DateTime.from_unix!(from_unix)
+      |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
+
+    to_str =
+      DateTime.from_unix!(to_unix) |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
 
     context =
       if prior_summaries != [] do
         prior_text =
           prior_summaries
           |> Enum.map(fn s ->
-            f = DateTime.from_unix!(s.from_date) |> Calendar.strftime("%Y-%m-%d")
-            t = DateTime.from_unix!(s.to_date) |> Calendar.strftime("%Y-%m-%d")
+            f =
+              DateTime.from_unix!(s.from_date)
+              |> Calendar.strftime("%Y-%m-%d")
+
+            t =
+              DateTime.from_unix!(s.to_date) |> Calendar.strftime("%Y-%m-%d")
+
             "--- #{f} to #{t} ---\n#{s.summary_text}"
           end)
           |> Enum.join("\n\n")
@@ -183,7 +213,8 @@ defmodule Froth.Summarizer do
     |> Enum.max(fn -> nil end)
   end
 
-  defp summary_covered_to_unix(nil, to_unix) when is_integer(to_unix), do: to_unix
+  defp summary_covered_to_unix(nil, to_unix) when is_integer(to_unix),
+    do: to_unix
 
   defp summary_covered_to_unix(max_message_unix, to_unix)
        when is_integer(max_message_unix) and is_integer(to_unix) do

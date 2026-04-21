@@ -48,11 +48,19 @@ defmodule Froth.Context.BlockHTML do
         <% is_binary(@block.body) -> %>
           {@block.body}
         <% has_fold?(@block) -> %>
-          <head lines={head_range(@block)}>{join(Block.attr(@block, :head, []))}</head>
-          <omitted :if={Block.attr(@block, :omitted, 0) > 0} count={Block.attr(@block, :omitted)}>
+          <head lines={head_range(@block)}>
+            {join(Block.attr(@block, :head, []))}
+          </head>
+          <omitted
+            :if={Block.attr(@block, :omitted, 0) > 0}
+            count={Block.attr(@block, :omitted)}
+          >
             {Block.attr(@block, :omitted)} lines omitted — use pager to read more
           </omitted>
-          <tail :if={Block.attr(@block, :tail, []) != []} lines={tail_range(@block)}>
+          <tail
+            :if={Block.attr(@block, :tail, []) != []}
+            lines={tail_range(@block)}
+          >
             {join(Block.attr(@block, :tail, []))}
           </tail>
         <% true -> %>
@@ -127,11 +135,14 @@ defmodule Froth.Context.BlockHTML do
     assigns = assign(assigns, tag: safe_tag(assigns.kind))
 
     ~H"""
-    <.dynamic_tag tag_name={@tag} {@attrs}>{render_slot(@inner_block)}</.dynamic_tag>
+    <.dynamic_tag tag_name={@tag} {@attrs}>
+      {render_slot(@inner_block)}
+    </.dynamic_tag>
     """
   end
 
-  defp kind(%Block{} = block), do: to_string(Block.attr(block, :kind) || "block")
+  defp kind(%Block{} = block),
+    do: to_string(Block.attr(block, :kind) || "block")
 
   defp safe_tag(name) when is_binary(name) do
     if Regex.match?(~r/\A[a-z][a-z0-9_]*\z/, name) and
@@ -189,7 +200,11 @@ defmodule Froth.Context.BlockHTML do
   defp preview_text(%Block{body: body}) when is_binary(body) and body != "" do
     lines = String.split(body, "\n")
     preview_lines = Enum.take(lines, @trace_preview_lines)
-    finish_preview(preview_lines, max(length(lines) - length(preview_lines), 0))
+
+    finish_preview(
+      preview_lines,
+      max(length(lines) - length(preview_lines), 0)
+    )
   end
 
   defp preview_text(%Block{} = block) do
@@ -201,7 +216,10 @@ defmodule Froth.Context.BlockHTML do
         total_lines = Block.attr(block, :lines, length(head))
         preview_lines = Enum.take(head, @trace_preview_lines)
 
-        finish_preview(preview_lines, max(total_lines - length(preview_lines), 0))
+        finish_preview(
+          preview_lines,
+          max(total_lines - length(preview_lines), 0)
+        )
     end
   end
 
@@ -213,7 +231,12 @@ defmodule Froth.Context.BlockHTML do
 
     suffix =
       if remaining_lines > 0 do
-        ["... ", Integer.to_string(remaining_lines), " more ", pluralize("line", remaining_lines)]
+        [
+          "... ",
+          Integer.to_string(remaining_lines),
+          " more ",
+          pluralize("line", remaining_lines)
+        ]
       else
         []
       end

@@ -47,7 +47,9 @@ defmodule Froth.Podcast.TtsWorker do
          {:ok, p} <- Froth.Replicate.await(p.id, 120_000) do
       url = extract_url(p.output)
 
-      case Finch.request(Finch.build(:get, url), Froth.Finch, receive_timeout: 30_000) do
+      case Finch.request(Finch.build(:get, url), Froth.Finch,
+             receive_timeout: 30_000
+           ) do
         {:ok, %Finch.Response{status: 200, body: audio}} ->
           File.write!(seg_path, audio)
 
@@ -101,12 +103,18 @@ defmodule Froth.Podcast.TtsWorker do
     if pending == 0 do
       # Use unique to avoid duplicate stitch jobs
       %{"batch_id" => batch_id}
-      |> Froth.Podcast.StitchWorker.new(unique: [period: 300, keys: [:batch_id]])
+      |> Froth.Podcast.StitchWorker.new(
+        unique: [period: 300, keys: [:batch_id]]
+      )
       |> Oban.insert()
     end
   end
 
-  defp send_progress(%{"batch_id" => batch_id, "chat_id" => chat_id, "label" => label}) do
+  defp send_progress(%{
+         "batch_id" => batch_id,
+         "chat_id" => chat_id,
+         "label" => label
+       }) do
     import Ecto.Query
 
     total =

@@ -12,7 +12,8 @@ defmodule Froth.Telegram.Queries do
   # ── messages ──────────────────────────────────────────────────────
 
   def fetch_messages(chat_id, from_unix, to_unix)
-      when is_integer(chat_id) and is_integer(from_unix) and is_integer(to_unix) do
+      when is_integer(chat_id) and is_integer(from_unix) and
+             is_integer(to_unix) do
     "telegram_messages"
     |> base_message_range_query(chat_id, from_unix, to_unix)
     |> distinct([m], m.message_id)
@@ -39,7 +40,8 @@ defmodule Froth.Telegram.Queries do
   end
 
   def fetch_recent_messages(chat_id, from_unix, to_unix, limit)
-      when is_integer(chat_id) and is_integer(from_unix) and is_integer(to_unix) and
+      when is_integer(chat_id) and is_integer(from_unix) and
+             is_integer(to_unix) and
              is_integer(limit) and limit > 0 do
     "telegram_messages"
     |> base_message_range_query(chat_id, from_unix, to_unix)
@@ -51,12 +53,14 @@ defmodule Froth.Telegram.Queries do
   end
 
   def fetch_recent_messages(chat_id, from_unix, :infinity, limit)
-      when is_integer(chat_id) and is_integer(from_unix) and is_integer(limit) and limit > 0 do
+      when is_integer(chat_id) and is_integer(from_unix) and is_integer(limit) and
+             limit > 0 do
     fetch_recent_messages(chat_id, from_unix, nil, limit)
   end
 
   def fetch_recent_messages(chat_id, from_unix, nil, limit)
-      when is_integer(chat_id) and is_integer(from_unix) and is_integer(limit) and limit > 0 do
+      when is_integer(chat_id) and is_integer(from_unix) and is_integer(limit) and
+             limit > 0 do
     "telegram_messages"
     |> base_message_range_query(chat_id, from_unix, nil)
     |> order_by([m], desc: m.date, desc: m.inserted_at, desc: m.message_id)
@@ -88,9 +92,16 @@ defmodule Froth.Telegram.Queries do
     |> Repo.all(log: false)
   end
 
-  def fetch_recent_session_messages(session_id, chat_id, from_unix, to_unix, limit)
+  def fetch_recent_session_messages(
+        session_id,
+        chat_id,
+        from_unix,
+        to_unix,
+        limit
+      )
       when is_binary(session_id) and session_id != "" and is_integer(chat_id) and
-             is_integer(from_unix) and is_integer(to_unix) and is_integer(limit) and limit > 0 do
+             is_integer(from_unix) and is_integer(to_unix) and
+             is_integer(limit) and limit > 0 do
     session_id
     |> descending_session_message_range_query(chat_id, from_unix, to_unix)
     |> limit(^limit)
@@ -98,13 +109,25 @@ defmodule Froth.Telegram.Queries do
     |> Enum.reverse()
   end
 
-  def fetch_recent_session_messages(session_id, chat_id, from_unix, :infinity, limit)
+  def fetch_recent_session_messages(
+        session_id,
+        chat_id,
+        from_unix,
+        :infinity,
+        limit
+      )
       when is_binary(session_id) and session_id != "" and is_integer(chat_id) and
              is_integer(from_unix) and is_integer(limit) and limit > 0 do
     fetch_recent_session_messages(session_id, chat_id, from_unix, nil, limit)
   end
 
-  def fetch_recent_session_messages(session_id, chat_id, from_unix, nil, limit)
+  def fetch_recent_session_messages(
+        session_id,
+        chat_id,
+        from_unix,
+        nil,
+        limit
+      )
       when is_binary(session_id) and session_id != "" and is_integer(chat_id) and
              is_integer(from_unix) and is_integer(limit) and limit > 0 do
     session_id
@@ -115,7 +138,8 @@ defmodule Froth.Telegram.Queries do
   end
 
   def count_messages(chat_id, from_unix, to_unix)
-      when is_integer(chat_id) and is_integer(from_unix) and is_integer(to_unix) do
+      when is_integer(chat_id) and is_integer(from_unix) and
+             is_integer(to_unix) do
     "telegram_messages"
     |> base_message_range_query(chat_id, from_unix, to_unix)
     |> Repo.aggregate(:count, :message_id, log: false)
@@ -137,7 +161,12 @@ defmodule Froth.Telegram.Queries do
       when is_binary(session_id) and session_id != "" and is_integer(chat_id) and
              is_integer(from_unix) and is_integer(to_unix) do
     "telegram_messages"
-    |> base_session_message_range_query(session_id, chat_id, from_unix, to_unix)
+    |> base_session_message_range_query(
+      session_id,
+      chat_id,
+      from_unix,
+      to_unix
+    )
     |> Repo.aggregate(:count, :message_id, log: false)
   end
 
@@ -195,21 +224,42 @@ defmodule Froth.Telegram.Queries do
        when is_binary(session_id) and session_id != "" and is_integer(chat_id) and
               is_integer(from_unix) do
     "telegram_messages"
-    |> base_session_message_range_query(session_id, chat_id, from_unix, to_unix)
+    |> base_session_message_range_query(
+      session_id,
+      chat_id,
+      from_unix,
+      to_unix
+    )
     |> order_by([m], asc: m.date, asc: m.inserted_at, asc: m.message_id)
     |> select_message_fields()
   end
 
-  defp descending_session_message_range_query(session_id, chat_id, from_unix, to_unix)
+  defp descending_session_message_range_query(
+         session_id,
+         chat_id,
+         from_unix,
+         to_unix
+       )
        when is_binary(session_id) and session_id != "" and is_integer(chat_id) and
               is_integer(from_unix) do
     "telegram_messages"
-    |> base_session_message_range_query(session_id, chat_id, from_unix, to_unix)
+    |> base_session_message_range_query(
+      session_id,
+      chat_id,
+      from_unix,
+      to_unix
+    )
     |> order_by([m], desc: m.date, desc: m.inserted_at, desc: m.message_id)
     |> select_message_fields()
   end
 
-  defp base_session_message_range_query(queryable, session_id, chat_id, from_unix, to_unix)
+  defp base_session_message_range_query(
+         queryable,
+         session_id,
+         chat_id,
+         from_unix,
+         to_unix
+       )
        when is_binary(session_id) and session_id != "" and is_integer(chat_id) and
               is_integer(from_unix) do
     query =
@@ -245,13 +295,18 @@ defmodule Froth.Telegram.Queries do
       where: s.chat_id == ^chat_id and s.from_date != s.to_date,
       where: fragment("? - ? <= 86400", s.to_date, s.from_date),
       order_by: [asc: s.from_date],
-      select: %{from_date: s.from_date, to_date: s.to_date, summary_text: s.summary_text}
+      select: %{
+        from_date: s.from_date,
+        to_date: s.to_date,
+        summary_text: s.summary_text
+      }
     )
     |> maybe_before_unix(before_unix)
     |> Repo.all(log: false)
   end
 
-  def latest_daily_summary_end(chat_id, before_unix \\ nil) when is_integer(chat_id) do
+  def latest_daily_summary_end(chat_id, before_unix \\ nil)
+      when is_integer(chat_id) do
     from(s in ChatSummary,
       where: s.chat_id == ^chat_id and s.from_date != s.to_date,
       where: fragment("? - ? <= 86400", s.to_date, s.from_date),
@@ -300,7 +355,11 @@ defmodule Froth.Telegram.Queries do
         on: c.id == l.cycle_id,
         where: l.chat_id == ^chat_id and l.reply_to in ^message_ids,
         order_by: [asc: c.inserted_at],
-        select: %{message_id: l.reply_to, cycle_id: l.cycle_id, inserted_at: c.inserted_at}
+        select: %{
+          message_id: l.reply_to,
+          cycle_id: l.cycle_id,
+          inserted_at: c.inserted_at
+        }
       )
 
     query =

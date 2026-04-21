@@ -75,7 +75,12 @@ defmodule Froth.Codex.Task do
                   Froth.Tasks.start(task.task_id)
 
                   if chat_id do
-                    send_micromanage_button(session_id, chat_id, reply_to, prompt)
+                    send_micromanage_button(
+                      session_id,
+                      chat_id,
+                      reply_to,
+                      prompt
+                    )
                   end
 
                   Span.execute([:froth, :codex, :task_started], nil, %{
@@ -87,8 +92,14 @@ defmodule Froth.Codex.Task do
                   if await do
                     case session_module.subscribe(session_id) do
                       :ok ->
-                        initial_saw_turn? = await_active_turn?(session_id, session_module)
-                        collect_until_done(session_id, session_module, initial_saw_turn?)
+                        initial_saw_turn? =
+                          await_active_turn?(session_id, session_module)
+
+                        collect_until_done(
+                          session_id,
+                          session_module,
+                          initial_saw_turn?
+                        )
 
                       {:error, reason} ->
                         {:error, reason}
@@ -199,7 +210,8 @@ defmodule Froth.Codex.Task do
 
           {:ok, snapshot} ->
             active_turn_id =
-              Map.get(snapshot, :active_turn_id) || Map.get(snapshot, "active_turn_id")
+              Map.get(snapshot, :active_turn_id) ||
+                Map.get(snapshot, "active_turn_id")
 
             saw_turn? = saw_turn? or is_binary(active_turn_id)
 
@@ -264,7 +276,10 @@ defmodule Froth.Codex.Task do
   defp await_active_turn?(session_id, session_module) do
     case session_module.snapshot(session_id) do
       {:ok, snapshot} ->
-        active_turn_id = Map.get(snapshot, :active_turn_id) || Map.get(snapshot, "active_turn_id")
+        active_turn_id =
+          Map.get(snapshot, :active_turn_id) ||
+            Map.get(snapshot, "active_turn_id")
+
         is_binary(active_turn_id)
 
       _ ->
@@ -282,7 +297,8 @@ defmodule Froth.Codex.Task do
     end
   end
 
-  defp task_failure_reason(reason) when is_binary(reason), do: String.slice(reason, 0, 200)
+  defp task_failure_reason(reason) when is_binary(reason),
+    do: String.slice(reason, 0, 200)
 
   defp task_failure_reason(reason) do
     reason

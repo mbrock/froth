@@ -4,9 +4,11 @@ defmodule Froth.DurableFiles do
   @default_files_base_url "https://less.rest/files"
   @files_dir Path.expand("../../priv/static/files", __DIR__)
 
-  @spec persist(binary(), String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
+  @spec persist(binary(), String.t(), String.t()) ::
+          {:ok, map()} | {:error, String.t()}
   def persist(file_data, media_type, filename)
-      when is_binary(file_data) and is_binary(media_type) and is_binary(filename) do
+      when is_binary(file_data) and is_binary(media_type) and
+             is_binary(filename) do
     with :ok <- File.mkdir_p(@files_dir),
          {:ok, basename} <- durable_filename(file_data, media_type, filename),
          local_path <- Path.join(@files_dir, basename),
@@ -89,7 +91,8 @@ defmodule Froth.DurableFiles do
   def extension_from_filename(_), do: nil
 
   defp durable_filename(file_data, media_type, filename)
-       when is_binary(file_data) and is_binary(media_type) and is_binary(filename) do
+       when is_binary(file_data) and is_binary(media_type) and
+              is_binary(filename) do
     hash =
       :crypto.hash(:sha256, file_data)
       |> Base.encode16(case: :lower)

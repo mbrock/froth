@@ -84,7 +84,8 @@ defmodule Froth.Codex do
 
   @doc "Stop the client process."
   @spec stop(server(), timeout()) :: :ok
-  def stop(server \\ __MODULE__, timeout \\ 5_000), do: GenServer.stop(server, :normal, timeout)
+  def stop(server \\ __MODULE__, timeout \\ 5_000),
+    do: GenServer.stop(server, :normal, timeout)
 
   @doc """
   Subscribe the current process to Codex events over PubSub.
@@ -96,7 +97,11 @@ defmodule Froth.Codex do
   def subscribe(server \\ __MODULE__, opts \\ []) when is_list(opts) do
     with {:ok, {pubsub, topic}} <- resolve_pubsub_topic(server, opts),
          :ok <- Phoenix.PubSub.subscribe(pubsub, topic) do
-      Span.execute([:froth, :codex, :pubsub_subscribe], nil, %{pubsub: pubsub, topic: topic})
+      Span.execute([:froth, :codex, :pubsub_subscribe], nil, %{
+        pubsub: pubsub,
+        topic: topic
+      })
+
       :ok
     end
   end
@@ -111,7 +116,11 @@ defmodule Froth.Codex do
   def unsubscribe(server \\ __MODULE__, opts \\ []) when is_list(opts) do
     with {:ok, {pubsub, topic}} <- resolve_pubsub_topic(server, opts),
          :ok <- Phoenix.PubSub.unsubscribe(pubsub, topic) do
-      Span.execute([:froth, :codex, :pubsub_unsubscribe], nil, %{pubsub: pubsub, topic: topic})
+      Span.execute([:froth, :codex, :pubsub_unsubscribe], nil, %{
+        pubsub: pubsub,
+        topic: topic
+      })
+
       :ok
     end
   end
@@ -119,7 +128,8 @@ defmodule Froth.Codex do
   @doc """
   Return the configured `{pubsub, topic}` for a running Codex client.
   """
-  @spec pubsub_topic(server()) :: {:ok, {term(), String.t()}} | {:error, term()}
+  @spec pubsub_topic(server()) ::
+          {:ok, {term(), String.t()}} | {:error, term()}
   def pubsub_topic(server \\ __MODULE__) do
     try do
       {:ok, GenServer.call(server, :pubsub_topic)}
@@ -172,14 +182,19 @@ defmodule Froth.Codex do
     - `:capabilities` - map passed as `capabilities`
     - `:timeout` - request timeout
   """
-  @spec initialize(server(), map(), keyword()) :: {:ok, map()} | {:error, term()}
-  def initialize(server \\ __MODULE__, client_info, opts \\ []) when is_map(client_info) do
+  @spec initialize(server(), map(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def initialize(server \\ __MODULE__, client_info, opts \\ [])
+      when is_map(client_info) do
     params = %{"clientInfo" => deep_stringify_keys(client_info)}
 
     params =
       case Keyword.get(opts, :capabilities) do
-        caps when is_map(caps) -> Map.put(params, "capabilities", deep_stringify_keys(caps))
-        _ -> params
+        caps when is_map(caps) ->
+          Map.put(params, "capabilities", deep_stringify_keys(caps))
+
+        _ ->
+          params
       end
 
     request(server, "initialize", params,
@@ -189,13 +204,16 @@ defmodule Froth.Codex do
 
   @doc "Send the `initialized` notification."
   @spec initialized(server()) :: :ok | {:error, term()}
-  def initialized(server \\ __MODULE__), do: notify(server, "initialized", %{})
+  def initialized(server \\ __MODULE__),
+    do: notify(server, "initialized", %{})
 
   @doc """
   Convenience handshake: `initialize` followed by `initialized`.
   """
-  @spec handshake(server(), map(), keyword()) :: {:ok, map()} | {:error, term()}
-  def handshake(server \\ __MODULE__, client_info, opts \\ []) when is_map(client_info) do
+  @spec handshake(server(), map(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def handshake(server \\ __MODULE__, client_info, opts \\ [])
+      when is_map(client_info) do
     case initialize(server, client_info, opts) do
       {:ok, result} ->
         case initialized(server) do
@@ -210,7 +228,8 @@ defmodule Froth.Codex do
 
   for {fun, rpc_method} <- @request_methods do
     @doc "Call `#{rpc_method}`."
-    @spec unquote(fun)(server(), map(), keyword()) :: {:ok, term()} | {:error, term()}
+    @spec unquote(fun)(server(), map(), keyword()) ::
+            {:ok, term()} | {:error, term()}
     def unquote(fun)(server \\ __MODULE__, params \\ %{}, opts \\ [])
         when is_map(params) and is_list(opts) do
       request(server, unquote(rpc_method), params, opts)
@@ -222,7 +241,10 @@ defmodule Froth.Codex do
     executable = resolve_executable(opts)
 
     args = Keyword.get(opts, :args, ["app-server"])
-    request_timeout = Keyword.get(opts, :request_timeout, @default_request_timeout)
+
+    request_timeout =
+      Keyword.get(opts, :request_timeout, @default_request_timeout)
+
     cwd = Keyword.get(opts, :cwd)
     pubsub = Keyword.get(opts, :pubsub, Froth.PubSub)
     topic = Keyword.get(opts, :topic, @default_topic)
@@ -289,14 +311,21 @@ defmodule Froth.Codex do
 
     case send_message(state, msg) do
       :ok ->
-        Span.execute([:froth, :codex, :notify_sent], state.parent_span_id, %{method: method})
+        Span.execute([:froth, :codex, :notify_sent], state.parent_span_id, %{
+          method: method
+        })
+
         {:reply, :ok, state}
 
       {:error, reason} = error ->
-        Span.execute([:froth, :codex, :notify_failed], state.parent_span_id, %{
-          method: method,
-          reason: reason
-        })
+        Span.execute(
+          [:froth, :codex, :notify_failed],
+          state.parent_span_id,
+          %{
+            method: method,
+            reason: reason
+          }
+        )
 
         {:reply, error, state}
     end
@@ -331,27 +360,36 @@ defmodule Froth.Codex do
             method: method
           })
 
-        Span.execute([:froth, :codex, :request_queued], state.parent_span_id, %{
-          id: id,
-          method: method,
-          pending_count: map_size(pending)
-        })
+        Span.execute(
+          [:froth, :codex, :request_queued],
+          state.parent_span_id,
+          %{
+            id: id,
+            method: method,
+            pending_count: map_size(pending)
+          }
+        )
 
         {:noreply, %{state | next_id: id + 1, pending: pending}}
 
       {:error, reason} = error ->
-        Span.execute([:froth, :codex, :request_failed_to_send], state.parent_span_id, %{
-          id: id,
-          method: method,
-          reason: reason
-        })
+        Span.execute(
+          [:froth, :codex, :request_failed_to_send],
+          state.parent_span_id,
+          %{
+            id: id,
+            method: method,
+            reason: reason
+          }
+        )
 
         {:reply, error, state}
     end
   end
 
   @impl true
-  def handle_info({port, {:data, data}}, %{port: port} = state) when is_binary(data) do
+  def handle_info({port, {:data, data}}, %{port: port} = state)
+      when is_binary(data) do
     buffer = state.buffer <> data
     {lines, rest} = split_complete_lines(buffer)
 
@@ -377,11 +415,15 @@ defmodule Froth.Codex do
         {:noreply, state}
 
       {%{from: from, method: method}, pending} ->
-        Span.execute([:froth, :codex, :request_timeout], state.parent_span_id, %{
-          id: id,
-          method: method,
-          pending_count: map_size(pending)
-        })
+        Span.execute(
+          [:froth, :codex, :request_timeout],
+          state.parent_span_id,
+          %{
+            id: id,
+            method: method,
+            pending_count: map_size(pending)
+          }
+        )
 
         GenServer.reply(from, {:error, :timeout})
         {:noreply, %{state | pending: pending}}
@@ -410,40 +452,60 @@ defmodule Froth.Codex do
     else
       case Jason.decode(line) do
         {:ok, %{"id" => id} = msg} ->
-          Span.execute([:froth, :codex, :response_received], state.parent_span_id, %{
-            id: id,
-            raw_preview: preview(msg)
-          })
+          Span.execute(
+            [:froth, :codex, :response_received],
+            state.parent_span_id,
+            %{
+              id: id,
+              raw_preview: preview(msg)
+            }
+          )
 
           handle_response(id, msg, state)
 
         {:ok, %{"method" => method} = msg} when is_binary(method) ->
           params = Map.get(msg, "params", %{})
 
-          Span.execute([:froth, :codex, :notification_received], state.parent_span_id, %{
-            method: method,
-            topic: state.topic,
-            params_preview: preview(params)
-          })
+          Span.execute(
+            [:froth, :codex, :notification_received],
+            state.parent_span_id,
+            %{
+              method: method,
+              topic: state.topic,
+              params_preview: preview(params)
+            }
+          )
 
           broadcast_notification(state, method, params, msg, line)
           state
 
         {:ok, msg} ->
-          Span.execute([:froth, :codex, :unknown_message], state.parent_span_id, %{
-            message_preview: preview(msg)
-          })
+          Span.execute(
+            [:froth, :codex, :unknown_message],
+            state.parent_span_id,
+            %{
+              message_preview: preview(msg)
+            }
+          )
 
           broadcast_protocol_error(state, {:unknown_message, msg})
           state
 
         {:error, reason} ->
-          Span.execute([:froth, :codex, :invalid_json], state.parent_span_id, %{
-            line_preview: String.slice(line, 0, 500),
-            reason: reason
-          })
+          Span.execute(
+            [:froth, :codex, :invalid_json],
+            state.parent_span_id,
+            %{
+              line_preview: String.slice(line, 0, 500),
+              reason: reason
+            }
+          )
 
-          broadcast_protocol_error(state, {:invalid_json, line, inspect(reason)})
+          broadcast_protocol_error(
+            state,
+            {:invalid_json, line, inspect(reason)}
+          )
+
           state
       end
     end
@@ -454,10 +516,14 @@ defmodule Froth.Codex do
 
     case Map.pop(state.pending, id) do
       {nil, pending} ->
-        Span.execute([:froth, :codex, :unexpected_response], state.parent_span_id, %{
-          id: id,
-          response_preview: preview(msg)
-        })
+        Span.execute(
+          [:froth, :codex, :unexpected_response],
+          state.parent_span_id,
+          %{
+            id: id,
+            response_preview: preview(msg)
+          }
+        )
 
         broadcast_protocol_error(state, {:unexpected_response, msg})
         %{state | pending: pending}
@@ -466,12 +532,20 @@ defmodule Froth.Codex do
         Process.cancel_timer(timer)
 
         if Map.has_key?(msg, "error") do
-          Span.execute([:froth, :codex, :request_error_response], state.parent_span_id, %{
-            id: id,
-            error_preview: preview(msg["error"])
-          })
+          Span.execute(
+            [:froth, :codex, :request_error_response],
+            state.parent_span_id,
+            %{
+              id: id,
+              error_preview: preview(msg["error"])
+            }
+          )
         else
-          Span.execute([:froth, :codex, :request_ok_response], state.parent_span_id, %{id: id})
+          Span.execute(
+            [:froth, :codex, :request_ok_response],
+            state.parent_span_id,
+            %{id: id}
+          )
         end
 
         GenServer.reply(from, decode_response(msg))
@@ -480,7 +554,10 @@ defmodule Froth.Codex do
   end
 
   defp decode_response(%{"result" => result}), do: {:ok, result}
-  defp decode_response(%{"error" => error}), do: {:error, normalize_rpc_error(error)}
+
+  defp decode_response(%{"error" => error}),
+    do: {:error, normalize_rpc_error(error)}
+
   defp decode_response(other), do: {:error, {:invalid_response, other}}
 
   defp normalize_rpc_error(error) when is_map(error), do: error
@@ -511,12 +588,18 @@ defmodule Froth.Codex do
         :ok
 
       _ ->
-        Span.execute([:froth, :codex, :send_failed], parent_span_id, %{reason: :port_closed})
+        Span.execute([:froth, :codex, :send_failed], parent_span_id, %{
+          reason: :port_closed
+        })
+
         {:error, :port_closed}
     end
   rescue
     ArgumentError ->
-      Span.execute([:froth, :codex, :send_failed], parent_span_id, %{reason: :port_closed})
+      Span.execute([:froth, :codex, :send_failed], parent_span_id, %{
+        reason: :port_closed
+      })
+
       {:error, :port_closed}
   end
 

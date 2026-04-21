@@ -12,9 +12,10 @@ defmodule FrothWeb.TimelineLiveTest do
   alias Froth.Telegram.SessionConfig
   alias Froth.Telegram.Username
 
-  test "renders highlighted elixir eval inputs and value outputs in cycle timeline entries", %{
-    conn: conn
-  } do
+  test "renders highlighted elixir eval inputs and value outputs in cycle timeline entries",
+       %{
+         conn: conn
+       } do
     session_id = "charlie"
     chat_id = unique_chat_id()
     sender_id = 700_000_000 + System.unique_integer([:positive])
@@ -23,7 +24,14 @@ defmodule FrothWeb.TimelineLiveTest do
     ensure_session(session_id)
     ensure_username(sender_id, "Alice", session_id)
 
-    insert_telegram_message(session_id, chat_id, 1_001, sender_id, now - 5, "run a quick eval")
+    insert_telegram_message(
+      session_id,
+      chat_id,
+      1_001,
+      sender_id,
+      now - 5,
+      "run a quick eval"
+    )
 
     cycle = Repo.insert!(%Cycle{})
 
@@ -35,12 +43,16 @@ defmodule FrothWeb.TimelineLiveTest do
     })
 
     input = %{
-      "code" => ~s|for f <- ["phoenix.ex", "ecto.ex", "logs.ex", "eval.ex"] do\n  f\nend|,
+      "code" =>
+        ~s|for f <- ["phoenix.ex", "ecto.ex", "logs.ex", "eval.ex"] do\n  f\nend|,
       "session_id" => "eval_session_demo"
     }
 
     blocks = [
-      Block.new([kind: "io", session: "eval_session_demo"], "stdout from eval"),
+      Block.new(
+        [kind: "io", session: "eval_session_demo"],
+        "stdout from eval"
+      ),
       Block.new([kind: "value", session: "eval_session_demo"], "[2, 3]")
     ]
 
@@ -103,7 +115,8 @@ defmodule FrothWeb.TimelineLiveTest do
   end
 
   defp ensure_username(user_id, first_name, session_id)
-       when is_integer(user_id) and is_binary(first_name) and is_binary(session_id) do
+       when is_integer(user_id) and is_binary(first_name) and
+              is_binary(session_id) do
     %Username{}
     |> Username.changeset(%{
       user_id: user_id,
@@ -124,7 +137,14 @@ defmodule FrothWeb.TimelineLiveTest do
     )
   end
 
-  defp insert_telegram_message(session_id, chat_id, message_id, sender_id, date, text) do
+  defp insert_telegram_message(
+         session_id,
+         chat_id,
+         message_id,
+         sender_id,
+         date,
+         text
+       ) do
     raw = %{
       "id" => message_id,
       "chat_id" => chat_id,

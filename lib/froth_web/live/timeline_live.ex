@@ -107,7 +107,8 @@ defmodule FrothWeb.TimelineLive do
   def handle_info({:event, event, _message}, socket) do
     cycle_id = event.metadata["cycle_id"]
 
-    if is_binary(cycle_id) and MapSet.member?(socket.assigns.cycle_topics, cycle_id) do
+    if is_binary(cycle_id) and
+         MapSet.member?(socket.assigns.cycle_topics, cycle_id) do
       {:noreply, refresh_cycle_block(socket, cycle_id)}
     else
       {:noreply, socket}
@@ -143,7 +144,11 @@ defmodule FrothWeb.TimelineLive do
 
     reply_lookup =
       Map.new(messages, fn m ->
-        {m.message_id, %{text: TMsg.text(m.raw), name: short_name_for(m.sender_id, short_names)}}
+        {m.message_id,
+         %{
+           text: TMsg.text(m.raw),
+           name: short_name_for(m.sender_id, short_names)
+         }}
       end)
 
     cycles = load_cycle_traces(chat_id, messages, short_names)
@@ -159,7 +164,10 @@ defmodule FrothWeb.TimelineLive do
     |> assign(:short_names, short_names)
     |> assign(:reply_lookup, reply_lookup)
     |> assign(:blocks, blocks)
-    |> assign(:cycle_inserted_at, Map.new(cycles, &{&1.cycle_id, &1.inserted_at}))
+    |> assign(
+      :cycle_inserted_at,
+      Map.new(cycles, &{&1.cycle_id, &1.inserted_at})
+    )
     |> assign(:participants, participants)
     |> assign(:message_count, length(messages))
     |> assign(:oldest_date, List.first(messages) |> date_of())
@@ -207,7 +215,8 @@ defmodule FrothWeb.TimelineLive do
 
       latest ->
         cond do
-          cycles != [] and latest == Enum.max(Enum.map(cycles, &sort_key(&1.inserted_at))) ->
+          cycles != [] and
+              latest == Enum.max(Enum.map(cycles, &sort_key(&1.inserted_at))) ->
             cycles
             |> Enum.max_by(&sort_key(&1.inserted_at))
             |> Map.fetch!(:inserted_at)
@@ -218,8 +227,11 @@ defmodule FrothWeb.TimelineLive do
             messages
             |> List.last()
             |> case do
-              %{date: unix} when is_integer(unix) -> datetime_in("Europe/Riga", unix) |> day_key()
-              _ -> nil
+              %{date: unix} when is_integer(unix) ->
+                datetime_in("Europe/Riga", unix) |> day_key()
+
+              _ ->
+                nil
             end
         end
     end
@@ -240,7 +252,10 @@ defmodule FrothWeb.TimelineLive do
       end
     end)
     |> Enum.map(fn {id, p} ->
-      Map.merge(p, %{name: short_name_for(id, short_names), color: color_for(id)})
+      Map.merge(p, %{
+        name: short_name_for(id, short_names),
+        color: color_for(id)
+      })
     end)
     |> Enum.sort_by(& &1.count, :desc)
   end
@@ -262,7 +277,9 @@ defmodule FrothWeb.TimelineLive do
     message_ids = Enum.map(messages, & &1.message_id)
 
     links_by_message =
-      Queries.cycle_traces_for_messages(chat_id, message_ids, bot_id: "charlie")
+      Queries.cycle_traces_for_messages(chat_id, message_ids,
+        bot_id: "charlie"
+      )
 
     links =
       links_by_message
@@ -287,7 +304,8 @@ defmodule FrothWeb.TimelineLive do
         reply_to: l.reply_to,
         inserted_at: l.inserted_at,
         entries: entries,
-        bot_name: short_name_for(bot_sender_id, short_names) |> or_else("bot"),
+        bot_name:
+          short_name_for(bot_sender_id, short_names) |> or_else("bot"),
         bot_color: color_for(bot_sender_id)
       }
     end)
@@ -326,7 +344,9 @@ defmodule FrothWeb.TimelineLive do
       messages
       |> Enum.map(fn m ->
         dt = datetime_in(tz, m.date)
-        {dt, m.message_id, build_message_turn(m, short_names, reply_lookup, chat_id, dt)}
+
+        {dt, m.message_id,
+         build_message_turn(m, short_names, reply_lookup, chat_id, dt)}
       end)
 
     cycle_entries =
@@ -338,7 +358,9 @@ defmodule FrothWeb.TimelineLive do
 
     sorted =
       (message_entries ++ cycle_entries)
-      |> Enum.sort_by(fn {dt, order, _} -> {DateTime.to_unix(dt, :microsecond), order} end)
+      |> Enum.sort_by(fn {dt, order, _} ->
+        {DateTime.to_unix(dt, :microsecond), order}
+      end)
 
     {blocks, _last_day} =
       Enum.reduce(sorted, {[], nil}, fn {dt, _order, turn}, {acc, last_day} ->
@@ -365,9 +387,14 @@ defmodule FrothWeb.TimelineLive do
 
     body =
       cond do
-        raw_text -> parse_body(text)
-        photo?(m.raw) -> {:photo, "/froth/media/#{chat_id}/#{m.message_id}", caption(m.raw)}
-        true -> :media
+        raw_text ->
+          parse_body(text)
+
+        photo?(m.raw) ->
+          {:photo, "/froth/media/#{chat_id}/#{m.message_id}", caption(m.raw)}
+
+        true ->
+          :media
       end
 
     {:turn,
@@ -505,19 +532,25 @@ defmodule FrothWeb.TimelineLive do
   defp block_id({:daybreak, dt}), do: "d-#{day_key(dt)}"
 
   defp sort_key(%DateTime{} = dt), do: DateTime.to_unix(dt, :microsecond)
-  defp sort_key(%NaiveDateTime{} = ndt), do: ndt |> DateTime.from_naive!("Etc/UTC") |> sort_key()
+
+  defp sort_key(%NaiveDateTime{} = ndt),
+    do: ndt |> DateTime.from_naive!("Etc/UTC") |> sort_key()
+
   defp sort_key(unix) when is_integer(unix), do: unix * 1_000_000
   defp sort_key(_), do: nil
 
   defp day_key(%DateTime{} = dt), do: Date.to_iso8601(DateTime.to_date(dt))
-  defp day_key(%NaiveDateTime{} = ndt), do: ndt |> DateTime.from_naive!("Etc/UTC") |> day_key()
+
+  defp day_key(%NaiveDateTime{} = ndt),
+    do: ndt |> DateTime.from_naive!("Etc/UTC") |> day_key()
 
   defp maybe_subscribe_chat(socket, chat_id) when is_integer(chat_id) do
     topic = Telegram.chat_topic(chat_id)
 
     socket =
       if connected?(socket) do
-        if is_binary(socket.assigns.chat_topic) and socket.assigns.chat_topic != topic do
+        if is_binary(socket.assigns.chat_topic) and
+             socket.assigns.chat_topic != topic do
           Phoenix.PubSub.unsubscribe(Froth.PubSub, socket.assigns.chat_topic)
         end
 
@@ -565,7 +598,10 @@ defmodule FrothWeb.TimelineLive do
       :cycle_inserted_at,
       Map.put(socket.assigns.cycle_inserted_at, cycle_id, inserted_at)
     )
-    |> sync_cycle_topics(MapSet.put(socket.assigns.cycle_topics, cycle_id) |> MapSet.to_list())
+    |> sync_cycle_topics(
+      MapSet.put(socket.assigns.cycle_topics, cycle_id)
+      |> MapSet.to_list()
+    )
   end
 
   defp append_message_block(socket, %TMsg{} = message) do
@@ -575,9 +611,13 @@ defmodule FrothWeb.TimelineLive do
       load_chat(socket)
     else
       short_names =
-        ensure_short_names(socket.assigns.short_names, socket.assigns.session_id, [
-          message.sender_id
-        ])
+        ensure_short_names(
+          socket.assigns.short_names,
+          socket.assigns.session_id,
+          [
+            message.sender_id
+          ]
+        )
 
       block =
         build_message_turn(
@@ -653,7 +693,10 @@ defmodule FrothWeb.TimelineLive do
 
               case upsert_block(socket.assigns.blocks, block) do
                 :insert ->
-                  blocks_to_append = maybe_daybreak(socket.assigns.latest_day_key, dt) ++ [block]
+                  blocks_to_append =
+                    maybe_daybreak(socket.assigns.latest_day_key, dt) ++
+                      [block]
+
                   blocks = socket.assigns.blocks ++ blocks_to_append
 
                   socket =
@@ -663,14 +706,23 @@ defmodule FrothWeb.TimelineLive do
                     |> assign(:latest_day_key, day_key(dt))
 
                   Enum.reduce(blocks_to_append, socket, fn next_block, acc ->
-                    stream_insert(acc, :blocks, timeline_stream_item(next_block), at: -1)
+                    stream_insert(
+                      acc,
+                      :blocks,
+                      timeline_stream_item(next_block), at: -1)
                   end)
 
                 {:update, blocks} ->
                   socket
                   |> assign(:blocks, blocks)
-                  |> assign(:latest_sort_key, max_sort_key(socket.assigns.latest_sort_key, dt))
-                  |> assign(:latest_day_key, max_day_key(socket.assigns.latest_day_key, dt))
+                  |> assign(
+                    :latest_sort_key,
+                    max_sort_key(socket.assigns.latest_sort_key, dt)
+                  )
+                  |> assign(
+                    :latest_day_key,
+                    max_day_key(socket.assigns.latest_day_key, dt)
+                  )
                   |> stream_insert(:blocks, timeline_stream_item(block))
               end
             end
@@ -752,7 +804,9 @@ defmodule FrothWeb.TimelineLive do
   end
 
   defp max_sort_key(nil, dt), do: sort_key(dt)
-  defp max_sort_key(latest_sort_key, dt), do: max(latest_sort_key, sort_key(dt))
+
+  defp max_sort_key(latest_sort_key, dt),
+    do: max(latest_sort_key, sort_key(dt))
 
   defp max_day_key(nil, dt), do: day_key(dt)
 
@@ -791,7 +845,11 @@ defmodule FrothWeb.TimelineLive do
             data-scroll-body
             class="safe-bottom flex-1 overflow-y-auto overscroll-contain"
           >
-            <div id="timeline-blocks" phx-update="stream" class="max-w-[960px] mx-auto py-4 md:py-6">
+            <div
+              id="timeline-blocks"
+              phx-update="stream"
+              class="max-w-[960px] mx-auto py-4 md:py-6"
+            >
               <div :for={{dom_id, item} <- @streams.blocks} id={dom_id}>
                 <.timeline_block
                   block={item.block}
@@ -823,7 +881,9 @@ defmodule FrothWeb.TimelineLive do
         <div class="text-fg truncate" title={@chat_title}>
           <span class="text-amber">#</span>{@chat_title}
         </div>
-        <div class="font-mono text-2xs text-fg-mute mt-1 tabular-nums">{@chat_id}</div>
+        <div class="font-mono text-2xs text-fg-mute mt-1 tabular-nums">
+          {@chat_id}
+        </div>
       </div>
 
       <div class="py-2 overflow-y-auto flex-1">
@@ -869,9 +929,14 @@ defmodule FrothWeb.TimelineLive do
       phx-click="filter"
       phx-value-sender={@sender_id}
     >
-      <span class={["w-2 h-2 shrink-0 translate-y-[1px]", @color |> String.replace("text-", "bg-")]}>
+      <span class={[
+        "w-2 h-2 shrink-0 translate-y-[1px]",
+        @color |> String.replace("text-", "bg-")
+      ]}>
       </span>
-      <span class={["flex-1 min-w-0 truncate", @color]} title={@name}>{@name}</span>
+      <span class={["flex-1 min-w-0 truncate", @color]} title={@name}>
+        {@name}
+      </span>
       <span class="font-mono text-2xs text-fg-ghost tabular-nums">{@count}</span>
     </div>
     """
@@ -895,7 +960,9 @@ defmodule FrothWeb.TimelineLive do
     assigns =
       assign(assigns,
         turn: turn,
-        dimmed?: assigns.filter_sender != nil and assigns.filter_sender != turn.sender_id
+        dimmed?:
+          assigns.filter_sender != nil and
+            assigns.filter_sender != turn.sender_id
       )
 
     ~H"""
@@ -917,7 +984,12 @@ defmodule FrothWeb.TimelineLive do
     assigns = assign(assigns, :cycle, cycle)
 
     ~H"""
-    <Remix.turn name={@cycle.name} color={@cycle.color} time={@cycle.time} block?={true}>
+    <Remix.turn
+      name={@cycle.name}
+      color={@cycle.color}
+      time={@cycle.time}
+      block?={true}
+    >
       <.cycle_trace cycle={@cycle} />
     </Remix.turn>
     """
@@ -927,7 +999,9 @@ defmodule FrothWeb.TimelineLive do
     turn.reply != nil or multi_paragraph?(turn) or photo_body?(turn)
   end
 
-  defp multi_paragraph?(%{body: paragraphs}) when is_list(paragraphs), do: length(paragraphs) > 1
+  defp multi_paragraph?(%{body: paragraphs}) when is_list(paragraphs),
+    do: length(paragraphs) > 1
+
   defp multi_paragraph?(_), do: false
 
   defp photo_body?(%{body: {:photo, _, _}}), do: true
@@ -977,7 +1051,9 @@ defmodule FrothWeb.TimelineLive do
 
   defp body_segment(%{seg: {:code, _}} = assigns) do
     ~H"""
-    <code class="font-mono text-[12px] text-peach bg-amber/10 px-1">{elem(@seg, 1)}</code>
+    <code class="font-mono text-[12px] text-peach bg-amber/10 px-1">
+      {elem(@seg, 1)}
+    </code>
     """
   end
 
@@ -1006,7 +1082,13 @@ defmodule FrothWeb.TimelineLive do
             {acc, entry}
 
           :return ->
-            row = Map.put(pending || %{kind: :call, tool: "?"}, :result, entry.outcome)
+            row =
+              Map.put(
+                pending || %{kind: :call, tool: "?"},
+                :result,
+                entry.outcome
+              )
+
             {[row | acc], nil}
 
           :intervention ->
@@ -1044,7 +1126,9 @@ defmodule FrothWeb.TimelineLive do
         :if={@narration || (@result && @result.label != "ok")}
         class="flex items-baseline gap-2 text-2xs text-fg-mute"
       >
-        <span :if={@narration} class="truncate min-w-0" title={@narration}>{@narration}</span>
+        <span :if={@narration} class="truncate min-w-0" title={@narration}>
+          {@narration}
+        </span>
         <span
           :if={@result && @result.label != "ok"}
           class={["ml-auto shrink-0 font-mono tabular-nums", @result.color]}
@@ -1074,7 +1158,9 @@ defmodule FrothWeb.TimelineLive do
     """
   end
 
-  defp tool_input(%{tool: "elixir_eval", input: %{"code" => code} = input} = assigns)
+  defp tool_input(
+         %{tool: "elixir_eval", input: %{"code" => code} = input} = assigns
+       )
        when is_binary(code) do
     assigns =
       assign(assigns,
@@ -1097,11 +1183,14 @@ defmodule FrothWeb.TimelineLive do
     """
   end
 
-  defp tool_input(%{tool: "fetch", input: %{"source" => src}} = assigns) when is_binary(src) do
+  defp tool_input(%{tool: "fetch", input: %{"source" => src}} = assigns)
+       when is_binary(src) do
     assigns = assign(assigns, :src, src)
 
     ~H"""
-    <div class="font-mono text-[12px] text-cyan truncate" title={@src}>{@src}</div>
+    <div class="font-mono text-[12px] text-cyan truncate" title={@src}>
+      {@src}
+    </div>
     """
   end
 
@@ -1109,11 +1198,15 @@ defmodule FrothWeb.TimelineLive do
     assigns = assign(assigns, :summary, pager_summary(input))
 
     ~H"""
-    <div :if={@summary} class="font-mono text-[12px] text-fg-mute truncate">{@summary}</div>
+    <div :if={@summary} class="font-mono text-[12px] text-fg-mute truncate">
+      {@summary}
+    </div>
     """
   end
 
-  defp tool_input(%{tool: "task_output", input: %{"task_id" => id} = input} = assigns)
+  defp tool_input(
+         %{tool: "task_output", input: %{"task_id" => id} = input} = assigns
+       )
        when is_binary(id) do
     assigns =
       assign(assigns,
@@ -1135,7 +1228,11 @@ defmodule FrothWeb.TimelineLive do
     assigns = assign(assigns, :summary, summary)
 
     ~H"""
-    <div :if={@summary != nil} class="font-mono text-[12px] text-fg-dim truncate" title={@summary}>
+    <div
+      :if={@summary != nil}
+      class="font-mono text-[12px] text-fg-dim truncate"
+      title={@summary}
+    >
       {@summary}
     </div>
     """
@@ -1216,10 +1313,15 @@ defmodule FrothWeb.TimelineLive do
     footer =
       [
         kv_footer(attrs, :exit_code, &"exit #{&1}"),
-        kv_footer(attrs, :lines, &"#{&1} line#{if &1 == 1, do: "", else: "s"}"),
+        kv_footer(
+          attrs,
+          :lines,
+          &"#{&1} line#{if &1 == 1, do: "", else: "s"}"
+        ),
         kv_footer(attrs, :size, &format_size/1),
         if(rest != [],
-          do: "+#{length(rest)} more block#{if length(rest) == 1, do: "", else: "s"}",
+          do:
+            "+#{length(rest)} more block#{if length(rest) == 1, do: "", else: "s"}",
           else: nil
         )
       ]
@@ -1233,7 +1335,11 @@ defmodule FrothWeb.TimelineLive do
   end
 
   defp render_output(_tool, {:ok, value}) when is_map(value) do
-    %{body: inspect(value, limit: 10, printable_limit: 1000, pretty: true), kind: nil, footer: []}
+    %{
+      body: inspect(value, limit: 10, printable_limit: 1000, pretty: true),
+      kind: nil,
+      footer: []
+    }
   end
 
   defp render_output(_tool, {:error, message}) do
@@ -1293,12 +1399,15 @@ defmodule FrothWeb.TimelineLive do
 
   defp eval_output_label(_), do: "output"
 
-  defp eval_output_htmls("value", body), do: SyntaxHighlight.elixir_htmls(body)
+  defp eval_output_htmls("value", body),
+    do: SyntaxHighlight.elixir_htmls(body)
+
   defp eval_output_htmls(_kind, _body), do: nil
 
   defp normalize_body(nil), do: ""
 
-  defp normalize_body(body) when is_binary(body), do: String.trim_trailing(body)
+  defp normalize_body(body) when is_binary(body),
+    do: String.trim_trailing(body)
 
   defp kv_footer(attrs, key, fun) do
     case Keyword.get(attrs, key) do
@@ -1315,8 +1424,9 @@ defmodule FrothWeb.TimelineLive do
 
   defp tool_output(%{output: nil} = assigns), do: ~H""
 
-  defp tool_output(%{output: %{body: body}} = assigns) when body in [nil, "", "nil"],
-    do: ~H""
+  defp tool_output(%{output: %{body: body}} = assigns)
+       when body in [nil, "", "nil"],
+       do: ~H""
 
   defp tool_output(%{output: %{variant: :eval, sections: sections}} = assigns)
        when sections == [] do
@@ -1326,13 +1436,24 @@ defmodule FrothWeb.TimelineLive do
   defp tool_output(%{output: %{variant: :eval}} = assigns) do
     ~H"""
     <div class="flex flex-col gap-2">
-      <div :for={section <- @output.sections} class={eval_output_frame_class(section.kind)}>
+      <div
+        :for={section <- @output.sections}
+        class={eval_output_frame_class(section.kind)}
+      >
         <div class="flex items-baseline gap-2 border-b border-current/20 px-2 py-1 font-mono text-2xs uppercase tracking-[0.14em]">
-          <span class={eval_output_label_class(section.kind)}>{section.label}</span>
-          <span :if={section.session_id} class="text-fg-ghost normal-case tracking-normal">
+          <span class={eval_output_label_class(section.kind)}>
+            {section.label}
+          </span>
+          <span
+            :if={section.session_id}
+            class="text-fg-ghost normal-case tracking-normal"
+          >
             session {section.session_id}
           </span>
-          <span :if={section.meta} class="ml-auto text-fg-ghost normal-case tracking-normal">
+          <span
+            :if={section.meta}
+            class="ml-auto text-fg-ghost normal-case tracking-normal"
+          >
             {section.meta}
           </span>
         </div>
@@ -1391,9 +1512,15 @@ defmodule FrothWeb.TimelineLive do
   defp output_color("error"), do: "text-red"
   defp output_color(_), do: "text-fg-dim"
 
-  defp eval_output_frame_class("value"), do: "overflow-hidden border border-amber/20"
-  defp eval_output_frame_class("io"), do: "overflow-hidden border border-cyan/20"
-  defp eval_output_frame_class("error"), do: "overflow-hidden border border-red/20"
+  defp eval_output_frame_class("value"),
+    do: "overflow-hidden border border-amber/20"
+
+  defp eval_output_frame_class("io"),
+    do: "overflow-hidden border border-cyan/20"
+
+  defp eval_output_frame_class("error"),
+    do: "overflow-hidden border border-red/20"
+
   defp eval_output_frame_class(_), do: "overflow-hidden border border-line"
 
   defp eval_output_label_class("value"), do: "text-amber"
@@ -1418,16 +1545,24 @@ defmodule FrothWeb.TimelineLive do
 
   defp summarize_result(nil), do: nil
 
-  defp summarize_result({:ok, _}), do: %{label: "ok", color: "text-green", tooltip: nil}
+  defp summarize_result({:ok, _}),
+    do: %{label: "ok", color: "text-green", tooltip: nil}
 
   defp summarize_result({:error, message}),
     do: %{label: "error", color: "text-red", tooltip: to_string(message)}
 
-  defp summarize_result({:await, _}), do: %{label: "await", color: "text-amber", tooltip: nil}
-  defp summarize_result({:yield, _}), do: %{label: "yield", color: "text-amber", tooltip: nil}
+  defp summarize_result({:await, _}),
+    do: %{label: "await", color: "text-amber", tooltip: nil}
+
+  defp summarize_result({:yield, _}),
+    do: %{label: "yield", color: "text-amber", tooltip: nil}
 
   defp summarize_result({:intervention, data}) do
-    %{label: "intervention", color: "text-red", tooltip: inspect(data) |> String.slice(0, 160)}
+    %{
+      label: "intervention",
+      color: "text-red",
+      tooltip: inspect(data) |> String.slice(0, 160)
+    }
   end
 
   defp summarize_result(_), do: nil
@@ -1442,7 +1577,9 @@ defmodule FrothWeb.TimelineLive do
     ~H"""
     <div class="mb-1 border-l-2 border-cyan/40 pl-3 py-0.5 flex flex-col gap-0.5">
       <span class="text-cyan font-sans text-2xs">↳ {@name}</span>
-      <span :if={@snippet} class="font-mono text-2xs text-fg-mute truncate">{@snippet}</span>
+      <span :if={@snippet} class="font-mono text-2xs text-fg-mute truncate">
+        {@snippet}
+      </span>
     </div>
     """
   end

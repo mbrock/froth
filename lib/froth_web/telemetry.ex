@@ -11,7 +11,8 @@ defmodule FrothWeb.Telemetry do
     children = [
       # Telemetry poller will execute the given period measurements
       # every 10_000ms. Learn more here: https://hexdocs.pm/telemetry_metrics
-      {:telemetry_poller, measurements: periodic_measurements(), period: 10_000}
+      {:telemetry_poller,
+       measurements: periodic_measurements(), period: 10_000}
       # Add reporters as children of your supervision tree.
       # {Telemetry.Metrics.ConsoleReporter, metrics: metrics()}
     ]
@@ -66,8 +67,12 @@ defmodule FrothWeb.Telemetry do
       counter("froth.anthropic.request.stop.duration", tags: [:mode, :ok]),
 
       # Agent Metrics
-      summary("froth.agent.cycle.stop.duration", unit: {:native, :millisecond}),
-      summary("froth.agent.think.stop.duration", unit: {:native, :millisecond})
+      summary("froth.agent.cycle.stop.duration",
+        unit: {:native, :millisecond}
+      ),
+      summary("froth.agent.think.stop.duration",
+        unit: {:native, :millisecond}
+      )
     ]
   end
 

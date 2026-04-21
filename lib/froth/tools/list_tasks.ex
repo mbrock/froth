@@ -18,7 +18,8 @@ defmodule Froth.Tools.ListTasks do
   def spec do
     %{
       "name" => name(),
-      "description" => "List active and recently completed tasks with output rates and status.",
+      "description" =>
+        "List active and recently completed tasks with output rates and status.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{},

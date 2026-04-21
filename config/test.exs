@@ -11,7 +11,8 @@ config :froth, Froth.Repo,
 # you can enable the server option below.
 config :froth, FrothWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
-  secret_key_base: "1CpDXRLldzzMCm6v4GsM7sbwpewK6Go06KwWR9gg3cR0CgPaYZ3dlyCrLQX9RflA",
+  secret_key_base:
+    "1CpDXRLldzzMCm6v4GsM7sbwpewK6Go06KwWR9gg3cR0CgPaYZ3dlyCrLQX9RflA",
   server: false
 
 config :froth, Oban,

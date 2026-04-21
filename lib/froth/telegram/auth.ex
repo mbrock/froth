@@ -40,7 +40,10 @@ defmodule Froth.Telegram.Auth do
       spawn(fn ->
         try do
           :ok = Froth.Telegram.subscribe(session_id)
-          Froth.Telegram.send(session_id, %{"@type" => "getAuthorizationState"})
+
+          Froth.Telegram.send(session_id, %{
+            "@type" => "getAuthorizationState"
+          })
 
           # Load defaults from DB config if available
           db_config =
@@ -136,23 +139,28 @@ defmodule Froth.Telegram.Auth do
 
         loop(state)
 
-      {:telegram_update, %{"@type" => "authorizationStateWaitTdlibParameters"} = auth_state} ->
+      {:telegram_update,
+       %{"@type" => "authorizationStateWaitTdlibParameters"} = auth_state} ->
         state = handle_auth_state(auth_state, state)
         loop(state)
 
-      {:telegram_update, %{"@type" => "authorizationStateWaitEncryptionKey"} = auth_state} ->
+      {:telegram_update,
+       %{"@type" => "authorizationStateWaitEncryptionKey"} = auth_state} ->
         state = handle_auth_state(auth_state, state)
         loop(state)
 
-      {:telegram_update, %{"@type" => "authorizationStateWaitPhoneNumber"} = auth_state} ->
+      {:telegram_update,
+       %{"@type" => "authorizationStateWaitPhoneNumber"} = auth_state} ->
         state = handle_auth_state(auth_state, state)
         loop(state)
 
-      {:telegram_update, %{"@type" => "authorizationStateWaitCode"} = auth_state} ->
+      {:telegram_update,
+       %{"@type" => "authorizationStateWaitCode"} = auth_state} ->
         state = handle_auth_state(auth_state, state)
         loop(state)
 
-      {:telegram_update, %{"@type" => "authorizationStateWaitPassword"} = auth_state} ->
+      {:telegram_update,
+       %{"@type" => "authorizationStateWaitPassword"} = auth_state} ->
         state = handle_auth_state(auth_state, state)
         loop(state)
 
@@ -166,7 +174,11 @@ defmodule Froth.Telegram.Auth do
         loop(state)
 
       {:telegram_update,
-       %{"@type" => "updateOption", "name" => name, "value" => %{"value" => v}} = _upd} ->
+       %{
+         "@type" => "updateOption",
+         "name" => name,
+         "value" => %{"value" => v}
+       } = _upd} ->
         log(state, :dim, "option #{name}=#{v}")
         loop(state)
 
@@ -178,7 +190,12 @@ defmodule Froth.Telegram.Auth do
         loop(state)
 
       other ->
-        Froth.Telemetry.Span.execute([:froth, :telegram, :auth, :ignored], nil, %{message: other})
+        Froth.Telemetry.Span.execute(
+          [:froth, :telegram, :auth, :ignored],
+          nil,
+          %{message: other}
+        )
+
         loop(state)
     after
       60_000 ->
@@ -187,37 +204,61 @@ defmodule Froth.Telegram.Auth do
     end
   end
 
-  defp handle_auth_state(%{"@type" => "authorizationStateWaitTdlibParameters"}, state) do
+  defp handle_auth_state(
+         %{"@type" => "authorizationStateWaitTdlibParameters"},
+         state
+       ) do
     if state.sent_tdlib_parameters? do
       state
     else
       log(state, "setting tdlib parameters")
-      td_send(state, Map.put(tdlib_parameters(state), "@type", "setTdlibParameters"))
+
+      td_send(
+        state,
+        Map.put(tdlib_parameters(state), "@type", "setTdlibParameters")
+      )
+
       %{state | sent_tdlib_parameters?: true}
     end
   end
 
-  defp handle_auth_state(%{"@type" => "authorizationStateWaitEncryptionKey"}, state) do
+  defp handle_auth_state(
+         %{"@type" => "authorizationStateWaitEncryptionKey"},
+         state
+       ) do
     if state.sent_encryption_key? do
       state
     else
-      td_send(state, %{"@type" => "checkDatabaseEncryptionKey", "encryption_key" => ""})
+      td_send(state, %{
+        "@type" => "checkDatabaseEncryptionKey",
+        "encryption_key" => ""
+      })
+
       %{state | sent_encryption_key?: true}
     end
   end
 
-  defp handle_auth_state(%{"@type" => "authorizationStateWaitPhoneNumber"}, state) do
+  defp handle_auth_state(
+         %{"@type" => "authorizationStateWaitPhoneNumber"},
+         state
+       ) do
     cond do
       state.use_bot and state.sent_bot_token? ->
         state
 
       state.use_bot ->
-        token = state.db_config[:bot_token] || System.get_env("TELEGRAM_BOT_TOKEN")
+        token =
+          state.db_config[:bot_token] || System.get_env("TELEGRAM_BOT_TOKEN")
 
         case token do
           t when is_binary(t) and t != "" ->
             log(state, "authenticating as bot")
-            td_send(state, %{"@type" => "checkAuthenticationBotToken", "token" => t})
+
+            td_send(state, %{
+              "@type" => "checkAuthenticationBotToken",
+              "token" => t
+            })
+
             %{state | sent_bot_token?: true}
 
           _ ->
@@ -239,12 +280,20 @@ defmodule Froth.Telegram.Auth do
     end
   end
 
-  defp handle_auth_state(%{"@type" => "authorizationStateWaitPassword"}, state) do
+  defp handle_auth_state(
+         %{"@type" => "authorizationStateWaitPassword"},
+         state
+       ) do
     if state.sent_password? do
       state
     else
       password = prompt("Enter the 2FA password")
-      td_send(state, %{"@type" => "checkAuthenticationPassword", "password" => password})
+
+      td_send(state, %{
+        "@type" => "checkAuthenticationPassword",
+        "password" => password
+      })
+
       %{state | sent_password?: true}
     end
   end
@@ -259,8 +308,12 @@ defmodule Froth.Telegram.Auth do
     end
   end
 
-  defp handle_auth_state(%{"@type" => "authorization" <> _ = type} = auth_state, state) do
-    short = type |> String.replace("authorizationState", "") |> Macro.underscore()
+  defp handle_auth_state(
+         %{"@type" => "authorization" <> _ = type} = auth_state,
+         state
+       ) do
+    short =
+      type |> String.replace("authorizationState", "") |> Macro.underscore()
 
     if state.last_auth_type != type do
       log(state, "auth: #{short}")
@@ -295,7 +348,9 @@ defmodule Froth.Telegram.Auth do
         state.db_config[:phone_number] ||
           System.get_env("TDLIB_PHONE_NUMBER") ||
           System.get_env("TELEGRAM_PHONE_NUMBER") ||
-          prompt("Enter phone number (international format, e.g. +15551234567)")
+          prompt(
+            "Enter phone number (international format, e.g. +15551234567)"
+          )
 
       td_send(state, %{
         "@type" => "setAuthenticationPhoneNumber",
@@ -323,7 +378,9 @@ defmodule Froth.Telegram.Auth do
           print_message(state, msg)
 
         %{"@type" => "update" <> _ = type} ->
-          short = type |> String.replace_prefix("update", "") |> Macro.underscore()
+          short =
+            type |> String.replace_prefix("update", "") |> Macro.underscore()
+
           log(state, :dim, short)
 
         %{"@type" => type} ->
@@ -374,8 +431,11 @@ defmodule Froth.Telegram.Auth do
 
     api_hash =
       case state.api_hash do
-        nil -> System.get_env("TDLIB_API_HASH") |> to_required!("TDLIB_API_HASH")
-        s when is_binary(s) -> to_required!(s, "TDLIB_API_HASH")
+        nil ->
+          System.get_env("TDLIB_API_HASH") |> to_required!("TDLIB_API_HASH")
+
+        s when is_binary(s) ->
+          to_required!(s, "TDLIB_API_HASH")
       end
 
     database_dir =
@@ -399,7 +459,8 @@ defmodule Froth.Telegram.Auth do
       "use_secret_chats" => false,
       "api_id" => api_id,
       "api_hash" => api_hash,
-      "system_language_code" => System.get_env("LANG", "en") |> String.slice(0, 2),
+      "system_language_code" =>
+        System.get_env("LANG", "en") |> String.slice(0, 2),
       "device_model" => "froth",
       "system_version" => System.get_env("KERNEL", "linux"),
       "application_version" => "0.1.0"
@@ -410,7 +471,11 @@ defmodule Froth.Telegram.Auth do
 
   defp maybe_prompt_api(state, msg) do
     if String.contains?(msg, "api_id") do
-      log(state, :err, "bad api_id/api_hash -- get valid ones from my.telegram.org")
+      log(
+        state,
+        :err,
+        "bad api_id/api_hash -- get valid ones from my.telegram.org"
+      )
 
       api_id = prompt("TDLIB_API_ID")
       api_hash = prompt("TDLIB_API_HASH")

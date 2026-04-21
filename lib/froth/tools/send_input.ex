@@ -22,10 +22,14 @@ defmodule Froth.Tools.SendInput do
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
-          "task_id" => %{"type" => "string", "description" => "Task ID (e.g. shell:a3f8c1)."},
+          "task_id" => %{
+            "type" => "string",
+            "description" => "Task ID (e.g. shell:a3f8c1)."
+          },
           "input" => %{
             "type" => "string",
-            "description" => "Text to send to stdin (newline appended automatically)."
+            "description" =>
+              "Text to send to stdin (newline appended automatically)."
           }
         },
         "required" => ["task_id", "input"],
@@ -35,7 +39,8 @@ defmodule Froth.Tools.SendInput do
   end
 
   @impl true
-  def execute(%Context{}, %ToolUse{input: input}, _hooks) when is_map(input) do
+  def execute(%Context{}, %ToolUse{input: input}, _hooks)
+      when is_map(input) do
     task_id = input["task_id"]
     text = input["input"] <> "\n"
 

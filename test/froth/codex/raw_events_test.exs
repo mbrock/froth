@@ -14,13 +14,23 @@ defmodule Froth.Codex.RawEventsTest do
   end
 
   test "append_notification persists raw notification payload" do
-    session_id = "s_raw_" <> Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+    session_id =
+      "s_raw_" <>
+        Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+
     method = "thread/started"
     params = %{"threadId" => "thr_test", "source" => "test"}
     raw_message = %{"method" => method, "params" => params}
     raw_line = Jason.encode!(raw_message)
 
-    assert :ok = RawEvents.append_notification(session_id, method, params, raw_message, raw_line)
+    assert :ok =
+             RawEvents.append_notification(
+               session_id,
+               method,
+               params,
+               raw_message,
+               raw_line
+             )
 
     event = latest_raw_event!(session_id)
 
@@ -33,10 +43,14 @@ defmodule Froth.Codex.RawEventsTest do
   end
 
   test "append_protocol_error persists protocol error payload" do
-    session_id = "s_raw_" <> Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+    session_id =
+      "s_raw_" <>
+        Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
+
     reason = {:invalid_json, "not-json", "decode error"}
 
-    assert :ok = RawEvents.append_protocol_error(session_id, reason, "not-json")
+    assert :ok =
+             RawEvents.append_protocol_error(session_id, reason, "not-json")
 
     event = latest_raw_event!(session_id)
 

@@ -25,6 +25,13 @@ defmodule Froth.ChatSummary do
       :message_count,
       :metadata
     ])
-    |> validate_required([:chat_id, :from_date, :to_date, :agent, :summary_text, :message_count])
+    |> validate_required([
+      :chat_id,
+      :from_date,
+      :to_date,
+      :agent,
+      :summary_text,
+      :message_count
+    ])
   end
 end

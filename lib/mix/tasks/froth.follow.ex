@@ -31,7 +31,13 @@ defmodule Mix.Tasks.Froth.Follow do
 
     {opts, remaining, _invalid} =
       OptionParser.parse(args,
-        strict: [raw: :boolean, errors: :boolean, cycle: :string, span: :string, tail: :integer]
+        strict: [
+          raw: :boolean,
+          errors: :boolean,
+          cycle: :string,
+          span: :string,
+          tail: :integer
+        ]
       )
 
     mode = parse_mode(opts)
@@ -54,9 +60,14 @@ defmodule Mix.Tasks.Froth.Follow do
            &__MODULE__.handle_telemetry_event/4,
            %{pid: self()}
          ]) do
-      :ok -> :ok
-      {:badrpc, reason} -> abort("Could not attach telemetry handler: #{inspect(reason)}")
-      other -> abort("Could not attach telemetry handler: #{inspect(other)}")
+      :ok ->
+        :ok
+
+      {:badrpc, reason} ->
+        abort("Could not attach telemetry handler: #{inspect(reason)}")
+
+      other ->
+        abort("Could not attach telemetry handler: #{inspect(other)}")
     end
 
     Mix.shell().info("Connected to #{node}")
@@ -64,7 +75,10 @@ defmodule Mix.Tasks.Froth.Follow do
 
     Mix.shell().info([
       "Following #{length(events)} telemetry events",
-      if(filter_summary == [], do: "", else: " (#{Enum.join(filter_summary, ", ")})"),
+      if(filter_summary == [],
+        do: "",
+        else: " (#{Enum.join(filter_summary, ", ")})"
+      ),
       " ",
       mode_label(mode),
       "\n"
@@ -143,7 +157,12 @@ defmodule Mix.Tasks.Froth.Follow do
       cycle_summaries = Timeline.cycle_summaries(matched_entries)
 
       Enum.each(visible_entries, fn entry ->
-        IO.write(Renderer.to_ansi(entry, mode, tree_prefix: tree_prefix(tree_map, entry)))
+        IO.write(
+          Renderer.to_ansi(entry, mode,
+            tree_prefix: tree_prefix(tree_map, entry)
+          )
+        )
+
         IO.write("\n")
         maybe_render_cycle_summary(entry, cycle_summaries, mode)
       end)
@@ -173,12 +192,21 @@ defmodule Mix.Tasks.Froth.Follow do
         tree_map = Timeline.tree_map(visible_entries)
         cycle_summaries = Timeline.cycle_summaries(matched_entries)
 
-        IO.write(Renderer.to_ansi(entry, mode, tree_prefix: tree_prefix(tree_map, entry)))
+        IO.write(
+          Renderer.to_ansi(entry, mode,
+            tree_prefix: tree_prefix(tree_map, entry)
+          )
+        )
+
         IO.write("\n")
         maybe_render_cycle_summary(entry, cycle_summaries, mode)
       end
 
-      %{state | matched_entries: matched_entries, visible_entries: visible_entries}
+      %{
+        state
+        | matched_entries: matched_entries,
+          visible_entries: visible_entries
+      }
     else
       state
     end
@@ -199,9 +227,14 @@ defmodule Mix.Tasks.Froth.Follow do
       Application.ensure_all_started(:ecto_sql)
 
       case Froth.Repo.start_link() do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
-        {:error, reason} -> abort("Could not start Froth.Repo: #{inspect(reason)}")
+        {:ok, _pid} ->
+          :ok
+
+        {:error, {:already_started, _pid}} ->
+          :ok
+
+        {:error, reason} ->
+          abort("Could not start Froth.Repo: #{inspect(reason)}")
       end
     end
   end

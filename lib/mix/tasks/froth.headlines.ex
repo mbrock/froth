@@ -37,11 +37,18 @@ defmodule Mix.Tasks.Froth.Headlines do
     with_quiet_debug_logs(fn ->
       {opts, _remaining, invalid} =
         OptionParser.parse(args,
-          strict: [chat: :integer, model: :string, reset: :boolean, spam: :boolean]
+          strict: [
+            chat: :integer,
+            model: :string,
+            reset: :boolean,
+            spam: :boolean
+          ]
         )
 
       if invalid != [] do
-        abort("Unknown arguments: #{Enum.map_join(invalid, " ", &elem(&1, 0))}")
+        abort(
+          "Unknown arguments: #{Enum.map_join(invalid, " ", &elem(&1, 0))}"
+        )
       end
 
       node = connect!()
@@ -58,9 +65,14 @@ defmodule Mix.Tasks.Froth.Headlines do
              &__MODULE__.handle_telemetry_event/4,
              %{pid: self()}
            ]) do
-        :ok -> :ok
-        {:badrpc, reason} -> abort("Could not attach telemetry handler: #{inspect(reason)}")
-        other -> abort("Could not attach telemetry handler: #{inspect(other)}")
+        :ok ->
+          :ok
+
+        {:badrpc, reason} ->
+          abort("Could not attach telemetry handler: #{inspect(reason)}")
+
+        other ->
+          abort("Could not attach telemetry handler: #{inspect(other)}")
       end
 
       Mix.shell().info(start_message(chat_id, node, model, spam))
@@ -168,11 +180,22 @@ defmodule Mix.Tasks.Froth.Headlines do
           state.visible_entries
         end
 
-      state = %{state | matched_entries: matched_entries, visible_entries: visible_entries}
+      state = %{
+        state
+        | matched_entries: matched_entries,
+          visible_entries: visible_entries
+      }
 
       if visible? do
         flush_stream_phase(state)
-        render_entry(entry, matched_entries, visible_entries, measurements, metadata)
+
+        render_entry(
+          entry,
+          matched_entries,
+          visible_entries,
+          measurements,
+          metadata
+        )
       end
 
       state
@@ -185,18 +208,36 @@ defmodule Mix.Tasks.Froth.Headlines do
     maybe_render_telemetry(state, event_name, measurements, metadata)
   rescue
     error ->
-      report_render_warning(state, "telemetry #{format_event_name(event_name)}", error)
+      report_render_warning(
+        state,
+        "telemetry #{format_event_name(event_name)}",
+        error
+      )
   catch
     kind, reason ->
-      report_render_warning(state, "telemetry #{format_event_name(event_name)}", {kind, reason})
+      report_render_warning(
+        state,
+        "telemetry #{format_event_name(event_name)}",
+        {kind, reason}
+      )
   end
 
-  defp relevant_entry?(%Entry{event: "froth.headlines.registered"}, _event_name, metadata, state) do
+  defp relevant_entry?(
+         %Entry{event: "froth.headlines.registered"},
+         _event_name,
+         metadata,
+         state
+       ) do
     normalize_chat_id(metadata[:chat_id] || metadata["chat_id"]) ==
       Integer.to_string(state.chat_id)
   end
 
-  defp relevant_entry?(%Entry{cycle_id: cycle_id}, _event_name, _metadata, state)
+  defp relevant_entry?(
+         %Entry{cycle_id: cycle_id},
+         _event_name,
+         _metadata,
+         state
+       )
        when is_binary(cycle_id) and is_binary(state.cycle_id) do
     cycle_id == state.cycle_id
   end
@@ -231,11 +272,22 @@ defmodule Mix.Tasks.Froth.Headlines do
     render_registered_headlines(metadata)
   end
 
-  defp render_entry(entry, matched_entries, visible_entries, _measurements, _metadata) do
+  defp render_entry(
+         entry,
+         matched_entries,
+         visible_entries,
+         _measurements,
+         _metadata
+       ) do
     tree_map = Timeline.tree_map(visible_entries)
     cycle_summaries = Timeline.cycle_summaries(matched_entries)
 
-    IO.write(Renderer.to_ansi(entry, :smart, tree_prefix: tree_prefix(tree_map, entry)))
+    IO.write(
+      Renderer.to_ansi(entry, :smart,
+        tree_prefix: tree_prefix(tree_map, entry)
+      )
+    )
+
     IO.write("\n")
     maybe_render_cycle_summary(entry, cycle_summaries)
   end
@@ -250,7 +302,10 @@ defmodule Mix.Tasks.Froth.Headlines do
       report_render_warning(state, "stream item", {kind, reason})
   end
 
-  defp render_stream_item(state, {:stream, {:thinking_delta, %{"delta" => delta}}})
+  defp render_stream_item(
+         state,
+         {:stream, {:thinking_delta, %{"delta" => delta}}}
+       )
        when is_binary(delta) do
     state = begin_stream_phase(state, :thinking)
     IO.write([IO.ANSI.faint(), delta, IO.ANSI.reset()])
@@ -261,39 +316,56 @@ defmodule Mix.Tasks.Froth.Headlines do
     flush_stream_phase(state)
   end
 
-  defp render_stream_item(state, {:stream, {:thinking_summary, %{"thinking" => thinking}}})
+  defp render_stream_item(
+         state,
+         {:stream, {:thinking_summary, %{"thinking" => thinking}}}
+       )
        when is_binary(thinking) do
     state = begin_stream_phase(state, :thinking)
     IO.write([IO.ANSI.faint(), truncate(thinking, 8_000), IO.ANSI.reset()])
     flush_stream_phase(state)
   end
 
-  defp render_stream_item(state, {:stream, {:text_delta, delta}}) when is_binary(delta) do
+  defp render_stream_item(state, {:stream, {:text_delta, delta}})
+       when is_binary(delta) do
     state = begin_stream_phase(state, :reply)
     IO.write(delta)
     state
   end
 
-  defp render_stream_item(state, {:event, _event, %Message{role: :agent} = message}) do
+  defp render_stream_item(
+         state,
+         {:event, _event, %Message{role: :agent} = message}
+       ) do
     case message_thinking_text(message) do
       nil ->
         state
 
       thinking ->
         state = begin_stream_phase(state, :thinking)
-        IO.write([IO.ANSI.faint(), truncate(thinking, 8_000), IO.ANSI.reset()])
+
+        IO.write([
+          IO.ANSI.faint(),
+          truncate(thinking, 8_000),
+          IO.ANSI.reset()
+        ])
+
         flush_stream_phase(state)
     end
   end
 
-  defp render_stream_item(state, {:stream, {:tool_use_stop, data}}) when is_map(data) do
+  defp render_stream_item(state, {:stream, {:tool_use_stop, data}})
+       when is_map(data) do
     state = flush_stream_phase(state)
     IO.write(format_tool_call(data))
     IO.write("\n")
     state
   end
 
-  defp render_stream_item(state, {:event, _event, %Message{role: :user} = message}) do
+  defp render_stream_item(
+         state,
+         {:event, _event, %Message{role: :user} = message}
+       ) do
     case tool_result_text(message) || preview_message_text(message) do
       nil ->
         state
@@ -368,7 +440,10 @@ defmodule Mix.Tasks.Froth.Headlines do
     ]
   end
 
-  defp format_tool_call_details("register_headlines", %{"date" => date, "headlines" => headlines})
+  defp format_tool_call_details("register_headlines", %{
+         "date" => date,
+         "headlines" => headlines
+       })
        when is_binary(date) and is_list(headlines) do
     [
       "  ",
@@ -378,22 +453,28 @@ defmodule Mix.Tasks.Froth.Headlines do
       date,
       "\n",
       headlines
-      |> Enum.map_join("\n", fn headline -> "  " <> format_headline(headline) end)
+      |> Enum.map_join("\n", fn headline ->
+        "  " <> format_headline(headline)
+      end)
     ]
   end
 
   defp format_tool_call_details(_name, _input), do: nil
 
   defp preview_message_text(%Message{} = message) do
-    Message.extract_text(message) || inspect(message.content, limit: 20, printable_limit: 400)
+    Message.extract_text(message) ||
+      inspect(message.content, limit: 20, printable_limit: 400)
   end
 
   defp tool_result_text(%Message{} = message) do
     message
     |> message_blocks()
     |> Enum.flat_map(fn
-      %{"type" => "tool_result", "content" => content} -> [normalize_tool_result_text(content)]
-      _ -> []
+      %{"type" => "tool_result", "content" => content} ->
+        [normalize_tool_result_text(content)]
+
+      _ ->
+        []
     end)
     |> Enum.reject(&(&1 == ""))
     |> case do
@@ -406,8 +487,12 @@ defmodule Mix.Tasks.Froth.Headlines do
     message
     |> message_blocks()
     |> Enum.flat_map(fn
-      %{"type" => "thinking", "thinking" => thinking} when is_binary(thinking) -> [thinking]
-      _ -> []
+      %{"type" => "thinking", "thinking" => thinking}
+      when is_binary(thinking) ->
+        [thinking]
+
+      _ ->
+        []
     end)
     |> Enum.reject(&(&1 == ""))
     |> case do
@@ -416,13 +501,15 @@ defmodule Mix.Tasks.Froth.Headlines do
     end
   end
 
-  defp message_blocks(%Message{content: value}), do: normalize_message_blocks(value)
+  defp message_blocks(%Message{content: value}),
+    do: normalize_message_blocks(value)
 
   defp normalize_message_blocks(blocks) when is_list(blocks), do: blocks
   defp normalize_message_blocks(%{} = block), do: [block]
   defp normalize_message_blocks(_value), do: []
 
-  defp normalize_tool_result_text(content) when is_binary(content), do: content
+  defp normalize_tool_result_text(content) when is_binary(content),
+    do: content
 
   defp normalize_tool_result_text(content) when is_list(content) do
     content
@@ -433,7 +520,8 @@ defmodule Mix.Tasks.Froth.Headlines do
     end)
   end
 
-  defp normalize_tool_result_text(content), do: inspect(content, limit: 20, printable_limit: 400)
+  defp normalize_tool_result_text(content),
+    do: inspect(content, limit: 20, printable_limit: 400)
 
   defp preview_json(value) do
     encoded =
@@ -473,7 +561,11 @@ defmodule Mix.Tasks.Froth.Headlines do
 
   defp report_render_warning(state, subject, %_{} = error) do
     state = flush_stream_phase(state)
-    Mix.shell().error("follow render warning (#{subject}): #{Exception.message(error)}")
+
+    Mix.shell().error(
+      "follow render warning (#{subject}): #{Exception.message(error)}"
+    )
+
     state
   end
 
@@ -490,7 +582,8 @@ defmodule Mix.Tasks.Froth.Headlines do
   defp format_event_name(_event_name), do: "unknown"
 
   defp start_remote_headlines(node, chat_id, model, spam)
-       when is_integer(chat_id) and (is_binary(model) or is_nil(model)) and is_boolean(spam) do
+       when is_integer(chat_id) and (is_binary(model) or is_nil(model)) and
+              is_boolean(spam) do
     caller = self()
 
     case :erpc.call(node, fn ->
@@ -520,18 +613,26 @@ defmodule Mix.Tasks.Froth.Headlines do
 
                output =
                  Enum.reduce(stream, nil, fn item, acc ->
-                   send(caller, {:froth_headlines_stream_item, self(), cycle.id, item})
+                   send(
+                     caller,
+                     {:froth_headlines_stream_item, self(), cycle.id, item}
+                   )
 
                    case item do
-                     {:event, _event, %Froth.Agent.Message{role: :agent} = message} ->
-                       Froth.Agent.Message.extract_text(message) || message.content
+                     {:event, _event,
+                      %Froth.Agent.Message{role: :agent} = message} ->
+                       Froth.Agent.Message.extract_text(message) ||
+                         message.content
 
                      _ ->
                        acc
                    end
                  end)
 
-               send(caller, {:froth_headlines_finished, self(), cycle.id, output})
+               send(
+                 caller,
+                 {:froth_headlines_finished, self(), cycle.id, output}
+               )
              rescue
                error ->
                  send(
@@ -616,7 +717,9 @@ defmodule Mix.Tasks.Froth.Headlines do
   end
 
   defp maybe_put_start_opt(keyword, _key, nil), do: keyword
-  defp maybe_put_start_opt(keyword, key, value), do: Keyword.put(keyword, key, value)
+
+  defp maybe_put_start_opt(keyword, key, value),
+    do: Keyword.put(keyword, key, value)
 
   defp connect! do
     node = Froth.Cluster.rpc_target_node()
@@ -638,7 +741,8 @@ defmodule Mix.Tasks.Froth.Headlines do
   end
 
   defp maybe_render_cycle_summary(entry, cycle_summaries)
-       when entry.family == "cycle" and entry.kind in ["stop", "completed", "failed", "cancelled"] do
+       when entry.family == "cycle" and
+              entry.kind in ["stop", "completed", "failed", "cancelled"] do
     case Map.get(cycle_summaries, entry.cycle_id) do
       nil ->
         :ok
@@ -727,7 +831,9 @@ defmodule Mix.Tasks.Froth.Headlines do
 
   defp headline_time_window(_headline), do: nil
 
-  defp normalize_chat_id(value) when is_integer(value), do: Integer.to_string(value)
+  defp normalize_chat_id(value) when is_integer(value),
+    do: Integer.to_string(value)
+
   defp normalize_chat_id(value) when is_binary(value), do: value
   defp normalize_chat_id(_value), do: nil
 

@@ -38,7 +38,12 @@ defmodule Froth.Analyzer.Discovery do
 
     text_matches =
       []
-      |> maybe_match(text, @youtube_re, "youtube", Froth.Analyzer.YouTubeWorker)
+      |> maybe_match(
+        text,
+        @youtube_re,
+        "youtube",
+        Froth.Analyzer.YouTubeWorker
+      )
       |> maybe_match(text, @xpost_re, "xpost", Froth.Analyzer.XPostWorker)
 
     media ++ text_matches
@@ -71,7 +76,9 @@ defmodule Froth.Analyzer.Discovery do
 
   defp already_analyzed?(type, chat_id, message_id) do
     from(a in "analyses",
-      where: a.type == ^type and a.chat_id == ^chat_id and a.message_id == ^message_id
+      where:
+        a.type == ^type and a.chat_id == ^chat_id and
+          a.message_id == ^message_id
     )
     |> Repo.exists?(log: false)
   end
@@ -111,7 +118,9 @@ defmodule Froth.Analyzer.Discovery do
         select: %{chat_id: m.chat_id, message_id: m.message_id, raw: m.raw}
       )
 
-    query = if chat_id, do: where(query, [m], m.chat_id == ^chat_id), else: query
+    query =
+      if chat_id, do: where(query, [m], m.chat_id == ^chat_id), else: query
+
     Repo.all(query, log: false)
   end
 

@@ -10,11 +10,33 @@ defmodule FrothWeb.PageControllerTest do
     assert Floki.find(document, "#froth-hero") != []
     assert Floki.find(document, "#froth-primary-links") != []
     assert Floki.find(document, "#froth-secondary-links") != []
-    assert Floki.find(document, ~s(#froth-link-codex[href="/froth/mini/codex"])) != []
-    assert Floki.find(document, ~s(#froth-link-follow[href="/froth/follow"])) != []
-    assert Floki.find(document, ~s(#froth-link-headlines[href="/froth/headlines"])) != []
-    assert Floki.find(document, ~s(#froth-link-chronicle[href="/froth/summaries"])) != []
-    assert Floki.find(document, ~s(#froth-link-bot-context[href="/froth/bot-context"])) != []
-    assert Floki.find(document, ~s(#froth-link-analyses[href="/froth/analyses/day"])) != []
+
+    assert Floki.find(
+             document,
+             ~s(#froth-link-codex[href="/froth/mini/codex"])
+           ) != []
+
+    assert Floki.find(document, ~s(#froth-link-follow[href="/froth/follow"])) !=
+             []
+
+    assert Floki.find(
+             document,
+             ~s(#froth-link-headlines[href="/froth/headlines"])
+           ) != []
+
+    assert Floki.find(
+             document,
+             ~s(#froth-link-chronicle[href="/froth/summaries"])
+           ) != []
+
+    assert Floki.find(
+             document,
+             ~s(#froth-link-bot-context[href="/froth/bot-context"])
+           ) != []
+
+    assert Floki.find(
+             document,
+             ~s(#froth-link-analyses[href="/froth/analyses/day"])
+           ) != []
   end
 end

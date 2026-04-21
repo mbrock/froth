@@ -15,7 +15,14 @@ defmodule Froth.Codex.Event do
 
   def changeset(event, attrs) do
     event
-    |> cast(attrs, [:session_id, :entry_id, :sequence, :kind, :body, :metadata])
+    |> cast(attrs, [
+      :session_id,
+      :entry_id,
+      :sequence,
+      :kind,
+      :body,
+      :metadata
+    ])
     |> validate_required([:session_id, :entry_id, :sequence, :kind])
   end
 end

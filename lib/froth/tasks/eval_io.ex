@@ -46,15 +46,23 @@ defmodule Froth.Tasks.EvalIO do
     {:ok, %{state | buf: [text | state.buf]}}
   end
 
-  defp handle_io({:get_chars, _encoding, _prompt, _count}, state), do: {:eof, state}
+  defp handle_io({:get_chars, _encoding, _prompt, _count}, state),
+    do: {:eof, state}
+
   defp handle_io({:get_line, _encoding, _prompt}, state), do: {:eof, state}
-  defp handle_io({:get_until, _encoding, _prompt, _mod, _fun, _args}, state), do: {:eof, state}
+
+  defp handle_io({:get_until, _encoding, _prompt, _mod, _fun, _args}, state),
+    do: {:eof, state}
 
   defp handle_io({:requests, requests}, state) do
-    Enum.reduce(requests, {:ok, state}, fn req, {_, st} -> handle_io(req, st) end)
+    Enum.reduce(requests, {:ok, state}, fn req, {_, st} ->
+      handle_io(req, st)
+    end)
   end
 
-  defp handle_io(:getopts, state), do: {[binary: true, encoding: :unicode], state}
+  defp handle_io(:getopts, state),
+    do: {[binary: true, encoding: :unicode], state}
+
   defp handle_io({:setopts, _opts}, state), do: {:ok, state}
   defp handle_io(_, state), do: {{:error, :request}, state}
 end

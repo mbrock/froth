@@ -26,11 +26,16 @@ defmodule Froth.Replicate.Storyboard do
     manifest_path = Path.expand(manifest_path)
     manifest_dir = Path.dirname(manifest_path)
     manifest = read_manifest(manifest_path)
-    concurrency = positive_integer(Keyword.get(opts, :concurrency), @default_concurrency)
+
+    concurrency =
+      positive_integer(Keyword.get(opts, :concurrency), @default_concurrency)
+
     timeout = positive_integer(Keyword.get(opts, :timeout), @default_timeout)
     scenes = manifest_scenes(manifest, opts, "image_prompt")
 
-    IO.puts("Generating #{length(scenes)} storyboard image(s) from #{manifest_path}")
+    IO.puts(
+      "Generating #{length(scenes)} storyboard image(s) from #{manifest_path}"
+    )
 
     results =
       scenes
@@ -68,11 +73,21 @@ defmodule Froth.Replicate.Storyboard do
     manifest_path = Path.expand(manifest_path)
     manifest_dir = Path.dirname(manifest_path)
     manifest = read_manifest(manifest_path)
-    concurrency = positive_integer(Keyword.get(opts, :concurrency), @default_video_concurrency)
-    timeout = positive_integer(Keyword.get(opts, :timeout), @default_video_timeout)
+
+    concurrency =
+      positive_integer(
+        Keyword.get(opts, :concurrency),
+        @default_video_concurrency
+      )
+
+    timeout =
+      positive_integer(Keyword.get(opts, :timeout), @default_video_timeout)
+
     scenes = manifest_scenes(manifest, opts, "video_prompt")
 
-    IO.puts("Generating #{length(scenes)} storyboard video(s) from #{manifest_path}")
+    IO.puts(
+      "Generating #{length(scenes)} storyboard video(s) from #{manifest_path}"
+    )
 
     results =
       scenes
@@ -111,7 +126,9 @@ defmodule Froth.Replicate.Storyboard do
 
     File.mkdir_p!(frames_dir)
 
-    IO.puts("Resizing #{length(scenes)} storyboard frame(s) into #{frames_dir}")
+    IO.puts(
+      "Resizing #{length(scenes)} storyboard frame(s) into #{frames_dir}"
+    )
 
     results =
       Enum.map(scenes, fn scene ->
@@ -133,11 +150,22 @@ defmodule Froth.Replicate.Storyboard do
     try do
       case Replicate.start(prompt, prediction_options(model, aspect_ratio)) do
         {:ok, prediction} ->
-          await_and_download_scene(scene_id, prediction.id, output_path, timeout)
+          await_and_download_scene(
+            scene_id,
+            prediction.id,
+            output_path,
+            timeout
+          )
 
         {:error, reason} ->
           IO.puts("Scene #{scene_id} failed to start: #{inspect(reason)}")
-          %{id: scene_id, prediction_id: nil, path: output_path, status: :error}
+
+          %{
+            id: scene_id,
+            prediction_id: nil,
+            path: output_path,
+            status: :error
+          }
       end
     rescue
       exception ->
@@ -162,7 +190,12 @@ defmodule Froth.Replicate.Storyboard do
       with {:ok, start_time, end_time} <- scene_timing(scene),
            {:ok, image_url} <- ensure_scene_image_url(scene_id, manifest_dir),
            {:ok, audio_url} <-
-             ensure_scene_audio_url(scene_id, manifest_dir, start_time, end_time - start_time),
+             ensure_scene_audio_url(
+               scene_id,
+               manifest_dir,
+               start_time,
+               end_time - start_time
+             ),
            {:ok, prediction} <-
              Replicate.start(
                prompt,
@@ -173,15 +206,31 @@ defmodule Froth.Replicate.Storyboard do
                  scene_video_duration_seconds(end_time - start_time)
                )
              ) do
-        await_and_download_video(scene_id, prediction.id, output_path, timeout)
+        await_and_download_video(
+          scene_id,
+          prediction.id,
+          output_path,
+          timeout
+        )
       else
         {:error, reason} ->
-          IO.puts("Scene #{scene_id} failed to start video: #{inspect(reason)}")
-          %{id: scene_id, prediction_id: nil, path: output_path, status: :error}
+          IO.puts(
+            "Scene #{scene_id} failed to start video: #{inspect(reason)}"
+          )
+
+          %{
+            id: scene_id,
+            prediction_id: nil,
+            path: output_path,
+            status: :error
+          }
       end
     rescue
       exception ->
-        IO.puts("Scene #{scene_id} video crashed: #{Exception.message(exception)}")
+        IO.puts(
+          "Scene #{scene_id} video crashed: #{Exception.message(exception)}"
+        )
+
         %{id: scene_id, prediction_id: nil, path: output_path, status: :error}
     catch
       kind, reason ->
@@ -196,19 +245,38 @@ defmodule Froth.Replicate.Storyboard do
         with {:ok, image_url} <- output_url(prediction.output),
              {:ok, path} <- download_image(image_url, output_path) do
           IO.puts("Scene #{scene_id} complete: #{path}")
-          %{id: scene_id, prediction_id: prediction_id, path: path, status: :ok}
+
+          %{
+            id: scene_id,
+            prediction_id: prediction_id,
+            path: path,
+            status: :ok
+          }
         else
           {:error, reason} ->
             IO.puts(
               "Scene #{scene_id} failed after prediction #{prediction_id}: #{inspect(reason)}"
             )
 
-            %{id: scene_id, prediction_id: prediction_id, path: output_path, status: :error}
+            %{
+              id: scene_id,
+              prediction_id: prediction_id,
+              path: output_path,
+              status: :error
+            }
         end
 
       {:error, reason} ->
-        IO.puts("Scene #{scene_id} failed while awaiting #{prediction_id}: #{inspect(reason)}")
-        %{id: scene_id, prediction_id: prediction_id, path: output_path, status: :error}
+        IO.puts(
+          "Scene #{scene_id} failed while awaiting #{prediction_id}: #{inspect(reason)}"
+        )
+
+        %{
+          id: scene_id,
+          prediction_id: prediction_id,
+          path: output_path,
+          status: :error
+        }
     end
   end
 
@@ -218,19 +286,38 @@ defmodule Froth.Replicate.Storyboard do
         with {:ok, video_url} <- output_url(prediction.output),
              {:ok, path} <- download_video(video_url, output_path) do
           IO.puts("Scene #{scene_id} complete: #{path}")
-          %{id: scene_id, prediction_id: prediction_id, path: path, status: :ok}
+
+          %{
+            id: scene_id,
+            prediction_id: prediction_id,
+            path: path,
+            status: :ok
+          }
         else
           {:error, reason} ->
             IO.puts(
               "Scene #{scene_id} failed after prediction #{prediction_id}: #{inspect(reason)}"
             )
 
-            %{id: scene_id, prediction_id: prediction_id, path: output_path, status: :error}
+            %{
+              id: scene_id,
+              prediction_id: prediction_id,
+              path: output_path,
+              status: :error
+            }
         end
 
       {:error, reason} ->
-        IO.puts("Scene #{scene_id} failed while awaiting #{prediction_id}: #{inspect(reason)}")
-        %{id: scene_id, prediction_id: prediction_id, path: output_path, status: :error}
+        IO.puts(
+          "Scene #{scene_id} failed while awaiting #{prediction_id}: #{inspect(reason)}"
+        )
+
+        %{
+          id: scene_id,
+          prediction_id: prediction_id,
+          path: output_path,
+          status: :error
+        }
     end
   end
 
@@ -242,13 +329,18 @@ defmodule Froth.Replicate.Storyboard do
     if File.exists?(input_path) do
       IO.puts("Resizing storyboard scene #{scene_id}")
 
-      case System.cmd("ffmpeg", resize_args(input_path, output_path), stderr_to_stdout: true) do
+      case System.cmd("ffmpeg", resize_args(input_path, output_path),
+             stderr_to_stdout: true
+           ) do
         {_output, 0} ->
           IO.puts("Scene #{scene_id} resized: #{output_path}")
           %{id: scene_id, path: output_path, status: :ok}
 
         {output, code} ->
-          IO.puts("Scene #{scene_id} resize failed (#{code}): #{String.trim(output)}")
+          IO.puts(
+            "Scene #{scene_id} resize failed (#{code}): #{String.trim(output)}"
+          )
+
           %{id: scene_id, path: output_path, status: :error}
       end
     else
@@ -298,7 +390,9 @@ defmodule Froth.Replicate.Storyboard do
   defp scene_id_set(_ids), do: MapSet.new()
 
   defp prediction_options(model, nil), do: [model: model]
-  defp prediction_options(model, aspect_ratio), do: [model: model, aspect_ratio: aspect_ratio]
+
+  defp prediction_options(model, aspect_ratio),
+    do: [model: model, aspect_ratio: aspect_ratio]
 
   defp video_prediction_options(model, image_url, audio_url, duration) do
     [
@@ -408,7 +502,8 @@ defmodule Froth.Replicate.Storyboard do
 
     with :ok <- ensure_existing_file(source_path),
          :ok <- File.mkdir_p(clips_dir),
-         :ok <- slice_scene_audio(source_path, clip_path, start_time, duration),
+         :ok <-
+           slice_scene_audio(source_path, clip_path, start_time, duration),
          {:ok, url} <- ensure_public_file(clip_path, public_path) do
       {:ok, url}
     end
@@ -518,6 +613,8 @@ defmodule Froth.Replicate.Storyboard do
   defp present?(value) when is_nil(value), do: false
   defp present?(value), do: value |> to_string() |> String.trim() != ""
 
-  defp positive_integer(value, _default) when is_integer(value) and value > 0, do: value
+  defp positive_integer(value, _default) when is_integer(value) and value > 0,
+    do: value
+
   defp positive_integer(_value, default), do: default
 end

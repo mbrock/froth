@@ -9,14 +9,19 @@ defmodule Froth.Replicate.ReadmeWorker do
   import Ecto.Query
 
   @impl true
-  def perform(%Oban.Job{args: %{"owner" => owner, "name" => name, "gh_repo" => gh_repo} = args}) do
+  def perform(%Oban.Job{
+        args: %{"owner" => owner, "name" => name, "gh_repo" => gh_repo} = args
+      }) do
     path = args["path"]
 
     case fetch_readme(gh_repo, path) do
       {:ok, content} ->
         from(m in Model, where: m.owner == ^owner and m.name == ^name)
         |> Repo.update_all(
-          set: [readme: content, updated_at: DateTime.utc_now() |> DateTime.truncate(:second)]
+          set: [
+            readme: content,
+            updated_at: DateTime.utc_now() |> DateTime.truncate(:second)
+          ]
         )
 
         Span.execute([:froth, :replicate, :readme_fetched], nil, %{
@@ -28,7 +33,10 @@ defmodule Froth.Replicate.ReadmeWorker do
         :ok
 
       {:error, :not_found} ->
-        Span.execute([:froth, :replicate, :readme_not_found], nil, %{gh_repo: gh_repo, path: path})
+        Span.execute([:froth, :replicate, :readme_not_found], nil, %{
+          gh_repo: gh_repo,
+          path: path
+        })
 
         {:discard, "no README found"}
 
@@ -76,7 +84,9 @@ defmodule Froth.Replicate.ReadmeWorker do
 
             redirect_req = Finch.build(:get, redirect_url, headers)
 
-            case Finch.request(redirect_req, Froth.Finch, receive_timeout: 15_000) do
+            case Finch.request(redirect_req, Froth.Finch,
+                   receive_timeout: 15_000
+                 ) do
               {:ok, %Finch.Response{status: 200, body: body}} ->
                 {:ok, body}
 
@@ -116,8 +126,11 @@ defmodule Froth.Replicate.ReadmeWorker do
     case System.get_env("GH_TOKEN") || System.get_env("GITHUB_TOKEN") do
       nil ->
         case System.cmd("gh", ["auth", "token"], stderr_to_stdout: true) do
-          {token, 0} -> String.trim(token)
-          _ -> raise "No GitHub token available (set GH_TOKEN or install gh CLI)"
+          {token, 0} ->
+            String.trim(token)
+
+          _ ->
+            raise "No GitHub token available (set GH_TOKEN or install gh CLI)"
         end
 
       token ->

@@ -59,7 +59,10 @@ defmodule Froth.Headlines do
     config = build_headlines_config(chat_id, model, provider)
 
     user_message =
-      Repo.insert!(%AgentMessage{role: :user, content: AgentMessage.wrap(prompt)})
+      Repo.insert!(%AgentMessage{
+        role: :user,
+        content: AgentMessage.wrap(prompt)
+      })
 
     cycle = Agent.begin_cycle(user_message, config)
 
@@ -106,7 +109,11 @@ defmodule Froth.Headlines do
       from(s in ChatSummary,
         where: s.chat_id == ^chat_id,
         order_by: [asc: s.from_date],
-        select: %{from_date: s.from_date, to_date: s.to_date, summary_text: s.summary_text}
+        select: %{
+          from_date: s.from_date,
+          to_date: s.to_date,
+          summary_text: s.summary_text
+        }
       ),
       log: false
     )
@@ -185,7 +192,8 @@ defmodule Froth.Headlines do
           {MapSet.put(seen_dates, date), acc}
 
         true ->
-          {MapSet.put(seen_dates, date), [%{date: date, headlines: headlines} | acc]}
+          {MapSet.put(seen_dates, date),
+           [%{date: date, headlines: headlines} | acc]}
       end
     end)
     |> elem(1)

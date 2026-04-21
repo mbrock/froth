@@ -13,7 +13,10 @@ defmodule Froth.Agent.WorkerTest do
 
   setup do
     root_dir =
-      Path.join(System.tmp_dir!(), "froth-agent-spine-#{System.unique_integer([:positive])}")
+      Path.join(
+        System.tmp_dir!(),
+        "froth-agent-spine-#{System.unique_integer([:positive])}"
+      )
 
     previous = Application.get_env(:froth, ObjectStore, [])
 
@@ -34,7 +37,9 @@ defmodule Froth.Agent.WorkerTest do
   defmodule TestExecutor do
     use GenServer
 
-    def start_link({fun, parent}), do: GenServer.start_link(__MODULE__, {fun, parent})
+    def start_link({fun, parent}),
+      do: GenServer.start_link(__MODULE__, {fun, parent})
+
     def start_link(fun), do: GenServer.start_link(__MODULE__, {fun, nil})
 
     def execute(fun, tool_use, context), do: fun.(tool_use, context)
@@ -47,11 +52,17 @@ defmodule Froth.Agent.WorkerTest do
 
     @impl true
     def handle_call({:prepare_tool, tool_use, context}, _from, fun) do
-      {:reply, {:ok, %{execute: {__MODULE__, :execute, [fun, tool_use, context]}}}, fun}
+      {:reply,
+       {:ok, %{execute: {__MODULE__, :execute, [fun, tool_use, context]}}},
+       fun}
     end
 
     @impl true
-    def handle_call({:commit_tool, _tool_use, _context, _prepared, outcome}, _from, fun) do
+    def handle_call(
+          {:commit_tool, _tool_use, _context, _prepared, outcome},
+          _from,
+          fun
+        ) do
       result =
         case outcome do
           %{result: result} -> result
@@ -95,10 +106,16 @@ defmodule Froth.Agent.WorkerTest do
     {provider, model} =
       if fixture do
         notify_pid = Keyword.get(opts, :notify, self())
-        replayer = start_supervised!({Froth.SSEReplay, fixture: fixture, notify_pid: notify_pid})
+
+        replayer =
+          start_supervised!(
+            {Froth.SSEReplay, fixture: fixture, notify_pid: notify_pid}
+          )
+
         {:fakeai, Froth.SSEReplay.model(replayer)}
       else
-        {Keyword.get(opts, :provider, :anthropic), Keyword.get(opts, :model, "claude-opus-4-6")}
+        {Keyword.get(opts, :provider, :anthropic),
+         Keyword.get(opts, :model, "claude-opus-4-6")}
       end
 
     tools = Keyword.get(opts, :tools, [echo_tool_spec()])
@@ -144,7 +161,11 @@ defmodule Froth.Agent.WorkerTest do
 
     Agent.append_event(
       cycle,
-      %{kind: "message.appended", head_id: message.id, message_id: message.id},
+      %{
+        kind: "message.appended",
+        head_id: message.id,
+        message_id: message.id
+      },
       seq
     )
 
@@ -198,7 +219,9 @@ defmodule Froth.Agent.WorkerTest do
         where:
           like(e.event, "froth.agent.%") and
             fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id),
-        order_by: [asc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)]
+        order_by: [
+          asc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)
+        ]
       )
     )
   end
@@ -209,19 +232,27 @@ defmodule Froth.Agent.WorkerTest do
         where:
           e.event == ^"froth.agent.#{kind}" and
             fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id),
-        order_by: [desc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)],
+        order_by: [
+          desc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)
+        ],
         limit: 1
       )
     )
   end
 
-  defp event_seq(%Event{metadata: metadata}) when is_map(metadata), do: metadata["seq"]
+  defp event_seq(%Event{metadata: metadata}) when is_map(metadata),
+    do: metadata["seq"]
+
   defp event_seq(_event), do: nil
 
-  defp event_kind(%Event{metadata: metadata}) when is_map(metadata), do: metadata["kind"]
+  defp event_kind(%Event{metadata: metadata}) when is_map(metadata),
+    do: metadata["kind"]
+
   defp event_kind(_event), do: nil
 
-  defp event_head_id(%Event{metadata: metadata}) when is_map(metadata), do: metadata["head_id"]
+  defp event_head_id(%Event{metadata: metadata}) when is_map(metadata),
+    do: metadata["head_id"]
+
   defp event_head_id(_event), do: nil
 
   defp event_message_id(%Event{metadata: metadata}) when is_map(metadata),
@@ -282,18 +313,43 @@ defmodule Froth.Agent.WorkerTest do
     cycle_two = Repo.insert!(%Cycle{})
 
     first_one = append_cycle_message(cycle_one, nil, :user, "one", 0)
-    Agent.append_event(cycle_one, %{kind: "tool.started", head_id: first_one.id}, 1)
-    latest_one = append_cycle_message(cycle_one, first_one.id, :agent, "two", 2)
-    Agent.append_event(cycle_one, %{kind: "tool.completed", head_id: latest_one.id}, 3)
+
+    Agent.append_event(
+      cycle_one,
+      %{kind: "tool.started", head_id: first_one.id},
+      1
+    )
+
+    latest_one =
+      append_cycle_message(cycle_one, first_one.id, :agent, "two", 2)
+
+    Agent.append_event(
+      cycle_one,
+      %{kind: "tool.completed", head_id: latest_one.id},
+      3
+    )
 
     first_two = append_cycle_message(cycle_two, nil, :user, "alpha", 0)
-    latest_two = append_cycle_message(cycle_two, first_two.id, :agent, "beta", 1)
-    Agent.append_event(cycle_two, %{kind: "llm.completed", head_id: latest_two.id}, 2)
+
+    latest_two =
+      append_cycle_message(cycle_two, first_two.id, :agent, "beta", 1)
+
+    Agent.append_event(
+      cycle_two,
+      %{kind: "llm.completed", head_id: latest_two.id},
+      2
+    )
 
     assert Agent.latest_head_id(cycle_one) == latest_one.id
     assert Agent.latest_head_id(cycle_two) == latest_two.id
 
-    assert Agent.latest_head_ids([cycle_two.id, cycle_one.id, cycle_one.id, nil, ""]) == %{
+    assert Agent.latest_head_ids([
+             cycle_two.id,
+             cycle_one.id,
+             cycle_one.id,
+             nil,
+             ""
+           ]) == %{
              cycle_one.id => latest_one.id,
              cycle_two.id => latest_two.id
            }
@@ -304,7 +360,10 @@ defmodule Froth.Agent.WorkerTest do
       executor = start_executor(fn _, _ -> "ok" end)
 
       {pid, cycle} =
-        start_worker([Message.user("hello")], "simple_reply", tools: [], executor: executor)
+        start_worker([Message.user("hello")], "simple_reply",
+          tools: [],
+          executor: executor
+        )
 
       assert_receive {:api_call, 0, _body}, 5000
       assert_receive {:replay_done, 0}, 5000
@@ -317,7 +376,10 @@ defmodule Froth.Agent.WorkerTest do
       executor = start_executor(fn _, _ -> "ok" end)
 
       {pid, cycle} =
-        start_worker([Message.user("hello")], "simple_reply", tools: [], executor: executor)
+        start_worker([Message.user("hello")], "simple_reply",
+          tools: [],
+          executor: executor
+        )
 
       wait_for_exit(pid)
 
@@ -334,7 +396,10 @@ defmodule Froth.Agent.WorkerTest do
       long_text = String.duplicate("Ben oui — ", 80)
 
       {pid, _cycle} =
-        start_worker([Message.user(long_text)], "simple_reply", tools: [], executor: executor)
+        start_worker([Message.user(long_text)], "simple_reply",
+          tools: [],
+          executor: executor
+        )
 
       assert_receive {:api_call, 0, _body}, 5000
       assert_receive {:replay_done, 0}, 5000
@@ -345,7 +410,10 @@ defmodule Froth.Agent.WorkerTest do
       executor = start_executor(fn _, _ -> "ok" end)
 
       {pid, cycle} =
-        start_worker([Message.user("hello")], "simple_reply", tools: [], executor: executor)
+        start_worker([Message.user("hello")], "simple_reply",
+          tools: [],
+          executor: executor
+        )
 
       wait_for_exit(pid)
 
@@ -374,7 +442,10 @@ defmodule Froth.Agent.WorkerTest do
       executor = start_executor(fn _, _ -> "ok" end)
 
       {pid, cycle} =
-        start_worker([Message.user("hello")], "simple_reply", tools: [], executor: executor)
+        start_worker([Message.user("hello")], "simple_reply",
+          tools: [],
+          executor: executor
+        )
 
       wait_for_exit(pid)
 
@@ -383,7 +454,8 @@ defmodule Froth.Agent.WorkerTest do
         |> cycle_events()
         |> Enum.reject(&is_nil(event_seq(&1)))
 
-      assert Enum.map(events, &event_seq/1) == Enum.to_list(0..(length(events) - 1))
+      assert Enum.map(events, &event_seq/1) ==
+               Enum.to_list(0..(length(events) - 1))
     end
   end
 
@@ -398,10 +470,15 @@ defmodule Froth.Agent.WorkerTest do
         end)
 
       {pid, _cycle} =
-        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+        start_worker([Message.user("echo test message")], "tool_use_echo",
+          executor: executor
+        )
 
       assert_receive {:tool_executed,
-                      %ToolUse{name: "froth_echo", input: %{"text" => "test message"}}},
+                      %ToolUse{
+                        name: "froth_echo",
+                        input: %{"text" => "test message"}
+                      }},
                      5000
 
       wait_for_exit(pid)
@@ -409,10 +486,14 @@ defmodule Froth.Agent.WorkerTest do
 
     test "sends tool results back to the LLM on the second call" do
       executor =
-        start_executor(fn %ToolUse{input: %{"text" => text}}, _context -> "echoed: #{text}" end)
+        start_executor(fn %ToolUse{input: %{"text" => text}}, _context ->
+          "echoed: #{text}"
+        end)
 
       {pid, _cycle} =
-        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+        start_worker([Message.user("echo test message")], "tool_use_echo",
+          executor: executor
+        )
 
       assert_receive {:api_call, 1, body}, 5000
 
@@ -445,7 +526,9 @@ defmodule Froth.Agent.WorkerTest do
         end)
 
       {pid, _cycle} =
-        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+        start_worker([Message.user("echo test message")], "tool_use_echo",
+          executor: executor
+        )
 
       assert_receive {:api_call, 1, body}, 5000
 
@@ -476,10 +559,14 @@ defmodule Froth.Agent.WorkerTest do
 
     test "persists all messages including tool results" do
       executor =
-        start_executor(fn %ToolUse{input: %{"text" => text}}, _context -> "echoed: #{text}" end)
+        start_executor(fn %ToolUse{input: %{"text" => text}}, _context ->
+          "echoed: #{text}"
+        end)
 
       {pid, cycle} =
-        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+        start_worker([Message.user("echo test message")], "tool_use_echo",
+          executor: executor
+        )
 
       wait_for_exit(pid)
 
@@ -497,7 +584,9 @@ defmodule Froth.Agent.WorkerTest do
         end)
 
       {pid, cycle} =
-        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+        start_worker([Message.user("echo test message")], "tool_use_echo",
+          executor: executor
+        )
 
       assert_receive {:api_call, 1, body}, 5000
 
@@ -507,7 +596,9 @@ defmodule Froth.Agent.WorkerTest do
 
       [tool_result] = last_message["content"]
 
-      assert tool_result["content"] == <<"echoed: test message", replacement::binary>>
+      assert tool_result["content"] ==
+               <<"echoed: test message", replacement::binary>>
+
       assert String.valid?(tool_result["content"])
 
       wait_for_exit(pid)
@@ -516,11 +607,16 @@ defmodule Froth.Agent.WorkerTest do
       persisted_tool_result = Enum.at(messages, 2)
       [persisted_block] = persisted_tool_result.content
 
-      assert persisted_block["content"] == <<"echoed: test message", replacement::binary>>
+      assert persisted_block["content"] ==
+               <<"echoed: test message", replacement::binary>>
+
       assert String.valid?(persisted_block["content"])
 
       completed = latest_cycle_event(cycle.id, "tool.completed")
-      assert completed.metadata["result"] == <<"echoed: test message", replacement::binary>>
+
+      assert completed.metadata["result"] ==
+               <<"echoed: test message", replacement::binary>>
+
       assert String.valid?(completed.metadata["result"])
     end
 
@@ -539,7 +635,9 @@ defmodule Froth.Agent.WorkerTest do
           executor: executor
         )
 
-      assert_receive {FakeLLM, turn_1, %Request{messages: [%LLMMessage{role: :user}]}}, 5000
+      assert_receive {FakeLLM, turn_1,
+                      %Request{messages: [%LLMMessage{role: :user}]}},
+                     5000
 
       FakeLLM.reply(
         turn_1,
@@ -559,7 +657,10 @@ defmodule Froth.Agent.WorkerTest do
 
       assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5000
 
-      assert %LLMMessage{role: :user, content: [%{"type" => "tool_result", "content" => content}]} =
+      assert %LLMMessage{
+               role: :user,
+               content: [%{"type" => "tool_result", "content" => content}]
+             } =
                List.last(request_2.messages)
 
       assert String.contains?(content, "Yielding:")
@@ -599,7 +700,9 @@ defmodule Froth.Agent.WorkerTest do
 
       ref = Process.monitor(pid)
 
-      assert_receive {FakeLLM, turn_1, %Request{messages: [%LLMMessage{role: :user}]}}, 5_000
+      assert_receive {FakeLLM, turn_1,
+                      %Request{messages: [%LLMMessage{role: :user}]}},
+                     5_000
 
       FakeLLM.reply(
         turn_1,
@@ -646,7 +749,11 @@ defmodule Froth.Agent.WorkerTest do
 
       messages = cycle_messages(cycle.id)
       assert Enum.map(messages, & &1.role) == [:user, :agent, :agent]
-      assert Enum.any?(hd(tl(messages)).content, &(&1["type"] == "mcp_tool_use"))
+
+      assert Enum.any?(
+               hd(tl(messages)).content,
+               &(&1["type"] == "mcp_tool_use")
+             )
 
       cycle = Repo.get!(Cycle, cycle.id)
       assert cycle.status == :completed
@@ -669,7 +776,9 @@ defmodule Froth.Agent.WorkerTest do
 
       ref = Process.monitor(pid)
 
-      assert_receive {FakeLLM, turn_1, %Request{messages: [%LLMMessage{role: :user}]}}, 5000
+      assert_receive {FakeLLM, turn_1,
+                      %Request{messages: [%LLMMessage{role: :user}]}},
+                     5000
 
       FakeLLM.reply(
         turn_1,
@@ -696,7 +805,9 @@ defmodule Froth.Agent.WorkerTest do
       last_message = List.last(messages)
       [tool_result] = last_message.content
       assert tool_result["type"] == "tool_result"
-      assert tool_result["content"] == "Yielding: Waiting for subscribed tasks."
+
+      assert tool_result["content"] ==
+               "Yielding: Waiting for subscribed tasks."
 
       outcome = latest_cycle_event(cycle.id, "control.outcome")
 
@@ -709,7 +820,8 @@ defmodule Froth.Agent.WorkerTest do
 
       executor =
         start_executor(fn %ToolUse{}, _context ->
-          {:await, %{"reason" => "Waiting for the user's answer.", "kind" => "ask"}}
+          {:await,
+           %{"reason" => "Waiting for the user's answer.", "kind" => "ask"}}
         end)
 
       {pid, cycle} =
@@ -721,7 +833,9 @@ defmodule Froth.Agent.WorkerTest do
 
       ref = Process.monitor(pid)
 
-      assert_receive {FakeLLM, turn_1, %Request{messages: [%LLMMessage{role: :user}]}}, 5_000
+      assert_receive {FakeLLM, turn_1,
+                      %Request{messages: [%LLMMessage{role: :user}]}},
+                     5_000
 
       FakeLLM.reply(
         turn_1,
@@ -753,7 +867,9 @@ defmodule Froth.Agent.WorkerTest do
       assert outcome.metadata["reason"] == "Waiting for the user's answer."
 
       Process.exit(pid, {:shutdown, :cancelled})
-      assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :cancelled}}, 5_000
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :cancelled}},
+                     5_000
     end
 
     test "times out stalled tools using the worker-owned deadline" do
@@ -779,11 +895,16 @@ defmodule Froth.Agent.WorkerTest do
       last_message = List.last(messages)
       [tool_result] = last_message["content"]
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :started], %{},
-                      %{tool_name: "froth_echo", tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"}},
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :started],
+                      %{},
+                      %{
+                        tool_name: "froth_echo",
+                        tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"
+                      }},
                      5000
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :timed_out], measurements,
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :timed_out],
+                      measurements,
                       %{
                         timeout_ms: 10,
                         tool_name: "froth_echo",
@@ -807,17 +928,25 @@ defmodule Froth.Agent.WorkerTest do
     test "uses tool-specific timeout overrides when no cycle timeout is configured" do
       attach_tool_telemetry()
       model = FakeLLM.claim()
-      previous_overrides = Application.get_env(:froth, :tool_timeout_overrides)
+
+      previous_overrides =
+        Application.get_env(:froth, :tool_timeout_overrides)
 
       on_exit(fn ->
         if previous_overrides do
-          Application.put_env(:froth, :tool_timeout_overrides, previous_overrides)
+          Application.put_env(
+            :froth,
+            :tool_timeout_overrides,
+            previous_overrides
+          )
         else
           Application.delete_env(:froth, :tool_timeout_overrides)
         end
       end)
 
-      Application.put_env(:froth, :tool_timeout_overrides, %{"slow_tool" => 10})
+      Application.put_env(:froth, :tool_timeout_overrides, %{
+        "slow_tool" => 10
+      })
 
       executor =
         start_executor(fn %ToolUse{}, _context ->
@@ -853,7 +982,8 @@ defmodule Froth.Agent.WorkerTest do
          }}
       )
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :timed_out], measurements,
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :timed_out],
+                      measurements,
                       %{
                         timeout_ms: 10,
                         tool_name: "slow_tool",
@@ -866,7 +996,8 @@ defmodule Froth.Agent.WorkerTest do
 
       assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5000
 
-      assert %LLMMessage{role: :user, content: [tool_result]} = List.last(request_2.messages)
+      assert %LLMMessage{role: :user, content: [tool_result]} =
+               List.last(request_2.messages)
 
       assert tool_result == %{
                "type" => "tool_result",
@@ -892,12 +1023,17 @@ defmodule Froth.Agent.WorkerTest do
       attach_tool_telemetry()
 
       executor =
-        start_executor(fn %ToolUse{input: %{"text" => text}}, _context -> "echoed: #{text}" end)
+        start_executor(fn %ToolUse{input: %{"text" => text}}, _context ->
+          "echoed: #{text}"
+        end)
 
       {pid, _cycle} =
-        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+        start_worker([Message.user("echo test message")], "tool_use_echo",
+          executor: executor
+        )
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :started], %{},
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :started],
+                      %{},
                       %{
                         cycle_id: cycle_id,
                         tool_name: "froth_echo",
@@ -908,7 +1044,8 @@ defmodule Froth.Agent.WorkerTest do
 
       assert is_binary(cycle_id)
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :completed], measurements,
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :completed],
+                      measurements,
                       %{
                         cycle_id: ^cycle_id,
                         result_type: "text",
@@ -932,13 +1069,20 @@ defmodule Froth.Agent.WorkerTest do
         end)
 
       {pid, _cycle} =
-        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+        start_worker([Message.user("echo test message")], "tool_use_echo",
+          executor: executor
+        )
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :started], %{},
-                      %{tool_name: "froth_echo", tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"}},
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :started],
+                      %{},
+                      %{
+                        tool_name: "froth_echo",
+                        tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"
+                      }},
                      5000
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :failed], measurements,
+      assert_receive {:telemetry_event, [:froth, :agent, :tool, :failed],
+                      measurements,
                       %{
                         error: "echo failed",
                         tool_name: "froth_echo",
@@ -957,7 +1101,8 @@ defmodule Froth.Agent.WorkerTest do
       model = FakeLLM.claim()
 
       executor =
-        start_executor(fn %ToolUse{id: id, input: %{"text" => text}}, _context ->
+        start_executor(fn %ToolUse{id: id, input: %{"text" => text}},
+                          _context ->
           send(test_pid, {:tool_started, id, self(), text})
 
           receive do
@@ -972,7 +1117,9 @@ defmodule Froth.Agent.WorkerTest do
           executor: executor
         )
 
-      assert_receive {FakeLLM, turn_1, %Request{messages: [%LLMMessage{role: :user}]}}, 5000
+      assert_receive {FakeLLM, turn_1,
+                      %Request{messages: [%LLMMessage{role: :user}]}},
+                     5000
 
       FakeLLM.reply(
         turn_1,
@@ -1002,7 +1149,10 @@ defmodule Froth.Agent.WorkerTest do
           {id, task_pid}
         end
 
-      assert Enum.sort(Enum.map(started, &elem(&1, 0))) == ["call_1", "call_2"]
+      assert Enum.sort(Enum.map(started, &elem(&1, 0))) == [
+               "call_1",
+               "call_2"
+             ]
 
       Enum.each(started, fn {id, task_pid} ->
         send(task_pid, {:release, id})
@@ -1010,7 +1160,8 @@ defmodule Froth.Agent.WorkerTest do
 
       assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5000
 
-      assert %LLMMessage{role: :user, content: content} = List.last(request_2.messages)
+      assert %LLMMessage{role: :user, content: content} =
+               List.last(request_2.messages)
 
       assert content
              |> Enum.filter(&(&1["type"] == "tool_result"))
@@ -1047,7 +1198,9 @@ defmodule Froth.Agent.WorkerTest do
         end)
 
       {pid, cycle} =
-        start_worker([Message.user("echo test message")], "tool_use_echo", executor: executor)
+        start_worker([Message.user("echo test message")], "tool_use_echo",
+          executor: executor
+        )
 
       wait_for_exit(pid)
 
@@ -1063,7 +1216,11 @@ defmodule Froth.Agent.WorkerTest do
   describe "Agent.run/2" do
     test "returns a cycle and streams events" do
       executor = start_executor(fn _, _ -> "ok" end)
-      replayer = start_supervised!({Froth.SSEReplay, fixture: "simple_reply", notify_pid: self()})
+
+      replayer =
+        start_supervised!(
+          {Froth.SSEReplay, fixture: "simple_reply", notify_pid: self()}
+        )
 
       config = %Config{
         provider: :fakeai,
@@ -1072,7 +1229,8 @@ defmodule Froth.Agent.WorkerTest do
         tool_executor: executor
       }
 
-      message = Repo.insert!(%Message{role: :user, content: Message.wrap("hello")})
+      message =
+        Repo.insert!(%Message{role: :user, content: Message.wrap("hello")})
 
       {cycle, stream} = Froth.Agent.run(message, config)
       assert %Cycle{} = cycle
@@ -1088,10 +1246,14 @@ defmodule Froth.Agent.WorkerTest do
 
     test "streams tool use cycle events in order" do
       executor =
-        start_executor(fn %ToolUse{input: %{"text" => text}}, _context -> "echoed: #{text}" end)
+        start_executor(fn %ToolUse{input: %{"text" => text}}, _context ->
+          "echoed: #{text}"
+        end)
 
       replayer =
-        start_supervised!({Froth.SSEReplay, fixture: "tool_use_echo", notify_pid: self()})
+        start_supervised!(
+          {Froth.SSEReplay, fixture: "tool_use_echo", notify_pid: self()}
+        )
 
       config = %Config{
         provider: :fakeai,
@@ -1100,7 +1262,11 @@ defmodule Froth.Agent.WorkerTest do
         tool_executor: executor
       }
 
-      message = Repo.insert!(%Message{role: :user, content: Message.wrap("echo test message")})
+      message =
+        Repo.insert!(%Message{
+          role: :user,
+          content: Message.wrap("echo test message")
+        })
 
       {_cycle, stream} = Froth.Agent.run(message, config)
 
@@ -1121,14 +1287,20 @@ defmodule Froth.Agent.WorkerTest do
         tool_executor: executor
       }
 
-      message = Repo.insert!(%Message{role: :user, content: Message.wrap("hello")})
+      message =
+        Repo.insert!(%Message{role: :user, content: Message.wrap("hello")})
 
       {_cycle, stream} = Froth.Agent.run(message, config)
       collector = Task.async(fn -> Enum.to_list(stream) end)
 
       assert_receive {FakeLLM, turn, %Request{model: ^model} = request}, 5_000
 
-      assert [%LLMMessage{role: :user, content: [%{"type" => "text", "text" => "hello"}]}] =
+      assert [
+               %LLMMessage{
+                 role: :user,
+                 content: [%{"type" => "text", "text" => "hello"}]
+               }
+             ] =
                request.messages
 
       FakeLLM.reply(
@@ -1154,7 +1326,10 @@ defmodule Froth.Agent.WorkerTest do
       model = FakeLLM.claim()
 
       run_shell_spec =
-        Enum.find(Froth.Inference.Tools.specs_for_api(), &(&1["name"] == "run_shell"))
+        Enum.find(
+          Froth.Inference.Tools.specs_for_api(),
+          &(&1["name"] == "run_shell")
+        )
 
       config = %Config{
         provider: :fakeai,
@@ -1167,9 +1342,14 @@ defmodule Froth.Agent.WorkerTest do
       }
 
       prompt = "run a quick shell command and summarize it"
-      user_message = Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
+
+      user_message =
+        Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
+
       cycle = Agent.begin_cycle(user_message, config)
-      %{bot_id: bot_id} = Froth.TelegramBotCase.start_charlie_bot(model: model)
+
+      %{bot_id: bot_id} =
+        Froth.TelegramBotCase.start_charlie_bot(model: model)
 
       run_task =
         Task.async(fn ->
@@ -1206,7 +1386,9 @@ defmodule Froth.Agent.WorkerTest do
                      "decide whether the command succeeded",
                      "avoid replying from a guess"
                    ],
-                   "assumptions" => ["the shell command can run in this workspace"]
+                   "assumptions" => [
+                     "the shell command can run in this workspace"
+                   ]
                  }
                }
              }
@@ -1219,13 +1401,20 @@ defmodule Froth.Agent.WorkerTest do
 
       # Turn 2: the cycle should carry the response_id forward.
       assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5_000
-      assert request_2.provider_options["previous_response_id"] == "resp_adhoc_tool_1"
+
+      assert request_2.provider_options["previous_response_id"] ==
+               "resp_adhoc_tool_1"
+
       assert length(request_2.messages) == 1
 
       assert %LLMMessage{
                role: :user,
                content: [
-                 %{"type" => "tool_result", "tool_use_id" => "call_1", "content" => content}
+                 %{
+                   "type" => "tool_result",
+                   "tool_use_id" => "call_1",
+                   "content" => content
+                 }
                ]
              } = List.last(request_2.messages)
 
@@ -1253,7 +1442,9 @@ defmodule Froth.Agent.WorkerTest do
 
       messages = cycle_messages(completed_cycle.id)
       assert Enum.map(messages, & &1.role) == [:user, :agent, :user, :agent]
-      assert Enum.at(messages, 1).metadata["response_id"] == "resp_adhoc_tool_1"
+
+      assert Enum.at(messages, 1).metadata["response_id"] ==
+               "resp_adhoc_tool_1"
     end
   end
 end

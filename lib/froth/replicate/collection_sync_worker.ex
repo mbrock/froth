@@ -10,7 +10,12 @@ defmodule Froth.Replicate.CollectionSyncWorker do
 
   @impl true
   def perform(%Oban.Job{args: %{"slug" => slug}}) do
-    req = Finch.build(:get, "#{@api_base}/collections/#{slug}", Froth.Replicate.headers())
+    req =
+      Finch.build(
+        :get,
+        "#{@api_base}/collections/#{slug}",
+        Froth.Replicate.headers()
+      )
 
     case Finch.request(req, Froth.Finch, receive_timeout: 30_000) do
       {:ok, %Finch.Response{status: 200, body: body}} ->
@@ -24,7 +29,8 @@ defmodule Froth.Replicate.CollectionSyncWorker do
           full_description: data["full_description"]
         })
         |> Repo.insert!(
-          on_conflict: {:replace, [:name, :description, :full_description, :updated_at]},
+          on_conflict:
+            {:replace, [:name, :description, :full_description, :updated_at]},
           conflict_target: :slug
         )
 

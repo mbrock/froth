@@ -24,8 +24,21 @@ defmodule Froth.Telegram.Message do
 
   def changeset(msg, attrs) do
     msg
-    |> cast(attrs, [:telegram_session_id, :chat_id, :message_id, :sender_id, :date, :raw])
-    |> validate_required([:telegram_session_id, :chat_id, :message_id, :date, :raw])
+    |> cast(attrs, [
+      :telegram_session_id,
+      :chat_id,
+      :message_id,
+      :sender_id,
+      :date,
+      :raw
+    ])
+    |> validate_required([
+      :telegram_session_id,
+      :chat_id,
+      :message_id,
+      :date,
+      :raw
+    ])
     |> unique_constraint([:telegram_session_id, :chat_id, :message_id])
   end
 
@@ -55,17 +68,27 @@ defmodule Froth.Telegram.Message do
   senders (use `extract_sender_id/1` if you need chat senders too).
   """
   def sender_user_id(%{"sender_user_id" => uid}) when is_integer(uid), do: uid
-  def sender_user_id(%{"sender_id" => %{"user_id" => uid}}) when is_integer(uid), do: uid
+
+  def sender_user_id(%{"sender_id" => %{"user_id" => uid}})
+      when is_integer(uid), do: uid
+
   def sender_user_id(_payload), do: nil
 
   @doc "Extract plain text from a message's content (text or caption)."
-  def text(%{"content" => %{"text" => %{"text" => text}}}) when is_binary(text), do: text
-  def text(%{"content" => %{"caption" => %{"text" => text}}}) when is_binary(text), do: text
+  def text(%{"content" => %{"text" => %{"text" => text}}})
+      when is_binary(text), do: text
+
+  def text(%{"content" => %{"caption" => %{"text" => text}}})
+      when is_binary(text), do: text
+
   def text(_payload), do: nil
 
   @doc "The message id this message replies to, or `nil`."
   def reply_to_message_id(%{
-        "reply_to" => %{"@type" => "messageReplyToMessage", "message_id" => id}
+        "reply_to" => %{
+          "@type" => "messageReplyToMessage",
+          "message_id" => id
+        }
       })
       when is_integer(id),
       do: id

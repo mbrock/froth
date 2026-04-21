@@ -22,9 +22,11 @@ config :froth, FrothWeb.Endpoint,
   check_origin: false,
   code_reloader: true,
   debug_errors: true,
-  secret_key_base: "V8/B0gelBclU9Az6mmXVfpRHS+4GdPhqHWGeNQEK5OVHQUD+5kOEXBKNcFtnbtWt",
+  secret_key_base:
+    "V8/B0gelBclU9Az6mmXVfpRHS+4GdPhqHWGeNQEK5OVHQUD+5kOEXBKNcFtnbtWt",
   watchers: [
-    esbuild: {Esbuild, :install_and_run, [:froth, ~w(--sourcemap=inline --watch)]},
+    esbuild:
+      {Esbuild, :install_and_run, [:froth, ~w(--sourcemap=inline --watch)]},
     tailwind: {Tailwind, :install_and_run, [:froth, ~w(--watch)]}
   ]
 

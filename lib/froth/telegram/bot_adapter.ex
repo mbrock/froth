@@ -12,16 +12,21 @@ defmodule Froth.Telegram.BotAdapter do
   def text_limit, do: @text_limit
 
   def subscribe(session_id) when is_binary(session_id) do
-    Phoenix.PubSub.subscribe(Froth.PubSub, Froth.Telegram.Session.topic(session_id))
+    Phoenix.PubSub.subscribe(
+      Froth.PubSub,
+      Froth.Telegram.Session.topic(session_id)
+    )
   end
 
   @doc """
   Split a long text into chunks of at most `@text_limit` characters, preferring
   paragraph (`"\\n\\n"`) and line (`"\\n"`) boundaries over hard cuts.
   """
-  def split_long_text(text) when is_binary(text), do: split_long_text(text, @text_limit)
+  def split_long_text(text) when is_binary(text),
+    do: split_long_text(text, @text_limit)
 
-  def split_long_text(text, limit) when is_binary(text) and is_integer(limit) and limit > 0 do
+  def split_long_text(text, limit)
+      when is_binary(text) and is_integer(limit) and limit > 0 do
     if String.length(text) <= limit do
       [text]
     else
@@ -50,7 +55,10 @@ defmodule Froth.Telegram.BotAdapter do
         end
 
       {chunk, rest} = String.split_at(text, split_pos)
-      do_split_text(String.trim_leading(rest), limit, [String.trim_trailing(chunk) | acc])
+
+      do_split_text(String.trim_leading(rest), limit, [
+        String.trim_trailing(chunk) | acc
+      ])
     end
   end
 
@@ -62,7 +70,10 @@ defmodule Froth.Telegram.BotAdapter do
     String.contains?(text, "@#{bot_username}") or
       Enum.any?(entities, fn e ->
         e["type"]["@type"] == "textEntityTypeMention" and
-          String.contains?(String.slice(text, e["offset"], e["length"]), bot_username)
+          String.contains?(
+            String.slice(text, e["offset"], e["length"]),
+            bot_username
+          )
       end) or
       Enum.any?(entities, fn e ->
         e["type"]["@type"] == "textEntityTypeMentionName" and
@@ -97,7 +108,13 @@ defmodule Froth.Telegram.BotAdapter do
 
   # Allow DMs from owner or any explicitly allowed user
   # Mikael, Daniel, John Sherman
-  @allowed_dm_users [362_441_422, 1_635_262_887, 7_986_089_238, 8_564_331_819, 6_071_676_050]
+  @allowed_dm_users [
+    362_441_422,
+    1_635_262_887,
+    7_986_089_238,
+    8_564_331_819,
+    6_071_676_050
+  ]
 
   def allowed_chat?(chat_id, owner_user_id, _session_id)
       when is_integer(chat_id) and is_integer(owner_user_id) and chat_id > 0 do
@@ -105,7 +122,8 @@ defmodule Froth.Telegram.BotAdapter do
   end
 
   def allowed_chat?(chat_id, owner_user_id, session_id)
-      when is_integer(chat_id) and is_integer(owner_user_id) and is_binary(session_id) do
+      when is_integer(chat_id) and is_integer(owner_user_id) and
+             is_binary(session_id) do
     cache_key = {:chat_allowed, session_id, chat_id, owner_user_id}
 
     case Process.get(cache_key) do
@@ -147,13 +165,15 @@ defmodule Froth.Telegram.BotAdapter do
   end
 
   def send_message(session_id, chat_id, text, opts \\ [])
-      when is_binary(session_id) and is_integer(chat_id) and is_binary(text) and is_list(opts) do
+      when is_binary(session_id) and is_integer(chat_id) and is_binary(text) and
+             is_list(opts) do
     formatted_text = plain_formatted_text(text, opts[:entities])
     send_formatted_message(session_id, chat_id, formatted_text, opts)
   end
 
   def send_markdown(session_id, chat_id, reply_to, text, opts \\ [])
-      when is_binary(session_id) and is_integer(chat_id) and is_binary(text) and is_list(opts) do
+      when is_binary(session_id) and is_integer(chat_id) and is_binary(text) and
+             is_list(opts) do
     opts = Keyword.put(opts, :reply_to, reply_to)
 
     case parse_markdown(session_id, text) do
@@ -166,19 +186,33 @@ defmodule Froth.Telegram.BotAdapter do
   end
 
   def edit_message_text(session_id, chat_id, message_id, text, opts \\ [])
-      when is_binary(session_id) and is_integer(chat_id) and is_integer(message_id) and
+      when is_binary(session_id) and is_integer(chat_id) and
+             is_integer(message_id) and
              is_binary(text) and is_list(opts) do
     formatted_text = plain_formatted_text(text, opts[:entities])
 
-    edit_formatted_message(session_id, chat_id, message_id, formatted_text, opts)
+    edit_formatted_message(
+      session_id,
+      chat_id,
+      message_id,
+      formatted_text,
+      opts
+    )
   end
 
   def edit_message_markdown(session_id, chat_id, message_id, text, opts \\ [])
-      when is_binary(session_id) and is_integer(chat_id) and is_integer(message_id) and
+      when is_binary(session_id) and is_integer(chat_id) and
+             is_integer(message_id) and
              is_binary(text) and is_list(opts) do
     case parse_markdown(session_id, text) do
       {:ok, %{} = formatted_text} ->
-        edit_formatted_message(session_id, chat_id, message_id, formatted_text, opts)
+        edit_formatted_message(
+          session_id,
+          chat_id,
+          message_id,
+          formatted_text,
+          opts
+        )
 
       {:error, _reason} = error ->
         error
@@ -186,7 +220,8 @@ defmodule Froth.Telegram.BotAdapter do
   end
 
   def edit_message_italic(session_id, chat_id, message_id, text)
-      when is_binary(session_id) and is_integer(chat_id) and is_integer(message_id) and
+      when is_binary(session_id) and is_integer(chat_id) and
+             is_integer(message_id) and
              is_binary(text) do
     edit_message_text(session_id, chat_id, message_id, text,
       entities: [
@@ -201,7 +236,8 @@ defmodule Froth.Telegram.BotAdapter do
   end
 
   def send_error(session_id, chat_id, message)
-      when is_binary(session_id) and is_integer(chat_id) and is_binary(message) do
+      when is_binary(session_id) and is_integer(chat_id) and
+             is_binary(message) do
     text = "ERROR: #{message}"
 
     send_message(session_id, chat_id, text,
@@ -217,7 +253,8 @@ defmodule Froth.Telegram.BotAdapter do
   end
 
   def send_italic(session_id, chat_id, reply_to, text, opts \\ [])
-      when is_binary(session_id) and is_integer(chat_id) and is_binary(text) and is_list(opts) do
+      when is_binary(session_id) and is_integer(chat_id) and is_binary(text) and
+             is_list(opts) do
     italic = [
       %{
         "@type" => "textEntity",
@@ -231,7 +268,9 @@ defmodule Froth.Telegram.BotAdapter do
       session_id,
       chat_id,
       text,
-      opts |> Keyword.put(:reply_to, reply_to) |> Keyword.put(:entities, italic)
+      opts
+      |> Keyword.put(:reply_to, reply_to)
+      |> Keyword.put(:entities, italic)
     )
   end
 
@@ -276,8 +315,15 @@ defmodule Froth.Telegram.BotAdapter do
     end
   end
 
-  defp edit_formatted_message(session_id, chat_id, message_id, formatted_text, opts)
-       when is_binary(session_id) and is_integer(chat_id) and is_integer(message_id) and
+  defp edit_formatted_message(
+         session_id,
+         chat_id,
+         message_id,
+         formatted_text,
+         opts
+       )
+       when is_binary(session_id) and is_integer(chat_id) and
+              is_integer(message_id) and
               is_map(formatted_text) and is_list(opts) do
     payload = %{
       "@type" => "editMessageText",
@@ -301,7 +347,8 @@ defmodule Froth.Telegram.BotAdapter do
   end
 
   defp send_formatted_message(session_id, chat_id, formatted_text, opts)
-       when is_binary(session_id) and is_integer(chat_id) and is_map(formatted_text) and
+       when is_binary(session_id) and is_integer(chat_id) and
+              is_map(formatted_text) and
               is_list(opts) do
     payload = %{
       "@type" => "sendMessage",
@@ -314,8 +361,11 @@ defmodule Froth.Telegram.BotAdapter do
 
     payload =
       case reply_to_msg(opts[:reply_to]) do
-        reply_to when is_map(reply_to) -> Map.put(payload, "reply_to", reply_to)
-        _ -> payload
+        reply_to when is_map(reply_to) ->
+          Map.put(payload, "reply_to", reply_to)
+
+        _ ->
+          payload
       end
 
     payload =
@@ -346,7 +396,8 @@ defmodule Froth.Telegram.BotAdapter do
     end
   end
 
-  defp parse_markdown(session_id, text) when is_binary(session_id) and is_binary(text) do
+  defp parse_markdown(session_id, text)
+       when is_binary(session_id) and is_binary(text) do
     session_id
     |> Froth.Telegram.call(%{
       "@type" => "parseTextEntities",
@@ -362,16 +413,21 @@ defmodule Froth.Telegram.BotAdapter do
   defp reply_to_msg(nil), do: nil
   defp reply_to_msg(0), do: nil
 
-  defp reply_to_msg(message_id) when is_integer(message_id) and message_id > 0 do
+  defp reply_to_msg(message_id)
+       when is_integer(message_id) and message_id > 0 do
     %{"@type" => "inputMessageReplyToMessage", "message_id" => message_id}
   end
 
-  defp normalize_int64(value) when is_integer(value), do: Integer.to_string(value)
+  defp normalize_int64(value) when is_integer(value),
+    do: Integer.to_string(value)
+
   defp normalize_int64(""), do: nil
   defp normalize_int64(value) when is_binary(value), do: value
   defp normalize_int64(_value), do: nil
 
-  defp normalize_tdlib_result({:ok, %{"@type" => "error", "message" => message}})
+  defp normalize_tdlib_result(
+         {:ok, %{"@type" => "error", "message" => message}}
+       )
        when is_binary(message) do
     {:error, message}
   end

@@ -69,7 +69,8 @@ defmodule Froth.Tasks do
   end
 
   def fail(task_id, reason, metadata_updates \\ %{})
-      when is_binary(task_id) and is_binary(reason) and is_map(metadata_updates) do
+      when is_binary(task_id) and is_binary(reason) and
+             is_map(metadata_updates) do
     now = DateTime.utc_now()
 
     from(t in Task, where: t.task_id == ^task_id)
@@ -101,7 +102,11 @@ defmodule Froth.Tasks do
       merge_metadata(task_id, metadata_updates)
     end
 
-    Span.execute([:froth, :tasks, :stopped], nil, %{task_id: task_id, metadata: metadata_updates})
+    Span.execute([:froth, :tasks, :stopped], nil, %{
+      task_id: task_id,
+      metadata: metadata_updates
+    })
+
     append(task_id, "status", "stopped")
     fire_notifications(task_id)
     :ok
@@ -109,7 +114,8 @@ defmodule Froth.Tasks do
 
   # --- Events ---
 
-  def append(task_id, kind, content) when is_binary(task_id) and is_binary(kind) do
+  def append(task_id, kind, content)
+      when is_binary(task_id) and is_binary(kind) do
     content = content |> to_string() |> sanitize_event_content()
     now = DateTime.utc_now()
 
@@ -271,7 +277,10 @@ defmodule Froth.Tasks do
             |> Enum.map(fn e -> "  #{String.trim_trailing(e.content)}" end)
             |> Enum.join("\n")
 
-          total_str = if stats.total > 0, do: "\n  (#{stats.total} lines total)", else: ""
+          total_str =
+            if stats.total > 0,
+              do: "\n  (#{stats.total} lines total)",
+              else: ""
 
           "[#{task.task_id}] #{task.label || task.type} -- #{task.status} #{elapsed}#{rate_str}\n#{output_lines}#{total_str}"
         end)
@@ -321,7 +330,9 @@ defmodule Froth.Tasks do
 
     existing =
       from(l in TaskTelegramLink,
-        where: l.task_id == ^task_id and l.bot_id == ^bot_id and l.chat_id == ^chat_id
+        where:
+          l.task_id == ^task_id and l.bot_id == ^bot_id and
+            l.chat_id == ^chat_id
       )
       |> Repo.one()
 
@@ -354,7 +365,8 @@ defmodule Froth.Tasks do
 
     links =
       from(l in TaskTelegramLink,
-        where: l.task_id == ^task_id and l.notify == true and is_nil(l.notified_at)
+        where:
+          l.task_id == ^task_id and l.notify == true and is_nil(l.notified_at)
       )
       |> Repo.all()
 
@@ -373,9 +385,14 @@ defmodule Froth.Tasks do
         message_text = build_notification_message(task, output_preview)
 
         synthetic_message =
-          SyntheticMessage.build(link.chat_id, message_text, reply_to: link.message_id)
+          SyntheticMessage.build(link.chat_id, message_text,
+            reply_to: link.message_id
+          )
 
-        Froth.Telegram.Bots.cast(link.bot_id, {:start_inference_session, synthetic_message})
+        Froth.Telegram.Bots.cast(
+          link.bot_id,
+          {:start_inference_session, synthetic_message}
+        )
       end
 
       from(l in TaskTelegramLink, where: l.id == ^link.id)
@@ -416,9 +433,14 @@ defmodule Froth.Tasks do
           "Task #{task.task_id} is still running after #{link.expect_minutes} minutes (elapsed: #{elapsed})."
 
         synthetic_message =
-          SyntheticMessage.build(link.chat_id, message_text, reply_to: link.message_id)
+          SyntheticMessage.build(link.chat_id, message_text,
+            reply_to: link.message_id
+          )
 
-        Froth.Telegram.Bots.cast(link.bot_id, {:start_inference_session, synthetic_message})
+        Froth.Telegram.Bots.cast(
+          link.bot_id,
+          {:start_inference_session, synthetic_message}
+        )
       end
 
       from(l in TaskTelegramLink, where: l.id == ^link.id)
@@ -489,15 +511,18 @@ defmodule Froth.Tasks do
     |> String.slice(0, 2000)
   end
 
-  defp recent_output_preview(task_id, limit) when is_binary(task_id) and is_integer(limit) do
+  defp recent_output_preview(task_id, limit)
+       when is_binary(task_id) and is_integer(limit) do
     recent_output(task_id, limit)
     |> Enum.map_join("\n", & &1.content)
     |> String.trim()
   end
 
-  defp recent_status_text(task_id, limit) when is_binary(task_id) and is_integer(limit) do
+  defp recent_status_text(task_id, limit)
+       when is_binary(task_id) and is_integer(limit) do
     from(e in TaskEvent,
-      where: e.task_id == ^task_id and e.kind in ["status", "signal", "stdin"],
+      where:
+        e.task_id == ^task_id and e.kind in ["status", "signal", "stdin"],
       order_by: [desc: e.sequence],
       limit: ^limit
     )
@@ -514,8 +539,12 @@ defmodule Froth.Tasks do
     end
   end
 
-  defp build_notification_message(%Task{task_id: task_id, status: status}, output_preview)
-       when is_binary(task_id) and is_binary(status) and is_binary(output_preview) do
+  defp build_notification_message(
+         %Task{task_id: task_id, status: status},
+         output_preview
+       )
+       when is_binary(task_id) and is_binary(status) and
+              is_binary(output_preview) do
     prefix =
       case status do
         "completed" -> "[Task completed]"
@@ -534,5 +563,7 @@ defmodule Froth.Tasks do
   end
 
   defp maybe_put_task_link_attr(attrs, _key, nil), do: attrs
-  defp maybe_put_task_link_attr(attrs, key, value), do: Map.put(attrs, key, value)
+
+  defp maybe_put_task_link_attr(attrs, key, value),
+    do: Map.put(attrs, key, value)
 end

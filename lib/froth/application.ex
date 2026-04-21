@@ -34,7 +34,10 @@ defmodule Froth.Application do
       path ->
         addr =
           if String.starts_with?(path, "@"),
-            do: %{family: :local, path: <<0, String.slice(path, 1..-1//1)::binary>>},
+            do: %{
+              family: :local,
+              path: <<0, String.slice(path, 1..-1//1)::binary>>
+            },
             else: %{family: :local, path: path}
 
         with {:ok, sock} <- :socket.open(:local, :dgram, :default),
@@ -82,15 +85,20 @@ defmodule Froth.Application do
           {Task.Supervisor, name: Froth.Agent.TaskSupervisor},
           {Registry, keys: :unique, name: Froth.Agent.CycleRegistry}
         ] ++
-          Enum.map(Application.fetch_env!(:froth, Froth.Telegram.Bot), fn bot_opts ->
-            {Froth.Telegram.BotRuntime, bot_opts}
-          end) ++
+          Enum.map(
+            Application.fetch_env!(:froth, Froth.Telegram.Bot),
+            fn bot_opts ->
+              {Froth.Telegram.BotRuntime, bot_opts}
+            end
+          ) ++
           [
             {Registry, keys: :unique, name: Froth.Codex.SessionRegistry},
-            {DynamicSupervisor, name: Froth.Codex.SessionSupervisor, strategy: :one_for_one},
+            {DynamicSupervisor,
+             name: Froth.Codex.SessionSupervisor, strategy: :one_for_one},
             {Registry, keys: :unique, name: Froth.Tasks.Registry},
             Froth.Tasks.EvalSessions,
-            {DynamicSupervisor, name: Froth.Tasks.Supervisor, strategy: :one_for_one},
+            {DynamicSupervisor,
+             name: Froth.Tasks.Supervisor, strategy: :one_for_one},
             # Start a worker by calling: Froth.Worker.start_link(arg)
             # {Froth.Worker, arg},
             # Start to serve requests, typically the last entry

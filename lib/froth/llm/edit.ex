@@ -19,7 +19,8 @@ defmodule Froth.LLM.Edit do
             attrs: %{},
             raw: nil
 
-  def full_path(%__MODULE__{resource: resource, path: path}), do: resource ++ path
+  def full_path(%__MODULE__{resource: resource, path: path}),
+    do: resource ++ path
 
   def resource_id(%__MODULE__{resource: resource}) do
     Enum.map_join(resource, "/", &to_string/1)
@@ -32,7 +33,12 @@ defmodule Froth.LLM.Edit do
 
   # -- text_delta: append text on any message-scoped path --
 
-  defp do_project(%__MODULE__{op: :append, resource: ["message"], path: ["text"], value: text})
+  defp do_project(%__MODULE__{
+         op: :append,
+         resource: ["message"],
+         path: ["text"],
+         value: text
+       })
        when is_binary(text),
        do: {:text_delta, text}
 
@@ -63,9 +69,15 @@ defmodule Froth.LLM.Edit do
          resource: ["message", "blocks", _idx],
          attrs: %{"type" => type, "id" => id, "name" => name} = attrs
        })
-       when is_binary(id) and is_binary(name) and type in ["tool_use", "mcp_tool_use"] do
+       when is_binary(id) and is_binary(name) and
+              type in ["tool_use", "mcp_tool_use"] do
     {:tool_use_start,
-     %{"type" => type, "id" => id, "name" => name, "input" => Map.get(attrs, "input")}
+     %{
+       "type" => type,
+       "id" => id,
+       "name" => name,
+       "input" => Map.get(attrs, "input")
+     }
      |> maybe_put("server_name", Map.get(attrs, "server_name"))}
   end
 
@@ -104,9 +116,12 @@ defmodule Froth.LLM.Edit do
   defp do_project(%__MODULE__{
          op: :close,
          resource: ["message", "blocks", _idx],
-         attrs: %{"type" => type, "id" => id, "name" => name, "input" => input} = attrs
+         attrs:
+           %{"type" => type, "id" => id, "name" => name, "input" => input} =
+             attrs
        })
-       when is_binary(id) and is_binary(name) and type in ["tool_use", "mcp_tool_use"] do
+       when is_binary(id) and is_binary(name) and
+              type in ["tool_use", "mcp_tool_use"] do
     {:tool_use_stop,
      %{"type" => type, "id" => id, "name" => name, "input" => input}
      |> maybe_put("server_name", Map.get(attrs, "server_name"))}
@@ -114,7 +129,12 @@ defmodule Froth.LLM.Edit do
 
   # -- usage --
 
-  defp do_project(%__MODULE__{op: :merge, resource: ["message"], path: ["usage"], value: usage})
+  defp do_project(%__MODULE__{
+         op: :merge,
+         resource: ["message"],
+         path: ["usage"],
+         value: usage
+       })
        when is_map(usage),
        do: {:usage, %{"usage" => usage}}
 
@@ -152,10 +172,16 @@ defmodule Froth.LLM.Edit do
   defp do_project(%__MODULE__{
          op: :close,
          resource: ["message", "blocks", idx],
-         attrs: %{"type" => "thinking", "thinking" => thinking, "signature" => signature}
+         attrs: %{
+           "type" => "thinking",
+           "thinking" => thinking,
+           "signature" => signature
+         }
        })
        when is_integer(idx),
-       do: {:thinking_stop, %{"index" => idx, "thinking" => thinking, "signature" => signature}}
+       do:
+         {:thinking_stop,
+          %{"index" => idx, "thinking" => thinking, "signature" => signature}}
 
   # -- reasoning_summary (OpenAI) --
 

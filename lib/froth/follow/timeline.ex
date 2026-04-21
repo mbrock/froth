@@ -49,7 +49,13 @@ defmodule Froth.Follow.Timeline do
 
           node ->
             parent_key = node.parent_key || parent_key
-            node = %{node | parent_key: parent_key, entry_ids: node.entry_ids ++ [entry_id]}
+
+            node = %{
+              node
+              | parent_key: parent_key,
+                entry_ids: node.entry_ids ++ [entry_id]
+            }
+
             {Map.put(nodes, key, node), order}
         end
       end)
@@ -85,7 +91,9 @@ defmodule Froth.Follow.Timeline do
       |> Enum.reduce(acc, fn {entry_id, index}, tree ->
         Map.put(tree, entry_id, %{
           depth: info.depth,
-          prefix: ancestor_prefix <> node_marker(info.depth, total, index, info.last_sibling?)
+          prefix:
+            ancestor_prefix <>
+              node_marker(info.depth, total, index, info.last_sibling?)
         })
       end)
     end)
@@ -119,7 +127,10 @@ defmodule Froth.Follow.Timeline do
          llm_count: MapSet.size(summary.llm_keys),
          elapsed_ms:
            summary.duration_ms ||
-             elapsed_ms(summary.started_at || summary.first_at, summary.last_at),
+             elapsed_ms(
+               summary.started_at || summary.first_at,
+               summary.last_at
+             ),
          active?: not summary.completed?
        }}
     end)
@@ -155,7 +166,8 @@ defmodule Froth.Follow.Timeline do
       |> put_counts(entry)
 
     case {entry.family, entry.kind} do
-      {"cycle", kind} when kind in ["stop", "completed", "failed", "cancelled"] ->
+      {"cycle", kind}
+      when kind in ["stop", "completed", "failed", "cancelled"] ->
         %{
           summary
           | status: entry.summary || humanize(kind),
@@ -201,9 +213,15 @@ defmodule Froth.Follow.Timeline do
 
   defp provider_from_event(event) when is_binary(event) do
     case String.split(event, ".") do
-      ["froth", provider, "request" | _rest] when provider in @llm_providers -> provider
-      ["froth", "codex" | _rest] -> "codex"
-      _ -> nil
+      ["froth", provider, "request" | _rest]
+      when provider in @llm_providers ->
+        provider
+
+      ["froth", "codex" | _rest] ->
+        "codex"
+
+      _ ->
+        nil
     end
   end
 
@@ -228,7 +246,10 @@ defmodule Froth.Follow.Timeline do
   defp model_from_scope(_), do: nil
 
   defp put_first_at(summary, nil), do: summary
-  defp put_first_at(%{first_at: nil} = summary, at), do: %{summary | first_at: at}
+
+  defp put_first_at(%{first_at: nil} = summary, at),
+    do: %{summary | first_at: at}
+
   defp put_first_at(summary, _at), do: summary
 
   defp put_started_at(summary, %Entry{family: "cycle", kind: kind, at: at})
@@ -241,7 +262,9 @@ defmodule Froth.Follow.Timeline do
   defp put_last_at(summary, at), do: %{summary | last_at: at}
 
   defp maybe_put(summary, _key, nil), do: summary
-  defp maybe_put(summary, key, value), do: Map.put(summary, key, Map.get(summary, key) || value)
+
+  defp maybe_put(summary, key, value),
+    do: Map.put(summary, key, Map.get(summary, key) || value)
 
   defp elapsed_ms(nil, _last_at), do: nil
   defp elapsed_ms(_start_at, nil), do: nil
@@ -272,7 +295,10 @@ defmodule Froth.Follow.Timeline do
   defp node_marker(_depth, 1, _index, true), do: "└ "
   defp node_marker(_depth, 1, _index, false), do: "├ "
   defp node_marker(_depth, total, 0, _last_sibling?) when total > 1, do: "├ "
-  defp node_marker(_depth, total, index, _last_sibling?) when index == total - 1, do: "└ "
+
+  defp node_marker(_depth, total, index, _last_sibling?)
+       when index == total - 1, do: "└ "
+
   defp node_marker(_depth, _total, _index, _last_sibling?), do: "│ "
 
   defp last_sibling?(key, parent_key, children) do
@@ -296,15 +322,19 @@ defmodule Froth.Follow.Timeline do
         if MapSet.member?(seen, parent_key) do
           []
         else
-          ancestor_keys(parent_key, nodes, MapSet.put(seen, parent_key)) ++ [parent_key]
+          ancestor_keys(parent_key, nodes, MapSet.put(seen, parent_key)) ++
+            [parent_key]
         end
     end
   end
 
-  defp node_key(%Entry{span_id: span_id}) when is_binary(span_id), do: {:span, span_id}
+  defp node_key(%Entry{span_id: span_id}) when is_binary(span_id),
+    do: {:span, span_id}
+
   defp node_key(%Entry{} = entry), do: {:entry, entry_id(entry)}
 
-  defp parent_key(%Entry{parent_id: parent_id}, span_ids) when is_binary(parent_id) do
+  defp parent_key(%Entry{parent_id: parent_id}, span_ids)
+       when is_binary(parent_id) do
     if MapSet.member?(span_ids, parent_id), do: {:span, parent_id}, else: nil
   end
 
@@ -312,7 +342,9 @@ defmodule Froth.Follow.Timeline do
 
   defp entry_id(%Entry{id: id}), do: safe_string(id)
 
-  defp humanize(value) when is_binary(value), do: String.replace(value, "_", " ")
+  defp humanize(value) when is_binary(value),
+    do: String.replace(value, "_", " ")
+
   defp humanize(value), do: safe_string(value)
 
   defp truncate_id(value, max) do
@@ -327,8 +359,11 @@ defmodule Froth.Follow.Timeline do
     try do
       to_string(value)
     rescue
-      Protocol.UndefinedError -> inspect(value, limit: 8, printable_limit: 160)
-      ArgumentError -> inspect(value, limit: 8, printable_limit: 160)
+      Protocol.UndefinedError ->
+        inspect(value, limit: 8, printable_limit: 160)
+
+      ArgumentError ->
+        inspect(value, limit: 8, printable_limit: 160)
     end
   end
 end

@@ -25,7 +25,12 @@ defmodule Froth.Tasks.Shell do
 
     GenServer.start_link(
       __MODULE__,
-      %{task_id: task_id, command: command, working_dir: working_dir, parent: parent},
+      %{
+        task_id: task_id,
+        command: command,
+        working_dir: working_dir,
+        parent: parent
+      },
       name: via(task_id)
     )
   end
@@ -38,7 +43,8 @@ defmodule Froth.Tasks.Shell do
     :exit, _ -> :running
   end
 
-  def send_input(task_id, input) when is_binary(task_id) and is_binary(input) do
+  def send_input(task_id, input)
+      when is_binary(task_id) and is_binary(input) do
     GenServer.call(via(task_id), {:send_input, input})
   end
 
@@ -79,7 +85,12 @@ defmodule Froth.Tasks.Shell do
       DynamicSupervisor.start_child(
         Froth.Tasks.Supervisor,
         {__MODULE__,
-         [task_id: task_id, command: command, working_dir: working_dir, parent: self()]}
+         [
+           task_id: task_id,
+           command: command,
+           working_dir: working_dir,
+           parent: self()
+         ]}
       )
 
     case await(pid, @shell_await_ms) do
@@ -101,7 +112,12 @@ defmodule Froth.Tasks.Shell do
   # --- GenServer callbacks ---
 
   @impl true
-  def init(%{task_id: task_id, command: command, working_dir: working_dir, parent: parent}) do
+  def init(%{
+        task_id: task_id,
+        command: command,
+        working_dir: working_dir,
+        parent: parent
+      }) do
     Froth.Repo.allow(parent, "shell")
 
     port =
@@ -213,7 +229,11 @@ defmodule Froth.Tasks.Shell do
   end
 
   def handle_info({:await_timeout, from}, state) do
-    state = %{state | waiters: Enum.reject(state.waiters, fn {f, _} -> f == from end)}
+    state = %{
+      state
+      | waiters: Enum.reject(state.waiters, fn {f, _} -> f == from end)
+    }
+
     GenServer.reply(from, :running)
     {:noreply, state}
   end

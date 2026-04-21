@@ -84,7 +84,10 @@ defmodule Froth.AgentInspect do
         IO.puts("no first llm.requested event found for #{cycle_id}")
 
       summary ->
-        IO.puts("#{summary.cycle_id} | #{format_datetime(summary.requested_at)}")
+        IO.puts(
+          "#{summary.cycle_id} | #{format_datetime(summary.requested_at)}"
+        )
+
         IO.puts("blob_ref=#{summary.blob_ref || "-"}")
         IO.puts("blocks=#{summary.content_length}")
         IO.puts("breakpoints=#{format_breakpoints(summary.breakpoints)}")
@@ -116,7 +119,9 @@ defmodule Froth.AgentInspect do
         where:
           e.event == "froth.agent.llm.requested" and
             fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id),
-        order_by: [asc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)],
+        order_by: [
+          asc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)
+        ],
         limit: 1,
         select: %{inserted_at: e.inserted_at, metadata: e.metadata}
       ),
@@ -131,7 +136,11 @@ defmodule Froth.AgentInspect do
       from(e in Event,
         where:
           e.event == "froth.agent.llm.requested" and
-            fragment("?->>'cycle_id' = ANY(?)", e.metadata, type(^cycle_ids, {:array, :string})),
+            fragment(
+              "?->>'cycle_id' = ANY(?)",
+              e.metadata,
+              type(^cycle_ids, {:array, :string})
+            ),
         order_by: [
           asc: fragment("?->>'cycle_id'", e.metadata),
           asc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)
@@ -151,7 +160,11 @@ defmodule Froth.AgentInspect do
       from(e in Event,
         where:
           e.event == "froth.agent.llm.completed" and
-            fragment("?->>'cycle_id' = ANY(?)", e.metadata, type(^cycle_ids, {:array, :string})),
+            fragment(
+              "?->>'cycle_id' = ANY(?)",
+              e.metadata,
+              type(^cycle_ids, {:array, :string})
+            ),
         order_by: [
           asc: fragment("?->>'cycle_id'", e.metadata),
           asc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)
@@ -169,7 +182,8 @@ defmodule Froth.AgentInspect do
           %{
             seq: event_seq(event.metadata),
             stop_reason: event.metadata["stop_reason"],
-            cache_creation_input_tokens: usage["cache_creation_input_tokens"] || 0,
+            cache_creation_input_tokens:
+              usage["cache_creation_input_tokens"] || 0,
             cache_read_input_tokens: usage["cache_read_input_tokens"] || 0,
             input_tokens: usage["input_tokens"] || 0,
             output_tokens: usage["output_tokens"] || 0
@@ -196,12 +210,16 @@ defmodule Froth.AgentInspect do
     end
   end
 
-  defp load_event_payload(%{metadata: metadata}) when is_map(metadata), do: metadata
+  defp load_event_payload(%{metadata: metadata}) when is_map(metadata),
+    do: metadata
 
   defp first_user_content(%{"messages" => messages}) when is_list(messages) do
     Enum.find_value(messages, [], fn
-      %{"role" => "user", "content" => content} when is_list(content) -> content
-      _ -> nil
+      %{"role" => "user", "content" => content} when is_list(content) ->
+        content
+
+      _ ->
+        nil
     end) || []
   end
 
@@ -246,7 +264,8 @@ defmodule Froth.AgentInspect do
         chapter_name(text)
 
       true ->
-        message_id_from_text(text) || text |> String.split("\n", parts: 2) |> List.first()
+        message_id_from_text(text) ||
+          text |> String.split("\n", parts: 2) |> List.first()
     end
   end
 

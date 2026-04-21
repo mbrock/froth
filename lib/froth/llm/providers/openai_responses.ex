@@ -25,7 +25,10 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
       }
       |> maybe_put("instructions", normalize_instructions(request.system))
       |> maybe_put("tools", encode_tools(request.tools))
-      |> maybe_put("max_output_tokens", normalize_max_output_tokens(request.max_tokens))
+      |> maybe_put(
+        "max_output_tokens",
+        normalize_max_output_tokens(request.max_tokens)
+      )
       |> maybe_put(
         "reasoning",
         reasoning_config(
@@ -33,8 +36,14 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
           request.provider_options["reasoning_summary"]
         )
       )
-      |> maybe_put("previous_response_id", request.provider_options["previous_response_id"])
-      |> maybe_put("text", text_config(request.provider_options["text_verbosity"]))
+      |> maybe_put(
+        "previous_response_id",
+        request.provider_options["previous_response_id"]
+      )
+      |> maybe_put(
+        "text",
+        text_config(request.provider_options["text_verbosity"])
+      )
 
     {:ok, %{url: request.endpoint, headers: request.headers, body: body}}
   end
@@ -44,12 +53,18 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
   @impl true
 
   # Error events
-  def decode_payload(%{"type" => "error", "error" => %{} = error} = payload, _store) do
+  def decode_payload(
+        %{"type" => "error", "error" => %{} = error} = payload,
+        _store
+      ) do
     {provider_error_edits(%{"error" => error}, payload), true}
   end
 
   def decode_payload(
-        %{"type" => "response.failed", "response" => %{"error" => %{} = error} = response} =
+        %{
+          "type" => "response.failed",
+          "response" => %{"error" => %{} = error} = response
+        } =
           payload,
         _store
       ) do
@@ -62,7 +77,10 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
   end
 
   def decode_payload(
-        %{"type" => "response.completed", "response" => %{"error" => %{} = error} = response} =
+        %{
+          "type" => "response.completed",
+          "response" => %{"error" => %{} = error} = response
+        } =
           payload,
         _store
       ) do
@@ -79,12 +97,20 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
   end
 
   # Text delta
-  def decode_payload(%{"type" => "response.output_text.delta", "delta" => delta}, _store) do
-    {[%Edit{op: :append, resource: ["message"], path: ["text"], value: delta}], false}
+  def decode_payload(
+        %{"type" => "response.output_text.delta", "delta" => delta},
+        _store
+      ) do
+    {[
+       %Edit{op: :append, resource: ["message"], path: ["text"], value: delta}
+     ], false}
   end
 
   # Tool call argument streaming
-  def decode_payload(%{"type" => "response.function_call_arguments.delta"} = p, store) do
+  def decode_payload(
+        %{"type" => "response.function_call_arguments.delta"} = p,
+        store
+      ) do
     key = tool_call_key(p)
     delta = Map.get(p, "delta", "")
     id = tool_call_public_id(store, key, p)
@@ -101,7 +127,10 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
   end
 
   # Tool call added
-  def decode_payload(%{"type" => "response.output_item.added", "item" => item}, _store) do
+  def decode_payload(
+        %{"type" => "response.output_item.added", "item" => item},
+        _store
+      ) do
     case item do
       %{"type" => "function_call", "call_id" => id, "name" => name} ->
         key = tool_call_key(item)
@@ -112,7 +141,11 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
              resource: ["message", "tool_calls", key],
              path: [],
              value: nil,
-             attrs: %{"id" => id, "item_id" => Map.get(item, "id"), "name" => name}
+             attrs: %{
+               "id" => id,
+               "item_id" => Map.get(item, "id"),
+               "name" => name
+             }
            }
          ], false}
 
@@ -123,7 +156,10 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
 
   # Tool call done
   def decode_payload(
-        %{"type" => "response.output_item.done", "item" => %{"type" => "function_call"} = item},
+        %{
+          "type" => "response.output_item.done",
+          "item" => %{"type" => "function_call"} = item
+        },
         _store
       ) do
     key = tool_call_key(item)
@@ -139,7 +175,10 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
   end
 
   # Response completed — usage, stop reason, response_id, reasoning summary
-  def decode_payload(%{"type" => "response.completed", "response" => resp} = _payload, _store)
+  def decode_payload(
+        %{"type" => "response.completed", "response" => resp} = _payload,
+        _store
+      )
       when is_map(resp) do
     usage = Map.get(resp, "usage", %{})
 
@@ -152,14 +191,19 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
           value: %{
             "prompt_tokens" => usage["input_tokens"] || 0,
             "completion_tokens" => usage["output_tokens"] || 0,
-            "total_tokens" => (usage["input_tokens"] || 0) + (usage["output_tokens"] || 0)
+            "total_tokens" =>
+              (usage["input_tokens"] || 0) + (usage["output_tokens"] || 0)
           }
         },
         %Edit{
           op: :set,
           resource: ["message"],
           path: ["stop_reason"],
-          value: if(resp["status"] == "completed", do: "end_turn", else: resp["status"])
+          value:
+            if(resp["status"] == "completed",
+              do: "end_turn",
+              else: resp["status"]
+            )
         }
       ] ++ response_id_edits(resp) ++ reasoning_summary_edits(resp["output"])
 
@@ -167,8 +211,11 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
   end
 
   # Ignored event types
-  def decode_payload(%{"type" => "response.output_text.done"}, _store), do: {[], false}
-  def decode_payload(%{"type" => "response.content_part" <> _}, _store), do: {[], false}
+  def decode_payload(%{"type" => "response.output_text.done"}, _store),
+    do: {[], false}
+
+  def decode_payload(%{"type" => "response.content_part" <> _}, _store),
+    do: {[], false}
 
   # Catch-all
   def decode_payload(_payload, _store), do: {[], false}
@@ -219,8 +266,18 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
     case Map.get(resp, "id") do
       response_id when is_binary(response_id) and response_id != "" ->
         [
-          %Edit{op: :set, resource: ["message"], path: ["response_id"], value: response_id},
-          %Edit{op: :set, resource: ["message"], path: ["id"], value: response_id}
+          %Edit{
+            op: :set,
+            resource: ["message"],
+            path: ["response_id"],
+            value: response_id
+          },
+          %Edit{
+            op: :set,
+            resource: ["message"],
+            path: ["id"],
+            value: response_id
+          }
         ]
 
       _ ->
@@ -260,23 +317,31 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
     |> Enum.join("\n\n")
   end
 
-  defp extract_reasoning_summary_part(%{"type" => "summary_text", "text" => text})
+  defp extract_reasoning_summary_part(%{
+         "type" => "summary_text",
+         "text" => text
+       })
        when is_binary(text),
        do: [text]
 
-  defp extract_reasoning_summary_part(%{"text" => text}) when is_binary(text), do: [text]
+  defp extract_reasoning_summary_part(%{"text" => text}) when is_binary(text),
+    do: [text]
+
   defp extract_reasoning_summary_part(_part), do: []
 
   defp maybe_prepend_reasoning_block(content, reasoning_summary)
-       when is_list(content) and is_binary(reasoning_summary) and reasoning_summary != "" do
+       when is_list(content) and is_binary(reasoning_summary) and
+              reasoning_summary != "" do
     [%{"type" => "thinking", "thinking" => reasoning_summary} | content]
   end
 
-  defp maybe_prepend_reasoning_block(content, _reasoning_summary) when is_list(content),
-    do: content
+  defp maybe_prepend_reasoning_block(content, _reasoning_summary)
+       when is_list(content),
+       do: content
 
-  defp tool_call_key(%{"item_id" => item_id}) when is_binary(item_id) and item_id != "",
-    do: item_id
+  defp tool_call_key(%{"item_id" => item_id})
+       when is_binary(item_id) and item_id != "",
+       do: item_id
 
   defp tool_call_key(%{"id" => id}) when is_binary(id) and id != "", do: id
   defp tool_call_key(%{"index" => idx}) when is_integer(idx), do: idx
@@ -310,8 +375,16 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
         end
 
       case {tc["id"], tc["name"]} do
-        {id, name} when is_binary(id) and id != "" and is_binary(name) and name != "" ->
-          [%{"type" => "tool_use", "id" => id, "name" => name, "input" => input}]
+        {id, name}
+        when is_binary(id) and id != "" and is_binary(name) and name != "" ->
+          [
+            %{
+              "type" => "tool_use",
+              "id" => id,
+              "name" => name,
+              "input" => input
+            }
+          ]
 
         _ ->
           []
@@ -322,7 +395,9 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
   defp tool_calls_to_content(_), do: []
 
   defp maybe_add_text_block(blocks, ""), do: blocks
-  defp maybe_add_text_block(blocks, text), do: blocks ++ [%{"type" => "text", "text" => text}]
+
+  defp maybe_add_text_block(blocks, text),
+    do: blocks ++ [%{"type" => "text", "text" => text}]
 
   # -- Message encoding --
 
@@ -354,31 +429,51 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
       encode_tool_result_items(Message.tool_results(message))
   end
 
-  defp encode_raw_message(%{"role" => "tool", "tool_use_id" => id, "content" => content}) do
-    [%{"type" => "function_call_output", "call_id" => id, "output" => normalize_output(content)}]
+  defp encode_raw_message(%{
+         "role" => "tool",
+         "tool_use_id" => id,
+         "content" => content
+       }) do
+    [
+      %{
+        "type" => "function_call_output",
+        "call_id" => id,
+        "output" => normalize_output(content)
+      }
+    ]
   end
 
-  defp encode_raw_message(%{"role" => "user", "content" => content}) when is_binary(content) do
+  defp encode_raw_message(%{"role" => "user", "content" => content})
+       when is_binary(content) do
     [%{"role" => "user", "content" => content}]
   end
 
-  defp encode_raw_message(%{"role" => "user", "content" => content}) when is_list(content) do
+  defp encode_raw_message(%{"role" => "user", "content" => content})
+       when is_list(content) do
     encode_user_message(content) ++
-      encode_tool_result_items(Enum.filter(content, &match?(%{"type" => "tool_result"}, &1)))
+      encode_tool_result_items(
+        Enum.filter(content, &match?(%{"type" => "tool_result"}, &1))
+      )
   end
 
-  defp encode_raw_message(%{"role" => role, "content" => content}) when is_binary(content) do
+  defp encode_raw_message(%{"role" => role, "content" => content})
+       when is_binary(content) do
     [%{"role" => role, "content" => content}]
   end
 
-  defp encode_raw_message(%{"role" => role, "content" => content}) when is_list(content) do
+  defp encode_raw_message(%{"role" => role, "content" => content})
+       when is_list(content) do
     text_items = encode_text_message(role, content)
 
     tool_call_items =
-      encode_tool_call_items(Enum.filter(content, &match?(%{"type" => "tool_use"}, &1)))
+      encode_tool_call_items(
+        Enum.filter(content, &match?(%{"type" => "tool_use"}, &1))
+      )
 
     tool_result_items =
-      encode_tool_result_items(Enum.filter(content, &match?(%{"type" => "tool_result"}, &1)))
+      encode_tool_result_items(
+        Enum.filter(content, &match?(%{"type" => "tool_result"}, &1))
+      )
 
     text_items ++ tool_call_items ++ tool_result_items
   end
@@ -467,7 +562,10 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
         [
           Map.drop(
             tool,
-            Enum.filter(["name", "description", "input_schema"], &Map.has_key?(tool, &1))
+            Enum.filter(
+              ["name", "description", "input_schema"],
+              &Map.has_key?(tool, &1)
+            )
           )
         ]
 
@@ -494,7 +592,8 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
             "type" => "function_call",
             "call_id" => id,
             "name" => name,
-            "arguments" => Jason.encode!(if(is_map(input), do: input, else: %{}))
+            "arguments" =>
+              Jason.encode!(if(is_map(input), do: input, else: %{}))
           }
         ]
 
@@ -540,8 +639,12 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
 
   defp normalize_text_content(content), do: to_string(content)
 
-  defp normalize_output(content) when is_map(content), do: Jason.encode!(content)
-  defp normalize_output(content) when is_list(content), do: normalize_text_content(content)
+  defp normalize_output(content) when is_map(content),
+    do: Jason.encode!(content)
+
+  defp normalize_output(content) when is_list(content),
+    do: normalize_text_content(content)
+
   defp normalize_output(content), do: normalize_text_content(content)
 
   defp normalize_instructions(system) when is_binary(system) do
@@ -551,8 +654,9 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
 
   defp normalize_instructions(_), do: nil
 
-  defp normalize_max_output_tokens(max_tokens) when is_integer(max_tokens) and max_tokens > 0,
-    do: max_tokens
+  defp normalize_max_output_tokens(max_tokens)
+       when is_integer(max_tokens) and max_tokens > 0,
+       do: max_tokens
 
   defp normalize_max_output_tokens(_), do: nil
 
@@ -579,7 +683,10 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
 
   defp text_config(nil), do: nil
   defp text_config(""), do: nil
-  defp text_config(verbosity) when is_binary(verbosity), do: %{"verbosity" => verbosity}
+
+  defp text_config(verbosity) when is_binary(verbosity),
+    do: %{"verbosity" => verbosity}
+
   defp text_config(_), do: nil
 
   defp responses_image_part(source) when is_map(source) do
@@ -592,7 +699,9 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
           source["uri"]
 
         is_binary(source["data"]) and String.trim(source["data"]) != "" ->
-          media_type = source["media_type"] || source["mime_type"] || "image/jpeg"
+          media_type =
+            source["media_type"] || source["mime_type"] || "image/jpeg"
+
           "data:#{media_type};base64,#{source["data"]}"
 
         true ->
@@ -616,7 +725,8 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
     %{"type" => "input_image", "image_url" => url}
   end
 
-  defp normalize_image_url_part(%{"image_url" => url}) when is_binary(url) and url != "" do
+  defp normalize_image_url_part(%{"image_url" => url})
+       when is_binary(url) and url != "" do
     %{"type" => "input_image", "image_url" => url}
   end
 

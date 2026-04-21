@@ -78,12 +78,18 @@ defmodule Froth.Replicate do
 
         attrs =
           if status == "succeeded" do
-            Map.put(attrs, :completed_at, DateTime.utc_now() |> DateTime.truncate(:second))
+            Map.put(
+              attrs,
+              :completed_at,
+              DateTime.utc_now() |> DateTime.truncate(:second)
+            )
           else
             attrs
           end
 
-        {:ok, prediction} = %Prediction{} |> Prediction.changeset(attrs) |> Repo.insert()
+        {:ok, prediction} =
+          %Prediction{} |> Prediction.changeset(attrs) |> Repo.insert()
+
         IO.puts("Prediction #{prediction.id} (#{replicate_id}): #{status}")
         {:ok, prediction}
 
@@ -139,7 +145,11 @@ defmodule Froth.Replicate do
           IO.puts("Prediction #{prediction.id} failed: #{err}")
 
           prediction
-          |> Prediction.changeset(%{status: "failed", error: err, logs: resp["logs"]})
+          |> Prediction.changeset(%{
+            status: "failed",
+            error: err,
+            logs: resp["logs"]
+          })
           |> Repo.update!()
 
           {:error, err}
@@ -149,7 +159,11 @@ defmodule Froth.Replicate do
           IO.puts("Prediction #{prediction.id} canceled.")
 
           prediction
-          |> Prediction.changeset(%{status: "failed", error: "canceled", logs: resp["logs"]})
+          |> Prediction.changeset(%{
+            status: "failed",
+            error: "canceled",
+            logs: resp["logs"]
+          })
           |> Repo.update!()
 
           {:error, "canceled"}
@@ -244,7 +258,10 @@ defmodule Froth.Replicate do
       {:ok, %Finch.Response{status: 200, body: body}} ->
         data = Jason.decode!(body)
         schema = get_in(data, ["latest_version", "openapi_schema"])
-        input_props = get_in(schema, ["components", "schemas", "Input", "properties"]) || %{}
+
+        input_props =
+          get_in(schema, ["components", "schemas", "Input", "properties"]) ||
+            %{}
 
         fields =
           Enum.map(input_props, fn {name, spec} ->
@@ -299,7 +316,8 @@ defmodule Froth.Replicate do
     req = Finch.build(:post, url, headers(), body)
 
     case Finch.request(req, Froth.Finch, receive_timeout: 30_000) do
-      {:ok, %Finch.Response{status: status, body: resp}} when status in [200, 201] ->
+      {:ok, %Finch.Response{status: status, body: resp}}
+      when status in [200, 201] ->
         {:ok, Jason.decode!(resp)}
 
       {:ok, %Finch.Response{status: 404, body: _}} ->
@@ -326,7 +344,8 @@ defmodule Froth.Replicate do
         req = Finch.build(:post, url, headers(), body)
 
         case Finch.request(req, Froth.Finch, receive_timeout: 30_000) do
-          {:ok, %Finch.Response{status: status, body: resp}} when status in [200, 201] ->
+          {:ok, %Finch.Response{status: status, body: resp}}
+          when status in [200, 201] ->
             {:ok, Jason.decode!(resp)}
 
           {:ok, %Finch.Response{status: status, body: resp}} ->
@@ -359,7 +378,10 @@ defmodule Froth.Replicate do
   end
 
   defp normalize_output(nil), do: nil
-  defp normalize_output([url | _] = urls) when is_binary(url), do: %{"urls" => urls}
+
+  defp normalize_output([url | _] = urls) when is_binary(url),
+    do: %{"urls" => urls}
+
   defp normalize_output(url) when is_binary(url), do: %{"urls" => [url]}
   defp normalize_output(%{} = map), do: map
   defp normalize_output(other), do: %{"raw" => other}

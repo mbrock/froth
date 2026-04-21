@@ -45,9 +45,14 @@ defmodule Mix.Tasks.Froth.Tgcalls.Smoke do
              [timeout],
              timeout + 2_000
            ) do
-        {:ok, %{} = status} -> status
-        {:ok, other} -> Mix.raise("Expected map status payload, got: #{inspect(other)}")
-        {:error, reason} -> Mix.raise("tgcalls_status failed: #{inspect(reason)}")
+        {:ok, %{} = status} ->
+          status
+
+        {:ok, other} ->
+          Mix.raise("Expected map status payload, got: #{inspect(other)}")
+
+        {:error, reason} ->
+          Mix.raise("tgcalls_status failed: #{inspect(reason)}")
       end
 
     print_status(target_node, status)
@@ -98,7 +103,10 @@ defmodule Mix.Tasks.Froth.Tgcalls.Smoke do
       case System.get_env("ERLANG_COOKIE") do
         nil ->
           path = Path.expand("~/.erlang.cookie")
-          if File.exists?(path), do: File.read!(path) |> String.trim(), else: nil
+
+          if File.exists?(path),
+            do: File.read!(path) |> String.trim(),
+            else: nil
 
         value ->
           String.trim(value)

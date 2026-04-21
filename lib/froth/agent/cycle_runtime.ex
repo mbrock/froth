@@ -37,7 +37,11 @@ defmodule Froth.Agent.CycleRuntime do
   @registry Froth.Agent.CycleRegistry
 
   @type last_sent :: %{id: integer() | nil, text: binary()}
-  @type narration :: %{message_id: integer(), text: binary(), mode: :italic | :markdown}
+  @type narration :: %{
+          message_id: integer(),
+          text: binary(),
+          mode: :italic | :markdown
+        }
 
   @type opts :: [
           cycle_id: String.t(),
@@ -83,7 +87,10 @@ defmodule Froth.Agent.CycleRuntime do
   Start a bot-owned root cycle runtime under the resolved Bot's private
   cycle supervisor. Returns `{:ok, pid}` on success.
   """
-  @spec start_for_bot(String.t() | pid() | atom() | {:via, module(), term()}, opts()) ::
+  @spec start_for_bot(
+          String.t() | pid() | atom() | {:via, module(), term()},
+          opts()
+        ) ::
           DynamicSupervisor.on_start_child() | {:error, :bot_not_running}
   def start_for_bot(bot_ref, opts) when is_list(opts) do
     Bot.start_cycle_runtime(bot_ref, opts)
@@ -173,8 +180,11 @@ defmodule Froth.Agent.CycleRuntime do
   def track_sent_message(cycle_id, sent, text)
       when is_binary(cycle_id) and is_map(sent) and is_binary(text) do
     case whereis(cycle_id) do
-      pid when is_pid(pid) -> GenServer.cast(pid, {:track_sent_message, sent, text})
-      nil -> :ok
+      pid when is_pid(pid) ->
+        GenServer.cast(pid, {:track_sent_message, sent, text})
+
+      nil ->
+        :ok
     end
   end
 
@@ -191,7 +201,8 @@ defmodule Froth.Agent.CycleRuntime do
   `:bot_config`, `:bot_pid`, `:chat_id`, `:reply_to`.
   """
   @spec spawn_subagent(pid(), opts()) :: DynamicSupervisor.on_start_child()
-  def spawn_subagent(parent_pid, opts) when is_pid(parent_pid) and is_list(opts) do
+  def spawn_subagent(parent_pid, opts)
+      when is_pid(parent_pid) and is_list(opts) do
     GenServer.call(parent_pid, {:spawn_subagent, opts})
   end
 
@@ -269,8 +280,12 @@ defmodule Froth.Agent.CycleRuntime do
       opts
       |> event_stream_for()
       |> Enum.reduce(nil, fn
-        {:event, _event, %Froth.Agent.Message{role: :agent} = message}, _acc -> message
-        _other, acc -> acc
+        {:event, _event, %Froth.Agent.Message{role: :agent} = message},
+        _acc ->
+          message
+
+        _other, acc ->
+          acc
       end)
 
     refreshed = Froth.Repo.get!(Cycle, cycle_id)
@@ -307,7 +322,8 @@ defmodule Froth.Agent.CycleRuntime do
       },
       view: %View{},
       spam: Keyword.get(opts, :spam, true),
-      system_prompt: bc && BotConfig.resolve_system_prompt(chat_id || 0, nil, bc),
+      system_prompt:
+        bc && BotConfig.resolve_system_prompt(chat_id || 0, nil, bc),
       tool_specs: BotConfig.resolve_tool_specs(bc)
     }
 
@@ -338,7 +354,11 @@ defmodule Froth.Agent.CycleRuntime do
     {:reply, state.context.view.active_task_ids, state}
   end
 
-  def handle_call({:resolve_pending_ask, pending_ask_id, resolution}, _from, state) do
+  def handle_call(
+        {:resolve_pending_ask, pending_ask_id, resolution},
+        _from,
+        state
+      ) do
     case state.worker_pid do
       pid when is_pid(pid) ->
         reply = Worker.resolve_pending_ask(pid, pending_ask_id, resolution)
@@ -349,7 +369,11 @@ defmodule Froth.Agent.CycleRuntime do
     end
   end
 
-  def handle_call({:prepare_tool, %ToolUse{} = tool_use, invocation}, _from, state) do
+  def handle_call(
+        {:prepare_tool, %ToolUse{} = tool_use, invocation},
+        _from,
+        state
+      ) do
     {reply, state} = prepare_tool_call(state, tool_use, invocation)
     {:reply, reply, state}
   end
@@ -359,7 +383,9 @@ defmodule Froth.Agent.CycleRuntime do
         _from,
         state
       ) do
-    {reply, state} = commit_tool_call(state, tool_use, invocation, prepared, outcome)
+    {reply, state} =
+      commit_tool_call(state, tool_use, invocation, prepared, outcome)
+
     {:reply, reply, state}
   end
 
@@ -381,7 +407,12 @@ defmodule Froth.Agent.CycleRuntime do
       |> Keyword.put_new(:reply_to, reply_to)
       |> Keyword.put_new(:spam, spam)
 
-    reply = DynamicSupervisor.start_child(state.children_sup, {__MODULE__, child_opts})
+    reply =
+      DynamicSupervisor.start_child(
+        state.children_sup,
+        {__MODULE__, child_opts}
+      )
+
     {:reply, reply, state}
   end
 
@@ -391,7 +422,9 @@ defmodule Froth.Agent.CycleRuntime do
     {result, state} =
       case reply do
         {:ok, prepared} ->
-          outcome = ToolExecution.execute(prepared.context, prepared.tool_call)
+          outcome =
+            ToolExecution.execute(prepared.context, prepared.tool_call)
+
           commit_tool_call(state, tool_use, invocation, prepared, outcome)
 
         {:error, reason} ->
@@ -419,15 +452,22 @@ defmodule Froth.Agent.CycleRuntime do
   end
 
   def handle_cast(:clear_awaiting_user_input, state) do
-    {:noreply, update_view(state, fn %View{} = v -> %View{v | awaiting_user_input?: false} end)}
+    {:noreply,
+     update_view(state, fn %View{} = v ->
+       %View{v | awaiting_user_input?: false}
+     end)}
   end
 
-  def handle_cast({:track_sent_message, sent, text}, state) when is_binary(text) do
+  def handle_cast({:track_sent_message, sent, text}, state)
+      when is_binary(text) do
     {:noreply, update_view(state, &apply_sent_message(&1, sent, text))}
   end
 
   @impl true
-  def handle_info({:EXIT, worker_pid, reason}, %{worker_pid: worker_pid} = state) do
+  def handle_info(
+        {:EXIT, worker_pid, reason},
+        %{worker_pid: worker_pid} = state
+      ) do
     # Worker terminated. Mirror its reason — a normal Worker finish
     # ends the cycle runtime normally; a crash propagates the reason
     # up so the Bot's monitor sees it unchanged.
@@ -473,11 +513,18 @@ defmodule Froth.Agent.CycleRuntime do
   # per-call `%ToolUse{}` with its input shape-tweaked. `ToolExecution`
   # takes them as two arguments — cycle-level context + per-call tool
   # call — so the nullable-tool_call kludge goes away.
-  defp prepare_tool_call(state, %ToolUse{name: name, input: input} = tool_use, invocation)
+  defp prepare_tool_call(
+         state,
+         %ToolUse{name: name, input: input} = tool_use,
+         invocation
+       )
        when is_map(input) do
     %Context{} = base = state.context
     surface = overlay_surface(base.surface, invocation)
-    shaped_input = shape_tool_input(name, input, base.cycle_id, surface.reply_to)
+
+    shaped_input =
+      shape_tool_input(name, input, base.cycle_id, surface.reply_to)
+
     tool_call = %ToolUse{tool_use | input: shaped_input}
 
     ctx = %Context{base | surface: surface}
@@ -519,7 +566,8 @@ defmodule Froth.Agent.CycleRuntime do
     {result, sent_message, narration_message, awaiting_user_input?} =
       case outcome do
         %{result: result} = o ->
-          {result, o[:sent_message], o[:narration_message], o[:awaiting_user_input] == true}
+          {result, o[:sent_message], o[:narration_message],
+           o[:awaiting_user_input] == true}
 
         result ->
           {result, nil, nil, false}
@@ -536,8 +584,13 @@ defmodule Froth.Agent.CycleRuntime do
     {result, state}
   end
 
-  defp apply_narration_message(%View{} = view, %{message_id: mid, text: text, mode: mode})
-       when is_integer(mid) and is_binary(text) and mode in [:italic, :markdown] do
+  defp apply_narration_message(%View{} = view, %{
+         message_id: mid,
+         text: text,
+         mode: mode
+       })
+       when is_integer(mid) and is_binary(text) and
+              mode in [:italic, :markdown] do
     %View{view | narration: %{message_id: mid, text: text, mode: mode}}
   end
 
@@ -548,12 +601,17 @@ defmodule Froth.Agent.CycleRuntime do
     apply_awaiting_user_input(view, sent, text)
   end
 
-  defp apply_sent_or_awaiting(%View{} = view, %{sent: sent, text: text}, false)
+  defp apply_sent_or_awaiting(
+         %View{} = view,
+         %{sent: sent, text: text},
+         false
+       )
        when is_binary(text) do
     apply_sent_message(view, sent, text)
   end
 
-  defp apply_sent_or_awaiting(%View{} = view, _sent_message, _awaiting?), do: view
+  defp apply_sent_or_awaiting(%View{} = view, _sent_message, _awaiting?),
+    do: view
 
   defp apply_task_from_result(%View{} = view, {:ok, result}) do
     case extract_task_id(result) do
@@ -564,12 +622,15 @@ defmodule Froth.Agent.CycleRuntime do
 
   defp apply_task_from_result(%View{} = view, _result), do: view
 
-  defp add_task_id(%View{active_task_ids: ids} = view, task_id) when is_binary(task_id) do
+  defp add_task_id(%View{active_task_ids: ids} = view, task_id)
+       when is_binary(task_id) do
     %View{view | active_task_ids: Enum.sort(Enum.uniq([task_id | ids]))}
   end
 
   defp extract_task_id(text) when is_binary(text) do
-    case Regex.run(~r/\btask_id=([a-z]+:[a-zA-Z0-9:_-]+)/, text, capture: :all_but_first) do
+    case Regex.run(~r/\btask_id=([a-z]+:[a-zA-Z0-9:_-]+)/, text,
+           capture: :all_but_first
+         ) do
       [task_id] -> task_id
       _ -> extract_shell_task_id(text)
     end
@@ -578,7 +639,9 @@ defmodule Froth.Agent.CycleRuntime do
   defp extract_task_id(_), do: nil
 
   defp extract_shell_task_id(text) when is_binary(text) do
-    case Regex.run(~r/\bshell task ([a-z]+:[a-zA-Z0-9:_-]+)/, text, capture: :all_but_first) do
+    case Regex.run(~r/\bshell task ([a-z]+:[a-zA-Z0-9:_-]+)/, text,
+           capture: :all_but_first
+         ) do
       [task_id] -> task_id
       _ -> nil
     end
@@ -597,7 +660,8 @@ defmodule Froth.Agent.CycleRuntime do
 
   defp apply_sent_message(view, _sent, _text), do: view
 
-  defp apply_awaiting_user_input(%View{} = view, sent, text) when is_binary(text) do
+  defp apply_awaiting_user_input(%View{} = view, sent, text)
+       when is_binary(text) do
     %View{
       view
       | narration: nil,
@@ -638,7 +702,8 @@ defmodule Froth.Agent.CycleRuntime do
            awaiting_user_input?: false
          }
        })
-       when is_binary(cycle_id) and is_integer(msg_id) and is_binary(text) and is_integer(chat_id) do
+       when is_binary(cycle_id) and is_integer(msg_id) and is_binary(text) and
+              is_integer(chat_id) do
     # Tolerate a bad `cycle_id` (e.g. a non-ULID test fixture) so
     # terminate/2 doesn't log a confusing Ecto cast error.
     footer =

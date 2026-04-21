@@ -6,7 +6,9 @@ defmodule Mix.Tasks.Froth.Top do
 
   @impl Mix.Task
   def run(args) do
-    {opts, _, _} = OptionParser.parse(args, strict: [interval: :integer, count: :integer])
+    {opts, _, _} =
+      OptionParser.parse(args, strict: [interval: :integer, count: :integer])
+
     interval = Keyword.get(opts, :interval, 500)
     count = Keyword.get(opts, :count, 10)
 
@@ -60,7 +62,12 @@ defmodule Mix.Tasks.Froth.Top do
   defp snapshot(node) do
     :erpc.call(node, fn ->
       for pid <- Process.list(),
-          info = Process.info(pid, [:message_queue_len, :registered_name, :dictionary]),
+          info =
+            Process.info(pid, [
+              :message_queue_len,
+              :registered_name,
+              :dictionary
+            ]),
           info != nil,
           info[:message_queue_len] > 0 do
         name =
@@ -83,7 +90,9 @@ defmodule Mix.Tasks.Froth.Top do
             case :erlang.process_info(pid, :current_stacktrace) do
               {:current_stacktrace, frames} ->
                 frames
-                |> Enum.reject(fn {m, _f, _a, _loc} -> m in [:proc_lib, :gen_statem, :gen] end)
+                |> Enum.reject(fn {m, _f, _a, _loc} ->
+                  m in [:proc_lib, :gen_statem, :gen]
+                end)
                 |> Enum.take(3)
                 |> Enum.map_join(" <- ", fn {m, f, a, _loc} ->
                   "#{inspect(m)}.#{f}/#{a}"
@@ -107,7 +116,9 @@ defmodule Mix.Tasks.Froth.Top do
     "pcm:#{byte_size(pcm)}B seq=#{seq}"
   end
 
-  defp summarize_msg({:qwen_client_event, %{"type" => type}}), do: "event:#{type}"
+  defp summarize_msg({:qwen_client_event, %{"type" => type}}),
+    do: "event:#{type}"
+
   defp summarize_msg(:ping), do: "ping"
   defp summarize_msg(:mailbox_poll), do: "mailbox_poll"
 

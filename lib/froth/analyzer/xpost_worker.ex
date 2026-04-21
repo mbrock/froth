@@ -9,7 +9,11 @@ defmodule Froth.Analyzer.XPostWorker do
 
   @impl true
   def perform(%Oban.Job{
-        args: %{"chat_id" => chat_id, "message_id" => message_id, "text" => text}
+        args: %{
+          "chat_id" => chat_id,
+          "message_id" => message_id,
+          "text" => text
+        }
       }) do
     url =
       case Regex.run(@xpost_re, text) do

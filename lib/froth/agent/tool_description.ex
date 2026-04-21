@@ -43,7 +43,9 @@ defmodule Froth.Agent.ToolDescription do
 
   defp normalize_legacy_narration(_narration), do: nil
 
-  defp render_text(%{action: action}) when is_binary(action) and action != "", do: action
+  defp render_text(%{action: action}) when is_binary(action) and action != "",
+    do: action
+
   defp render_text(%{action: nil, goals: [first | _]}), do: first
   defp render_text(_), do: nil
 
@@ -63,7 +65,9 @@ defmodule Froth.Agent.ToolDescription do
 
   defp normalize_list(_items, _limit), do: []
 
-  defp maybe_take(items, limit) when is_integer(limit) and limit > 0, do: Enum.take(items, limit)
+  defp maybe_take(items, limit) when is_integer(limit) and limit > 0,
+    do: Enum.take(items, limit)
+
   defp maybe_take(items, _limit), do: items
 
   defp normalize_text(text) when is_binary(text) do
@@ -75,9 +79,15 @@ defmodule Froth.Agent.ToolDescription do
 
   defp normalize_text(_text), do: nil
 
-  defp description_value(map), do: Map.get(map, "description") || Map.get(map, :description)
-  defp narration_value(map), do: Map.get(map, "narration") || Map.get(map, :narration)
+  defp description_value(map),
+    do: Map.get(map, "description") || Map.get(map, :description)
+
+  defp narration_value(map),
+    do: Map.get(map, "narration") || Map.get(map, :narration)
+
   defp action_value(map), do: Map.get(map, "action") || Map.get(map, :action)
   defp goals_value(map), do: Map.get(map, "goals") || Map.get(map, :goals)
-  defp assumptions_value(map), do: Map.get(map, "assumptions") || Map.get(map, :assumptions)
+
+  defp assumptions_value(map),
+    do: Map.get(map, "assumptions") || Map.get(map, :assumptions)
 end

@@ -7,7 +7,10 @@ defmodule Mix.Tasks.Froth.ContextTest do
   test "resolve_cycle_selector accepts latest shorthands" do
     assert FrothContextTask.resolve_cycle_selector("latest") == {:latest, 1}
     assert FrothContextTask.resolve_cycle_selector("latest:3") == {:latest, 3}
-    assert FrothContextTask.resolve_cycle_selector("01KQABC") == {:id, "01KQABC"}
+
+    assert FrothContextTask.resolve_cycle_selector("01KQABC") ==
+             {:id, "01KQABC"}
+
     assert FrothContextTask.resolve_cycle_selector("latest:0") == :error
     assert FrothContextTask.resolve_cycle_selector("latest:nope") == :error
   end
@@ -24,7 +27,9 @@ defmodule Mix.Tasks.Froth.ContextTest do
       %Message{
         id: "msg_user",
         role: :user,
-        content: [%{"type" => "text", "text" => "<msg message_id=\"4401\">hi</msg>"}]
+        content: [
+          %{"type" => "text", "text" => "<msg message_id=\"4401\">hi</msg>"}
+        ]
       },
       %Message{
         id: "msg_assistant",
@@ -53,7 +58,9 @@ defmodule Mix.Tasks.Froth.ContextTest do
 
     rendered = FrothContextTask.render_cycle_request(cycle, messages)
 
-    assert rendered =~ "cycle 01KQTESTCYCLE00000000000000 status=waiting_on_tools"
+    assert rendered =~
+             "cycle 01KQTESTCYCLE00000000000000 status=waiting_on_tools"
+
     assert rendered =~ "provider=anthropic"
     assert rendered =~ "model=claude-opus-4-6"
     assert rendered =~ "request_messages=3"
@@ -71,13 +78,28 @@ defmodule Mix.Tasks.Froth.ContextTest do
     rendered =
       FrothContextTask.render_cycle_requests([
         {newest,
-         [%Message{id: "msg_new", role: :user, content: [%{"type" => "text", "text" => "new"}]}]},
+         [
+           %Message{
+             id: "msg_new",
+             role: :user,
+             content: [%{"type" => "text", "text" => "new"}]
+           }
+         ]},
         {older,
-         [%Message{id: "msg_old", role: :user, content: [%{"type" => "text", "text" => "old"}]}]}
+         [
+           %Message{
+             id: "msg_old",
+             role: :user,
+             content: [%{"type" => "text", "text" => "old"}]
+           }
+         ]}
       ])
 
-    newest_pos = :binary.match(rendered, "01KQNEWEST0000000000000000") |> elem(0)
-    older_pos = :binary.match(rendered, "01KQOLDER0000000000000000") |> elem(0)
+    newest_pos =
+      :binary.match(rendered, "01KQNEWEST0000000000000000") |> elem(0)
+
+    older_pos =
+      :binary.match(rendered, "01KQOLDER0000000000000000") |> elem(0)
 
     assert newest_pos < older_pos
     assert rendered =~ String.duplicate("-", 80)

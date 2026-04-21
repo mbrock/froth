@@ -40,7 +40,8 @@ defmodule Froth.Tools.ViewAnalysis do
   end
 
   @impl true
-  def execute(%Context{}, %ToolUse{input: input}, _hooks) when is_map(input) do
+  def execute(%Context{}, %ToolUse{input: input}, _hooks)
+      when is_map(input) do
     ids = input["ids"] || []
 
     analyses =

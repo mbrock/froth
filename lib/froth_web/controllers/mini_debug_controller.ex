@@ -7,7 +7,11 @@ defmodule FrothWeb.MiniDebugController do
     for entry <- logs do
       level = entry["level"] || "log"
       msg = entry["msg"] || ""
-      Span.execute([:froth, :web, :miniapp_log], nil, %{level: level, msg: msg})
+
+      Span.execute([:froth, :web, :miniapp_log], nil, %{
+        level: level,
+        msg: msg
+      })
     end
 
     json(conn, %{ok: true})

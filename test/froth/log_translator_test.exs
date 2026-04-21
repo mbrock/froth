@@ -13,7 +13,9 @@ defmodule Froth.LogTranslatorTest do
     {:ok, owner: owner}
   end
 
-  test "annotates sandbox ownership warnings with allow context", %{owner: owner} do
+  test "annotates sandbox ownership warnings with allow context", %{
+    owner: owner
+  } do
     parent = self()
 
     child =
@@ -35,13 +37,17 @@ defmodule Froth.LogTranslatorTest do
     Client #{inspect(child)} (:proc_lib) is still using a connection from owner
     """
 
-    assert {:ok, translated} = LogTranslator.translate(:debug, :error, :string, message)
+    assert {:ok, translated} =
+             LogTranslator.translate(:debug, :error, :string, message)
 
     output = IO.iodata_to_binary(translated)
 
     assert output =~ "Repo sandbox context:"
     assert output =~ "translator child"
-    assert output =~ "test annotates sandbox ownership warnings with allow context"
+
+    assert output =~
+             "test annotates sandbox ownership warnings with allow context"
+
     assert output =~ "test/froth/log_translator_test.exs:16"
 
     send(child, :stop)
@@ -70,12 +76,15 @@ defmodule Froth.LogTranslatorTest do
 
     message = "client #{inspect(child)} exited"
 
-    assert {:ok, translated} = LogTranslator.translate(:debug, :error, :string, message)
+    assert {:ok, translated} =
+             LogTranslator.translate(:debug, :error, :string, message)
 
     output = IO.iodata_to_binary(translated)
 
     assert output =~ "Repo sandbox context:"
     assert output =~ "translator child"
-    assert output =~ "test annotates sandbox client-exit warnings with allow context"
+
+    assert output =~
+             "test annotates sandbox client-exit warnings with allow context"
   end
 end

@@ -45,13 +45,16 @@ defmodule Froth.Telegram.Usernames do
     end
   end
 
-  defp pick_short_name(first, _uname, _label, _uid) when is_binary(first) and first != "",
-    do: first
+  defp pick_short_name(first, _uname, _label, _uid)
+       when is_binary(first) and first != "",
+       do: first
 
-  defp pick_short_name(_first, uname, _label, _uid) when is_binary(uname) and uname != "",
-    do: uname
+  defp pick_short_name(_first, uname, _label, _uid)
+       when is_binary(uname) and uname != "",
+       do: uname
 
-  defp pick_short_name(_first, _uname, label, _uid) when is_binary(label) and label != "" do
+  defp pick_short_name(_first, _uname, label, _uid)
+       when is_binary(label) and label != "" do
     case label do
       "@" <> rest -> rest
       other -> other
@@ -85,13 +88,16 @@ defmodule Froth.Telegram.Usernames do
         fetched =
           missing_ids
           |> Task.async_stream(
-            fn user_id -> {user_id, fetch_and_store_label(user_id, session_id)} end,
+            fn user_id ->
+              {user_id, fetch_and_store_label(user_id, session_id)}
+            end,
             ordered: false,
             max_concurrency: 8,
             timeout: :infinity
           )
           |> Enum.reduce(%{}, fn
-            {:ok, {user_id, label}}, acc when is_binary(label) and label != "" ->
+            {:ok, {user_id, label}}, acc
+            when is_binary(label) and label != "" ->
               Map.put(acc, user_id, label)
 
             _, acc ->
@@ -137,8 +143,13 @@ defmodule Froth.Telegram.Usernames do
   end
 
   def upsert_label(user_id, label, session_id \\ nil)
-      when is_integer(user_id) and user_id > 0 and is_binary(label) and label != "" do
-    attrs = %{user_id: user_id, label: label, source_session_id: blank_to_nil(session_id)}
+      when is_integer(user_id) and user_id > 0 and is_binary(label) and
+             label != "" do
+    attrs = %{
+      user_id: user_id,
+      label: label,
+      source_session_id: blank_to_nil(session_id)
+    }
 
     %Username{}
     |> Username.changeset(attrs)
@@ -164,7 +175,9 @@ defmodule Froth.Telegram.Usernames do
     results =
       user_ids
       |> Task.async_stream(
-        fn user_id -> {user_id, fetch_and_store_label(user_id, session_id)} end,
+        fn user_id ->
+          {user_id, fetch_and_store_label(user_id, session_id)}
+        end,
         ordered: false,
         max_concurrency: Keyword.get(opts, :max_concurrency, 8),
         timeout: :infinity
@@ -180,7 +193,8 @@ defmodule Froth.Telegram.Usernames do
     Map.merge(%{requested: length(user_ids), session_id: session_id}, results)
   end
 
-  defp fetch_and_store_label(user_id, session_id) when is_integer(user_id) and user_id > 0 do
+  defp fetch_and_store_label(user_id, session_id)
+       when is_integer(user_id) and user_id > 0 do
     fallback = "user:#{user_id}"
 
     case telegram_user(session_id, user_id) do
@@ -194,7 +208,8 @@ defmodule Froth.Telegram.Usernames do
     end
   end
 
-  defp telegram_user(session_id, user_id) when is_integer(user_id) and user_id > 0 do
+  defp telegram_user(session_id, user_id)
+       when is_integer(user_id) and user_id > 0 do
     session_id
     |> candidate_session_ids()
     |> Enum.reduce_while({:error, :no_session}, fn sid, _acc ->
@@ -205,7 +220,8 @@ defmodule Froth.Telegram.Usernames do
     end)
   end
 
-  defp candidate_session_ids(session_id) when is_binary(session_id) and session_id != "" do
+  defp candidate_session_ids(session_id)
+       when is_binary(session_id) and session_id != "" do
     [session_id | Queries.enabled_session_ids()]
     |> Enum.uniq()
   end
@@ -227,7 +243,8 @@ defmodule Froth.Telegram.Usernames do
 
   defp safe_call(_, _), do: {:error, :no_session}
 
-  defp resolve_session_id(session_id) when is_binary(session_id) and session_id != "" do
+  defp resolve_session_id(session_id)
+       when is_binary(session_id) and session_id != "" do
     session_id
   end
 
@@ -240,7 +257,8 @@ defmodule Froth.Telegram.Usernames do
       from(m in "telegram_messages",
         left_join: u in Username,
         on: u.user_id == m.sender_id,
-        where: not is_nil(m.sender_id) and m.sender_id > 0 and is_nil(u.user_id),
+        where:
+          not is_nil(m.sender_id) and m.sender_id > 0 and is_nil(u.user_id),
         distinct: m.sender_id,
         order_by: [asc: m.sender_id],
         select: m.sender_id,
@@ -255,7 +273,8 @@ defmodule Froth.Telegram.Usernames do
       from(m in "telegram_messages",
         left_join: u in Username,
         on: u.user_id == m.sender_id,
-        where: not is_nil(m.sender_id) and m.sender_id > 0 and is_nil(u.user_id),
+        where:
+          not is_nil(m.sender_id) and m.sender_id > 0 and is_nil(u.user_id),
         distinct: m.sender_id,
         order_by: [asc: m.sender_id],
         select: m.sender_id

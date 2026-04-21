@@ -122,8 +122,14 @@ defmodule Froth.Agent.ToolResultTest do
 
       blocks =
         Blocks.materialize([
-          Block.new([kind: "image", mime: "image/jpeg", filename: "a.jpg"], bytes_a),
-          Block.new([kind: "image", mime: "image/jpeg", filename: "b.jpg"], bytes_b)
+          Block.new(
+            [kind: "image", mime: "image/jpeg", filename: "a.jpg"],
+            bytes_a
+          ),
+          Block.new(
+            [kind: "image", mime: "image/jpeg", filename: "b.jpg"],
+            bytes_b
+          )
         ])
 
       result = ToolResult.new("call_5", blocks)
@@ -139,7 +145,10 @@ defmodule Froth.Agent.ToolResultTest do
 
       blocks =
         Blocks.materialize([
-          Block.new([kind: "audio", mime: "audio/ogg", filename: "voice.ogg"], bytes)
+          Block.new(
+            [kind: "audio", mime: "audio/ogg", filename: "voice.ogg"],
+            bytes
+          )
         ])
 
       result = ToolResult.new("call_6", blocks)

@@ -10,11 +10,17 @@ defmodule FrothWeb.PodcastController do
   plug :put_layout, false
 
   defp base_path(conn) do
-    if String.starts_with?(conn.request_path, "/froth/voice"), do: "/froth/voice", else: "/api"
+    if String.starts_with?(conn.request_path, "/froth/voice"),
+      do: "/froth/voice",
+      else: "/api"
   end
 
   defp ep(conn),
-    do: if(base_path(conn) == "/api", do: "/api/podcasts", else: "#{base_path(conn)}/episodes")
+    do:
+      if(base_path(conn) == "/api",
+        do: "/api/podcasts",
+        else: "#{base_path(conn)}/episodes"
+      )
 
   # ── Root ──────────────────────────────────────────────
 
@@ -175,7 +181,9 @@ defmodule FrothWeb.PodcastController do
     pagination =
       if offset + limit < total do
         pagination ++
-          ["<a href=\"#{ep(conn)}?limit=#{limit}&offset=#{offset + limit}\">Older →</a>"]
+          [
+            "<a href=\"#{ep(conn)}?limit=#{limit}&offset=#{offset + limit}\">Older →</a>"
+          ]
       else
         pagination
       end
@@ -328,7 +336,8 @@ defmodule FrothWeb.PodcastController do
 
   # ── Create ────────────────────────────────────────────
 
-  def create(conn, %{"speaker" => speakers, "text" => texts} = params) when is_list(speakers) do
+  def create(conn, %{"speaker" => speakers, "text" => texts} = params)
+      when is_list(speakers) do
     script =
       Enum.zip(speakers, texts)
       |> Enum.reject(fn {_, t} -> String.trim(t) == "" end)
@@ -363,7 +372,11 @@ defmodule FrothWeb.PodcastController do
   defp do_create(conn, script, params) when length(script) > 0 do
     chat_id = to_int(params["chat_id"], -1_003_690_254_489)
     label = params["label"]
-    label = if is_binary(label) and String.trim(label) != "", do: label, else: "Episode"
+
+    label =
+      if is_binary(label) and String.trim(label) != "",
+        do: label,
+        else: "Episode"
 
     {:ok, batch_id} =
       Froth.Podcast.generate(script,
@@ -374,7 +387,14 @@ defmodule FrothWeb.PodcastController do
         model: params["model"] || "minimax/speech-2.8-hd"
       )
 
-    rec = Repo.one(from(s in Froth.Podcast.Script, where: s.batch_id == ^batch_id, limit: 1))
+    rec =
+      Repo.one(
+        from(s in Froth.Podcast.Script,
+          where: s.batch_id == ^batch_id,
+          limit: 1
+        )
+      )
+
     id = if rec, do: rec.id, else: batch_id
 
     conn
@@ -383,7 +403,10 @@ defmodule FrothWeb.PodcastController do
     |> put_status(303)
     |> send_resp(
       303,
-      page("Created", "<p>Redirecting to <a href=\"#{ep(conn)}/#{id}\">episode</a>...</p>")
+      page(
+        "Created",
+        "<p>Redirecting to <a href=\"#{ep(conn)}/#{id}\">episode</a>...</p>"
+      )
     )
   end
 
@@ -393,7 +416,10 @@ defmodule FrothWeb.PodcastController do
     |> put_status(400)
     |> send_resp(
       400,
-      page("Error", "<p>Empty script. <a href=\"#{base_path(conn)}/new\">Try again</a>.</p>")
+      page(
+        "Error",
+        "<p>Empty script. <a href=\"#{base_path(conn)}/new\">Try again</a>.</p>"
+      )
     )
   end
 
@@ -419,7 +445,10 @@ defmodule FrothWeb.PodcastController do
           |> DateTime.from_unix!()
           |> Calendar.strftime("%a, %d %b %Y %H:%M:%S +0000")
 
-        cover = if s.cover_url, do: "<itunes:image href=\"#{h(s.cover_url)}\" />", else: ""
+        cover =
+          if s.cover_url,
+            do: "<itunes:image href=\"#{h(s.cover_url)}\" />",
+            else: ""
 
         """
         <item>
@@ -469,7 +498,13 @@ defmodule FrothWeb.PodcastController do
       |> Enum.map(fn filename ->
         %{size: size} = File.stat!(Path.join(audio_dir, filename))
         [_msg_id | rest] = String.split(filename, "-", parts: 2)
-        caption = rest |> hd() |> String.replace("-", " ") |> String.replace(".mp3", "")
+
+        caption =
+          rest
+          |> hd()
+          |> String.replace("-", " ")
+          |> String.replace(".mp3", "")
+
         %{filename: filename, caption: caption, size: size}
       end)
 
@@ -766,8 +801,13 @@ defmodule FrothWeb.PodcastController do
   defp h(other), do: h(to_string(other))
 
   defp fmt(nil), do: "—"
-  defp fmt(%NaiveDateTime{} = dt), do: NaiveDateTime.to_string(dt) |> String.slice(0..18)
-  defp fmt(%DateTime{} = dt), do: DateTime.to_string(dt) |> String.slice(0..18)
+
+  defp fmt(%NaiveDateTime{} = dt),
+    do: NaiveDateTime.to_string(dt) |> String.slice(0..18)
+
+  defp fmt(%DateTime{} = dt),
+    do: DateTime.to_string(dt) |> String.slice(0..18)
+
   defp fmt(other), do: to_string(other)
 
   defp to_int(nil, d), do: d

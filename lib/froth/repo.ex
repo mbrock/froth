@@ -18,7 +18,8 @@ defmodule Froth.Repo do
 
   @doc false
   def allow_debug_context(pid \\ self()) when is_pid(pid) do
-    process_dict_value(pid, @allow_debug_key) || table_allow_debug_context(pid)
+    process_dict_value(pid, @allow_debug_key) ||
+      table_allow_debug_context(pid)
   end
 
   @doc """
@@ -92,7 +93,8 @@ defmodule Froth.Repo do
     end
   end
 
-  defp sandbox_pool?, do: __MODULE__.config()[:pool] == Ecto.Adapters.SQL.Sandbox
+  defp sandbox_pool?,
+    do: __MODULE__.config()[:pool] == Ecto.Adapters.SQL.Sandbox
 
   defp remember_allow_debug(parent_pid, label) when is_pid(parent_pid) do
     parent_debug = allow_debug_context(parent_pid)
@@ -179,7 +181,8 @@ defmodule Froth.Repo do
     end
   end
 
-  defp put_allow_debug_context(pid, debug) when is_pid(pid) and is_map(debug) do
+  defp put_allow_debug_context(pid, debug)
+       when is_pid(pid) and is_map(debug) do
     table = ensure_allow_debug_table()
     true = :ets.insert(table, {pid, debug})
     :ok
@@ -189,7 +192,12 @@ defmodule Froth.Repo do
     case :ets.whereis(@allow_debug_table) do
       :undefined ->
         try do
-          :ets.new(@allow_debug_table, [:named_table, :public, :set, read_concurrency: true])
+          :ets.new(@allow_debug_table, [
+            :named_table,
+            :public,
+            :set,
+            read_concurrency: true
+          ])
         rescue
           ArgumentError -> @allow_debug_table
         end

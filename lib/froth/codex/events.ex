@@ -11,8 +11,10 @@ defmodule Froth.Codex.Events do
 
   @max_stored_entries 2_000
 
-  @spec load_recent_entries(String.t(), pos_integer()) :: {list(map()), non_neg_integer()}
-  def load_recent_entries(session_id, limit \\ 800) when is_binary(session_id) and limit > 0 do
+  @spec load_recent_entries(String.t(), pos_integer()) ::
+          {list(map()), non_neg_integer()}
+  def load_recent_entries(session_id, limit \\ 800)
+      when is_binary(session_id) and limit > 0 do
     events =
       from(e in Event,
         where: e.session_id == ^session_id,
@@ -58,7 +60,9 @@ defmodule Froth.Codex.Events do
 
     from(e in Event,
       join: latest in subquery(latest_by_session),
-      on: e.session_id == latest.session_id and e.sequence == latest.max_sequence,
+      on:
+        e.session_id == latest.session_id and
+          e.sequence == latest.max_sequence,
       order_by: [desc: latest.last_seen_at],
       limit: ^limit,
       select: %{
@@ -73,12 +77,16 @@ defmodule Froth.Codex.Events do
     |> Repo.all(log: false)
   rescue
     error ->
-      Span.execute([:froth, :codex, :events_list_failed], nil, %{error: Exception.message(error)})
+      Span.execute([:froth, :codex, :events_list_failed], nil, %{
+        error: Exception.message(error)
+      })
+
       []
   end
 
   @spec upsert_entry(String.t(), map()) :: :ok
-  def upsert_entry(session_id, entry) when is_binary(session_id) and is_map(entry) do
+  def upsert_entry(session_id, entry)
+      when is_binary(session_id) and is_map(entry) do
     id = to_string(entry[:id] || entry["id"])
     sequence = entry[:sequence] || entry["sequence"] || 0
     kind = entry[:kind] || entry["kind"] || :event
@@ -131,7 +139,9 @@ defmodule Froth.Codex.Events do
               rem(sequence, 100) == 0 do
     cutoff = max(sequence - @max_stored_entries, 0)
 
-    from(e in Event, where: e.session_id == ^session_id and e.sequence < ^cutoff)
+    from(e in Event,
+      where: e.session_id == ^session_id and e.sequence < ^cutoff
+    )
     |> Repo.delete_all(log: false)
 
     :ok
@@ -160,8 +170,11 @@ defmodule Froth.Codex.Events do
 
   defp maybe_put(entry, metadata, key) do
     case Map.get(metadata, key) do
-      value when is_binary(value) and value != "" -> Map.put(entry, String.to_atom(key), value)
-      _ -> entry
+      value when is_binary(value) and value != "" ->
+        Map.put(entry, String.to_atom(key), value)
+
+      _ ->
+        entry
     end
   end
 

@@ -37,7 +37,11 @@ defmodule Froth.Telegram.SessionConfig do
     phone = get_field(changeset, :phone_number)
 
     if is_nil(bot) and is_nil(phone) do
-      add_error(changeset, :bot_token, "either bot_token or phone_number is required")
+      add_error(
+        changeset,
+        :bot_token,
+        "either bot_token or phone_number is required"
+      )
     else
       changeset
     end
@@ -45,7 +49,9 @@ defmodule Froth.Telegram.SessionConfig do
 
   @doc "XDG state path for TDLib session data."
   def tdlib_path(session_id, subdir) do
-    state_home = System.get_env("XDG_STATE_HOME") || Path.expand("~/.local/state")
+    state_home =
+      System.get_env("XDG_STATE_HOME") || Path.expand("~/.local/state")
+
     Path.join([state_home, "froth", "tdlib", session_id, subdir])
   end
 

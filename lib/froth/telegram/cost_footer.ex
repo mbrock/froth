@@ -51,9 +51,17 @@ defmodule Froth.Telegram.CostFooter do
     full_text = append_footer(last_sent_message_text, footer)
 
     if String.length(full_text) <= BotAdapter.text_limit() do
-      case BotAdapter.edit_message_text(session_id, chat_id, last_sent_message_id, full_text) do
-        {:ok, _} -> :ok
-        {:error, _reason} -> send_standalone(session_id, chat_id, reply_to, footer)
+      case BotAdapter.edit_message_text(
+             session_id,
+             chat_id,
+             last_sent_message_id,
+             full_text
+           ) do
+        {:ok, _} ->
+          :ok
+
+        {:error, _reason} ->
+          send_standalone(session_id, chat_id, reply_to, footer)
       end
     else
       send_standalone(session_id, chat_id, reply_to, footer)
@@ -61,13 +69,18 @@ defmodule Froth.Telegram.CostFooter do
   end
 
   defp send_standalone(session_id, chat_id, reply_to, footer) do
-    _ = BotAdapter.send_message(session_id, chat_id, footer, reply_to: reply_to)
+    _ =
+      BotAdapter.send_message(session_id, chat_id, footer, reply_to: reply_to)
+
     :ok
   end
 
   defp append_footer(text, footer) do
     trimmed = String.trim_trailing(text)
-    if String.ends_with?(trimmed, footer), do: trimmed, else: trimmed <> "\n\n" <> footer
+
+    if String.ends_with?(trimmed, footer),
+      do: trimmed,
+      else: trimmed <> "\n\n" <> footer
   end
 
   defp render(%Cycle{} = cycle, usage, cost_usd) do
@@ -80,8 +93,13 @@ defmodule Froth.Telegram.CostFooter do
       duration = format_seconds(elapsed_seconds(cycle))
       in_part = format_tokens_k(total_in)
       out_part = format_tokens_k(total_out)
-      cache_write_part = format_tokens_k(usage_int(usage["cache_creation_input_tokens"]))
-      cache_read_part = format_tokens_k(usage_int(usage["cache_read_input_tokens"]))
+
+      cache_write_part =
+        format_tokens_k(usage_int(usage["cache_creation_input_tokens"]))
+
+      cache_read_part =
+        format_tokens_k(usage_int(usage["cache_read_input_tokens"]))
+
       cost = "$" <> :erlang.float_to_binary(cost_usd * 1.0, decimals: 3)
 
       "[#{duration} | #{in_part} in | #{out_part} out | #{cache_write_part} cw | #{cache_read_part} cr | #{cost}]"
@@ -90,7 +108,10 @@ defmodule Froth.Telegram.CostFooter do
 
   defp elapsed_seconds(%Cycle{started_at: %DateTime{} = started_at} = cycle) do
     finished_at = cycle.finished_at || DateTime.utc_now()
-    DateTime.diff(finished_at, started_at, :millisecond) |> max(0) |> Kernel./(1000)
+
+    DateTime.diff(finished_at, started_at, :millisecond)
+    |> max(0)
+    |> Kernel./(1000)
   end
 
   defp elapsed_seconds(_cycle), do: 0.0

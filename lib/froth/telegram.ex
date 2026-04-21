@@ -44,7 +44,8 @@ defmodule Froth.Telegram do
     children = [
       {Registry, keys: :unique, name: Froth.Telegram.Registry},
       Froth.Telegram.Cnode,
-      {DynamicSupervisor, name: Froth.Telegram.SessionSupervisor, strategy: :one_for_one}
+      {DynamicSupervisor,
+       name: Froth.Telegram.SessionSupervisor, strategy: :one_for_one}
     ]
 
     Supervisor.init(children, strategy: :one_for_all)
@@ -62,7 +63,10 @@ defmodule Froth.Telegram do
   def stop_session(id) do
     case Registry.lookup(Froth.Telegram.Registry, id) do
       [{pid, _}] ->
-        DynamicSupervisor.terminate_child(Froth.Telegram.SessionSupervisor, pid)
+        DynamicSupervisor.terminate_child(
+          Froth.Telegram.SessionSupervisor,
+          pid
+        )
 
       [] ->
         {:error, :not_found}
@@ -76,18 +80,26 @@ defmodule Froth.Telegram do
   # --- messaging ---
 
   def subscribe(session_id) do
-    Phoenix.PubSub.subscribe(Froth.PubSub, Froth.Telegram.Session.topic(session_id))
+    Phoenix.PubSub.subscribe(
+      Froth.PubSub,
+      Froth.Telegram.Session.topic(session_id)
+    )
   end
 
   @doc "PubSub topic for persisted updates scoped to one Telegram chat."
-  def chat_topic(chat_id) when is_integer(chat_id), do: "telegram:chat:#{chat_id}"
+  def chat_topic(chat_id) when is_integer(chat_id),
+    do: "telegram:chat:#{chat_id}"
 
   def send(session_id, request) do
     GenServer.cast(Froth.Telegram.Session.via(session_id), {:send, request})
   end
 
   def call(session_id, request, timeout \\ 30_000) do
-    GenServer.call(Froth.Telegram.Session.via(session_id), {:call, request}, timeout)
+    GenServer.call(
+      Froth.Telegram.Session.via(session_id),
+      {:call, request},
+      timeout
+    )
   end
 
   @doc """
@@ -124,7 +136,8 @@ defmodule Froth.Telegram do
   end
 
   def send_image(session_id, chat_id, images, opts)
-      when is_binary(session_id) and is_integer(chat_id) and is_list(images) and is_list(opts) do
+      when is_binary(session_id) and is_integer(chat_id) and is_list(images) and
+             is_list(opts) do
     if length(images) > 10 do
       {:error, "Telegram image albums support at most 10 images"}
     else
@@ -133,7 +146,8 @@ defmodule Froth.Telegram do
              %{
                "@type" => "sendMessageAlbum",
                "chat_id" => chat_id,
-               "input_message_contents" => album_contents(prepared_images, opts)
+               "input_message_contents" =>
+                 album_contents(prepared_images, opts)
              }
              |> maybe_put_reply_to(opts[:reply_to])
              |> then(&call(session_id, &1)) do
@@ -172,7 +186,8 @@ defmodule Froth.Telegram do
       %{
         "@type" => "sendMessage",
         "chat_id" => chat_id,
-        "input_message_content" => photo_content(prepared_image.file_ref, opts)
+        "input_message_content" =>
+          photo_content(prepared_image.file_ref, opts)
       }
       |> maybe_put_reply_to(opts[:reply_to])
       |> then(&call(session_id, &1))
@@ -199,7 +214,11 @@ defmodule Froth.Telegram do
 
       content =
         if caption,
-          do: Map.put(content, "caption", %{"@type" => "formattedText", "text" => caption}),
+          do:
+            Map.put(content, "caption", %{
+              "@type" => "formattedText",
+              "text" => caption
+            }),
           else: content
 
       call(session_id, %{
@@ -228,7 +247,11 @@ defmodule Froth.Telegram do
 
       content =
         if caption,
-          do: Map.put(content, "caption", %{"@type" => "formattedText", "text" => caption}),
+          do:
+            Map.put(content, "caption", %{
+              "@type" => "formattedText",
+              "text" => caption
+            }),
           else: content
 
       call(session_id, %{
@@ -260,7 +283,11 @@ defmodule Froth.Telegram do
 
       content =
         if is_binary(caption) and caption != "" do
-          Map.put(content, "caption", formatted_text(caption, caption_entities))
+          Map.put(
+            content,
+            "caption",
+            formatted_text(caption, caption_entities)
+          )
         else
           content
         end
@@ -295,13 +322,18 @@ defmodule Froth.Telegram do
   end
 
   defp prepare_image(input) do
-    with {:ok, %{file_data: file_data, filename: filename, media_type: media_type}} <-
+    with {:ok,
+          %{file_data: file_data, filename: filename, media_type: media_type}} <-
            image_data(input),
-         {:ok, metadata} <- DurableFiles.persist(file_data, media_type, filename) do
+         {:ok, metadata} <-
+           DurableFiles.persist(file_data, media_type, filename) do
       {:ok,
        %{
          metadata: metadata,
-         file_ref: %{"@type" => "inputFileLocal", "path" => metadata["local_path"]}
+         file_ref: %{
+           "@type" => "inputFileLocal",
+           "path" => metadata["local_path"]
+         }
        }}
     end
   end
@@ -345,7 +377,8 @@ defmodule Froth.Telegram do
   end
 
   defp image_data(_input) do
-    {:error, "Unsupported image input. Use a local path, URL, Image value, or Nx tensor."}
+    {:error,
+     "Unsupported image input. Use a local path, URL, Image value, or Nx tensor."}
   end
 
   defp image_data_from_path(path) when is_binary(path) do
@@ -367,10 +400,13 @@ defmodule Froth.Telegram do
     end
   end
 
-  defp download_image_data(url, default_ext) when is_binary(url) and is_binary(default_ext) do
+  defp download_image_data(url, default_ext)
+       when is_binary(url) and is_binary(default_ext) do
     filename = filename_from_url(url, default_ext)
 
-    case Finch.request(Finch.build(:get, url), Froth.Finch, receive_timeout: 120_000) do
+    case Finch.request(Finch.build(:get, url), Froth.Finch,
+           receive_timeout: 120_000
+         ) do
       {:ok, %Finch.Response{status: 200, body: body, headers: headers}} ->
         {:ok,
          %{
@@ -410,7 +446,9 @@ defmodule Froth.Telegram do
         "froth_#{:crypto.strong_rand_bytes(8) |> Base.hex_encode32(case: :lower)}#{ext}"
       )
 
-    case Finch.request(Finch.build(:get, url), Froth.Finch, receive_timeout: 120_000) do
+    case Finch.request(Finch.build(:get, url), Froth.Finch,
+           receive_timeout: 120_000
+         ) do
       {:ok, %Finch.Response{status: 200, body: body}} ->
         File.write!(tmp, body)
         {:ok, %{"@type" => "inputFileLocal", "path" => tmp}}
@@ -438,9 +476,11 @@ defmodule Froth.Telegram do
     end
   end
 
-  defp ensure_image_filename(_filename, suffix) when is_binary(suffix), do: "image#{suffix}"
+  defp ensure_image_filename(_filename, suffix) when is_binary(suffix),
+    do: "image#{suffix}"
 
-  defp filename_from_url(url, default_ext) when is_binary(url) and is_binary(default_ext) do
+  defp filename_from_url(url, default_ext)
+       when is_binary(url) and is_binary(default_ext) do
     case URI.parse(url).path do
       path when is_binary(path) and path != "" ->
         case Path.basename(path) do
@@ -465,7 +505,8 @@ defmodule Froth.Telegram do
 
   defp content_type_from_headers(_headers), do: nil
 
-  defp album_contents(prepared_images, opts) when is_list(prepared_images) and is_list(opts) do
+  defp album_contents(prepared_images, opts)
+       when is_list(prepared_images) and is_list(opts) do
     metadatas = Enum.map(prepared_images, & &1.metadata)
     first_item_opts = maybe_append_png_links(opts, metadatas)
 
@@ -477,7 +518,8 @@ defmodule Froth.Telegram do
     end)
   end
 
-  defp photo_content(file_ref, opts) when is_map(file_ref) and is_list(opts) do
+  defp photo_content(file_ref, opts)
+       when is_map(file_ref) and is_list(opts) do
     content = %{
       "@type" => "inputMessagePhoto",
       "photo" => file_ref,
@@ -515,7 +557,9 @@ defmodule Froth.Telegram do
       true ->
         caption = Keyword.get(opts, :caption) || ""
         entities = Keyword.get(opts, :caption_entities) || []
-        {new_caption, new_entities} = append_png_link_footer(caption, entities, urls)
+
+        {new_caption, new_entities} =
+          append_png_link_footer(caption, entities, urls)
 
         opts
         |> Keyword.put(:caption, new_caption)
@@ -541,7 +585,8 @@ defmodule Froth.Telegram do
     {parts_rev, _} =
       urls
       |> Enum.with_index(1)
-      |> Enum.reduce({[], utf16_length(prefix)}, fn {url, idx}, {acc, offset} ->
+      |> Enum.reduce({[], utf16_length(prefix)}, fn {url, idx},
+                                                    {acc, offset} ->
         between = if acc == [], do: "", else: " · "
         between_len = utf16_length(between)
         label = Integer.to_string(idx)
@@ -551,7 +596,10 @@ defmodule Froth.Telegram do
       end)
 
     parts = Enum.reverse(parts_rev)
-    suffix = Enum.map_join(parts, "", fn {between, label, _} -> between <> label end)
+
+    suffix =
+      Enum.map_join(parts, "", fn {between, label, _} -> between <> label end)
+
     new_text = prefix <> suffix
     new_entities = entities ++ Enum.map(parts, fn {_, _, e} -> e end)
     {new_text, new_entities}

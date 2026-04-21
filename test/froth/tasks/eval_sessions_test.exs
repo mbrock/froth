@@ -14,7 +14,8 @@ defmodule Froth.Tasks.EvalSessionsTest do
     end
 
     test "creates then reuses a provided session_id" do
-      session_id = "eval_session_manual_test_#{System.unique_integer([:positive])}"
+      session_id =
+        "eval_session_manual_test_#{System.unique_integer([:positive])}"
 
       assert {^session_id, true} = EvalSessions.ensure_session(session_id)
       assert {^session_id, false} = EvalSessions.ensure_session(session_id)

@@ -66,7 +66,8 @@ defmodule Froth.LLM do
     gemini: %{
       key_providers: ["gemini", "google"],
       provider_module: Froth.LLM.Providers.GeminiInteractions,
-      endpoint: "https://generativelanguage.googleapis.com/v1beta/interactions",
+      endpoint:
+        "https://generativelanguage.googleapis.com/v1beta/interactions",
       auth: :query_key,
       config_key: Froth.Gemini
     },
@@ -94,7 +95,8 @@ defmodule Froth.LLM do
   @spec stream_single(list(map() | Message.t()), on_event(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def stream_single(api_messages, on_event, opts \\ [])
-      when is_list(api_messages) and is_function(on_event, 1) and is_list(opts) do
+      when is_list(api_messages) and is_function(on_event, 1) and
+             is_list(opts) do
     with {:ok, request} <- build_request(api_messages, opts) do
       provider_name = resolve_provider_name(opts[:provider], opts[:model])
       stream_with_retries(provider_name, request, on_event, opts, 0)
@@ -102,7 +104,9 @@ defmodule Froth.LLM do
   end
 
   defp stream_with_retries(provider_name, request, on_event, opts, attempt) do
-    case Client.stream_request(provider_name, request, on_event, receive_timeout: 60_000) do
+    case Client.stream_request(provider_name, request, on_event,
+           receive_timeout: 60_000
+         ) do
       {:error, reason} = error ->
         cfg = provider_app_config(provider_name)
 
@@ -116,7 +120,14 @@ defmodule Froth.LLM do
             )
 
             if delay_ms > 0, do: Process.sleep(delay_ms)
-            stream_with_retries(provider_name, request, on_event, opts, attempt + 1)
+
+            stream_with_retries(
+              provider_name,
+              request,
+              on_event,
+              opts,
+              attempt + 1
+            )
         end
 
       result ->
@@ -124,7 +135,12 @@ defmodule Froth.LLM do
     end
   end
 
-  defp retry_delay_ms({:provider_error, _provider, error, _diagnostics}, attempt, opts, cfg) do
+  defp retry_delay_ms(
+         {:provider_error, _provider, error, _diagnostics},
+         attempt,
+         opts,
+         cfg
+       ) do
     if attempt < max_retries(opts, cfg) and retryable_error?(error) do
       compute_delay(attempt, opts, cfg)
     end
@@ -139,12 +155,15 @@ defmodule Froth.LLM do
 
   defp retry_delay_ms(_reason, _attempt, _opts, _cfg), do: nil
 
-  defp retryable_error?(%{"error" => %{} = error}), do: retryable_error?(error)
+  defp retryable_error?(%{"error" => %{} = error}),
+    do: retryable_error?(error)
 
   defp retryable_error?(%{} = error) do
     type = error["type"] || error[:type]
     code = error["code"] || error[:code]
-    message = String.downcase(to_string(error["message"] || error[:message] || ""))
+
+    message =
+      String.downcase(to_string(error["message"] || error[:message] || ""))
 
     type in ["api_error", "overloaded_error", "rate_limit_error"] or
       code in ["rate_limit_exceeded", "server_error", "overloaded_error"] or
@@ -163,14 +182,28 @@ defmodule Froth.LLM do
   end
 
   defp max_retries(opts, cfg),
-    do: Keyword.get(opts, :max_retries, Keyword.get(cfg, :max_retries, @default_max_retries))
+    do:
+      Keyword.get(
+        opts,
+        :max_retries,
+        Keyword.get(cfg, :max_retries, @default_max_retries)
+      )
 
   defp retry_base_ms(opts, cfg),
     do:
-      Keyword.get(opts, :retry_base_ms, Keyword.get(cfg, :retry_base_ms, @default_retry_base_ms))
+      Keyword.get(
+        opts,
+        :retry_base_ms,
+        Keyword.get(cfg, :retry_base_ms, @default_retry_base_ms)
+      )
 
   defp retry_max_ms(opts, cfg),
-    do: Keyword.get(opts, :retry_max_ms, Keyword.get(cfg, :retry_max_ms, @default_retry_max_ms))
+    do:
+      Keyword.get(
+        opts,
+        :retry_max_ms,
+        Keyword.get(cfg, :retry_max_ms, @default_retry_max_ms)
+      )
 
   # -- Request building --
 
@@ -184,7 +217,11 @@ defmodule Froth.LLM do
   @spec build_request(list(map() | Message.t()), keyword()) ::
           {:ok, Request.t()} | {:error, term()}
   def build_request(api_messages, opts) do
-    provider_name = resolve_provider_name(Keyword.get(opts, :provider), Keyword.get(opts, :model))
+    provider_name =
+      resolve_provider_name(
+        Keyword.get(opts, :provider),
+        Keyword.get(opts, :model)
+      )
 
     case Map.get(@providers, provider_name) do
       nil ->
@@ -223,23 +260,44 @@ defmodule Froth.LLM do
                    Keyword.get(opts, :thinking, Keyword.get(cfg, :thinking))
                  ),
                output_config: resolve_output_config(model, opts, cfg),
-               cache_control: resolve_cache_control(provider_name, api_messages, opts, cfg),
+               cache_control:
+                 resolve_cache_control(provider_name, api_messages, opts, cfg),
                response_modalities:
-                 Keyword.get(opts, :response_modalities, Keyword.get(cfg, :response_modalities)),
+                 Keyword.get(
+                   opts,
+                   :response_modalities,
+                   Keyword.get(cfg, :response_modalities)
+                 ),
                response_format:
-                 Keyword.get(opts, :response_format, Keyword.get(cfg, :response_format)),
+                 Keyword.get(
+                   opts,
+                   :response_format,
+                   Keyword.get(cfg, :response_format)
+                 ),
                response_mime_type:
-                 Keyword.get(opts, :response_mime_type, Keyword.get(cfg, :response_mime_type)),
+                 Keyword.get(
+                   opts,
+                   :response_mime_type,
+                   Keyword.get(cfg, :response_mime_type)
+                 ),
                headers: build_headers(provider_spec, api_key, tools),
-               endpoint: build_endpoint(provider_spec, api_key, model, opts, cfg),
+               endpoint:
+                 build_endpoint(provider_spec, api_key, model, opts, cfg),
                parent_id: Keyword.get(opts, :parent_id),
                provider_options: %{
-                 "reasoning_effort" => Keyword.get(opts, :effort, Keyword.get(cfg, :effort)),
+                 "reasoning_effort" =>
+                   Keyword.get(opts, :effort, Keyword.get(cfg, :effort)),
                  "reasoning_summary" =>
-                   Keyword.get(opts, :reasoning_summary, Keyword.get(cfg, :reasoning_summary)),
+                   Keyword.get(
+                     opts,
+                     :reasoning_summary,
+                     Keyword.get(cfg, :reasoning_summary)
+                   ),
                  "include_usage" => true,
-                 "text_verbosity" => Keyword.get(opts, :verbosity, Keyword.get(cfg, :verbosity)),
-                 "previous_response_id" => Keyword.get(opts, :previous_response_id)
+                 "text_verbosity" =>
+                   Keyword.get(opts, :verbosity, Keyword.get(cfg, :verbosity)),
+                 "previous_response_id" =>
+                   Keyword.get(opts, :previous_response_id)
                }
              }}
           end
@@ -274,7 +332,8 @@ defmodule Froth.LLM do
 
   defp resolve_thinking(_model, configured), do: configured
 
-  defp normalize_thinking(model, configured) when is_binary(model) and is_map(configured) do
+  defp normalize_thinking(model, configured)
+       when is_binary(model) and is_map(configured) do
     configured =
       Map.new(configured, fn {key, value} ->
         {to_string(key), value}
@@ -295,7 +354,8 @@ defmodule Froth.LLM do
   end
 
   defp resolve_output_config(model, opts, cfg) do
-    output_config = Keyword.get(opts, :output_config, Keyword.get(cfg, :output_config))
+    output_config =
+      Keyword.get(opts, :output_config, Keyword.get(cfg, :output_config))
 
     effort =
       opts
@@ -325,7 +385,11 @@ defmodule Froth.LLM do
 
   defp build_headers(%{auth: :anthropic}, api_key, tools) do
     beta = [@context_beta]
-    beta = if Enum.any?(List.wrap(tools), &mcp_tool?/1), do: beta ++ [@mcp_beta], else: beta
+
+    beta =
+      if Enum.any?(List.wrap(tools), &mcp_tool?/1),
+        do: beta ++ [@mcp_beta],
+        else: beta
 
     [
       {"x-api-key", api_key},
@@ -346,7 +410,13 @@ defmodule Froth.LLM do
   defp mcp_tool?(%{"type" => "mcp_endpoint"}), do: true
   defp mcp_tool?(_), do: false
 
-  defp build_endpoint(%{auth: :query_key, endpoint: base}, api_key, _model, opts, cfg) do
+  defp build_endpoint(
+         %{auth: :query_key, endpoint: base},
+         api_key,
+         _model,
+         opts,
+         cfg
+       ) do
     custom = Keyword.get(opts, :endpoint, Keyword.get(cfg, :endpoint))
     url = custom || base
     "#{String.trim_trailing(url, "/")}?alt=sse&key=#{api_key}"
@@ -366,15 +436,21 @@ defmodule Froth.LLM do
 
   # -- stream (low-level, used by Client) --
 
-  @spec stream(Request.t(), on_event(), keyword()) :: {:ok, map()} | {:error, term()}
+  @spec stream(Request.t(), on_event(), keyword()) ::
+          {:ok, map()} | {:error, term()}
   def stream(request, on_event, opts \\ [])
 
-  def stream(%Request{provider: Froth.LLM.Providers.Fake} = request, on_event, _opts)
+  def stream(
+        %Request{provider: Froth.LLM.Providers.Fake} = request,
+        on_event,
+        _opts
+      )
       when is_function(on_event, 1) do
     Froth.LLM.Fake.stream(request, on_event)
   end
 
-  def stream(%Request{} = request, on_event, opts) when is_function(on_event, 1) do
+  def stream(%Request{} = request, on_event, opts)
+      when is_function(on_event, 1) do
     provider = request.provider
     telemetry_provider = Keyword.get(opts, :provider_name, provider)
     on_edit = Keyword.get(opts, :on_edit, fn _edit -> :ok end)
@@ -411,10 +487,12 @@ defmodule Froth.LLM do
         {:ok, %{acc: store, diagnostics: diagnostics}} ->
           case provider_error_from_store(store) do
             nil ->
-              {:ok, provider.finalize(store) |> Map.put(:diagnostics, diagnostics)}
+              {:ok,
+               provider.finalize(store) |> Map.put(:diagnostics, diagnostics)}
 
             error ->
-              {:error, {:provider_error, provider_name(provider), error, diagnostics}}
+              {:error,
+               {:provider_error, provider_name(provider), error, diagnostics}}
           end
 
         {:error, _} = err ->
@@ -428,7 +506,8 @@ defmodule Froth.LLM do
 
   # -- active_api_key --
 
-  @spec active_api_key(String.t() | atom() | [String.t() | atom()]) :: String.t() | nil
+  @spec active_api_key(String.t() | atom() | [String.t() | atom()]) ::
+          String.t() | nil
   def active_api_key(provider)
       when is_binary(provider) or is_atom(provider) or is_list(provider) do
     providers =
@@ -451,7 +530,8 @@ defmodule Froth.LLM do
 
   # -- Provider resolution --
 
-  @spec resolve_provider_name(provider_ref(), String.t() | nil) :: atom() | nil
+  @spec resolve_provider_name(provider_ref(), String.t() | nil) ::
+          atom() | nil
   def resolve_provider_name(provider, model \\ nil)
 
   def resolve_provider_name(nil, model), do: provider_name_for_model(model)
@@ -494,7 +574,8 @@ defmodule Froth.LLM do
         Keyword.get(cfg, :cache_control, %{"type" => "ephemeral"})
       )
 
-    if provider_name == :anthropic and explicit_cache_breakpoints?(api_messages) do
+    if provider_name == :anthropic and
+         explicit_cache_breakpoints?(api_messages) do
       nil
     else
       cache_control
@@ -536,7 +617,8 @@ defmodule Froth.LLM do
     })
   end
 
-  defp provider_name(provider) when provider in [:anthropic, :openai, :grok, :gemini] do
+  defp provider_name(provider)
+       when provider in [:anthropic, :openai, :grok, :gemini] do
     provider
   end
 
@@ -548,7 +630,8 @@ defmodule Froth.LLM do
   end
 
   defp provider_module?(provider) when is_atom(provider) do
-    Code.ensure_loaded?(provider) and function_exported?(provider, :build_request, 1) and
+    Code.ensure_loaded?(provider) and
+      function_exported?(provider, :build_request, 1) and
       function_exported?(provider, :decode_payload, 2) and
       function_exported?(provider, :finalize, 1)
   end

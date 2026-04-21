@@ -1,7 +1,13 @@
 defmodule Froth.Tools.FetchTest do
   use ExUnit.Case, async: false
 
-  alias Froth.Agent.{CycleRuntime.Context, CycleRuntime.View, Surface, ToolUse}
+  alias Froth.Agent.{
+    CycleRuntime.Context,
+    CycleRuntime.View,
+    Surface,
+    ToolUse
+  }
+
   alias Froth.Context.Block
   alias Froth.Tools.Fetch
   alias Req.Test, as: ReqTest
@@ -19,27 +25,45 @@ defmodule Froth.Tools.FetchTest do
     end
 
     test "blank source returns a helpful error" do
-      assert {:error, msg} = Fetch.execute(empty_context(), tool_use(%{"source" => "   "}), [])
+      assert {:error, msg} =
+               Fetch.execute(
+                 empty_context(),
+                 tool_use(%{"source" => "   "}),
+                 []
+               )
+
       assert msg =~ "Missing source"
     end
 
     test "garbage source returns a helpful error" do
       assert {:error, msg} =
-               Fetch.execute(empty_context(), tool_use(%{"source" => "not-a-url-or-msg"}), [])
+               Fetch.execute(
+                 empty_context(),
+                 tool_use(%{"source" => "not-a-url-or-msg"}),
+                 []
+               )
 
       assert msg =~ "Invalid source"
     end
 
     test "telegram source without a chat returns a clear error" do
       assert {:error, msg} =
-               Fetch.execute(empty_context(), tool_use(%{"source" => "msg:42"}), [])
+               Fetch.execute(
+                 empty_context(),
+                 tool_use(%{"source" => "msg:42"}),
+                 []
+               )
 
       assert msg =~ "Telegram source requires"
     end
 
     test "negative integer is rejected" do
       assert {:error, msg} =
-               Fetch.execute(empty_context(), tool_use(%{"source" => "-1"}), [])
+               Fetch.execute(
+                 empty_context(),
+                 tool_use(%{"source" => "-1"}),
+                 []
+               )
 
       assert msg =~ "Invalid source"
     end
@@ -48,7 +72,11 @@ defmodule Froth.Tools.FetchTest do
       # Without a session, we expect the post-parse "Telegram source requires…" error,
       # which proves the parser accepted message_id as a fallback.
       assert {:error, msg} =
-               Fetch.execute(empty_context(), tool_use(%{"message_id" => 12_345}), [])
+               Fetch.execute(
+                 empty_context(),
+                 tool_use(%{"message_id" => 12_345}),
+                 []
+               )
 
       assert msg =~ "Telegram source requires"
     end
@@ -56,7 +84,9 @@ defmodule Froth.Tools.FetchTest do
 
   describe "URL fetch — non-HTML (direct Req)" do
     test "HEAD with image/png routes to Req.get and returns a binary fetched block" do
-      png_bytes = <<137, 80, 78, 71, 13, 10, 26, 10>> <> :crypto.strong_rand_bytes(64)
+      png_bytes =
+        <<137, 80, 78, 71, 13, 10, 26, 10>> <> :crypto.strong_rand_bytes(64)
+
       stub = stub_url("https://example.test/cat.png", png_bytes, "image/png")
 
       Req.default_options(plug: {ReqTest, stub})
@@ -102,14 +132,19 @@ defmodule Froth.Tools.FetchTest do
 
     test "PDF with explicit view: true inlines the body" do
       pdf = "%PDF-1.4\n" <> :crypto.strong_rand_bytes(128)
-      stub = stub_url("https://example.test/inlined.pdf", pdf, "application/pdf")
+
+      stub =
+        stub_url("https://example.test/inlined.pdf", pdf, "application/pdf")
 
       Req.default_options(plug: {ReqTest, stub})
 
       assert {:ok, [%Block{} = block]} =
                Fetch.execute(
                  empty_context(),
-                 tool_use(%{"source" => "https://example.test/inlined.pdf", "view" => true}),
+                 tool_use(%{
+                   "source" => "https://example.test/inlined.pdf",
+                   "view" => true
+                 }),
                  []
                )
 
@@ -120,14 +155,23 @@ defmodule Froth.Tools.FetchTest do
 
     test "view: false returns a metadata-only block (no body)" do
       bytes = :crypto.strong_rand_bytes(256)
-      stub = stub_url("https://example.test/blob.bin", bytes, "application/octet-stream")
+
+      stub =
+        stub_url(
+          "https://example.test/blob.bin",
+          bytes,
+          "application/octet-stream"
+        )
 
       Req.default_options(plug: {ReqTest, stub})
 
       assert {:ok, [%Block{} = block]} =
                Fetch.execute(
                  empty_context(),
-                 tool_use(%{"source" => "https://example.test/blob.bin", "view" => false}),
+                 tool_use(%{
+                   "source" => "https://example.test/blob.bin",
+                   "view" => false
+                 }),
                  []
                )
 
@@ -143,7 +187,9 @@ defmodule Froth.Tools.FetchTest do
       # HEAD with content-type: text/html (the error page's type).
       # We must NOT trust that and route to lightpanda — the actual
       # resource here is a PNG and we should get its raw bytes back.
-      png_bytes = <<137, 80, 78, 71, 13, 10, 26, 10>> <> :crypto.strong_rand_bytes(64)
+      png_bytes =
+        <<137, 80, 78, 71, 13, 10, 26, 10>> <> :crypto.strong_rand_bytes(64)
+
       stub_name = {:fetch_405_then_png, System.unique_integer([:positive])}
 
       ReqTest.stub(stub_name, fn conn ->
@@ -165,7 +211,9 @@ defmodule Froth.Tools.FetchTest do
       assert {:ok, [%Block{} = block]} =
                Fetch.execute(
                  empty_context(),
-                 tool_use(%{"source" => "https://example.test/disguised.png"}),
+                 tool_use(%{
+                   "source" => "https://example.test/disguised.png"
+                 }),
                  []
                )
 
@@ -196,8 +244,14 @@ defmodule Froth.Tools.FetchTest do
 
           "GET" ->
             conn
-            |> Plug.Conn.put_resp_header("content-type", "text/html; charset=utf-8")
-            |> Plug.Conn.send_resp(200, "<!doctype html><body>real html</body>")
+            |> Plug.Conn.put_resp_header(
+              "content-type",
+              "text/html; charset=utf-8"
+            )
+            |> Plug.Conn.send_resp(
+              200,
+              "<!doctype html><body>real html</body>"
+            )
         end
       end)
 

@@ -10,7 +10,10 @@ defmodule Froth.Agent.TaskBridge do
 
   @spec task_id_for_cycle(Cycle.t() | String.t()) :: String.t() | nil
   def task_id_for_cycle(%Cycle{id: cycle_id}), do: task_id_for_cycle(cycle_id)
-  def task_id_for_cycle(cycle_id) when is_binary(cycle_id), do: "#{@task_prefix}:#{cycle_id}"
+
+  def task_id_for_cycle(cycle_id) when is_binary(cycle_id),
+    do: "#{@task_prefix}:#{cycle_id}"
+
   def task_id_for_cycle(_cycle_id), do: nil
 
   @spec create_spawned_agent_task(Cycle.t(), String.t(), keyword()) ::
@@ -32,11 +35,13 @@ defmodule Froth.Agent.TaskBridge do
     end
   end
 
-  @spec sync_cycle_task(Cycle.t(), String.t() | nil, Cycle.status(), map()) :: :ok
+  @spec sync_cycle_task(Cycle.t(), String.t() | nil, Cycle.status(), map()) ::
+          :ok
   def sync_cycle_task(%Cycle{} = cycle, head_id, status, extra \\ %{})
       when status in [:completed, :failed, :cancelled] and is_map(extra) do
     case {task_id_for_cycle(cycle), cycle_task(cycle)} do
-      {task_id, %Froth.Task{status: task_status}} when task_status in ["pending", "running"] ->
+      {task_id, %Froth.Task{status: task_status}}
+      when task_status in ["pending", "running"] ->
         metadata = completion_metadata(cycle, head_id, status, extra)
         append_completion_output(task_id, status, metadata)
         finish_task(task_id, status, metadata)
@@ -55,15 +60,18 @@ defmodule Froth.Agent.TaskBridge do
     end
   end
 
-  defp finish_task(task_id, :completed, metadata) when is_binary(task_id) and is_map(metadata) do
+  defp finish_task(task_id, :completed, metadata)
+       when is_binary(task_id) and is_map(metadata) do
     :ok = Tasks.complete(task_id, metadata)
   end
 
-  defp finish_task(task_id, :failed, metadata) when is_binary(task_id) and is_map(metadata) do
+  defp finish_task(task_id, :failed, metadata)
+       when is_binary(task_id) and is_map(metadata) do
     :ok = Tasks.fail(task_id, task_error(metadata), metadata)
   end
 
-  defp finish_task(task_id, :cancelled, metadata) when is_binary(task_id) and is_map(metadata) do
+  defp finish_task(task_id, :cancelled, metadata)
+       when is_binary(task_id) and is_map(metadata) do
     :ok = Tasks.stop(task_id, metadata)
   end
 
@@ -103,7 +111,8 @@ defmodule Froth.Agent.TaskBridge do
     |> maybe_put("parent_cycle_id", Keyword.get(opts, :parent_cycle_id))
   end
 
-  defp completion_metadata(%Cycle{} = cycle, head_id, status, extra) when is_map(extra) do
+  defp completion_metadata(%Cycle{} = cycle, head_id, status, extra)
+       when is_map(extra) do
     %{}
     |> maybe_put("cycle_id", cycle.id)
     |> maybe_put("cycle_status", Atom.to_string(status))
@@ -172,7 +181,9 @@ defmodule Froth.Agent.TaskBridge do
     reply_to = Keyword.get(opts, :reply_to)
 
     if is_binary(bot_id) and is_integer(chat_id) do
-      case Tasks.subscribe_telegram(task_id, bot_id, chat_id, message_id: reply_to) do
+      case Tasks.subscribe_telegram(task_id, bot_id, chat_id,
+             message_id: reply_to
+           ) do
         {:ok, _link} -> :ok
         {:error, _reason} = error -> error
         _ -> :ok

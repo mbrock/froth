@@ -20,12 +20,16 @@ defmodule Froth.TestSupport.FakeCodexSession do
 
     GenServer.start_link(
       __MODULE__,
-      %{session_id: session_id, snapshot: normalize_snapshot(session_id, snapshot)},
+      %{
+        session_id: session_id,
+        snapshot: normalize_snapshot(session_id, snapshot)
+      },
       name: via(session_id)
     )
   end
 
-  def ensure_started(session_id, opts \\ []) when is_binary(session_id) and is_list(opts) do
+  def ensure_started(session_id, opts \\ [])
+      when is_binary(session_id) and is_list(opts) do
     case whereis(session_id) do
       pid when is_pid(pid) ->
         {:ok, pid}
@@ -58,7 +62,8 @@ defmodule Froth.TestSupport.FakeCodexSession do
     GenServer.call(via(session_id), {:send_prompt, prompt, opts})
   end
 
-  def set_snapshot(session_id, snapshot) when is_binary(session_id) and is_map(snapshot) do
+  def set_snapshot(session_id, snapshot)
+      when is_binary(session_id) and is_map(snapshot) do
     GenServer.call(via(session_id), {:set_snapshot, snapshot})
   end
 
@@ -82,7 +87,8 @@ defmodule Froth.TestSupport.FakeCodexSession do
     end
   end
 
-  def topic(session_id) when is_binary(session_id), do: "codex:session:#{session_id}"
+  def topic(session_id) when is_binary(session_id),
+    do: "codex:session:#{session_id}"
 
   @impl true
   def init(state), do: {:ok, state}
@@ -132,7 +138,11 @@ defmodule Froth.TestSupport.FakeCodexSession do
           end
 
         snapshot =
-          Map.put(state.snapshot, :runtime, Map.put(runtime, :reasoning_effort, normalized))
+          Map.put(
+            state.snapshot,
+            :runtime,
+            Map.put(runtime, :reasoning_effort, normalized)
+          )
 
         broadcast_update(state.session_id)
         {:reply, :ok, %{state | snapshot: snapshot}}
@@ -154,7 +164,11 @@ defmodule Froth.TestSupport.FakeCodexSession do
           end
 
         snapshot =
-          Map.put(state.snapshot, :runtime, Map.put(runtime, :model, normalized))
+          Map.put(
+            state.snapshot,
+            :runtime,
+            Map.put(runtime, :model, normalized)
+          )
 
         broadcast_update(state.session_id)
         {:reply, :ok, %{state | snapshot: snapshot}}
@@ -206,7 +220,8 @@ defmodule Froth.TestSupport.FakeCodexSession do
     next_turn_id = next_snapshot[:active_turn_id]
 
     cond do
-      is_binary(previous_turn_id) and is_nil(next_turn_id) and next_snapshot[:status] != :error ->
+      is_binary(previous_turn_id) and is_nil(next_turn_id) and
+          next_snapshot[:status] != :error ->
         append_entry(next_snapshot, :status, "turn completed")
 
       true ->
@@ -233,7 +248,8 @@ defmodule Froth.TestSupport.FakeCodexSession do
     append_entry_map(snapshot, %{kind: kind, body: body})
   end
 
-  defp append_entry_map(snapshot, entry) when is_map(snapshot) and is_map(entry) do
+  defp append_entry_map(snapshot, entry)
+       when is_map(snapshot) and is_map(entry) do
     sequence =
       snapshot
       |> Map.get(:entries, [])
@@ -271,7 +287,8 @@ defmodule Froth.TestSupport.FakeCodexSession do
           %{
             path: path,
             url: Map.get(image, :url) || Map.get(image, "url"),
-            alt: Map.get(image, :alt) || Map.get(image, "alt") || "Pasted image"
+            alt:
+              Map.get(image, :alt) || Map.get(image, "alt") || "Pasted image"
           }
         ]
 
@@ -283,7 +300,9 @@ defmodule Froth.TestSupport.FakeCodexSession do
             %{
               path: path,
               url: Map.get(image, :url) || Map.get(image, "url"),
-              alt: Map.get(image, :alt) || Map.get(image, "alt") || "Pasted image"
+              alt:
+                Map.get(image, :alt) || Map.get(image, "alt") ||
+                  "Pasted image"
             }
           ]
         else

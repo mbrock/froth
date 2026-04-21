@@ -80,12 +80,14 @@ defmodule Froth.Tools.Fetch do
   end
 
   @impl true
-  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks) when is_map(input) do
+  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks)
+      when is_map(input) do
     with {:ok, source} <- parse_source(input["source"] || input["message_id"]),
          {:ok, fetched} <- fetch_source(source, ctx),
          {:ok, media_type} <- resolve_media_type(fetched),
          {:ok, filename} <- resolve_filename(fetched, media_type),
-         {:ok, metadata} <- DurableFiles.persist(fetched.data, media_type, filename),
+         {:ok, metadata} <-
+           DurableFiles.persist(fetched.data, media_type, filename),
          {:ok, view?} <- resolve_view(input["view"], media_type),
          {:ok, blocks} <- build_result_blocks(fetched, metadata, view?) do
       {:ok, blocks}
@@ -103,7 +105,8 @@ defmodule Froth.Tools.Fetch do
 
     cond do
       trimmed == "" ->
-        {:error, "Missing source. Provide a Telegram message id (msg:N) or an http(s):// URL."}
+        {:error,
+         "Missing source. Provide a Telegram message id (msg:N) or an http(s):// URL."}
 
       url?(trimmed) ->
         {:ok, {:url, trimmed}}
@@ -114,11 +117,13 @@ defmodule Froth.Tools.Fetch do
   end
 
   defp parse_source(nil) do
-    {:error, "Missing source. Provide a Telegram message id (msg:N) or an http(s):// URL."}
+    {:error,
+     "Missing source. Provide a Telegram message id (msg:N) or an http(s):// URL."}
   end
 
   defp parse_source(_),
-    do: {:error, "Invalid source. Use msg:N for Telegram or an http(s):// URL."}
+    do:
+      {:error, "Invalid source. Use msg:N for Telegram or an http(s):// URL."}
 
   defp url?(value) when is_binary(value) do
     String.starts_with?(value, ["http://", "https://"])
@@ -135,7 +140,8 @@ defmodule Froth.Tools.Fetch do
         {:ok, {:telegram, message_id}}
 
       _ ->
-        {:error, "Invalid source. Use an integer like 12345, msg:12345, or an http(s):// URL."}
+        {:error,
+         "Invalid source. Use an integer like 12345, msg:12345, or an http(s):// URL."}
     end
   end
 
@@ -145,9 +151,11 @@ defmodule Froth.Tools.Fetch do
          surface: %{chat_id: chat_id, session_id: session_id}
        })
        when is_integer(chat_id) and is_binary(session_id) do
-    with {:ok, message} <- fetch_message_for_media(session_id, chat_id, message_id),
+    with {:ok, message} <-
+           fetch_message_for_media(session_id, chat_id, message_id),
          {:ok, media} <- extract_fetch_media(message, message_id),
-         {:ok, file_data, local_path} <- download_tdlib_file(session_id, media.file_id) do
+         {:ok, file_data, local_path} <-
+           download_tdlib_file(session_id, media.file_id) do
       {:ok,
        %Fetched{
          source: "msg:#{message_id}",
@@ -156,13 +164,15 @@ defmodule Froth.Tools.Fetch do
          filename: media.filename,
          local_path: local_path,
          fallback_basename: telegram_basename(media.message_type, message_id),
-         fallback_media_type: default_media_type_for_message_type(media.message_type)
+         fallback_media_type:
+           default_media_type_for_message_type(media.message_type)
        }}
     end
   end
 
   defp fetch_source({:telegram, _message_id}, %Context{}) do
-    {:error, "Telegram source requires an active session and chat in the cycle context."}
+    {:error,
+     "Telegram source requires an active session and chat in the cycle context."}
   end
 
   defp fetch_source({:url, url}, %Context{} = _ctx) do
@@ -206,7 +216,8 @@ defmodule Froth.Tools.Fetch do
               {fetch_via_lightpanda(url),
                %{outcome: :lightpanda_via_get, content_type: media_type}}
             else
-              {{:ok, fetched}, %{outcome: :req_via_get_sniff, content_type: media_type}}
+              {{:ok, fetched},
+               %{outcome: :req_via_get_sniff, content_type: media_type}}
             end
 
           {:error, _} = error ->
@@ -221,7 +232,8 @@ defmodule Froth.Tools.Fetch do
   # HTML error page would be sent to lightpanda).
   defp head_content_type(url) do
     case Req.head(url, redirect: true, retry: false, decode_body: false) do
-      {:ok, %Req.Response{status: status, headers: headers}} when status in 200..299 ->
+      {:ok, %Req.Response{status: status, headers: headers}}
+      when status in 200..299 ->
         case content_type_header(headers) do
           nil -> :unknown
           ct -> {:ok, ct}
@@ -371,9 +383,12 @@ defmodule Froth.Tools.Fetch do
     {:ok, filename}
   end
 
-  defp resolve_filename(%Fetched{} = fetched, media_type) when is_binary(media_type) do
+  defp resolve_filename(%Fetched{} = fetched, media_type)
+       when is_binary(media_type) do
     extension = DurableFiles.extension_from_media_type(media_type) || ".bin"
-    {:ok, fetched.fallback_basename <> "-" <> short_hash(fetched.data) <> extension}
+
+    {:ok,
+     fetched.fallback_basename <> "-" <> short_hash(fetched.data) <> extension}
   end
 
   defp resolve_view(nil, media_type) when is_binary(media_type) do
@@ -398,7 +413,8 @@ defmodule Froth.Tools.Fetch do
     end
   end
 
-  defp build_result_blocks(%Fetched{} = fetched, metadata, view?) when is_boolean(view?) do
+  defp build_result_blocks(%Fetched{} = fetched, metadata, view?)
+       when is_boolean(view?) do
     body = if view?, do: fetched.data, else: nil
 
     attrs = [
@@ -415,13 +431,16 @@ defmodule Froth.Tools.Fetch do
   end
 
   defp short_hash(data) when is_binary(data) do
-    :crypto.hash(:sha256, data) |> Base.encode16(case: :lower) |> binary_part(0, 8)
+    :crypto.hash(:sha256, data)
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 8)
   end
 
   # ── Telegram backend (unchanged behavior) ────────────────────────
 
   defp fetch_message_for_media(session_id, chat_id, message_id)
-       when is_binary(session_id) and is_integer(chat_id) and is_integer(message_id) do
+       when is_binary(session_id) and is_integer(chat_id) and
+              is_integer(message_id) do
     case Froth.Telegram.call(
            session_id,
            %{
@@ -445,7 +464,10 @@ defmodule Froth.Tools.Fetch do
     end
   end
 
-  defp extract_fetch_media(%{"content" => %{"@type" => "messagePhoto"} = content}, message_id) do
+  defp extract_fetch_media(
+         %{"content" => %{"@type" => "messagePhoto"} = content},
+         message_id
+       ) do
     sizes = get_in(content, ["photo", "sizes"]) || []
     largest = Enum.max_by(sizes, &photo_size_pixels/1, fn -> nil end)
     file_id = get_in(largest || %{}, ["photo", "id"])
@@ -460,12 +482,18 @@ defmodule Froth.Tools.Fetch do
          declared_media_type: nil
        }}
     else
-      {:error, "Message msg:#{message_id} does not include a downloadable photo."}
+      {:error,
+       "Message msg:#{message_id} does not include a downloadable photo."}
     end
   end
 
   defp extract_fetch_media(
-         %{"content" => %{"@type" => "messageDocument", "document" => document}},
+         %{
+           "content" => %{
+             "@type" => "messageDocument",
+             "document" => document
+           }
+         },
          message_id
        )
        when is_map(document) do
@@ -483,7 +511,8 @@ defmodule Froth.Tools.Fetch do
              DurableFiles.media_type_from_filename(document["file_name"])
        }}
     else
-      {:error, "Message msg:#{message_id} does not include a downloadable document."}
+      {:error,
+       "Message msg:#{message_id} does not include a downloadable document."}
     end
   end
 
@@ -506,7 +535,8 @@ defmodule Froth.Tools.Fetch do
              DurableFiles.media_type_from_filename(video["file_name"])
        }}
     else
-      {:error, "Message msg:#{message_id} does not include a downloadable video."}
+      {:error,
+       "Message msg:#{message_id} does not include a downloadable video."}
     end
   end
 
@@ -529,12 +559,18 @@ defmodule Froth.Tools.Fetch do
              DurableFiles.media_type_from_filename(audio["file_name"])
        }}
     else
-      {:error, "Message msg:#{message_id} does not include a downloadable audio file."}
+      {:error,
+       "Message msg:#{message_id} does not include a downloadable audio file."}
     end
   end
 
   defp extract_fetch_media(
-         %{"content" => %{"@type" => "messageVoiceNote", "voice_note" => voice_note}},
+         %{
+           "content" => %{
+             "@type" => "messageVoiceNote",
+             "voice_note" => voice_note
+           }
+         },
          message_id
        )
        when is_map(voice_note) do
@@ -547,10 +583,12 @@ defmodule Froth.Tools.Fetch do
          message_type: "messageVoiceNote",
          file_id: file_id,
          filename: nil,
-         declared_media_type: present_string(voice_note["mime_type"]) || "audio/ogg"
+         declared_media_type:
+           present_string(voice_note["mime_type"]) || "audio/ogg"
        }}
     else
-      {:error, "Message msg:#{message_id} does not include a downloadable voice note."}
+      {:error,
+       "Message msg:#{message_id} does not include a downloadable voice note."}
     end
   end
 
@@ -571,12 +609,18 @@ defmodule Froth.Tools.Fetch do
          declared_media_type: sticker_media_type(sticker)
        }}
     else
-      {:error, "Message msg:#{message_id} does not include a downloadable sticker."}
+      {:error,
+       "Message msg:#{message_id} does not include a downloadable sticker."}
     end
   end
 
   defp extract_fetch_media(
-         %{"content" => %{"@type" => "messageAnimation", "animation" => animation}},
+         %{
+           "content" => %{
+             "@type" => "messageAnimation",
+             "animation" => animation
+           }
+         },
          message_id
        )
        when is_map(animation) do
@@ -594,12 +638,18 @@ defmodule Froth.Tools.Fetch do
              DurableFiles.media_type_from_filename(animation["file_name"])
        }}
     else
-      {:error, "Message msg:#{message_id} does not include a downloadable animation."}
+      {:error,
+       "Message msg:#{message_id} does not include a downloadable animation."}
     end
   end
 
   defp extract_fetch_media(
-         %{"content" => %{"@type" => "messageVideoNote", "video_note" => video_note}},
+         %{
+           "content" => %{
+             "@type" => "messageVideoNote",
+             "video_note" => video_note
+           }
+         },
          message_id
        )
        when is_map(video_note) do
@@ -615,7 +665,8 @@ defmodule Froth.Tools.Fetch do
          declared_media_type: "video/mp4"
        }}
     else
-      {:error, "Message msg:#{message_id} does not include a downloadable video note."}
+      {:error,
+       "Message msg:#{message_id} does not include a downloadable video note."}
     end
   end
 
@@ -636,10 +687,14 @@ defmodule Froth.Tools.Fetch do
            },
            180_000
          ) do
-      {:ok, %{"local" => %{"path" => path}}} when is_binary(path) and path != "" ->
+      {:ok, %{"local" => %{"path" => path}}}
+      when is_binary(path) and path != "" ->
         case File.read(path) do
-          {:ok, data} -> {:ok, data, path}
-          {:error, reason} -> {:error, "downloaded file read failed: #{inspect(reason)}"}
+          {:ok, data} ->
+            {:ok, data, path}
+
+          {:error, reason} ->
+            {:error, "downloaded file read failed: #{inspect(reason)}"}
         end
 
       {:ok, %{"@type" => "error", "message" => reason}} ->
@@ -649,7 +704,8 @@ defmodule Froth.Tools.Fetch do
         {:error, "downloadFile failed: #{inspect(reason)}"}
 
       {:ok, other} ->
-        {:error, "downloadFile returned unexpected response: #{inspect(other)}"}
+        {:error,
+         "downloadFile returned unexpected response: #{inspect(other)}"}
     end
   end
 
@@ -669,13 +725,25 @@ defmodule Froth.Tools.Fetch do
   defp telegram_basename(_type, id), do: "msg-#{id}"
 
   defp default_media_type_for_message_type("messagePhoto"), do: "image/jpeg"
-  defp default_media_type_for_message_type("messageDocument"), do: "application/octet-stream"
+
+  defp default_media_type_for_message_type("messageDocument"),
+    do: "application/octet-stream"
+
   defp default_media_type_for_message_type("messageVideo"), do: "video/mp4"
   defp default_media_type_for_message_type("messageAudio"), do: "audio/mpeg"
-  defp default_media_type_for_message_type("messageVoiceNote"), do: "audio/ogg"
-  defp default_media_type_for_message_type("messageSticker"), do: "application/octet-stream"
-  defp default_media_type_for_message_type("messageAnimation"), do: "video/mp4"
-  defp default_media_type_for_message_type("messageVideoNote"), do: "video/mp4"
+
+  defp default_media_type_for_message_type("messageVoiceNote"),
+    do: "audio/ogg"
+
+  defp default_media_type_for_message_type("messageSticker"),
+    do: "application/octet-stream"
+
+  defp default_media_type_for_message_type("messageAnimation"),
+    do: "video/mp4"
+
+  defp default_media_type_for_message_type("messageVideoNote"),
+    do: "video/mp4"
+
   defp default_media_type_for_message_type(_), do: "application/octet-stream"
 
   defp photo_size_pixels(size) when is_map(size) do
@@ -694,12 +762,15 @@ defmodule Froth.Tools.Fetch do
 
   defp present_string(_), do: nil
 
-  defp sticker_media_type(%{"format" => %{"@type" => "stickerFormatWebp"}}), do: "image/webp"
+  defp sticker_media_type(%{"format" => %{"@type" => "stickerFormatWebp"}}),
+    do: "image/webp"
 
   defp sticker_media_type(%{"format" => %{"@type" => "stickerFormatTgs"}}),
     do: "application/x-tgsticker"
 
-  defp sticker_media_type(%{"format" => %{"@type" => "stickerFormatWebm"}}), do: "video/webm"
+  defp sticker_media_type(%{"format" => %{"@type" => "stickerFormatWebm"}}),
+    do: "video/webm"
+
   defp sticker_media_type(_), do: "application/octet-stream"
 
   defp sticker_filename(sticker) when is_map(sticker) do

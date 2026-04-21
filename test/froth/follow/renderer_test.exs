@@ -87,7 +87,10 @@ defmodule Froth.Follow.RendererTest do
     assert primary =~ "froth.agent.tool.started"
     assert secondary =~ "56ms"
     assert secondary =~ "provider=anthropic"
-    assert secondary =~ "this string should stay fully visible without truncation"
+
+    assert secondary =~
+             "this string should stay fully visible without truncation"
+
     refute rendered =~ ~r/[│├└]/u
   end
 

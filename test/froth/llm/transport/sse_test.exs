@@ -4,7 +4,11 @@ defmodule Froth.LLM.Transport.SSETest do
   alias Froth.LLM.Transport.SSE
 
   test "flushes a final unterminated event at end of stream" do
-    assert {:ok, %{acc: [%{"type" => "response.completed"}], diagnostics: diagnostics}} =
+    assert {:ok,
+            %{
+              acc: [%{"type" => "response.completed"}],
+              diagnostics: diagnostics
+            }} =
              SSE.consume_chunks(
                [
                  "event: response.completed\n",
@@ -32,7 +36,10 @@ defmodule Froth.LLM.Transport.SSETest do
 
     assert diagnostics.raw_event_count == 1
     assert diagnostics.json_decode_error_count == 1
-    assert [%{"data" => data, "error" => error}] = diagnostics.json_decode_errors
+
+    assert [%{"data" => data, "error" => error}] =
+             diagnostics.json_decode_errors
+
     assert data =~ "\"response.completed\""
     assert error != ""
   end

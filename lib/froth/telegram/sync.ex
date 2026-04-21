@@ -28,7 +28,9 @@ defmodule Froth.Telegram.Sync do
   def backfill(session_id, opts \\ []) do
     chat_limit = Keyword.get(opts, :chat_limit, 200)
 
-    Span.execute([:froth, :telegram, :sync, :backfill_start], nil, %{session_id: session_id})
+    Span.execute([:froth, :telegram, :sync, :backfill_start], nil, %{
+      session_id: session_id
+    })
 
     {:ok, chats} =
       Telegram.call(session_id, %{
@@ -38,7 +40,10 @@ defmodule Froth.Telegram.Sync do
       })
 
     chat_ids = chats["chat_ids"] || []
-    Span.execute([:froth, :telegram, :sync, :backfill_chats], nil, %{count: length(chat_ids)})
+
+    Span.execute([:froth, :telegram, :sync, :backfill_chats], nil, %{
+      count: length(chat_ids)
+    })
 
     total =
       Enum.reduce(chat_ids, 0, fn chat_id, acc ->
@@ -97,7 +102,8 @@ defmodule Froth.Telegram.Sync do
     maybe_verbose_request(session_id, chat_id, total, request, opts)
 
     case Telegram.call(session_id, request, 60_000) do
-      {:ok, %{"messages" => messages}} when is_list(messages) and messages != [] ->
+      {:ok, %{"messages" => messages}}
+      when is_list(messages) and messages != [] ->
         stored = store_batch(session_id, messages)
         oldest_id = messages |> List.last() |> Map.fetch!("id")
         new_total = total + stored
@@ -150,7 +156,10 @@ defmodule Froth.Telegram.Sync do
   end
 
   defp log_backfill(chat_id, 0),
-    do: Span.execute([:froth, :telegram, :sync, :backfill_empty], nil, %{chat_id: chat_id})
+    do:
+      Span.execute([:froth, :telegram, :sync, :backfill_empty], nil, %{
+        chat_id: chat_id
+      })
 
   defp log_backfill(chat_id, n),
     do:
@@ -215,20 +224,38 @@ defmodule Froth.Telegram.Sync do
     GenServer.start_link(__MODULE__, session_id, name: via(session_id))
   end
 
-  def via(session_id), do: {:via, Registry, {Froth.Telegram.Registry, {:sync, session_id}}}
+  def via(session_id),
+    do: {:via, Registry, {Froth.Telegram.Registry, {:sync, session_id}}}
 
   @impl true
   def init(session_id) do
-    :ok = Phoenix.PubSub.subscribe(Froth.PubSub, Froth.Telegram.Session.topic(session_id))
-    Span.execute([:froth, :telegram, :sync, :listening], nil, %{session_id: session_id})
+    :ok =
+      Phoenix.PubSub.subscribe(
+        Froth.PubSub,
+        Froth.Telegram.Session.topic(session_id)
+      )
+
+    Span.execute([:froth, :telegram, :sync, :listening], nil, %{
+      session_id: session_id
+    })
+
     {:ok, %{session_id: session_id, count: 0}}
   end
 
   @impl true
-  def handle_info({:telegram_update, %{"@type" => "updateNewMessage", "message" => msg}}, state) do
+  def handle_info(
+        {:telegram_update,
+         %{"@type" => "updateNewMessage", "message" => msg}},
+        state
+      ) do
     case store_message(state.session_id, msg) do
       {:ok, :inserted} ->
-        Froth.Analyzer.Discovery.discover_message(msg["chat_id"], msg["id"], msg)
+        Froth.Analyzer.Discovery.discover_message(
+          msg["chat_id"],
+          msg["id"],
+          msg
+        )
+
         {:noreply, %{state | count: state.count + 1}}
 
       _ ->
@@ -237,7 +264,8 @@ defmodule Froth.Telegram.Sync do
   end
 
   def handle_info(
-        {:telegram_update, %{"@type" => "updateMessageSendSucceeded", "message" => msg}},
+        {:telegram_update,
+         %{"@type" => "updateMessageSendSucceeded", "message" => msg}},
         state
       ) do
     case store_message(state.session_id, msg) do

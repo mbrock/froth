@@ -14,8 +14,15 @@ defmodule Froth.Task do
     field(:attempts, :integer, default: 0)
     field(:max_attempts, :integer, default: 1)
 
-    has_many(:events, Froth.TaskEvent, foreign_key: :task_id, references: :task_id)
-    has_many(:telegram_links, Froth.TaskTelegramLink, foreign_key: :task_id, references: :task_id)
+    has_many(:events, Froth.TaskEvent,
+      foreign_key: :task_id,
+      references: :task_id
+    )
+
+    has_many(:telegram_links, Froth.TaskTelegramLink,
+      foreign_key: :task_id,
+      references: :task_id
+    )
 
     timestamps(type: :utc_datetime_usec, updated_at: false)
   end
@@ -34,6 +41,9 @@ defmodule Froth.Task do
       :max_attempts
     ])
     |> validate_required([:task_id, :type])
-    |> validate_inclusion(:status, ~w(pending running completed failed stopped))
+    |> validate_inclusion(
+      :status,
+      ~w(pending running completed failed stopped)
+    )
   end
 end

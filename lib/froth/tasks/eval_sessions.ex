@@ -31,7 +31,8 @@ defmodule Froth.Tasks.EvalSessions do
   end
 
   @spec put_binding(session_id(), binding_list()) :: :ok
-  def put_binding(session_id, binding) when is_binary(session_id) and is_list(binding) do
+  def put_binding(session_id, binding)
+      when is_binary(session_id) and is_list(binding) do
     GenServer.call(__MODULE__, {:put_binding, session_id, binding})
   end
 
@@ -56,10 +57,12 @@ defmodule Froth.Tasks.EvalSessions do
     {created?, sessions} =
       case Map.get(state.sessions, session_id) do
         nil ->
-          {true, Map.put(state.sessions, session_id, %{binding: [], updated_at: now})}
+          {true,
+           Map.put(state.sessions, session_id, %{binding: [], updated_at: now})}
 
         session ->
-          {false, Map.put(state.sessions, session_id, %{session | updated_at: now})}
+          {false,
+           Map.put(state.sessions, session_id, %{session | updated_at: now})}
       end
 
     {:reply, {session_id, created?}, %{state | sessions: sessions}}
@@ -71,10 +74,12 @@ defmodule Froth.Tasks.EvalSessions do
     {binding, sessions} =
       case Map.get(state.sessions, session_id) do
         nil ->
-          {[], Map.put(state.sessions, session_id, %{binding: [], updated_at: now})}
+          {[],
+           Map.put(state.sessions, session_id, %{binding: [], updated_at: now})}
 
         session ->
-          {session.binding, Map.put(state.sessions, session_id, %{session | updated_at: now})}
+          {session.binding,
+           Map.put(state.sessions, session_id, %{session | updated_at: now})}
       end
 
     {:reply, binding, %{state | sessions: sessions}}
@@ -98,7 +103,9 @@ defmodule Froth.Tasks.EvalSessions do
 
     sessions =
       state.sessions
-      |> Enum.reject(fn {_session_id, session} -> session.updated_at < cutoff end)
+      |> Enum.reject(fn {_session_id, session} ->
+        session.updated_at < cutoff
+      end)
       |> Map.new()
 
     Process.send_after(self(), :prune, @prune_interval_ms)

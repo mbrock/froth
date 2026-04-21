@@ -17,14 +17,19 @@ defmodule Froth.Tools.StopTask do
   def spec do
     %{
       "name" => name(),
-      "description" => "Stop a running task. Sends SIGTERM by default, or a specific signal.",
+      "description" =>
+        "Stop a running task. Sends SIGTERM by default, or a specific signal.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
-          "task_id" => %{"type" => "string", "description" => "Task ID (e.g. shell:a3f8c1)."},
+          "task_id" => %{
+            "type" => "string",
+            "description" => "Task ID (e.g. shell:a3f8c1)."
+          },
           "signal" => %{
             "type" => "string",
-            "description" => "Signal to send (e.g. TERM, KILL, INT). Default: TERM."
+            "description" =>
+              "Signal to send (e.g. TERM, KILL, INT). Default: TERM."
           }
         },
         "required" => ["task_id"],
@@ -34,7 +39,8 @@ defmodule Froth.Tools.StopTask do
   end
 
   @impl true
-  def execute(%Context{}, %ToolUse{input: input}, _hooks) when is_map(input) do
+  def execute(%Context{}, %ToolUse{input: input}, _hooks)
+      when is_map(input) do
     task_id = input["task_id"]
     signal = input["signal"] || "TERM"
 

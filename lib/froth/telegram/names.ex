@@ -52,14 +52,18 @@ defmodule Froth.Telegram.Names do
   """
   def sender_label(nil, _session_id), do: "unknown"
 
-  def sender_label(sender_id, session_id) when is_integer(sender_id) and sender_id > 0 do
+  def sender_label(sender_id, session_id)
+      when is_integer(sender_id) and sender_id > 0 do
     cached({:user_label, session_id, sender_id}, fn ->
       case Usernames.get_label(sender_id) do
         label when is_binary(label) and label != "" ->
           label
 
         _ ->
-          case telegram_call(session_id, %{"@type" => "getUser", "user_id" => sender_id}) do
+          case telegram_call(session_id, %{
+                 "@type" => "getUser",
+                 "user_id" => sender_id
+               }) do
             {:ok, user} when is_map(user) ->
               Usernames.upsert_from_user(user, session_id)
               format_user_label(user, sender_id)
@@ -75,7 +79,10 @@ defmodule Froth.Telegram.Names do
 
   def sender_label(sender_id, session_id) when is_integer(sender_id) do
     cached({:chat_sender_label, session_id, sender_id}, fn ->
-      case telegram_call(session_id, %{"@type" => "getChat", "chat_id" => sender_id}) do
+      case telegram_call(session_id, %{
+             "@type" => "getChat",
+             "chat_id" => sender_id
+           }) do
         {:ok, %{"title" => title}} when is_binary(title) and title != "" ->
           sanitize("#{title} (chat:#{sender_id})")
 
@@ -90,7 +97,10 @@ defmodule Froth.Telegram.Names do
   """
   def chat_name(chat_id, session_id) when is_integer(chat_id) do
     cached({:chat_name, session_id, chat_id}, fn ->
-      case telegram_call(session_id, %{"@type" => "getChat", "chat_id" => chat_id}) do
+      case telegram_call(session_id, %{
+             "@type" => "getChat",
+             "chat_id" => chat_id
+           }) do
         {:ok, %{"title" => title}} when is_binary(title) and title != "" ->
           sanitize(title)
 
@@ -127,7 +137,8 @@ defmodule Froth.Telegram.Names do
     end)
   end
 
-  defp candidate_session_ids(session_id) when is_binary(session_id) and session_id != "" do
+  defp candidate_session_ids(session_id)
+       when is_binary(session_id) and session_id != "" do
     [session_id | Queries.enabled_session_ids()]
     |> Enum.uniq()
   end
@@ -149,7 +160,8 @@ defmodule Froth.Telegram.Names do
 
   # ── formatting helpers ─────────────────────────────────────────
 
-  defp format_user_label(user, user_id) when is_map(user) and is_integer(user_id) do
+  defp format_user_label(user, user_id)
+       when is_map(user) and is_integer(user_id) do
     case get_in(user, ["usernames", "active_usernames"]) do
       [u | _] when is_binary(u) and u != "" -> sanitize("@#{u}")
       _ -> "user:#{user_id}"

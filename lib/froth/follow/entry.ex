@@ -46,7 +46,10 @@ defmodule Froth.Follow.Entry do
   ]
 
   def visible?(%__MODULE__{}, :raw), do: true
-  def visible?(%__MODULE__{level: level}, :errors), do: level in [:warn, :error]
+
+  def visible?(%__MODULE__{level: level}, :errors),
+    do: level in [:warn, :error]
+
   def visible?(%__MODULE__{hidden: true}, :smart), do: false
   def visible?(%__MODULE__{}, :smart), do: true
 end

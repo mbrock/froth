@@ -14,7 +14,10 @@ defmodule Froth.Context.BlockHTMLTest do
     test "a single block with a small body renders as its kind tag with attrs and body" do
       blocks =
         Blocks.materialize([
-          Block.new([kind: "shell", task_id: "shell:abc", exit_code: 0], "hello world")
+          Block.new(
+            [kind: "shell", task_id: "shell:abc", exit_code: 0],
+            "hello world"
+          )
         ])
 
       html = BlockHTML.live_to_string(blocks)
@@ -28,7 +31,11 @@ defmodule Froth.Context.BlockHTMLTest do
     end
 
     test "text body with angle brackets is escaped by HEEx" do
-      blocks = Blocks.materialize([Block.new([kind: "shell"], "grep '<script>' file")])
+      blocks =
+        Blocks.materialize([
+          Block.new([kind: "shell"], "grep '<script>' file")
+        ])
+
       html = BlockHTML.live_to_string(blocks)
 
       assert html =~ "&lt;script&gt;"
@@ -55,7 +62,9 @@ defmodule Froth.Context.BlockHTMLTest do
       big = Enum.map_join(1..100, "\n", &"line #{&1}")
 
       [block] =
-        Blocks.materialize([Block.new([kind: "page", blob: "01TEST", no_fold: true], big)])
+        Blocks.materialize([
+          Block.new([kind: "page", blob: "01TEST", no_fold: true], big)
+        ])
 
       assert is_binary(block.body)
       assert Block.attr(block, :blob) == "01TEST"
@@ -99,7 +108,12 @@ defmodule Froth.Context.BlockHTMLTest do
     test "a block with no body renders self-closing with its attrs" do
       html =
         BlockHTML.live_to_string([
-          Block.new(kind: "task", id: "shell:abc", status: "running", label: "tail -f")
+          Block.new(
+            kind: "task",
+            id: "shell:abc",
+            status: "running",
+            label: "tail -f"
+          )
         ])
 
       assert html =~ "<task"
@@ -132,7 +146,9 @@ defmodule Froth.Context.BlockHTMLTest do
   describe "trace/1" do
     test "shows attrs plus a short preview, no head/tail split" do
       blocks =
-        Blocks.materialize([Block.new([kind: "shell", task_id: "shell:abc"], "hello world")])
+        Blocks.materialize([
+          Block.new([kind: "shell", task_id: "shell:abc"], "hello world")
+        ])
 
       %{blocks: blocks}
       |> BlockHTML.trace()
@@ -220,7 +236,12 @@ defmodule Froth.Context.BlockHTMLTest do
       blocks =
         Blocks.materialize([
           Block.new(
-            [kind: "fetched", mime: "image/jpeg", filename: "cat.jpg", source: "msg:42"],
+            [
+              kind: "fetched",
+              mime: "image/jpeg",
+              filename: "cat.jpg",
+              source: "msg:42"
+            ],
             bytes
           )
         ])
@@ -244,7 +265,12 @@ defmodule Froth.Context.BlockHTMLTest do
       blocks =
         Blocks.materialize([
           Block.new(
-            [kind: "image", mime: "image/png", filename: "x.png", no_fold: true],
+            [
+              kind: "image",
+              mime: "image/png",
+              filename: "x.png",
+              no_fold: true
+            ],
             bytes
           )
         ])
@@ -262,7 +288,8 @@ defmodule Froth.Context.BlockHTMLTest do
       # comes in with raw PNG bytes, gets auto-promoted to binary,
       # and renders with an inline placeholder so the agent can tell
       # "there's a PNG here" from "cat produced nothing".
-      png = <<0x89, "PNG\r\n", 0x1A, 0x0A>> <> :crypto.strong_rand_bytes(10_000)
+      png =
+        <<0x89, "PNG\r\n", 0x1A, 0x0A>> <> :crypto.strong_rand_bytes(10_000)
 
       blocks =
         Blocks.materialize([
@@ -275,7 +302,9 @@ defmodule Froth.Context.BlockHTMLTest do
       expected_blob = Block.attr(block, :blob)
 
       assert html =~ ~s(mime="image/png")
-      assert html =~ "[binary: image/png #{expected_size} bytes → blob:#{expected_blob}]"
+
+      assert html =~
+               "[binary: image/png #{expected_size} bytes → blob:#{expected_blob}]"
     end
 
     test "binary placeholder falls back to octet-stream when mime is unknown" do
@@ -283,7 +312,10 @@ defmodule Froth.Context.BlockHTMLTest do
 
       blocks =
         Blocks.materialize([
-          Block.new([kind: "shell"], <<0xAB, 0xCD, 0xEF, 0x00, 0x01>> <> bytes)
+          Block.new(
+            [kind: "shell"],
+            <<0xAB, 0xCD, 0xEF, 0x00, 0x01>> <> bytes
+          )
         ])
 
       html = BlockHTML.live_to_string(blocks)

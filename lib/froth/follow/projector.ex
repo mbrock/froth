@@ -133,7 +133,12 @@ defmodule Froth.Follow.Projector do
     }
   end
 
-  defp classify(["froth", "agent", "cycle", "stop"], _m, metadata, duration_ms) do
+  defp classify(
+         ["froth", "agent", "cycle", "stop"],
+         _m,
+         metadata,
+         duration_ms
+       ) do
     reason = normalize_string(metadata["reason"])
     phase = normalize_string(metadata["phase"])
 
@@ -145,7 +150,10 @@ defmodule Froth.Follow.Projector do
         reason == "yield" ->
           {"yielded", :info}
 
-        reason in ["assistant_stopped_without_reply", ":assistant_stopped_without_reply"] ->
+        reason in [
+          "assistant_stopped_without_reply",
+          ":assistant_stopped_without_reply"
+        ] ->
           {"stopped without reply", :warn}
 
         reason in [nil, ""] ->
@@ -158,7 +166,8 @@ defmodule Froth.Follow.Projector do
     detail =
       join_detail([
         duration_ms && "#{duration_ms}ms",
-        reason not in [nil, "", "normal", ":normal", "yield"] && "reason=#{reason}",
+        reason not in [nil, "", "normal", ":normal", "yield"] &&
+          "reason=#{reason}",
         phase not in [nil, "", "done", ":done"] && "phase=#{phase}"
       ])
 
@@ -213,16 +222,28 @@ defmodule Froth.Follow.Projector do
     }
   end
 
-  defp classify(["froth", "agent", "think", "stop"], _m, metadata, duration_ms) do
+  defp classify(
+         ["froth", "agent", "think", "stop"],
+         _m,
+         metadata,
+         duration_ms
+       ) do
     error = normalize_string(metadata["error"])
 
     %{
       family: "think",
       kind: "stop",
       scope: short_id(metadata["cycle_id"]),
-      summary: if(error in [nil, ""], do: "thinking completed", else: "thinking failed"),
+      summary:
+        if(error in [nil, ""],
+          do: "thinking completed",
+          else: "thinking failed"
+        ),
       detail:
-        join_detail([duration_ms && "#{duration_ms}ms", error && "error=#{truncate(error, 120)}"]),
+        join_detail([
+          duration_ms && "#{duration_ms}ms",
+          error && "error=#{truncate(error, 120)}"
+        ]),
       level: if(error in [nil, ""], do: :info, else: :error),
       hidden: false
     }
@@ -261,14 +282,20 @@ defmodule Froth.Follow.Projector do
     }
   end
 
-  defp classify(["froth", "agent", "control", "outcome"], _m, metadata, _duration_ms) do
+  defp classify(
+         ["froth", "agent", "control", "outcome"],
+         _m,
+         metadata,
+         _duration_ms
+       ) do
     outcome = normalize_string(metadata["outcome"])
     tool_name = metadata["tool_name"]
 
     {summary, detail, level} =
       case outcome do
         "reply_sent" ->
-          {"reply sent", join_detail([tool_name && "tool=#{tool_name}"]), :info}
+          {"reply sent", join_detail([tool_name && "tool=#{tool_name}"]),
+           :info}
 
         "yield" ->
           {"yielded", join_detail([metadata["reason"]]), :info}
@@ -277,7 +304,8 @@ defmodule Froth.Follow.Projector do
           {"waiting for answer", join_detail([metadata["reason"]]), :info}
 
         "waiting_on_subscription" ->
-          {"waiting on subscription", join_detail([metadata["reason"]]), :info}
+          {"waiting on subscription", join_detail([metadata["reason"]]),
+           :info}
 
         "assistant_stopped_without_reply" ->
           {"stopped without reply", join_detail([metadata["detail"]]), :warn}
@@ -290,16 +318,26 @@ defmodule Froth.Follow.Projector do
            ]), :error}
 
         "cycle_error" ->
-          {"cycle error", join_detail([metadata["error"] && truncate(metadata["error"], 120)]),
-           :error}
+          {"cycle error",
+           join_detail([
+             metadata["error"] && truncate(metadata["error"], 120)
+           ]), :error}
 
         value when is_binary(value) and value != "" ->
           {humanize(value),
-           join_detail([metadata["reason"], metadata["error"], metadata["detail"]]), :info}
+           join_detail([
+             metadata["reason"],
+             metadata["error"],
+             metadata["detail"]
+           ]), :info}
 
         _ ->
-          {"outcome", join_detail([metadata["reason"], metadata["error"], metadata["detail"]]),
-           :info}
+          {"outcome",
+           join_detail([
+             metadata["reason"],
+             metadata["error"],
+             metadata["detail"]
+           ]), :info}
       end
 
     detail =
@@ -331,7 +369,8 @@ defmodule Froth.Follow.Projector do
           {"request queued",
            join_detail([
              metadata["model"] && "model=#{metadata["model"]}",
-             metadata["message_count"] && "messages=#{metadata["message_count"]}",
+             metadata["message_count"] &&
+               "messages=#{metadata["message_count"]}",
              metadata["tool_count"] && "tools=#{metadata["tool_count"]}"
            ])}
 
@@ -357,7 +396,12 @@ defmodule Froth.Follow.Projector do
     }
   end
 
-  defp classify(["froth", "agent", "message", "appended"], _m, metadata, _duration_ms) do
+  defp classify(
+         ["froth", "agent", "message", "appended"],
+         _m,
+         metadata,
+         _duration_ms
+       ) do
     role = metadata["role"] || "message"
     preview = metadata["text_preview"]
 
@@ -376,7 +420,12 @@ defmodule Froth.Follow.Projector do
     }
   end
 
-  defp classify(["froth", provider, "request", kind], _m, metadata, duration_ms)
+  defp classify(
+         ["froth", provider, "request", kind],
+         _m,
+         metadata,
+         duration_ms
+       )
        when provider in ["anthropic", "openai", "grok", "gemini"] and
               kind in ["start", "stop", "exception"] do
     model = metadata["model"]
@@ -449,7 +498,12 @@ defmodule Froth.Follow.Projector do
     }
   end
 
-  defp classify(["froth", "telegram", "bot", "cycle", kind], _m, metadata, duration_ms)
+  defp classify(
+         ["froth", "telegram", "bot", "cycle", kind],
+         _m,
+         metadata,
+         duration_ms
+       )
        when kind in ["start", "stop"] do
     reason = normalize_string(metadata["reason"])
 
@@ -459,9 +513,14 @@ defmodule Froth.Follow.Projector do
       scope: metadata["bot_id"] || "telegram",
       summary:
         case kind do
-          "start" -> "bot cycle started"
-          "stop" when reason in [nil, "", "normal", ":normal"] -> "bot cycle completed"
-          "stop" -> "bot cycle stopped"
+          "start" ->
+            "bot cycle started"
+
+          "stop" when reason in [nil, "", "normal", ":normal"] ->
+            "bot cycle completed"
+
+          "stop" ->
+            "bot cycle stopped"
         end,
       detail:
         join_detail([
@@ -486,14 +545,23 @@ defmodule Froth.Follow.Projector do
       kind: kind,
       scope: metadata["session"] || "telegram",
       summary: "session #{humanize(kind)}",
-      detail: join_detail([metadata["error"] && "error=#{truncate(metadata["error"], 120)}"]),
-      level: if(kind in ["register_failed", "send_failed", "unexpected"], do: :warn, else: :info),
+      detail:
+        join_detail([
+          metadata["error"] && "error=#{truncate(metadata["error"], 120)}"
+        ]),
+      level:
+        if(kind in ["register_failed", "send_failed", "unexpected"],
+          do: :warn,
+          else: :info
+        ),
       hidden: hidden
     }
   end
 
   defp classify(["froth", "telegram", "cnode", kind], _m, metadata, _d) do
-    hidden = kind in ["output", "connect_retry", "register", "node_up", "launching"]
+    hidden =
+      kind in ["output", "connect_retry", "register", "node_up", "launching"]
+
     data = metadata["data"] || metadata["message"]
 
     %{
@@ -502,12 +570,21 @@ defmodule Froth.Follow.Projector do
       scope: "cnode",
       summary: "cnode #{humanize(kind)}",
       detail: data && truncate(safe_string(data), 120),
-      level: if(kind in ["unexpected", "exited", "node_down"], do: :warn, else: :info),
+      level:
+        if(kind in ["unexpected", "exited", "node_down"],
+          do: :warn,
+          else: :info
+        ),
       hidden: hidden
     }
   end
 
-  defp classify(["froth", "browser", "instance", kind], _m, metadata, _duration_ms) do
+  defp classify(
+         ["froth", "browser", "instance", kind],
+         _m,
+         metadata,
+         _duration_ms
+       ) do
     browser_id = short_browser_id(metadata["browser_id"])
     exit_code = integer_or_nil(metadata["exit_code"])
 
@@ -517,10 +594,12 @@ defmodule Froth.Follow.Projector do
           {"browser started", :info}
 
         "stopped" ->
-          {"browser stopped", if(exit_code in [nil, 0], do: :info, else: :warn)}
+          {"browser stopped",
+           if(exit_code in [nil, 0], do: :info, else: :warn)}
 
         _ ->
-          {"browser #{humanize(kind)}", level_for_parts(["froth", "browser", "instance", kind])}
+          {"browser #{humanize(kind)}",
+           level_for_parts(["froth", "browser", "instance", kind])}
       end
 
     %{
@@ -540,13 +619,19 @@ defmodule Froth.Follow.Projector do
     }
   end
 
-  defp classify(["froth", "browser", "session", kind], _m, metadata, _duration_ms) do
+  defp classify(
+         ["froth", "browser", "session", kind],
+         _m,
+         metadata,
+         _duration_ms
+       ) do
     browser_id = short_browser_id(metadata["browser_id"])
 
     {summary, detail} =
       case kind do
         "screenshot" ->
-          {"captured screenshot", metadata["path"] && display_path_tail(metadata["path"])}
+          {"captured screenshot",
+           metadata["path"] && display_path_tail(metadata["path"])}
 
         "navigated" ->
           {"navigated", metadata["url"] && display_url(metadata["url"])}
@@ -584,7 +669,8 @@ defmodule Froth.Follow.Projector do
            ])}
 
         "event" ->
-          {"cdp #{method || "event"}", join_detail([session_id && "session=#{session_id}"])}
+          {"cdp #{method || "event"}",
+           join_detail([session_id && "session=#{session_id}"])}
 
         _ ->
           {"cdp #{humanize(kind)}",
@@ -719,7 +805,8 @@ defmodule Froth.Follow.Projector do
     detail =
       join_detail([
         duration_ms && "#{duration_ms}ms",
-        metadata["method"] && "method=#{browser_method_scope(metadata["method"])}",
+        metadata["method"] &&
+          "method=#{browser_method_scope(metadata["method"])}",
         metadata["topic"] && "topic=#{codex_topic_scope(metadata["topic"])}",
         metadata["id"] && "id=#{metadata["id"]}",
         metadata["pending_count"] && "pending=#{metadata["pending_count"]}",
@@ -733,16 +820,20 @@ defmodule Froth.Follow.Projector do
         metadata["executable"] && "exec=#{path_label(metadata["executable"])}",
         metadata["params_preview"] &&
           "params=#{truncate(safe_string(metadata["params_preview"]), 120)}",
-        metadata["raw_preview"] && "reply=#{truncate(safe_string(metadata["raw_preview"]), 120)}",
+        metadata["raw_preview"] &&
+          "reply=#{truncate(safe_string(metadata["raw_preview"]), 120)}",
         metadata["response_preview"] &&
           "reply=#{truncate(safe_string(metadata["response_preview"]), 120)}",
         metadata["error_preview"] &&
           "error=#{truncate(safe_string(metadata["error_preview"]), 120)}",
         metadata["message_preview"] &&
           "message=#{truncate(safe_string(metadata["message_preview"]), 120)}",
-        metadata["line_preview"] && "line=#{truncate(safe_string(metadata["line_preview"]), 120)}",
-        metadata["reason"] && "reason=#{truncate(safe_string(metadata["reason"]), 120)}",
-        metadata["error"] && "error=#{truncate(safe_string(metadata["error"]), 120)}"
+        metadata["line_preview"] &&
+          "line=#{truncate(safe_string(metadata["line_preview"]), 120)}",
+        metadata["reason"] &&
+          "reason=#{truncate(safe_string(metadata["reason"]), 120)}",
+        metadata["error"] &&
+          "error=#{truncate(safe_string(metadata["error"]), 120)}"
       ])
 
     %{
@@ -764,7 +855,9 @@ defmodule Froth.Follow.Projector do
     %{
       family: family,
       kind: kind,
-      scope: metadata["bot_id"] || metadata["model"] || short_id(metadata["cycle_id"]),
+      scope:
+        metadata["bot_id"] || metadata["model"] ||
+          short_id(metadata["cycle_id"]),
       summary: humanize(kind),
       detail:
         join_detail([
@@ -806,23 +899,43 @@ defmodule Froth.Follow.Projector do
   end
 
   defp hidden_by_default?(["froth", "llm", "edit"], _metadata), do: true
-  defp hidden_by_default?(["froth", "browser", "cdp" | _], _metadata), do: true
-  defp hidden_by_default?(["froth", "codex", "data_chunk"], _metadata), do: true
-  defp hidden_by_default?(["froth", "codex", "notification_received"], _metadata), do: true
+
+  defp hidden_by_default?(["froth", "browser", "cdp" | _], _metadata),
+    do: true
+
+  defp hidden_by_default?(["froth", "codex", "data_chunk"], _metadata),
+    do: true
+
+  defp hidden_by_default?(
+         ["froth", "codex", "notification_received"],
+         _metadata
+       ), do: true
+
   defp hidden_by_default?(["froth", "codex", "send_raw"], _metadata), do: true
   defp hidden_by_default?(["froth", "http", "sse" | _], _metadata), do: true
-  defp hidden_by_default?(["froth", "http", "request" | _], _metadata), do: true
-  defp hidden_by_default?(["froth", "telegram", "cnode", "output"], _metadata), do: true
+
+  defp hidden_by_default?(["froth", "http", "request" | _], _metadata),
+    do: true
+
+  defp hidden_by_default?(
+         ["froth", "telegram", "cnode", "output"],
+         _metadata
+       ), do: true
 
   defp hidden_by_default?(["froth", "telegram", "bot", "update"], metadata) do
     metadata["action"] == "ignore" and
-      MapSet.member?(@telegram_noise_updates, safe_string(metadata["update_type"] || ""))
+      MapSet.member?(
+        @telegram_noise_updates,
+        safe_string(metadata["update_type"] || "")
+      )
   end
 
   defp hidden_by_default?(_, _metadata), do: false
 
   defp provider_label(provider, nil), do: normalize_string(provider)
-  defp provider_label(provider, model), do: "#{safe_string(provider)}:#{safe_string(model)}"
+
+  defp provider_label(provider, model),
+    do: "#{safe_string(provider)}:#{safe_string(model)}"
 
   defp codex_scope(metadata) do
     browser_method_scope(metadata["method"]) ||
@@ -844,7 +957,8 @@ defmodule Froth.Follow.Projector do
     ]
   end
 
-  defp fallback_scope(cycle_id, span_id), do: short_id(cycle_id) || short_id(span_id)
+  defp fallback_scope(cycle_id, span_id),
+    do: short_id(cycle_id) || short_id(span_id)
 
   defp duration_ms(measurements) do
     cond do
@@ -852,7 +966,11 @@ defmodule Froth.Follow.Projector do
         measurements["duration_ms"]
 
       is_integer(measurements["duration"]) ->
-        System.convert_time_unit(measurements["duration"], :native, :millisecond)
+        System.convert_time_unit(
+          measurements["duration"],
+          :native,
+          :millisecond
+        )
 
       true ->
         nil
@@ -868,7 +986,10 @@ defmodule Froth.Follow.Projector do
   defp stringify_keys(_), do: %{}
 
   defp stringify_value(value) when is_map(value), do: stringify_keys(value)
-  defp stringify_value(value) when is_list(value), do: Enum.map(value, &stringify_value/1)
+
+  defp stringify_value(value) when is_list(value),
+    do: Enum.map(value, &stringify_value/1)
+
   defp stringify_value(value) when is_atom(value), do: Atom.to_string(value)
   defp stringify_value(value), do: value
 
@@ -908,8 +1029,11 @@ defmodule Froth.Follow.Projector do
     try do
       to_string(value)
     rescue
-      Protocol.UndefinedError -> inspect(value, limit: 8, printable_limit: 160)
-      ArgumentError -> inspect(value, limit: 8, printable_limit: 160)
+      Protocol.UndefinedError ->
+        inspect(value, limit: 8, printable_limit: 160)
+
+      ArgumentError ->
+        inspect(value, limit: 8, printable_limit: 160)
     end
   end
 
@@ -971,7 +1095,8 @@ defmodule Froth.Follow.Projector do
     uri = URI.parse(safe_string(value))
 
     cond do
-      is_binary(uri.host) and is_binary(uri.path) and uri.path not in ["", "/"] ->
+      is_binary(uri.host) and is_binary(uri.path) and
+          uri.path not in ["", "/"] ->
         uri.host <> uri.path
 
       is_binary(uri.host) ->

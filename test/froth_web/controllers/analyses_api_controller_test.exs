@@ -25,9 +25,10 @@ defmodule FrothWeb.AnalysesApiControllerTest do
     assert example =~ "/froth/analyses/"
   end
 
-  test "GET /froth/analyses/:chat_id returns ordered analyses with cursor pagination", %{
-    conn: conn
-  } do
+  test "GET /froth/analyses/:chat_id returns ordered analyses with cursor pagination",
+       %{
+         conn: conn
+       } do
     chat_id = -1_003_690_254_489
 
     _older =
@@ -97,7 +98,8 @@ defmodule FrothWeb.AnalysesApiControllerTest do
     assert is_binary(inserted_at)
   end
 
-  test "GET /froth/analyses/:chat_id caps the limit and validates query params", %{conn: conn} do
+  test "GET /froth/analyses/:chat_id caps the limit and validates query params",
+       %{conn: conn} do
     chat_id = -777
 
     insert_analysis(%{
@@ -125,7 +127,8 @@ defmodule FrothWeb.AnalysesApiControllerTest do
       |> put_req_header("accept", "application/json")
       |> get(~p"/froth/analyses/#{chat_id}?limit=5000")
 
-    assert [%{"message_id" => 1}, %{"message_id" => 2}] = json_response(capped_conn, 200)
+    assert [%{"message_id" => 1}, %{"message_id" => 2}] =
+             json_response(capped_conn, 200)
 
     invalid_conn =
       build_conn()

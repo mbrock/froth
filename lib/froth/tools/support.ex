@@ -7,17 +7,24 @@ defmodule Froth.Tools.Support do
 
   @default_session_id "charlie"
 
-  def chat_id(%Context{surface: %Surface{chat_id: id}}) when is_integer(id), do: id
+  def chat_id(%Context{surface: %Surface{chat_id: id}}) when is_integer(id),
+    do: id
+
   def chat_id(_ctx), do: 0
 
-  def session_id(%Context{surface: %Surface{session_id: id}}) when is_binary(id), do: id
+  def session_id(%Context{surface: %Surface{session_id: id}})
+      when is_binary(id), do: id
+
   def session_id(_ctx), do: @default_session_id
 
-  def bot_id(%Context{bot_config: %BotConfig{id: id}}) when is_binary(id), do: id
+  def bot_id(%Context{bot_config: %BotConfig{id: id}}) when is_binary(id),
+    do: id
+
   def bot_id(_ctx), do: "charlie"
 
-  def reply_to(%Context{surface: %Surface{reply_to: reply_to}}) when is_integer(reply_to),
-    do: reply_to
+  def reply_to(%Context{surface: %Surface{reply_to: reply_to}})
+      when is_integer(reply_to),
+      do: reply_to
 
   def reply_to(_ctx), do: nil
 
@@ -61,14 +68,16 @@ defmodule Froth.Tools.Support do
 
   def eval_session_id(_input), do: nil
 
-  def required_trimmed_string(input, key) when is_map(input) and is_binary(key) do
+  def required_trimmed_string(input, key)
+      when is_map(input) and is_binary(key) do
     case optional_trimmed_string(input, key) do
       {:ok, nil} -> {:error, "#{key} must be a non-empty string"}
       other -> other
     end
   end
 
-  def optional_trimmed_string(input, key) when is_map(input) and is_binary(key) do
+  def optional_trimmed_string(input, key)
+      when is_map(input) and is_binary(key) do
     case Map.get(input, key) do
       nil ->
         {:ok, nil}
@@ -94,5 +103,6 @@ defmodule Froth.Tools.Support do
   defp format_duration(seconds) when seconds < 3600,
     do: "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
 
-  defp format_duration(seconds), do: "#{div(seconds, 3600)}h #{div(rem(seconds, 3600), 60)}m"
+  defp format_duration(seconds),
+    do: "#{div(seconds, 3600)}h #{div(rem(seconds, 3600), 60)}m"
 end

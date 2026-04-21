@@ -39,8 +39,17 @@ defmodule Froth.Codex.TaskWatcherTest do
     ref = Process.monitor(watcher)
     {:ok, snapshot} = FakeCodexSession.snapshot(session_id)
 
-    assert :ok = FakeCodexSession.set_snapshot(session_id, %{snapshot | active_turn_id: "turn-1"})
-    assert :ok = FakeCodexSession.set_snapshot(session_id, %{snapshot | active_turn_id: nil})
+    assert :ok =
+             FakeCodexSession.set_snapshot(session_id, %{
+               snapshot
+               | active_turn_id: "turn-1"
+             })
+
+    assert :ok =
+             FakeCodexSession.set_snapshot(session_id, %{
+               snapshot
+               | active_turn_id: nil
+             })
 
     assert_receive {:task_event, ^task_id, event}, 1_000
     assert event.kind == "status"

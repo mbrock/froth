@@ -14,7 +14,8 @@ defmodule Froth.Telegram.BotTest do
 
     send(
       bot,
-      {:telegram_update, %{"@type" => "error", "code" => 400, "message" => "MESSAGE_ID_INVALID"}}
+      {:telegram_update,
+       %{"@type" => "error", "code" => 400, "message" => "MESSAGE_ID_INVALID"}}
     )
 
     assert %Bot{} = :sys.get_state(bot)
@@ -59,7 +60,9 @@ defmodule Froth.Telegram.BotTest do
                       "@type" => "editMessageText",
                       "chat_id" => 123,
                       "message_id" => 42,
-                      "input_message_content" => %{"text" => %{"text" => edited_text}}
+                      "input_message_content" => %{
+                        "text" => %{"text" => edited_text}
+                      }
                     }},
                    5_000
 

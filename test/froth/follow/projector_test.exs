@@ -51,7 +51,11 @@ defmodule Froth.Follow.ProjectorTest do
       Projector.from_live(
         [:froth, :llm, :edit],
         %{},
-        %{provider: "anthropic", op: "append", resource_id: "message/blocks/0"}
+        %{
+          provider: "anthropic",
+          op: "append",
+          resource_id: "message/blocks/0"
+        }
       )
 
     assert entry.hidden

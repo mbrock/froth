@@ -25,7 +25,8 @@ defmodule Froth.Telegram.RecentWindowTest do
         bucket_minutes: 30
       })
 
-    assert Enum.map(selected, & &1.message_id) == Enum.map(rows, & &1.message_id)
+    assert Enum.map(selected, & &1.message_id) ==
+             Enum.map(rows, & &1.message_id)
   end
 
   test "trims oldest buckets to stay within budget but keeps the minimum horizon" do
@@ -77,7 +78,9 @@ defmodule Froth.Telegram.RecentWindowTest do
     }
 
     base_selected = RecentWindow.select_rows(base_rows, range_end, config)
-    with_extra_selected = RecentWindow.select_rows(base_rows ++ [extra_row], range_end, config)
+
+    with_extra_selected =
+      RecentWindow.select_rows(base_rows ++ [extra_row], range_end, config)
 
     assert hd(base_selected).message_id == hd(with_extra_selected).message_id
   end

@@ -58,7 +58,9 @@ defmodule Froth.Tasks.Eval do
     telegram = Keyword.get(opts, :telegram)
     topic = Keyword.get(opts, :topic)
     requested_session_id = Keyword.get(opts, :session_id)
-    {session_id, _created?} = Froth.Tasks.EvalSessions.ensure_session(requested_session_id)
+
+    {session_id, _created?} =
+      Froth.Tasks.EvalSessions.ensure_session(requested_session_id)
 
     {:ok, _task} =
       Froth.Tasks.create(%{
@@ -78,7 +80,8 @@ defmodule Froth.Tasks.Eval do
     {:ok, pid} =
       DynamicSupervisor.start_child(
         Froth.Tasks.Supervisor,
-        {__MODULE__, [task_id: task_id, code: code, topic: topic, session_id: session_id]}
+        {__MODULE__,
+         [task_id: task_id, code: code, topic: topic, session_id: session_id]}
       )
 
     case await(pid, @eval_await_ms) do
@@ -99,7 +102,12 @@ defmodule Froth.Tasks.Eval do
   # --- GenServer callbacks ---
 
   @impl true
-  def init(%{task_id: task_id, code: code, topic: topic, session_id: session_id}) do
+  def init(%{
+        task_id: task_id,
+        code: code,
+        topic: topic,
+        session_id: session_id
+      }) do
     server = self()
 
     if topic, do: broadcast_topic_events(task_id, topic)
@@ -152,7 +160,8 @@ defmodule Froth.Tasks.Eval do
     {:noreply, %{state | waiters: [{from, timer} | state.waiters]}}
   end
 
-  def handle_call(:stop_eval, _from, %{done: false, eval_pid: pid} = state) when is_pid(pid) do
+  def handle_call(:stop_eval, _from, %{done: false, eval_pid: pid} = state)
+      when is_pid(pid) do
     Process.exit(pid, :kill)
     {:reply, :ok, state}
   end
@@ -190,11 +199,21 @@ defmodule Froth.Tasks.Eval do
       Froth.Tasks.fail(state.task_id, String.slice(reason, 0, 200))
     end
 
-    state = %{state | result: result, io_output: io_output, is_error: is_error, done: true}
+    state = %{
+      state
+      | result: result,
+        io_output: io_output,
+        is_error: is_error,
+        done: true
+    }
+
     reply_to_waiters(state)
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, reason}, %{eval_ref: ref, done: false} = state) do
+  def handle_info(
+        {:DOWN, ref, :process, _pid, reason},
+        %{eval_ref: ref, done: false} = state
+      ) do
     error_msg = "Eval process crashed: #{inspect(reason)}"
 
     Span.execute([:froth, :tasks, :eval_crashed], nil, %{
@@ -215,7 +234,11 @@ defmodule Froth.Tasks.Eval do
   end
 
   def handle_info({:await_timeout, from}, state) do
-    state = %{state | waiters: Enum.reject(state.waiters, fn {f, _} -> f == from end)}
+    state = %{
+      state
+      | waiters: Enum.reject(state.waiters, fn {f, _} -> f == from end)
+    }
+
     GenServer.reply(from, :running)
     {:noreply, state}
   end
@@ -234,7 +257,8 @@ defmodule Froth.Tasks.Eval do
     {:via, Registry, {Froth.Tasks.Registry, task_id}}
   end
 
-  defp eval_code(code, session_id) when is_binary(code) and is_binary(session_id) do
+  defp eval_code(code, session_id)
+       when is_binary(code) and is_binary(session_id) do
     binding = Froth.Tasks.EvalSessions.binding(session_id)
 
     try do
@@ -264,14 +288,28 @@ defmodule Froth.Tasks.Eval do
       if io_trimmed == "" do
         []
       else
-        [Froth.Context.Block.new([kind: "io", session: session_id], io_trimmed)]
+        [
+          Froth.Context.Block.new(
+            [kind: "io", session: session_id],
+            io_trimmed
+          )
+        ]
       end
 
     result_block =
       case result do
         {:ok, value} ->
-          inspected = inspect(value, pretty: true, limit: 500, printable_limit: :infinity)
-          Froth.Context.Block.new([kind: "value", session: session_id], inspected)
+          inspected =
+            inspect(value,
+              pretty: true,
+              limit: 500,
+              printable_limit: :infinity
+            )
+
+          Froth.Context.Block.new(
+            [kind: "value", session: session_id],
+            inspected
+          )
 
         {:error, msg} ->
           Froth.Context.Block.new([kind: "error", session: session_id], msg)
@@ -287,11 +325,13 @@ defmodule Froth.Tasks.Eval do
 
     case result do
       {:ok, value} ->
-        inspected = inspect(value, pretty: true, limit: 500, printable_limit: :infinity)
+        inspected =
+          inspect(value, pretty: true, limit: 500, printable_limit: :infinity)
 
         if io_trimmed == "",
           do: inspected,
-          else: "=== io ===\n" <> io_trimmed <> "\n\n=== value ===\n" <> inspected
+          else:
+            "=== io ===\n" <> io_trimmed <> "\n\n=== value ===\n" <> inspected
 
       {:error, msg} ->
         if io_trimmed == "",
@@ -337,14 +377,17 @@ defmodule Froth.Tasks.Eval do
 
   defp bridge_loop(topic) do
     receive do
-      {:task_event, _task_id, %Froth.TaskEvent{kind: "stdout", content: content}} ->
+      {:task_event, _task_id,
+       %Froth.TaskEvent{kind: "stdout", content: content}} ->
         Froth.broadcast(topic, {:io_chunk, content})
         bridge_loop(topic)
 
-      {:task_event, _task_id, %Froth.TaskEvent{kind: "status", content: "completed"}} ->
+      {:task_event, _task_id,
+       %Froth.TaskEvent{kind: "status", content: "completed"}} ->
         :ok
 
-      {:task_event, _task_id, %Froth.TaskEvent{kind: "status", content: "failed: " <> _}} ->
+      {:task_event, _task_id,
+       %Froth.TaskEvent{kind: "status", content: "failed: " <> _}} ->
         :ok
 
       _ ->

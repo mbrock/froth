@@ -58,12 +58,18 @@ defmodule Froth.HeadlinesLedger do
         where:
           e.event == "froth.headlines.registered" and
             fragment("?->>'chat_id' = ?", e.metadata, ^chat_id_string),
-        order_by: [desc: fragment("?->>'date'", e.metadata), desc: e.inserted_at],
+        order_by: [
+          desc: fragment("?->>'date'", e.metadata),
+          desc: e.inserted_at
+        ],
         select: %{inserted_at: e.inserted_at, metadata: e.metadata}
       ),
       log: false
     )
-    |> Enum.reduce({MapSet.new(), []}, fn %{inserted_at: inserted_at, metadata: metadata},
+    |> Enum.reduce({MapSet.new(), []}, fn %{
+                                            inserted_at: inserted_at,
+                                            metadata: metadata
+                                          },
                                           {seen_dates, acc} ->
       case headline_day(metadata, inserted_at) do
         nil ->
@@ -82,16 +88,20 @@ defmodule Froth.HeadlinesLedger do
     |> Enum.sort_by(& &1.date, {:desc, Date})
   end
 
-  defp coverage(nil, headline_days), do: coverage_from_summary_dates([], headline_days)
+  defp coverage(nil, headline_days),
+    do: coverage_from_summary_dates([], headline_days)
 
   defp coverage(chat_id, headline_days) when is_integer(chat_id) do
     summary_dates =
       Repo.all(
         from(s in ChatSummary,
           where: s.chat_id == ^chat_id,
-          distinct: fragment("timezone('UTC', to_timestamp(?))::date", s.from_date),
-          order_by: fragment("timezone('UTC', to_timestamp(?))::date", s.from_date),
-          select: fragment("timezone('UTC', to_timestamp(?))::date", s.from_date)
+          distinct:
+            fragment("timezone('UTC', to_timestamp(?))::date", s.from_date),
+          order_by:
+            fragment("timezone('UTC', to_timestamp(?))::date", s.from_date),
+          select:
+            fragment("timezone('UTC', to_timestamp(?))::date", s.from_date)
         ),
         log: false
       )
@@ -102,16 +112,21 @@ defmodule Froth.HeadlinesLedger do
 
   defp coverage_from_summary_dates(summary_dates, headline_days) do
     filed_dates = MapSet.new(Enum.map(headline_days, & &1.iso_date))
-    missing_dates = Enum.reject(summary_dates, &MapSet.member?(filed_dates, &1))
+
+    missing_dates =
+      Enum.reject(summary_dates, &MapSet.member?(filed_dates, &1))
 
     %{
       total_days: length(summary_dates),
       filed_days: length(headline_days),
-      total_headlines: Enum.reduce(headline_days, 0, &(&1.headline_count + &2)),
+      total_headlines:
+        Enum.reduce(headline_days, 0, &(&1.headline_count + &2)),
       missing_count: length(missing_dates),
       missing_dates: missing_dates,
-      first_day: List.last(summary_dates) || maybe_day_iso(List.last(headline_days)),
-      last_day: List.first(summary_dates) || maybe_day_iso(List.first(headline_days))
+      first_day:
+        List.last(summary_dates) || maybe_day_iso(List.last(headline_days)),
+      last_day:
+        List.first(summary_dates) || maybe_day_iso(List.first(headline_days))
     }
   end
 
@@ -149,7 +164,10 @@ defmodule Froth.HeadlinesLedger do
     |> Enum.reverse()
   end
 
-  defp headline_day(%{"date" => iso_date, "headlines" => headlines}, inserted_at)
+  defp headline_day(
+         %{"date" => iso_date, "headlines" => headlines},
+         inserted_at
+       )
        when is_binary(iso_date) and is_list(headlines) do
     with {:ok, date} <- Date.from_iso8601(iso_date) do
       normalized_headlines = Enum.map(headlines, &normalize_headline/1)
@@ -213,7 +231,8 @@ defmodule Froth.HeadlinesLedger do
 
   defp parse_chat_id(_value), do: []
 
-  defp string_field(map, string_key, atom_key, default \\ nil) when is_map(map) do
+  defp string_field(map, string_key, atom_key, default \\ nil)
+       when is_map(map) do
     case Map.get(map, string_key) || Map.get(map, atom_key) do
       value when is_binary(value) ->
         case String.trim(value) do
@@ -226,10 +245,12 @@ defmodule Froth.HeadlinesLedger do
     end
   end
 
-  defp time_window(from_time, to_time) when is_binary(from_time) and is_binary(to_time) do
+  defp time_window(from_time, to_time)
+       when is_binary(from_time) and is_binary(to_time) do
     with {:ok, from_dt} <- parse_datetime(from_time),
          {:ok, to_dt} <- parse_datetime(to_time) do
-      Calendar.strftime(from_dt, "%H:%M") <> "-" <> Calendar.strftime(to_dt, "%H:%M UTC")
+      Calendar.strftime(from_dt, "%H:%M") <>
+        "-" <> Calendar.strftime(to_dt, "%H:%M UTC")
     else
       _ -> nil
     end
@@ -244,14 +265,20 @@ defmodule Froth.HeadlinesLedger do
 
       {:error, _reason} ->
         case NaiveDateTime.from_iso8601(value) do
-          {:ok, naive_datetime} -> {:ok, DateTime.from_naive!(naive_datetime, "Etc/UTC")}
-          {:error, _reason} -> :error
+          {:ok, naive_datetime} ->
+            {:ok, DateTime.from_naive!(naive_datetime, "Etc/UTC")}
+
+          {:error, _reason} ->
+            :error
         end
     end
   end
 
-  defp month_section_id(%Date{} = date), do: "month-" <> Calendar.strftime(date, "%Y-%m")
+  defp month_section_id(%Date{} = date),
+    do: "month-" <> Calendar.strftime(date, "%Y-%m")
 
-  defp maybe_day_iso(%{iso_date: iso_date}) when is_binary(iso_date), do: iso_date
+  defp maybe_day_iso(%{iso_date: iso_date}) when is_binary(iso_date),
+    do: iso_date
+
   defp maybe_day_iso(_day), do: nil
 end

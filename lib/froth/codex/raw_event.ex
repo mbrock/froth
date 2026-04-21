@@ -15,7 +15,20 @@ defmodule Froth.Codex.RawEvent do
 
   def changeset(raw_event, attrs) do
     raw_event
-    |> cast(attrs, [:session_id, :kind, :method, :payload, :raw_line, :received_at])
-    |> validate_required([:session_id, :kind, :payload, :raw_line, :received_at])
+    |> cast(attrs, [
+      :session_id,
+      :kind,
+      :method,
+      :payload,
+      :raw_line,
+      :received_at
+    ])
+    |> validate_required([
+      :session_id,
+      :kind,
+      :payload,
+      :raw_line,
+      :received_at
+    ])
   end
 end

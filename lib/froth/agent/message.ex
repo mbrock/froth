@@ -22,8 +22,11 @@ defmodule Froth.Agent.Message do
     timestamps()
   end
 
-  def user(content), do: %__MODULE__{role: :user, content: Content.to_blocks(content)}
-  def agent(content), do: %__MODULE__{role: :agent, content: Content.to_blocks(content)}
+  def user(content),
+    do: %__MODULE__{role: :user, content: Content.to_blocks(content)}
+
+  def agent(content),
+    do: %__MODULE__{role: :agent, content: Content.to_blocks(content)}
 
   def agent(content, metadata),
     do: %__MODULE__{

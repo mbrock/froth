@@ -39,8 +39,10 @@ defmodule Froth.Codex.Session do
 
   # --- Public API ---
 
-  @spec ensure_started(session_id(), keyword()) :: {:ok, pid()} | {:error, term()}
-  def ensure_started(session_id, opts \\ []) when is_binary(session_id) and is_list(opts) do
+  @spec ensure_started(session_id(), keyword()) ::
+          {:ok, pid()} | {:error, term()}
+  def ensure_started(session_id, opts \\ [])
+      when is_binary(session_id) and is_list(opts) do
     session_id = String.trim(session_id)
     requested_thread_id = thread_id_from_opts(opts)
 
@@ -48,7 +50,8 @@ defmodule Froth.Codex.Session do
       nil ->
         case DynamicSupervisor.start_child(
                @supervisor,
-               {__MODULE__, [session_id: session_id, thread_id: requested_thread_id]}
+               {__MODULE__,
+                [session_id: session_id, thread_id: requested_thread_id]}
              ) do
           {:ok, pid} -> {:ok, pid}
           {:error, {:already_started, pid}} -> {:ok, pid}
@@ -57,7 +60,10 @@ defmodule Froth.Codex.Session do
 
       pid ->
         if is_binary(requested_thread_id) do
-          GenServer.cast(pid, {:resume_thread_if_missing, requested_thread_id})
+          GenServer.cast(
+            pid,
+            {:resume_thread_if_missing, requested_thread_id}
+          )
         end
 
         {:ok, pid}
@@ -81,7 +87,8 @@ defmodule Froth.Codex.Session do
   end
 
   @spec topic(session_id()) :: String.t()
-  def topic(session_id) when is_binary(session_id), do: "codex:session:#{session_id}"
+  def topic(session_id) when is_binary(session_id),
+    do: "codex:session:#{session_id}"
 
   @spec subscribe(session_id()) :: :ok | {:error, term()}
   def subscribe(session_id) when is_binary(session_id) do
@@ -104,21 +111,24 @@ defmodule Froth.Codex.Session do
     :exit, reason -> {:error, reason}
   end
 
-  @spec send_prompt(session_id(), String.t(), keyword()) :: :ok | {:error, term()}
+  @spec send_prompt(session_id(), String.t(), keyword()) ::
+          :ok | {:error, term()}
   def send_prompt(session_id, prompt, opts \\ [])
       when is_binary(session_id) and is_binary(prompt) and is_list(opts) do
     call_session(session_id, {:send_prompt, prompt, opts})
   end
 
   @spec new_thread(session_id()) :: :ok | {:error, term()}
-  def new_thread(session_id) when is_binary(session_id), do: call_session(session_id, :new_thread)
+  def new_thread(session_id) when is_binary(session_id),
+    do: call_session(session_id, :new_thread)
 
   @spec interrupt_turn(session_id()) :: :ok | {:error, term()}
   def interrupt_turn(session_id) when is_binary(session_id) do
     call_session(session_id, :interrupt_turn)
   end
 
-  @spec set_reasoning_effort(session_id(), String.t()) :: :ok | {:error, term()}
+  @spec set_reasoning_effort(session_id(), String.t()) ::
+          :ok | {:error, term()}
   def set_reasoning_effort(session_id, effort)
       when is_binary(session_id) and is_binary(effort) do
     call_session(session_id, {:set_reasoning_effort, effort})
@@ -135,7 +145,8 @@ defmodule Froth.Codex.Session do
     call_session(session_id, :refresh_available_models)
   end
 
-  @spec current_thread_id(session_id()) :: {:ok, String.t() | nil} | {:error, term()}
+  @spec current_thread_id(session_id()) ::
+          {:ok, String.t() | nil} | {:error, term()}
   def current_thread_id(session_id) when is_binary(session_id) do
     with {:ok, snap} <- snapshot(session_id), do: {:ok, snap.thread_id}
   end
@@ -177,7 +188,9 @@ defmodule Froth.Codex.Session do
     session_id = Keyword.fetch!(opts, :session_id)
     thread_id = Keyword.get(opts, :thread_id)
 
-    GenServer.start_link(__MODULE__, %{session_id: session_id, thread_id: thread_id},
+    GenServer.start_link(
+      __MODULE__,
+      %{session_id: session_id, thread_id: thread_id},
       name: {:via, Registry, {@registry, session_id}}
     )
   end
@@ -185,8 +198,15 @@ defmodule Froth.Codex.Session do
   @impl true
   def init(%{session_id: session_id, thread_id: requested_thread_id}) do
     Process.flag(:trap_exit, true)
-    {restored_entries, restored_seq} = CodexEvents.load_recent_entries(session_id, @max_entries)
-    session_span_id = Span.start_span([:froth, :codex, :session], nil, %{session_id: session_id})
+
+    {restored_entries, restored_seq} =
+      CodexEvents.load_recent_entries(session_id, @max_entries)
+
+    session_span_id =
+      Span.start_span([:froth, :codex, :session], nil, %{
+        session_id: session_id
+      })
+
     Registry.update_value(@registry, session_id, fn _ -> session_span_id end)
 
     state = %{
@@ -246,12 +266,16 @@ defmodule Froth.Codex.Session do
   end
 
   def handle_call(:close, _from, state) do
-    Span.execute([:froth, :codex, :session, :close_requested], state.span_id, %{
-      session_id: state.session_id,
-      thread_id: state.thread_id,
-      active_turn_id: state.active_turn_id,
-      status: state.status
-    })
+    Span.execute(
+      [:froth, :codex, :session, :close_requested],
+      state.span_id,
+      %{
+        session_id: state.session_id,
+        thread_id: state.thread_id,
+        active_turn_id: state.active_turn_id,
+        status: state.status
+      }
+    )
 
     {:stop, :normal, :ok, %{state | close_reason: :requested}}
   end
@@ -264,37 +288,52 @@ defmodule Froth.Codex.Session do
       {:reply, {:error, :empty_prompt}, state}
     else
       case do_send_prompt(state, prompt, images) do
-        {:ok, state} -> {:reply, :ok, broadcast_update(state)}
-        {:error, reason, state} -> {:reply, {:error, reason}, broadcast_update(state)}
+        {:ok, state} ->
+          {:reply, :ok, broadcast_update(state)}
+
+        {:error, reason, state} ->
+          {:reply, {:error, reason}, broadcast_update(state)}
       end
     end
   end
 
   def handle_call(:new_thread, _from, state) do
     case do_start_new_thread(state, true) do
-      {:ok, state} -> {:reply, :ok, broadcast_update(state)}
-      {:error, reason, state} -> {:reply, {:error, reason}, broadcast_update(state)}
+      {:ok, state} ->
+        {:reply, :ok, broadcast_update(state)}
+
+      {:error, reason, state} ->
+        {:reply, {:error, reason}, broadcast_update(state)}
     end
   end
 
   def handle_call(:interrupt_turn, _from, state) do
     case do_interrupt_turn(state) do
-      {:ok, state} -> {:reply, :ok, broadcast_update(state)}
-      {:error, reason, state} -> {:reply, {:error, reason}, broadcast_update(state)}
+      {:ok, state} ->
+        {:reply, :ok, broadcast_update(state)}
+
+      {:error, reason, state} ->
+        {:reply, {:error, reason}, broadcast_update(state)}
     end
   end
 
   def handle_call({:set_reasoning_effort, effort}, _from, state) do
     case do_set_reasoning_effort(state, effort) do
-      {:ok, state} -> {:reply, :ok, broadcast_update(state)}
-      {:error, reason, state} -> {:reply, {:error, reason}, broadcast_update(state)}
+      {:ok, state} ->
+        {:reply, :ok, broadcast_update(state)}
+
+      {:error, reason, state} ->
+        {:reply, {:error, reason}, broadcast_update(state)}
     end
   end
 
   def handle_call({:set_model, model}, _from, state) do
     case do_set_model(state, model) do
-      {:ok, state} -> {:reply, :ok, broadcast_update(state)}
-      {:error, reason, state} -> {:reply, {:error, reason}, broadcast_update(state)}
+      {:ok, state} ->
+        {:reply, :ok, broadcast_update(state)}
+
+      {:error, reason, state} ->
+        {:reply, {:error, reason}, broadcast_update(state)}
     end
   end
 
@@ -349,7 +388,10 @@ defmodule Froth.Codex.Session do
     {:noreply, broadcast_update(state)}
   end
 
-  def handle_info({:codex, :notification, method, params, _raw, _raw_line}, state)
+  def handle_info(
+        {:codex, :notification, method, params, _raw, _raw_line},
+        state
+      )
       when is_binary(method) and is_map(params) do
     state = safely_apply_notification(state, method, params)
     {:noreply, broadcast_update(state)}
@@ -365,7 +407,8 @@ defmodule Froth.Codex.Session do
     {:noreply, broadcast_update(state)}
   end
 
-  def handle_info({:EXIT, pid, reason}, %{codex_pid: pid} = state) when is_pid(pid) do
+  def handle_info({:EXIT, pid, reason}, %{codex_pid: pid} = state)
+      when is_pid(pid) do
     Span.execute([:froth, :codex, :session_codex_exit], state.span_id, %{
       session_id: state.session_id,
       reason: inspect(reason)
@@ -431,7 +474,8 @@ defmodule Froth.Codex.Session do
          ) do
       {:ok, pid} ->
         with :ok <- Froth.Codex.subscribe(pid),
-             {:ok, _} <- Froth.Codex.handshake(pid, client_info(state.session_id)) do
+             {:ok, _} <-
+               Froth.Codex.handshake(pid, client_info(state.session_id)) do
           state
           |> Map.put(:codex_pid, pid)
           |> Map.put(:status, :ready)
@@ -455,7 +499,8 @@ defmodule Froth.Codex.Session do
     end
   end
 
-  defp do_send_prompt(state, prompt, images) when is_binary(prompt) and is_list(images) do
+  defp do_send_prompt(state, prompt, images)
+       when is_binary(prompt) and is_list(images) do
     with {:ok, state} <- ensure_ready(state),
          {:ok, state} <- ensure_thread(state) do
       turn_input = build_turn_input(prompt, images)
@@ -471,12 +516,16 @@ defmodule Froth.Codex.Session do
           {:ok,
            state
            |> Map.put(:active_turn_id, get_turn_id(result))
-           |> Map.put(:active_turn_started_at_ms, System.system_time(:millisecond))
+           |> Map.put(
+             :active_turn_started_at_ms,
+             System.system_time(:millisecond)
+           )
            |> Map.put(:last_turn_elapsed_ms, nil)
            |> reset_turn_state()}
 
         {:error, reason} ->
-          {:error, reason, push_entry(state, :error, "turn/start failed: #{inspect(reason)}")}
+          {:error, reason,
+           push_entry(state, :error, "turn/start failed: #{inspect(reason)}")}
       end
     end
   end
@@ -528,7 +577,12 @@ defmodule Froth.Codex.Session do
           end
 
         {:error, reason} ->
-          {:error, reason, push_entry(state, :error, "thread/start failed: #{inspect(reason)}")}
+          {:error, reason,
+           push_entry(
+             state,
+             :error,
+             "thread/start failed: #{inspect(reason)}"
+           )}
       end
     end
   end
@@ -547,17 +601,23 @@ defmodule Froth.Codex.Session do
           {:ok, push_entry(state, :status, "interrupt requested")}
 
         {:error, reason} ->
-          {:error, reason, push_entry(state, :error, "interrupt failed: #{inspect(reason)}")}
+          {:error, reason,
+           push_entry(state, :error, "interrupt failed: #{inspect(reason)}")}
       end
     else
-      {:error, reason, state} -> {:error, reason, state}
-      _ -> {:error, :missing_thread, push_entry(state, :error, "cannot interrupt without thread")}
+      {:error, reason, state} ->
+        {:error, reason, state}
+
+      _ ->
+        {:error, :missing_thread,
+         push_entry(state, :error, "cannot interrupt without thread")}
     end
   end
 
   defp do_set_reasoning_effort(state, effort) when is_binary(effort) do
     with {:ok, state} <- ensure_ready(state),
-         normalized when is_binary(normalized) <- normalize_reasoning_effort_value(effort) do
+         normalized when is_binary(normalized) <-
+           normalize_reasoning_effort_value(effort) do
       params = %{
         "keyPath" => "model_reasoning_effort",
         "value" => normalized,
@@ -570,7 +630,11 @@ defmodule Froth.Codex.Session do
 
         {:error, reason} ->
           {:error, reason,
-           push_entry(state, :error, "reasoning update failed: #{inspect(reason)}")}
+           push_entry(
+             state,
+             :error,
+             "reasoning update failed: #{inspect(reason)}"
+           )}
       end
     else
       {:error, reason, state} ->
@@ -578,7 +642,11 @@ defmodule Froth.Codex.Session do
 
       _ ->
         {:error, :invalid_reasoning_effort,
-         push_entry(state, :error, "unsupported reasoning effort: #{inspect(effort)}")}
+         push_entry(
+           state,
+           :error,
+           "unsupported reasoning effort: #{inspect(effort)}"
+         )}
     end
   end
 
@@ -597,7 +665,12 @@ defmodule Froth.Codex.Session do
           {:ok, merge_runtime(state, %{model: normalized})}
 
         {:error, reason} ->
-          {:error, reason, push_entry(state, :error, "model update failed: #{inspect(reason)}")}
+          {:error, reason,
+           push_entry(
+             state,
+             :error,
+             "model update failed: #{inspect(reason)}"
+           )}
       end
     else
       {:error, reason, state} ->
@@ -612,9 +685,12 @@ defmodule Froth.Codex.Session do
   defp ensure_ready(%{status: :ready} = state), do: {:ok, state}
 
   defp ensure_ready(state),
-    do: {:error, :codex_not_ready, push_entry(state, :error, "codex not ready")}
+    do:
+      {:error, :codex_not_ready, push_entry(state, :error, "codex not ready")}
 
-  defp ensure_thread(%{thread_id: id} = state) when is_binary(id), do: {:ok, state}
+  defp ensure_thread(%{thread_id: id} = state) when is_binary(id),
+    do: {:ok, state}
+
   defp ensure_thread(state), do: do_start_new_thread(state, false)
 
   defp resume_thread(state, thread_id) when is_binary(thread_id) do
@@ -636,14 +712,19 @@ defmodule Froth.Codex.Session do
           {:ok, state}
 
         {:error, reason} ->
-          {:error, reason, push_entry(state, :error, "resume failed: #{inspect(reason)}")}
+          {:error, reason,
+           push_entry(state, :error, "resume failed: #{inspect(reason)}")}
       end
     end
   end
 
   defp codex_call(state, method, params) when is_map(params) do
     if is_pid(state.codex_pid) and Process.alive?(state.codex_pid) do
-      apply(Froth.Codex, method, [state.codex_pid, params, [timeout: @request_timeout_ms]])
+      apply(Froth.Codex, method, [
+        state.codex_pid,
+        params,
+        [timeout: @request_timeout_ms]
+      ])
     else
       {:error, :codex_not_running}
     end
@@ -654,7 +735,11 @@ defmodule Froth.Codex.Session do
   defp apply_notification(state, "thread/started", params) do
     thread_id = get_thread_id(params)
     state = apply_runtime_patch(state, params)
-    state = if is_binary(thread_id), do: Map.put(state, :thread_id, thread_id), else: state
+
+    state =
+      if is_binary(thread_id),
+        do: Map.put(state, :thread_id, thread_id),
+        else: state
 
     if is_binary(thread_id),
       do: push_entry(state, :system, "thread ready"),
@@ -712,7 +797,11 @@ defmodule Froth.Codex.Session do
     |> push_entry(:status, "turn #{turn_status}")
   end
 
-  defp apply_notification(state, "item/agentMessage/delta", %{"delta" => delta} = params)
+  defp apply_notification(
+         state,
+         "item/agentMessage/delta",
+         %{"delta" => delta} = params
+       )
        when is_binary(delta) do
     assistant_id = assistant_delta_id(state, params)
     full = assistant_delta_text(state, assistant_id, delta)
@@ -723,10 +812,22 @@ defmodule Froth.Codex.Session do
     |> upsert_entry(assistant_id, :assistant, full)
   end
 
-  defp apply_notification(state, "item/completed", %{"item" => %{"type" => type} = item} = params)
+  defp apply_notification(
+         state,
+         "item/completed",
+         %{"item" => %{"type" => type} = item} = params
+       )
        when type in ["agentMessage", "AgentMessage"] do
-    text = Map.get(item, "text") || extract_text_from_content(Map.get(item, "content"))
-    upsert_assistant_message(state, Map.get(params, "turnId"), Map.get(item, "id"), text)
+    text =
+      Map.get(item, "text") ||
+        extract_text_from_content(Map.get(item, "content"))
+
+    upsert_assistant_message(
+      state,
+      Map.get(params, "turnId"),
+      Map.get(item, "id"),
+      text
+    )
   end
 
   defp apply_notification(state, "item/reasoning/summaryPartAdded", params) do
@@ -738,9 +839,15 @@ defmodule Froth.Codex.Session do
     |> upsert_entry(reasoning_id, :reasoning, "thinking...")
   end
 
-  defp apply_notification(state, "item/reasoning/summaryTextDelta", %{"delta" => delta} = params)
+  defp apply_notification(
+         state,
+         "item/reasoning/summaryTextDelta",
+         %{"delta" => delta} = params
+       )
        when is_binary(delta) do
-    reasoning_id = state.active_reasoning_entry_id || make_reasoning_id(params)
+    reasoning_id =
+      state.active_reasoning_entry_id || make_reasoning_id(params)
+
     full = state.active_reasoning_text <> delta
 
     state
@@ -749,7 +856,9 @@ defmodule Froth.Codex.Session do
     |> upsert_entry(reasoning_id, :reasoning, full)
   end
 
-  defp apply_notification(state, "codex/event/exec_command_begin", %{"msg" => msg})
+  defp apply_notification(state, "codex/event/exec_command_begin", %{
+         "msg" => msg
+       })
        when is_map(msg) do
     call_id = Map.get(msg, "call_id") || Map.get(msg, "callId")
     command = summarize_command(msg)
@@ -766,7 +875,9 @@ defmodule Froth.Codex.Session do
     })
   end
 
-  defp apply_notification(state, "codex/event/exec_command_end", %{"msg" => msg})
+  defp apply_notification(state, "codex/event/exec_command_end", %{
+         "msg" => msg
+       })
        when is_map(msg) do
     call_id = Map.get(msg, "call_id") || Map.get(msg, "callId")
     exit_code = Map.get(msg, "exit_code") || Map.get(msg, "exitCode")
@@ -778,7 +889,9 @@ defmodule Froth.Codex.Session do
         true -> "done"
       end
 
-    entry_id = Map.get(state.tool_entry_ids_by_call, call_id) || "tool-#{state.entry_seq + 1}"
+    entry_id =
+      Map.get(state.tool_entry_ids_by_call, call_id) ||
+        "tool-#{state.entry_seq + 1}"
 
     state
     |> Map.update!(:tool_entry_ids_by_call, &Map.delete(&1, call_id))
@@ -787,22 +900,32 @@ defmodule Froth.Codex.Session do
       kind: :tool,
       body: summarize_command(msg) || "command finished",
       status: status,
-      output: summarize_output(Map.get(msg, "aggregated_output") || Map.get(msg, "output"))
+      output:
+        summarize_output(
+          Map.get(msg, "aggregated_output") || Map.get(msg, "output")
+        )
     })
   end
 
-  defp apply_notification(state, "thread/tokenUsage/updated", %{"tokenUsage" => usage})
+  defp apply_notification(state, "thread/tokenUsage/updated", %{
+         "tokenUsage" => usage
+       })
        when is_map(usage) do
     Map.put(state, :token_usage, usage)
   end
 
-  defp apply_notification(state, "account/rateLimits/updated", %{"rateLimits" => limits})
+  defp apply_notification(state, "account/rateLimits/updated", %{
+         "rateLimits" => limits
+       })
        when is_map(limits) do
     Map.put(state, :rate_limits, limits)
   end
 
   defp apply_notification(state, "error", params) do
-    msg = Map.get(params, "message") || Map.get(params, "error") || inspect(params, limit: 20)
+    msg =
+      Map.get(params, "message") || Map.get(params, "error") ||
+        inspect(params, limit: 20)
+
     push_entry(state, :error, "codex error: #{msg}")
   end
 
@@ -812,7 +935,8 @@ defmodule Froth.Codex.Session do
     item/reasoning/summaryPartAdded item/reasoning/summaryTextDelta
   ]
 
-  defp apply_notification(state, method, _params) when method in @ignored_methods, do: state
+  defp apply_notification(state, method, _params)
+       when method in @ignored_methods, do: state
 
   defp apply_notification(state, method, params) do
     if MapSet.member?(state.seen_misc_methods, method) do
@@ -833,7 +957,11 @@ defmodule Froth.Codex.Session do
         error: Exception.message(error)
       })
 
-      push_entry(state, :error, "failed to process #{method}: #{Exception.message(error)}")
+      push_entry(
+        state,
+        :error,
+        "failed to process #{method}: #{Exception.message(error)}"
+      )
   end
 
   # --- Entry management ---
@@ -845,26 +973,43 @@ defmodule Froth.Codex.Session do
   defp append_entry_map(state, entry) when is_map(entry) do
     sequence = state.entry_seq + 1
     entry = Map.merge(entry, %{id: "e-#{sequence}", sequence: sequence})
-    state = %{state | entry_seq: sequence, entries: trim_entries(state.entries ++ [entry])}
+
+    state = %{
+      state
+      | entry_seq: sequence,
+        entries: trim_entries(state.entries ++ [entry])
+    }
+
     CodexEvents.upsert_entry(state.session_id, entry)
     state
   end
 
-  defp upsert_entry(state, id, kind, body) when is_binary(id) and is_binary(body) do
+  defp upsert_entry(state, id, kind, body)
+       when is_binary(id) and is_binary(body) do
     upsert_entry_map(state, id, %{id: id, kind: kind, body: body})
   end
 
-  defp upsert_entry_map(state, id, entry) when is_binary(id) and is_map(entry) do
+  defp upsert_entry_map(state, id, entry)
+       when is_binary(id) and is_map(entry) do
     case Enum.find_index(state.entries, &(&1.id == id)) do
       nil ->
         sequence = state.entry_seq + 1
         entry = Map.merge(entry, %{id: id, sequence: sequence})
-        state = %{state | entries: trim_entries(state.entries ++ [entry]), entry_seq: sequence}
+
+        state = %{
+          state
+          | entries: trim_entries(state.entries ++ [entry]),
+            entry_seq: sequence
+        }
+
         CodexEvents.upsert_entry(state.session_id, entry)
         state
 
       idx ->
-        sequence = (Enum.at(state.entries, idx) || %{})[:sequence] || state.entry_seq + 1
+        sequence =
+          (Enum.at(state.entries, idx) || %{})[:sequence] ||
+            state.entry_seq + 1
+
         entry = Map.merge(entry, %{id: id, sequence: sequence})
         state = %{state | entries: List.replace_at(state.entries, idx, entry)}
         CodexEvents.upsert_entry(state.session_id, entry)
@@ -910,7 +1055,10 @@ defmodule Froth.Codex.Session do
   end
 
   defp broadcast_update(state) do
-    Froth.broadcast(topic(state.session_id), {:codex_session_updated, state.session_id})
+    Froth.broadcast(
+      topic(state.session_id),
+      {:codex_session_updated, state.session_id}
+    )
 
     state
   end
@@ -992,19 +1140,28 @@ defmodule Froth.Codex.Session do
 
     merge_runtime(state, %{
       model: Map.get(result, "model"),
-      model_provider: Map.get(result, "modelProvider") || Map.get(thread, "modelProvider"),
+      model_provider:
+        Map.get(result, "modelProvider") || Map.get(thread, "modelProvider"),
       reasoning_effort: Map.get(result, "reasoningEffort"),
-      approval_policy: Map.get(result, "approvalPolicy") || Map.get(extra, "approvalPolicy"),
-      personality: Map.get(result, "personality") || Map.get(extra, "personality"),
-      cwd: Map.get(result, "cwd") || Map.get(thread, "cwd") || Map.get(extra, "cwd"),
-      sandbox: summarize_sandbox(Map.get(result, "sandbox") || Map.get(extra, "sandbox")),
+      approval_policy:
+        Map.get(result, "approvalPolicy") || Map.get(extra, "approvalPolicy"),
+      personality:
+        Map.get(result, "personality") || Map.get(extra, "personality"),
+      cwd:
+        Map.get(result, "cwd") || Map.get(thread, "cwd") ||
+          Map.get(extra, "cwd"),
+      sandbox:
+        summarize_sandbox(
+          Map.get(result, "sandbox") || Map.get(extra, "sandbox")
+        ),
       cli_version: Map.get(thread, "cliVersion"),
       source: Map.get(thread, "source")
     })
   end
 
   defp merge_runtime(state, patch) when is_map(patch) do
-    compact = patch |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end) |> Map.new()
+    compact =
+      patch |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end) |> Map.new()
 
     if map_size(compact) == 0 do
       state
@@ -1053,7 +1210,10 @@ defmodule Froth.Codex.Session do
   defp available_models_from_result(models) when is_list(models), do: models
   defp available_models_from_result(_), do: []
 
-  defp ensure_model_supported(%{available_models: available_models} = state, model)
+  defp ensure_model_supported(
+         %{available_models: available_models} = state,
+         model
+       )
        when is_binary(model) do
     allowed_model_values = available_model_values(available_models)
     current_model = current_runtime_model(state.runtime)
@@ -1078,7 +1238,8 @@ defmodule Froth.Codex.Session do
     |> Enum.flat_map(fn model ->
       value = available_model_value(model)
 
-      if is_binary(value) and value != "" and not available_model_hidden?(model) do
+      if is_binary(value) and value != "" and
+           not available_model_hidden?(model) do
         [value]
       else
         []
@@ -1132,8 +1293,13 @@ defmodule Froth.Codex.Session do
     "reasoning-#{item}-#{index}"
   end
 
-  defp maybe_track_tool_call(state, call_id, entry_id) when is_binary(call_id) do
-    Map.update!(state, :tool_entry_ids_by_call, &Map.put(&1, call_id, entry_id))
+  defp maybe_track_tool_call(state, call_id, entry_id)
+       when is_binary(call_id) do
+    Map.update!(
+      state,
+      :tool_entry_ids_by_call,
+      &Map.put(&1, call_id, entry_id)
+    )
   end
 
   defp maybe_track_tool_call(state, _, _), do: state
@@ -1155,8 +1321,9 @@ defmodule Froth.Codex.Session do
     end
   end
 
-  defp assistant_item_id_present?(%{"itemId" => item_id}) when is_binary(item_id),
-    do: String.trim(item_id) != ""
+  defp assistant_item_id_present?(%{"itemId" => item_id})
+       when is_binary(item_id),
+       do: String.trim(item_id) != ""
 
   defp assistant_item_id_present?(_), do: false
 
@@ -1179,7 +1346,8 @@ defmodule Froth.Codex.Session do
 
   defp upsert_assistant_message(state, _, _, _), do: state
 
-  defp push_user_entry(state, prompt, images) when is_binary(prompt) and is_list(images) do
+  defp push_user_entry(state, prompt, images)
+       when is_binary(prompt) and is_list(images) do
     entry =
       %{
         kind: :user,
@@ -1191,9 +1359,12 @@ defmodule Froth.Codex.Session do
   end
 
   defp maybe_put_images(entry, []), do: entry
-  defp maybe_put_images(entry, images) when is_list(images), do: Map.put(entry, :images, images)
 
-  defp build_turn_input(prompt, images) when is_binary(prompt) and is_list(images) do
+  defp maybe_put_images(entry, images) when is_list(images),
+    do: Map.put(entry, :images, images)
+
+  defp build_turn_input(prompt, images)
+       when is_binary(prompt) and is_list(images) do
     text_items =
       case String.trim(prompt) do
         "" -> []
@@ -1218,9 +1389,14 @@ defmodule Froth.Codex.Session do
       %{path: path} = image when is_binary(path) and path != "" ->
         %{
           path: path,
-          url: normalize_optional_binary(Map.get(image, :url) || Map.get(image, "url")),
+          url:
+            normalize_optional_binary(
+              Map.get(image, :url) || Map.get(image, "url")
+            ),
           alt:
-            normalize_optional_binary(Map.get(image, :alt) || Map.get(image, "alt")) ||
+            normalize_optional_binary(
+              Map.get(image, :alt) || Map.get(image, "alt")
+            ) ||
               "Pasted image"
         }
 
@@ -1230,9 +1406,14 @@ defmodule Froth.Codex.Session do
         if is_binary(path) and path != "" do
           %{
             path: path,
-            url: normalize_optional_binary(Map.get(image, :url) || Map.get(image, "url")),
+            url:
+              normalize_optional_binary(
+                Map.get(image, :url) || Map.get(image, "url")
+              ),
             alt:
-              normalize_optional_binary(Map.get(image, :alt) || Map.get(image, "alt")) ||
+              normalize_optional_binary(
+                Map.get(image, :alt) || Map.get(image, "alt")
+              ) ||
                 "Pasted image"
           }
         end
@@ -1285,7 +1466,8 @@ defmodule Froth.Codex.Session do
 
   # --- Utilities ---
 
-  defp summarize_command(%{"command" => command} = msg) when is_list(command) do
+  defp summarize_command(%{"command" => command} = msg)
+       when is_list(command) do
     command
     |> Enum.map(&command_part_to_string/1)
     |> Enum.reject(&(&1 == ""))
@@ -1295,14 +1477,16 @@ defmodule Froth.Codex.Session do
     |> normalize_optional_binary()
   end
 
-  defp summarize_command(%{"command" => command} = msg) when is_binary(command) do
+  defp summarize_command(%{"command" => command} = msg)
+       when is_binary(command) do
     command
     |> maybe_prefix_workdir(msg)
     |> truncate(4_000)
     |> normalize_optional_binary()
   end
 
-  defp summarize_command(%{"parsed_cmd" => parsed} = msg) when is_list(parsed) do
+  defp summarize_command(%{"parsed_cmd" => parsed} = msg)
+       when is_list(parsed) do
     parsed
     |> Enum.map(&format_parsed_command/1)
     |> Enum.filter(&(is_binary(&1) and &1 != ""))
@@ -1330,9 +1514,16 @@ defmodule Froth.Codex.Session do
   defp summarize_output(_), do: nil
 
   defp command_part_to_string(value) when is_binary(value), do: value
-  defp command_part_to_string(value) when is_atom(value), do: Atom.to_string(value)
-  defp command_part_to_string(value) when is_integer(value), do: Integer.to_string(value)
-  defp command_part_to_string(value) when is_float(value), do: Float.to_string(value)
+
+  defp command_part_to_string(value) when is_atom(value),
+    do: Atom.to_string(value)
+
+  defp command_part_to_string(value) when is_integer(value),
+    do: Integer.to_string(value)
+
+  defp command_part_to_string(value) when is_float(value),
+    do: Float.to_string(value)
+
   defp command_part_to_string(value), do: inspect(value)
 
   defp format_parsed_command(%{"cmd" => cmd} = parsed) when is_binary(cmd) do
@@ -1353,12 +1544,16 @@ defmodule Froth.Codex.Session do
     end
   end
 
-  defp format_parsed_command(%{"type" => type}) when is_binary(type), do: "[#{type}]"
+  defp format_parsed_command(%{"type" => type}) when is_binary(type),
+    do: "[#{type}]"
+
   defp format_parsed_command(_), do: nil
 
-  defp maybe_prefix_workdir(command, msg) when is_binary(command) and is_map(msg) do
+  defp maybe_prefix_workdir(command, msg)
+       when is_binary(command) and is_map(msg) do
     case normalize_optional_binary(
-           Map.get(msg, "cwd") || Map.get(msg, "working_dir") || Map.get(msg, "workdir")
+           Map.get(msg, "cwd") || Map.get(msg, "working_dir") ||
+             Map.get(msg, "workdir")
          ) do
       nil -> command
       cwd -> "cd #{cwd}\n#{command}"
@@ -1389,11 +1584,17 @@ defmodule Froth.Codex.Session do
         _ -> "dev"
       end
 
-    %{name: "froth_codex_session_#{session_id}", title: "Froth Codex Session", version: version}
+    %{
+      name: "froth_codex_session_#{session_id}",
+      title: "Froth Codex Session",
+      version: version
+    }
   end
 
   defp truncate(value, max) when is_binary(value) and is_integer(max) do
-    if String.length(value) > max, do: String.slice(value, 0, max) <> "...", else: value
+    if String.length(value) > max,
+      do: String.slice(value, 0, max) <> "...",
+      else: value
   end
 
   defp preview(params) when is_map(params) do

@@ -49,7 +49,10 @@ defmodule Froth.Telegram.BotContext do
       when is_integer(chat_id) and is_list(messages) do
     recent = build_recent(chat_id, messages, opts)
 
-    %Context{chat_context: recent.chat_context, recent_messages: recent.recent_messages}
+    %Context{
+      chat_context: recent.chat_context,
+      recent_messages: recent.recent_messages
+    }
     |> render()
   end
 
@@ -60,7 +63,10 @@ defmodule Froth.Telegram.BotContext do
       when is_integer(chat_id) and is_list(messages) do
     recent = build_recent(chat_id, messages, opts)
 
-    %Context{chat_context: recent.chat_context, recent_messages: recent.recent_messages}
+    %Context{
+      chat_context: recent.chat_context,
+      recent_messages: recent.recent_messages
+    }
     |> then(&BotContextHTML.context(%{ctx: &1}))
     |> BotContextHTML.render_to_string()
   end
@@ -156,7 +162,8 @@ defmodule Froth.Telegram.BotContext do
     Enum.map(normalized, &to_recent_message(&1, sender_labels))
   end
 
-  defp fetch_recent(chat_id, before_unix, opts) when is_integer(chat_id) and is_list(opts) do
+  defp fetch_recent(chat_id, before_unix, opts)
+       when is_integer(chat_id) and is_list(opts) do
     range_end = before_unix || :infinity
 
     RecentWindow.fetch_recent(chat_id, range_end, opts)
@@ -173,19 +180,28 @@ defmodule Froth.Telegram.BotContext do
     analyses_map = Queries.analyses_for_messages(chat_id, msg_ids)
     cycle_traces_map = build_cycle_traces_map(chat_id, msg_ids, opts)
     participants = Queries.all_participants(chat_id)
-    participant_labels = Names.labels_for_ids(Enum.map(participants, & &1.sender_id), session_id)
+
+    participant_labels =
+      Names.labels_for_ids(Enum.map(participants, & &1.sender_id), session_id)
 
     all_participants =
       participants
       |> Enum.map(fn %{sender_id: id, latest_date: latest} ->
-        %{id: id, label: Map.get(participant_labels, id, "user:#{id}"), latest_date: latest}
+        %{
+          id: id,
+          label: Map.get(participant_labels, id, "user:#{id}"),
+          latest_date: latest
+        }
       end)
 
     recent_messages =
       Enum.map(normalized, fn msg ->
         msg
         |> to_recent_message(sender_labels)
-        |> Map.put(:analyses, truncate_analyses(Map.get(analyses_map, msg.message_id, [])))
+        |> Map.put(
+          :analyses,
+          truncate_analyses(Map.get(analyses_map, msg.message_id, []))
+        )
         |> Map.put(:cycles, Map.get(cycle_traces_map, msg.message_id, []))
       end)
 
@@ -203,7 +219,8 @@ defmodule Froth.Telegram.BotContext do
   defp to_recent_message(msg, sender_labels) do
     %{
       date: msg.date,
-      sender: Map.get(sender_labels, msg.sender_id, fallback_sender(msg.sender_id)),
+      sender:
+        Map.get(sender_labels, msg.sender_id, fallback_sender(msg.sender_id)),
       message_id: msg.message_id,
       type: msg.type,
       text: msg.text,
@@ -223,7 +240,9 @@ defmodule Froth.Telegram.BotContext do
        when is_integer(sender_id),
        do: sender_id
 
-  defp incoming_sender_id(%{"sender_id" => sender_id}), do: integer_sender_id(sender_id)
+  defp incoming_sender_id(%{"sender_id" => sender_id}),
+    do: integer_sender_id(sender_id)
+
   defp incoming_sender_id(_msg), do: nil
 
   defp integer_sender_id(sender_id) when is_integer(sender_id), do: sender_id
@@ -248,7 +267,9 @@ defmodule Froth.Telegram.BotContext do
 
   defp build_cycle_traces_map(chat_id, msg_ids, opts) do
     links_by_message =
-      Queries.cycle_traces_for_messages(chat_id, msg_ids, bot_id: opt_bot_id(opts))
+      Queries.cycle_traces_for_messages(chat_id, msg_ids,
+        bot_id: opt_bot_id(opts)
+      )
 
     traces_by_cycle =
       links_by_message
@@ -267,10 +288,16 @@ defmodule Froth.Telegram.BotContext do
     end)
   end
 
-  defp build_cycle_trace(%{cycle_id: cycle_id, inserted_at: inserted_at}, traces_by_cycle) do
+  defp build_cycle_trace(
+         %{cycle_id: cycle_id, inserted_at: inserted_at},
+         traces_by_cycle
+       ) do
     case Map.get(traces_by_cycle, cycle_id, []) do
-      [] -> nil
-      entries -> %{cycle_id: cycle_id, inserted_at: inserted_at, entries: entries}
+      [] ->
+        nil
+
+      entries ->
+        %{cycle_id: cycle_id, inserted_at: inserted_at, entries: entries}
     end
   end
 
@@ -278,8 +305,16 @@ defmodule Froth.Telegram.BotContext do
 
   defp message_opts(msg, bot_config) do
     base = [telegram_session_id: bot_config.session_id, bot_id: bot_config.id]
-    base = maybe_put_opt(base, :chronicle_dir, Map.get(bot_config, :chronicle_dir))
-    base = maybe_put_opt(base, :recent_message_limit, Map.get(bot_config, :recent_message_limit))
+
+    base =
+      maybe_put_opt(base, :chronicle_dir, Map.get(bot_config, :chronicle_dir))
+
+    base =
+      maybe_put_opt(
+        base,
+        :recent_message_limit,
+        Map.get(bot_config, :recent_message_limit)
+      )
 
     base =
       maybe_put_opt(
@@ -289,7 +324,11 @@ defmodule Froth.Telegram.BotContext do
       )
 
     base =
-      maybe_put_opt(base, :recent_window_min_hours, Map.get(bot_config, :recent_window_min_hours))
+      maybe_put_opt(
+        base,
+        :recent_window_min_hours,
+        Map.get(bot_config, :recent_window_min_hours)
+      )
 
     base =
       maybe_put_opt(
@@ -340,7 +379,8 @@ defmodule Froth.Telegram.BotContext do
     end
   end
 
-  defp context_session_id(chat_id, opts) when is_integer(chat_id) and is_list(opts) do
+  defp context_session_id(chat_id, opts)
+       when is_integer(chat_id) and is_list(opts) do
     configured = opt_session_id(opts)
 
     if group_chat_id?(chat_id) do
@@ -350,8 +390,9 @@ defmodule Froth.Telegram.BotContext do
     end
   end
 
-  defp incoming_session_id([%{"chat_id" => chat_id} | _], opts) when is_integer(chat_id),
-    do: context_session_id(chat_id, opts)
+  defp incoming_session_id([%{"chat_id" => chat_id} | _], opts)
+       when is_integer(chat_id),
+       do: context_session_id(chat_id, opts)
 
   defp incoming_session_id(_messages, opts), do: opt_session_id(opts)
 
@@ -395,7 +436,8 @@ defmodule Froth.Telegram.BotContext do
         rows
 
       {:error, n, anchor_size}
-      when is_integer(n) and n > 0 and is_integer(anchor_size) and anchor_size > 1 ->
+      when is_integer(n) and n > 0 and is_integer(anchor_size) and
+             anchor_size > 1 ->
         rows
 
       {:error, n, _anchor_size} when is_integer(n) and n > 0 ->

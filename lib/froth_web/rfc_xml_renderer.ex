@@ -5,13 +5,17 @@ defmodule FrothWeb.RfcXmlRenderer do
   """
 
   def render(xml_string) do
-    case :xmerl_scan.string(String.to_charlist(xml_string), [{:space, :normalize}]) do
+    case :xmerl_scan.string(String.to_charlist(xml_string), [
+           {:space, :normalize}
+         ]) do
       {doc, _rest} -> {:ok, render_rfc(doc)}
       error -> {:error, error}
     end
   end
 
-  defp render_rfc({:xmlElement, :rfc, _, _, _, _, _, attrs, children, _, _, _}) do
+  defp render_rfc(
+         {:xmlElement, :rfc, _, _, _, _, _, attrs, children, _, _, _}
+       ) do
     number = get_attr(attrs, :number)
     meta = find_child(children, :meta)
     sections = find_children(children, :section)
@@ -52,9 +56,15 @@ defmodule FrothWeb.RfcXmlRenderer do
   end
 
   defp render_rfc(_),
-    do: %{number: "????", title: "Parse Error", body: "<p>Failed to parse RFC XML</p>"}
+    do: %{
+      number: "????",
+      title: "Parse Error",
+      body: "<p>Failed to parse RFC XML</p>"
+    }
 
-  defp render_section({:xmlElement, :section, _, _, _, _, _, attrs, children, _, _, _}) do
+  defp render_section(
+         {:xmlElement, :section, _, _, _, _, _, attrs, children, _, _, _}
+       ) do
     title = get_attr(attrs, :title)
     id = get_attr(attrs, :id)
     content = Enum.map(children, &render_block/1) |> Enum.join("\n")
@@ -64,23 +74,36 @@ defmodule FrothWeb.RfcXmlRenderer do
 
   defp render_section(_), do: ""
 
-  defp render_block({:xmlElement, :p, _, _, _, _, _, _attrs, children, _, _, _}) do
+  defp render_block(
+         {:xmlElement, :p, _, _, _, _, _, _attrs, children, _, _, _}
+       ) do
     "<p>#{render_inline(children)}</p>"
   end
 
-  defp render_block({:xmlElement, :code, _, _, _, _, _, attrs, children, _, _, _}) do
+  defp render_block(
+         {:xmlElement, :code, _, _, _, _, _, attrs, children, _, _, _}
+       ) do
     lang = get_attr(attrs, :lang)
     text = text_content(children)
     lang_text = if lang, do: to_string(lang), else: ""
-    lang_class = if lang_text != "", do: ~s( class="language-#{h(lang_text)}"), else: ""
+
+    lang_class =
+      if lang_text != "", do: ~s( class="language-#{h(lang_text)}"), else: ""
+
     "<pre><code#{lang_class}>#{h(to_string(text))}</code></pre>"
   end
 
-  defp render_block({:xmlElement, :figure, _, _, _, _, _, attrs, children, _, _, _}) do
+  defp render_block(
+         {:xmlElement, :figure, _, _, _, _, _, attrs, children, _, _, _}
+       ) do
     src = get_attr(attrs, :src)
     alt = get_attr(attrs, :alt)
     caption_el = find_child(children, :caption)
-    caption = if caption_el, do: render_inline(elem_children(caption_el)), else: to_string(alt)
+
+    caption =
+      if caption_el,
+        do: render_inline(elem_children(caption_el)),
+        else: to_string(alt)
 
     """
     <figure>
@@ -90,7 +113,9 @@ defmodule FrothWeb.RfcXmlRenderer do
     """
   end
 
-  defp render_block({:xmlElement, :list, _, _, _, _, _, attrs, children, _, _, _}) do
+  defp render_block(
+         {:xmlElement, :list, _, _, _, _, _, attrs, children, _, _, _}
+       ) do
     type = get_attr(attrs, :type) || "numbered"
     items = find_children(children, :item)
 
@@ -107,7 +132,9 @@ defmodule FrothWeb.RfcXmlRenderer do
     "<#{tag}>\n#{items_html}\n</#{close_tag}>"
   end
 
-  defp render_block({:xmlElement, :section, _, _, _, _, _, _, _, _, _, _} = el) do
+  defp render_block(
+         {:xmlElement, :section, _, _, _, _, _, _, _, _, _, _} = el
+       ) do
     render_section(el)
   end
 
@@ -118,14 +145,22 @@ defmodule FrothWeb.RfcXmlRenderer do
 
   defp render_block(_), do: ""
 
-  defp render_item({:xmlElement, :item, _, _, _, _, _, _attrs, children, _, _, _}) do
+  defp render_item(
+         {:xmlElement, :item, _, _, _, _, _, _attrs, children, _, _, _}
+       ) do
     label_el = find_child(children, :label)
 
     label =
-      if label_el, do: "<strong>#{text_content(elem_children(label_el))}) </strong>", else: ""
+      if label_el,
+        do: "<strong>#{text_content(elem_children(label_el))}) </strong>",
+        else: ""
 
     ps = find_children(children, :p)
-    inner = Enum.map(ps, fn p -> render_inline(elem_children(p)) end) |> Enum.join(" ")
+
+    inner =
+      Enum.map(ps, fn p -> render_inline(elem_children(p)) end)
+      |> Enum.join(" ")
+
     "<li>#{label}#{inner}</li>"
   end
 
@@ -137,51 +172,74 @@ defmodule FrothWeb.RfcXmlRenderer do
 
   defp render_inline_node({:xmlText, _, _, _, text, _}), do: to_string(text)
 
-  defp render_inline_node({:xmlElement, :cite, _, _, _, _, _, attrs, _, _, _, _}) do
+  defp render_inline_node(
+         {:xmlElement, :cite, _, _, _, _, _, attrs, _, _, _, _}
+       ) do
     ref = get_attr(attrs, :ref)
+
     ~s'<sup><a href="#ref-#{h(to_string(ref))}">[#{h(to_string(ref))}]</a></sup>'
   end
 
-  defp render_inline_node({:xmlElement, :em, _, _, _, _, _, _, children, _, _, _}) do
+  defp render_inline_node(
+         {:xmlElement, :em, _, _, _, _, _, _, children, _, _, _}
+       ) do
     "<em>#{text_content(children)}</em>"
   end
 
-  defp render_inline_node({:xmlElement, :strong, _, _, _, _, _, _, children, _, _, _}) do
+  defp render_inline_node(
+         {:xmlElement, :strong, _, _, _, _, _, _, children, _, _, _}
+       ) do
     "<strong>#{text_content(children)}</strong>"
   end
 
-  defp render_inline_node({:xmlElement, :c, _, _, _, _, _, _, children, _, _, _}) do
+  defp render_inline_node(
+         {:xmlElement, :c, _, _, _, _, _, _, children, _, _, _}
+       ) do
     "<code>#{h(to_string(text_content(children)))}</code>"
   end
 
-  defp render_inline_node({:xmlElement, :link, _, _, _, _, _, attrs, children, _, _, _}) do
+  defp render_inline_node(
+         {:xmlElement, :link, _, _, _, _, _, attrs, children, _, _, _}
+       ) do
     href = get_attr(attrs, :href)
     "<a href=\"#{h(to_string(href))}\">#{text_content(children)}</a>"
   end
 
-  defp render_inline_node({:xmlElement, :"rfc-ref", _, _, _, _, _, attrs, _, _, _, _}) do
+  defp render_inline_node(
+         {:xmlElement, :"rfc-ref", _, _, _, _, _, attrs, _, _, _, _}
+       ) do
     number = get_attr(attrs, :number)
     "<a href=\"/rfc/#{h(to_string(number))}\">RFC-#{h(to_string(number))}</a>"
   end
 
   defp render_inline_node(_), do: ""
 
-  defp render_references({:xmlElement, :references, _, _, _, _, _, _, children, _, _, _}) do
+  defp render_references(
+         {:xmlElement, :references, _, _, _, _, _, _, children, _, _, _}
+       ) do
     refs = find_children(children, :ref)
 
     if refs == [] do
       ""
     else
       items =
-        Enum.map(refs, fn {:xmlElement, :ref, _, _, _, _, _, attrs, children, _, _, _} ->
+        Enum.map(refs, fn {:xmlElement, :ref, _, _, _, _, _, attrs, children,
+                           _, _, _} ->
           id = get_attr(attrs, :id)
           number = get_attr(attrs, :number)
           title = meta_field_from(children, :title)
           url = meta_field_from(children, :url)
-          num_display = if number && to_string(number) != "", do: "[#{number}]", else: "[#{id}]"
+
+          num_display =
+            if number && to_string(number) != "",
+              do: "[#{number}]",
+              else: "[#{id}]"
 
           url_html =
-            if url, do: " <a href=\"#{h(to_string(url))}\">#{h(to_string(url))}</a>", else: ""
+            if url,
+              do:
+                " <a href=\"#{h(to_string(url))}\">#{h(to_string(url))}</a>",
+              else: ""
 
           ~s'<li id="ref-#{h(to_string(id))}">#{num_display} #{h(to_string(title || ""))}#{url_html}</li>'
         end)
@@ -226,7 +284,9 @@ defmodule FrothWeb.RfcXmlRenderer do
     end)
   end
 
-  defp elem_children({:xmlElement, _, _, _, _, _, _, _, children, _, _, _}), do: children
+  defp elem_children({:xmlElement, _, _, _, _, _, _, _, children, _, _, _}),
+    do: children
+
   defp elem_children(_), do: []
 
   defp text_content(children) do

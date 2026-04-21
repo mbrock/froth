@@ -27,7 +27,10 @@ defmodule Froth.FakeTelegramSession do
 
   def start_link(opts) when is_list(opts) do
     session_id = Keyword.fetch!(opts, :session_id)
-    GenServer.start_link(__MODULE__, opts, name: Froth.Telegram.Session.via(session_id))
+
+    GenServer.start_link(__MODULE__, opts,
+      name: Froth.Telegram.Session.via(session_id)
+    )
   end
 
   @impl true
@@ -57,7 +60,10 @@ defmodule Froth.FakeTelegramSession do
             temp_id = 1_000_000 + System.unique_integer([:positive])
             final_id = temp_id + 10_000
             chat_id = request["chat_id"]
-            text = get_in(request, ["input_message_content", "text", "text"]) || ""
+
+            text =
+              get_in(request, ["input_message_content", "text", "text"]) || ""
+
             send(self(), {:send_success, temp_id, final_id, chat_id, text})
 
             {:reply, {:ok, %{"id" => temp_id, "chat_id" => chat_id}}, state}
@@ -70,8 +76,12 @@ defmodule Froth.FakeTelegramSession do
 
           "parseTextEntities" ->
             {:reply,
-             {:ok, %{"@type" => "formattedText", "text" => request["text"], "entities" => []}},
-             state}
+             {:ok,
+              %{
+                "@type" => "formattedText",
+                "text" => request["text"],
+                "entities" => []
+              }}, state}
 
           _ ->
             {:reply, {:ok, %{}}, state}
@@ -98,7 +108,11 @@ defmodule Froth.FakeTelegramSession do
        }}
     )
 
-    send(state.test_pid, {:message_send_succeeded, old_id, new_id, chat_id, text})
+    send(
+      state.test_pid,
+      {:message_send_succeeded, old_id, new_id, chat_id, text}
+    )
+
     {:noreply, state}
   end
 

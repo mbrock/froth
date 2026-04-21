@@ -62,12 +62,18 @@ defmodule Froth.DailyDigest do
     session_id = resolve_session_id(opts)
 
     pending_summary_dates_fun =
-      Keyword.get(opts, :pending_summary_dates_fun, &Summarizer.pending_summary_dates/2)
+      Keyword.get(
+        opts,
+        :pending_summary_dates_fun,
+        &Summarizer.pending_summary_dates/2
+      )
 
-    summarize_day_fun = Keyword.get(opts, :summarize_day_fun, &Summarizer.summarize_day/2)
+    summarize_day_fun =
+      Keyword.get(opts, :summarize_day_fun, &Summarizer.summarize_day/2)
 
     extract_headlines_fun =
-      Keyword.get(opts, :extract_headlines_fun, fn digest_chat_id, extract_opts ->
+      Keyword.get(opts, :extract_headlines_fun, fn digest_chat_id,
+                                                   extract_opts ->
         Headlines.extract(
           Keyword.merge(
             [bot: Froth.Telegram.Bot.Charlie, chat_id: digest_chat_id],
@@ -76,11 +82,16 @@ defmodule Froth.DailyDigest do
         )
       end)
 
-    send_document_fun = Keyword.get(opts, :send_document_fun, &Telegram.send_document/4)
+    send_document_fun =
+      Keyword.get(opts, :send_document_fun, &Telegram.send_document/4)
 
     pending_dates = pending_summary_dates_fun.(chat_id, today)
 
-    with {:ok, %{summarized_dates: summarized_dates, no_message_dates: no_message_dates}} <-
+    with {:ok,
+          %{
+            summarized_dates: summarized_dates,
+            no_message_dates: no_message_dates
+          }} <-
            summarize_pending_dates(chat_id, pending_dates, summarize_day_fun),
          sendable_summaries <- unsent_daily_summaries(chat_id, today),
          :ok <-
@@ -158,20 +169,29 @@ defmodule Froth.DailyDigest do
     {:noreply, %{state | task_ref: nil, task_pid: nil}}
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, reason}, %{task_ref: ref} = state) do
+  def handle_info(
+        {:DOWN, ref, :process, _pid, reason},
+        %{task_ref: ref} = state
+      ) do
     Logger.error("DailyDigest worker exited: #{inspect(reason)}")
     {:noreply, %{state | task_ref: nil, task_pid: nil}}
   end
 
   def handle_info(_message, state), do: {:noreply, state}
 
-  defp maybe_start_run(%{task_ref: ref} = state, _reason) when is_reference(ref) do
-    Logger.warning("DailyDigest skipped because a previous run is still in flight.")
+  defp maybe_start_run(%{task_ref: ref} = state, _reason)
+       when is_reference(ref) do
+    Logger.warning(
+      "DailyDigest skipped because a previous run is still in flight."
+    )
+
     state
   end
 
   defp maybe_start_run(state, reason) do
-    Logger.info("DailyDigest starting #{reason} run for chat #{state.chat_id}.")
+    Logger.info(
+      "DailyDigest starting #{reason} run for chat #{state.chat_id}."
+    )
 
     task =
       Task.Supervisor.async_nolink(Froth.TaskSupervisor, fn ->
@@ -192,17 +212,20 @@ defmodule Froth.DailyDigest do
   end
 
   defp summarize_pending_dates(chat_id, pending_dates, summarize_day_fun)
-       when is_integer(chat_id) and is_list(pending_dates) and is_function(summarize_day_fun, 2) do
+       when is_integer(chat_id) and is_list(pending_dates) and
+              is_function(summarize_day_fun, 2) do
     Enum.reduce_while(
       pending_dates,
       {:ok, %{summarized_dates: [], no_message_dates: []}},
       fn date, {:ok, acc} ->
         case summarize_day_fun.(chat_id, date) do
           {:ok, _summary} ->
-            {:cont, {:ok, %{acc | summarized_dates: acc.summarized_dates ++ [date]}}}
+            {:cont,
+             {:ok, %{acc | summarized_dates: acc.summarized_dates ++ [date]}}}
 
           {:error, :no_messages} ->
-            {:cont, {:ok, %{acc | no_message_dates: acc.no_message_dates ++ [date]}}}
+            {:cont,
+             {:ok, %{acc | no_message_dates: acc.no_message_dates ++ [date]}}}
 
           {:error, reason} ->
             {:halt, {:error, {:summarize_failed, date, reason}}}
@@ -227,14 +250,26 @@ defmodule Froth.DailyDigest do
     |> Enum.sort_by(&elem(&1, 0), Date)
     |> Enum.map(fn {date, [summary | _]} -> {date, summary} end)
     |> Enum.filter(fn {date, _summary} ->
-      Date.compare(date, cutoff_date) != :gt and not digest_sent?(chat_id, date)
+      Date.compare(date, cutoff_date) != :gt and
+        not digest_sent?(chat_id, date)
     end)
   end
 
-  defp maybe_generate_missing_headlines([], _chat_id, _opts, _extract_headlines_fun), do: :ok
+  defp maybe_generate_missing_headlines(
+         [],
+         _chat_id,
+         _opts,
+         _extract_headlines_fun
+       ), do: :ok
 
-  defp maybe_generate_missing_headlines(sendable_summaries, chat_id, opts, extract_headlines_fun)
-       when is_list(sendable_summaries) and is_integer(chat_id) and is_list(opts) and
+  defp maybe_generate_missing_headlines(
+         sendable_summaries,
+         chat_id,
+         opts,
+         extract_headlines_fun
+       )
+       when is_list(sendable_summaries) and is_integer(chat_id) and
+              is_list(opts) and
               is_function(extract_headlines_fun, 2) do
     missing_dates =
       sendable_summaries
@@ -255,12 +290,21 @@ defmodule Froth.DailyDigest do
     end
   end
 
-  defp send_digests([], _chat_id, _session_id, _opts, _send_document_fun), do: {:ok, []}
+  defp send_digests([], _chat_id, _session_id, _opts, _send_document_fun),
+    do: {:ok, []}
 
-  defp send_digests(sendable_summaries, chat_id, session_id, opts, send_document_fun)
-       when is_list(sendable_summaries) and is_integer(chat_id) and is_binary(session_id) and
+  defp send_digests(
+         sendable_summaries,
+         chat_id,
+         session_id,
+         opts,
+         send_document_fun
+       )
+       when is_list(sendable_summaries) and is_integer(chat_id) and
+              is_binary(session_id) and
               is_list(opts) and is_function(send_document_fun, 4) do
-    Enum.reduce_while(sendable_summaries, {:ok, []}, fn {date, summary}, {:ok, sent_dates} ->
+    Enum.reduce_while(sendable_summaries, {:ok, []}, fn {date, summary},
+                                                        {:ok, sent_dates} ->
       case registered_headlines_for_date(chat_id, date) do
         {:ok, headlines} ->
           with {:ok, path} <- write_summary_file(summary, date, opts),
@@ -271,7 +315,13 @@ defmodule Froth.DailyDigest do
                    caption_entities: entities
                  ),
                {:ok, _event} <-
-                 store_digest_sent_event(chat_id, date, summary, sent_message, headlines) do
+                 store_digest_sent_event(
+                   chat_id,
+                   date,
+                   summary,
+                   sent_message,
+                   headlines
+                 ) do
             {:cont, {:ok, sent_dates ++ [date]}}
           else
             {:error, reason} ->
@@ -284,7 +334,8 @@ defmodule Froth.DailyDigest do
     end)
   end
 
-  defp registered_headlines_for_date(chat_id, %Date{} = date) when is_integer(chat_id) do
+  defp registered_headlines_for_date(chat_id, %Date{} = date)
+       when is_integer(chat_id) do
     date_str = Date.to_iso8601(date)
     chat_id_string = Integer.to_string(chat_id)
 
@@ -352,15 +403,22 @@ defmodule Froth.DailyDigest do
     |> Repo.insert()
   end
 
-  defp maybe_put_message_id(metadata, %{"id" => message_id}) when is_integer(message_id) do
+  defp maybe_put_message_id(metadata, %{"id" => message_id})
+       when is_integer(message_id) do
     Map.put(metadata, "message_id", message_id)
   end
 
   defp maybe_put_message_id(metadata, _sent_message), do: metadata
 
-  defp write_summary_file(%ChatSummary{} = summary, %Date{} = date, opts) when is_list(opts) do
+  defp write_summary_file(%ChatSummary{} = summary, %Date{} = date, opts)
+       when is_list(opts) do
     digest_dir = resolve_digest_dir(opts)
-    path = Path.join(digest_dir, "chat-#{summary.chat_id}-#{Date.to_iso8601(date)}.html")
+
+    path =
+      Path.join(
+        digest_dir,
+        "chat-#{summary.chat_id}-#{Date.to_iso8601(date)}.html"
+      )
 
     with :ok <- File.mkdir_p(digest_dir),
          :ok <- File.write(path, render_summary_html(summary, date)) do
@@ -472,14 +530,17 @@ defmodule Froth.DailyDigest do
     """
   end
 
-  defp format_digest_caption(%Date{} = date, headlines) when is_list(headlines) do
-    {headline_text, headline_entities} = format_headlines_caption(date, headlines)
+  defp format_digest_caption(%Date{} = date, headlines)
+       when is_list(headlines) do
+    {headline_text, headline_entities} =
+      format_headlines_caption(date, headlines)
 
     attachment_note = "\n\nSummary attached as HTML."
     {headline_text <> attachment_note, headline_entities}
   end
 
-  defp format_headlines_caption(%Date{} = date, headlines) when is_list(headlines) do
+  defp format_headlines_caption(%Date{} = date, headlines)
+       when is_list(headlines) do
     date_text = Date.to_iso8601(date)
     separator = "\n\n"
 
@@ -497,14 +558,20 @@ defmodule Froth.DailyDigest do
 
     entities =
       headlines
-      |> Enum.reduce({header_entities, utf16_length(date_text <> separator)}, fn headline,
-                                                                                 {acc, offset} ->
-        title = Map.get(headline, "title") || Map.get(headline, :title) || ""
-        line = headline_line(headline)
-        title_offset = offset + headline_title_offset(headline)
-        next_offset = offset + utf16_length(line) + utf16_length(separator)
-        {acc ++ [bold_entity(title_offset, utf16_length(title))], next_offset}
-      end)
+      |> Enum.reduce(
+        {header_entities, utf16_length(date_text <> separator)},
+        fn headline, {acc, offset} ->
+          title =
+            Map.get(headline, "title") || Map.get(headline, :title) || ""
+
+          line = headline_line(headline)
+          title_offset = offset + headline_title_offset(headline)
+          next_offset = offset + utf16_length(line) + utf16_length(separator)
+
+          {acc ++ [bold_entity(title_offset, utf16_length(title))],
+           next_offset}
+        end
+      )
       |> elem(0)
 
     {text, entities}
@@ -537,15 +604,18 @@ defmodule Froth.DailyDigest do
        when is_binary(emoji) and is_binary(title),
        do: "#{emoji} #{title}"
 
-  defp headline_line(%{emoji: emoji, title: title}) when is_binary(emoji) and is_binary(title),
-    do: "#{emoji} #{title}"
+  defp headline_line(%{emoji: emoji, title: title})
+       when is_binary(emoji) and is_binary(title),
+       do: "#{emoji} #{title}"
 
   defp headline_line(_headline), do: "Headline"
 
   defp headline_title_offset(%{"emoji" => emoji}) when is_binary(emoji),
     do: utf16_length("#{emoji} ")
 
-  defp headline_title_offset(%{emoji: emoji}) when is_binary(emoji), do: utf16_length("#{emoji} ")
+  defp headline_title_offset(%{emoji: emoji}) when is_binary(emoji),
+    do: utf16_length("#{emoji} ")
+
   defp headline_title_offset(_headline), do: 0
 
   defp headline_time_window(from_time, to_time)
@@ -569,13 +639,17 @@ defmodule Froth.DailyDigest do
 
       {:error, _reason} ->
         case NaiveDateTime.from_iso8601(value) do
-          {:ok, naive_datetime} -> {:ok, DateTime.from_naive!(naive_datetime, "Etc/UTC")}
-          {:error, _reason} -> :error
+          {:ok, naive_datetime} ->
+            {:ok, DateTime.from_naive!(naive_datetime, "Etc/UTC")}
+
+          {:error, _reason} ->
+            :error
         end
     end
   end
 
-  defp bold_entity(offset, length) when is_integer(offset) and is_integer(length) do
+  defp bold_entity(offset, length)
+       when is_integer(offset) and is_integer(length) do
     %{
       "@type" => "textEntity",
       "offset" => offset,
@@ -598,18 +672,23 @@ defmodule Froth.DailyDigest do
 
   defp daily_summary?(_summary), do: false
 
-  defp summary_date(%ChatSummary{from_date: from_unix}) when is_integer(from_unix) do
+  defp summary_date(%ChatSummary{from_date: from_unix})
+       when is_integer(from_unix) do
     DateTime.from_unix!(from_unix, :second)
     |> DateTime.to_date()
   end
 
-  defp schedule_startup_tick(%__MODULE__{startup_delay_ms: startup_delay_ms} = state)
+  defp schedule_startup_tick(
+         %__MODULE__{startup_delay_ms: startup_delay_ms} = state
+       )
        when is_integer(startup_delay_ms) and startup_delay_ms >= 0 do
     Process.send_after(self(), @startup_tick, startup_delay_ms)
     state
   end
 
-  defp schedule_next_run(%__MODULE__{run_at_utc: run_at_utc, timer_ref: timer_ref} = state)
+  defp schedule_next_run(
+         %__MODULE__{run_at_utc: run_at_utc, timer_ref: timer_ref} = state
+       )
        when is_struct(run_at_utc, Time) do
     if is_reference(timer_ref), do: Process.cancel_timer(timer_ref)
 
@@ -706,7 +785,9 @@ defmodule Froth.DailyDigest do
   end
 
   defp maybe_put_extract_opt(opts, _key, nil), do: opts
-  defp maybe_put_extract_opt(opts, key, value), do: Keyword.put(opts, key, value)
+
+  defp maybe_put_extract_opt(opts, key, value),
+    do: Keyword.put(opts, key, value)
 
   defp normalize_integer(value, _default) when is_integer(value), do: value
 

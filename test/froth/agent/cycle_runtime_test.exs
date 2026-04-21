@@ -35,14 +35,19 @@ defmodule Froth.Agent.CycleRuntimeTest do
       # runtime's DOWN may reach us before the Registry has processed its
       # own DOWN and unregistered. Force the partition to a sync point so
       # the cleanup is observable.
-      _ = :sys.get_state(Module.concat(Froth.Agent.CycleRegistry, "PIDPartition0"))
+      _ =
+        :sys.get_state(
+          Module.concat(Froth.Agent.CycleRegistry, "PIDPartition0")
+        )
 
       refute is_pid(CycleRuntime.whereis(cycle_id))
       assert CycleRuntime.whereis(cycle_id) == nil
     end
 
     test "whereis/1 returns nil for unknown cycle ids" do
-      assert CycleRuntime.whereis("cycle_does_not_exist_#{System.unique_integer([:positive])}") ==
+      assert CycleRuntime.whereis(
+               "cycle_does_not_exist_#{System.unique_integer([:positive])}"
+             ) ==
                nil
     end
   end
@@ -51,7 +56,12 @@ defmodule Froth.Agent.CycleRuntimeTest do
     test "tracks narration message state" do
       runtime = start_scaffold_runtime()
 
-      tool_use = %ToolUse{id: "call_1", name: "run_shell", input: %{"command" => "pwd"}}
+      tool_use = %ToolUse{
+        id: "call_1",
+        name: "run_shell",
+        input: %{"command" => "pwd"}
+      }
+
       invocation = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
 
       prepared = sample_prepared(runtime, tool_use)
@@ -62,11 +72,17 @@ defmodule Froth.Agent.CycleRuntimeTest do
                  {:commit_tool, tool_use, invocation, prepared,
                   %{
                     result: {:ok, "ok"},
-                    narration_message: %{message_id: 77, text: "Checking X", mode: :italic}
+                    narration_message: %{
+                      message_id: 77,
+                      text: "Checking X",
+                      mode: :italic
+                    }
                   }}
                )
 
-      assert %View{narration: %{message_id: 77, text: "Checking X", mode: :italic}} =
+      assert %View{
+               narration: %{message_id: 77, text: "Checking X", mode: :italic}
+             } =
                :sys.get_state(runtime).context.view
     end
 
@@ -76,11 +92,20 @@ defmodule Froth.Agent.CycleRuntimeTest do
       :sys.replace_state(runtime, fn rstate ->
         put_in(
           rstate.context.view.narration,
-          %{message_id: 77, text: "Checking X\nAlso checking Y", mode: :italic}
+          %{
+            message_id: 77,
+            text: "Checking X\nAlso checking Y",
+            mode: :italic
+          }
         )
       end)
 
-      tool_use = %ToolUse{id: "call_1", name: "send_message", input: %{"text" => "hello"}}
+      tool_use = %ToolUse{
+        id: "call_1",
+        name: "send_message",
+        input: %{"text" => "hello"}
+      }
+
       invocation = %{cycle_id: "cycle_1", chat_id: 123, reply_to: 456}
 
       outcome = %{
@@ -129,7 +154,9 @@ defmodule Froth.Agent.CycleRuntimeTest do
     test "terminating the parent cascades to children" do
       parent = start_scaffold_runtime()
       child_cycle_id = unique_cycle_id()
-      {:ok, child_pid} = CycleRuntime.spawn_subagent(parent, cycle_id: child_cycle_id)
+
+      {:ok, child_pid} =
+        CycleRuntime.spawn_subagent(parent, cycle_id: child_cycle_id)
 
       parent_ref = Process.monitor(parent)
       child_ref = Process.monitor(child_pid)

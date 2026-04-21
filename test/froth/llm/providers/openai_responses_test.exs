@@ -25,7 +25,11 @@ defmodule Froth.LLM.Providers.OpenAIResponsesTest do
           }
         ]),
         Message.user([
-          %{"type" => "tool_result", "tool_use_id" => "call_1", "content" => "echoed: hi"}
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "call_1",
+            "content" => "echoed: hi"
+          }
         ])
       ],
       tools: [
@@ -66,7 +70,11 @@ defmodule Froth.LLM.Providers.OpenAIResponsesTest do
                "name" => "froth_echo",
                "arguments" => ~s({"text":"hi"})
              },
-             %{"type" => "function_call_output", "call_id" => "call_1", "output" => "echoed: hi"}
+             %{
+               "type" => "function_call_output",
+               "call_id" => "call_1",
+               "output" => "echoed: hi"
+             }
            ]
 
     assert body["tools"] == [
@@ -117,12 +125,18 @@ defmodule Froth.LLM.Providers.OpenAIResponsesTest do
              %{
                "role" => "user",
                "content" => [
-                 %{"type" => "input_text", "text" => "What is in these images?"},
+                 %{
+                   "type" => "input_text",
+                   "text" => "What is in these images?"
+                 },
                  %{
                    "type" => "input_image",
                    "image_url" => "data:image/png;base64,aGVsbG8="
                  },
-                 %{"type" => "input_image", "image_url" => "https://example.test/cat.png"}
+                 %{
+                   "type" => "input_image",
+                   "image_url" => "https://example.test/cat.png"
+                 }
                ]
              }
            ]
@@ -239,7 +253,8 @@ defmodule Froth.LLM.Providers.OpenAIResponsesTest do
                 "summary" => [
                   %{
                     "type" => "summary_text",
-                    "text" => "Checked the summaries and grouped the real same-day events."
+                    "text" =>
+                      "Checked the summaries and grouped the real same-day events."
                   }
                 ]
               }
@@ -258,7 +273,10 @@ defmodule Froth.LLM.Providers.OpenAIResponsesTest do
 
     assert Froth.LLM.Edit.project_event(summary_edit) ==
              {:thinking_summary,
-              %{"thinking" => "Checked the summaries and grouped the real same-day events."}}
+              %{
+                "thinking" =>
+                  "Checked the summaries and grouped the real same-day events."
+              }}
 
     result =
       store
@@ -271,7 +289,8 @@ defmodule Froth.LLM.Providers.OpenAIResponsesTest do
     assert result.content == [
              %{
                "type" => "thinking",
-               "thinking" => "Checked the summaries and grouped the real same-day events."
+               "thinking" =>
+                 "Checked the summaries and grouped the real same-day events."
              }
            ]
   end

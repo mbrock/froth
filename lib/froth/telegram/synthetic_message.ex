@@ -15,7 +15,10 @@ defmodule Froth.Telegram.SyntheticMessage do
         }
       }
     }
-    |> maybe_put("reply_to_override", normalize_optional_integer(Keyword.get(opts, :reply_to)))
+    |> maybe_put(
+      "reply_to_override",
+      normalize_optional_integer(Keyword.get(opts, :reply_to))
+    )
   end
 
   defp normalize_id(id) when is_integer(id) and id > 0, do: id
@@ -25,7 +28,9 @@ defmodule Froth.Telegram.SyntheticMessage do
   defp normalize_date(date) when is_integer(date) and date > 0, do: date
   defp normalize_date(_date), do: DateTime.utc_now() |> DateTime.to_unix()
 
-  defp normalize_optional_integer(value) when is_integer(value) and value > 0, do: value
+  defp normalize_optional_integer(value) when is_integer(value) and value > 0,
+    do: value
+
   defp normalize_optional_integer(_value), do: nil
 
   defp maybe_put(map, _key, nil), do: map

@@ -21,7 +21,8 @@ defmodule Froth.LLM.Transport.SSE do
         ) ::
           {:ok, %{acc: term(), diagnostics: map()}} | {:error, term()}
   def stream(url, headers, body, acc, fun, opts \\ [])
-      when is_binary(url) and is_list(headers) and is_map(body) and is_function(fun, 3) do
+      when is_binary(url) and is_list(headers) and is_map(body) and
+             is_function(fun, 3) do
     receive_timeout = Keyword.get(opts, :receive_timeout, 60_000)
     finch = Keyword.get(opts, :finch, Froth.Finch)
 
@@ -41,7 +42,8 @@ defmodule Froth.LLM.Transport.SSE do
       when is_integer(status) and status in 200..299 ->
         consume_sse(async_body, acc, fun)
 
-      {:ok, %Req.Response{status: status, body: async_body}} when is_integer(status) ->
+      {:ok, %Req.Response{status: status, body: async_body}}
+      when is_integer(status) ->
         err = consume_error_body(async_body)
         {:error, {:http_error, status, maybe_decode_json(err)}}
 
@@ -66,32 +68,41 @@ defmodule Froth.LLM.Transport.SSE do
 
   defp consume_sse(async_body, acc, fun) do
     result =
-      Enum.reduce_while(async_body, {:ok, acc, "", new_diagnostics()}, fn chunk,
-                                                                          {:ok, current, buffer,
-                                                                           diagnostics} ->
-        raw =
-          case chunk do
-            {:data, data} -> data
-            data when is_binary(data) -> data
-            _ -> ""
-          end
-
-        buffer = buffer <> raw
-        # Normalize all line endings to \n (handles \r\n and bare \r)
-        buffer = buffer |> String.replace("\r\n", "\n") |> String.replace("\r", "\n")
-
-        case split_events(buffer) do
-          {events, remainder} ->
-            case dispatch_events(events, current, fun, diagnostics) do
-              {:cont, next, diagnostics} -> {:cont, {:ok, next, remainder, diagnostics}}
-              {:halt, next, diagnostics} -> {:halt, {:ok, next, remainder, diagnostics}}
+      Enum.reduce_while(
+        async_body,
+        {:ok, acc, "", new_diagnostics()},
+        fn chunk, {:ok, current, buffer, diagnostics} ->
+          raw =
+            case chunk do
+              {:data, data} -> data
+              data when is_binary(data) -> data
+              _ -> ""
             end
+
+          buffer = buffer <> raw
+          # Normalize all line endings to \n (handles \r\n and bare \r)
+          buffer =
+            buffer
+            |> String.replace("\r\n", "\n")
+            |> String.replace("\r", "\n")
+
+          case split_events(buffer) do
+            {events, remainder} ->
+              case dispatch_events(events, current, fun, diagnostics) do
+                {:cont, next, diagnostics} ->
+                  {:cont, {:ok, next, remainder, diagnostics}}
+
+                {:halt, next, diagnostics} ->
+                  {:halt, {:ok, next, remainder, diagnostics}}
+              end
+          end
         end
-      end)
+      )
 
     case result do
       {:ok, final, buffer, diagnostics} ->
-        with {:ok, final, diagnostics} <- flush_remainder(buffer, final, fun, diagnostics) do
+        with {:ok, final, diagnostics} <-
+               flush_remainder(buffer, final, fun, diagnostics) do
           {:ok, %{acc: final, diagnostics: finalize_diagnostics(diagnostics)}}
         end
 
@@ -112,7 +123,8 @@ defmodule Froth.LLM.Transport.SSE do
   end
 
   # Parse and dispatch a list of raw event strings.
-  defp dispatch_events([], acc, _fun, diagnostics), do: {:cont, acc, diagnostics}
+  defp dispatch_events([], acc, _fun, diagnostics),
+    do: {:cont, acc, diagnostics}
 
   defp dispatch_events([raw | rest], acc, fun, diagnostics, opts \\ []) do
     data = extract_data(raw)
@@ -142,7 +154,9 @@ defmodule Froth.LLM.Transport.SSE do
         end
 
       true ->
-        diagnostics = maybe_remember_trailing_buffer(diagnostics, raw, trailing?)
+        diagnostics =
+          maybe_remember_trailing_buffer(diagnostics, raw, trailing?)
+
         dispatch_events(rest, acc, fun, diagnostics)
     end
   end
@@ -187,11 +201,13 @@ defmodule Froth.LLM.Transport.SSE do
 
   defp maybe_decode_json(body), do: body
 
-  defp flush_remainder(buffer, acc, _fun, diagnostics) when buffer in [nil, ""] do
+  defp flush_remainder(buffer, acc, _fun, diagnostics)
+       when buffer in [nil, ""] do
     {:ok, acc, diagnostics}
   end
 
-  defp flush_remainder(buffer, acc, fun, diagnostics) when is_binary(buffer) do
+  defp flush_remainder(buffer, acc, fun, diagnostics)
+       when is_binary(buffer) do
     if String.trim(buffer) == "" do
       {:ok, acc, diagnostics}
     else
@@ -244,9 +260,11 @@ defmodule Froth.LLM.Transport.SSE do
     end)
   end
 
-  defp maybe_remember_trailing_buffer(diagnostics, _raw, false), do: diagnostics
+  defp maybe_remember_trailing_buffer(diagnostics, _raw, false),
+    do: diagnostics
 
-  defp maybe_remember_trailing_buffer(diagnostics, raw, true) when is_binary(raw) do
+  defp maybe_remember_trailing_buffer(diagnostics, raw, true)
+       when is_binary(raw) do
     Map.put(diagnostics, :trailing_buffer, truncate_diagnostic(raw))
   end
 

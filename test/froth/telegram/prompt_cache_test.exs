@@ -15,7 +15,10 @@ defmodule Froth.Telegram.PromptCacheTest do
 
     blocks = PromptCache.text_blocks(parts, %{model: "claude-opus-4-6"})
 
-    assert Enum.at(blocks, 0) == %{"type" => "text", "text" => Enum.at(parts, 0)}
+    assert Enum.at(blocks, 0) == %{
+             "type" => "text",
+             "text" => Enum.at(parts, 0)
+           }
 
     assert Enum.at(blocks, 1) == %{
              "type" => "text",

@@ -14,11 +14,16 @@ defmodule FrothWeb.MediaController do
         sizes = get_in(content, ["photo", "sizes"]) || []
 
         largest =
-          Enum.max_by(sizes, fn s -> (s["width"] || 0) * (s["height"] || 0) end, fn -> nil end)
+          Enum.max_by(
+            sizes,
+            fn s -> (s["width"] || 0) * (s["height"] || 0) end,
+            fn -> nil end
+          )
 
         serve_file(conn, get_in(largest, ["photo", "id"]))
 
-      {:ok, %{"content" => %{"@type" => "messageDocument", "document" => doc}}} ->
+      {:ok,
+       %{"content" => %{"@type" => "messageDocument", "document" => doc}}} ->
         serve_file(
           conn,
           get_in(doc, ["document", "id"]),
@@ -58,11 +63,20 @@ defmodule FrothWeb.MediaController do
 
   defp guess_mime(path, default) do
     cond do
-      String.ends_with?(path, ".png") -> "image/png"
-      String.ends_with?(path, ".jpg") or String.ends_with?(path, ".jpeg") -> "image/jpeg"
-      String.ends_with?(path, ".webp") -> "image/webp"
-      String.ends_with?(path, ".pdf") -> "application/pdf"
-      true -> default
+      String.ends_with?(path, ".png") ->
+        "image/png"
+
+      String.ends_with?(path, ".jpg") or String.ends_with?(path, ".jpeg") ->
+        "image/jpeg"
+
+      String.ends_with?(path, ".webp") ->
+        "image/webp"
+
+      String.ends_with?(path, ".pdf") ->
+        "application/pdf"
+
+      true ->
+        default
     end
   end
 end

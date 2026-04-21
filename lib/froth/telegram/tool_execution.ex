@@ -16,11 +16,19 @@ defmodule Froth.Telegram.ToolExecution do
 
   # Telegram-side send_message with real surface.
   def execute(
-        %Context{surface: %Surface{session_id: session_id, chat_id: chat_id, reply_to: reply_to}},
+        %Context{
+          surface: %Surface{
+            session_id: session_id,
+            chat_id: chat_id,
+            reply_to: reply_to
+          }
+        },
         %ToolUse{name: "send_message", input: %{"text" => text}}
       )
       when is_binary(text) and is_binary(session_id) and is_integer(chat_id) do
-    case BotAdapter.send_message(session_id, chat_id, text, reply_to: reply_to) do
+    case BotAdapter.send_message(session_id, chat_id, text,
+           reply_to: reply_to
+         ) do
       {:ok, sent} ->
         %{result: {:ok, "sent"}, sent_message: %{sent: sent, text: text}}
 
@@ -34,12 +42,19 @@ defmodule Froth.Telegram.ToolExecution do
   def execute(
         %Context{
           bot_config: %BotConfig{},
-          surface: %Surface{session_id: session_id, chat_id: chat_id, reply_to: ctx_reply_to}
+          surface: %Surface{
+            session_id: session_id,
+            chat_id: chat_id,
+            reply_to: ctx_reply_to
+          }
         } = ctx,
         %ToolUse{name: name, input: input} = tool_call
       )
-      when is_binary(name) and is_map(input) and is_binary(session_id) and is_integer(chat_id) do
-    reply_to = Map.get(input, "reply_to") || Map.get(input, :reply_to) || ctx_reply_to
+      when is_binary(name) and is_map(input) and is_binary(session_id) and
+             is_integer(chat_id) do
+    reply_to =
+      Map.get(input, "reply_to") || Map.get(input, :reply_to) || ctx_reply_to
+
     narration_message = maybe_send_narration(ctx, tool_call, reply_to)
 
     result = Tools.execute(ctx, tool_call)
@@ -57,7 +72,10 @@ defmodule Froth.Telegram.ToolExecution do
   # started directly via `CycleRuntime.run_to_completion/1` from a cron
   # or script). Skip narration and Telegram-side effects entirely;
   # invoke the tool directly.
-  def execute(%Context{} = ctx, %ToolUse{name: name, input: input} = tool_call)
+  def execute(
+        %Context{} = ctx,
+        %ToolUse{name: name, input: input} = tool_call
+      )
       when is_binary(name) and is_map(input) do
     result =
       ctx
@@ -75,9 +93,14 @@ defmodule Froth.Telegram.ToolExecution do
 
   # --- Narration ---
 
-  defp maybe_send_narration(%Context{spam: false}, _tool_call, _reply_to), do: nil
+  defp maybe_send_narration(%Context{spam: false}, _tool_call, _reply_to),
+    do: nil
 
-  defp maybe_send_narration(%Context{} = ctx, %ToolUse{input: input}, reply_to)
+  defp maybe_send_narration(
+         %Context{} = ctx,
+         %ToolUse{input: input},
+         reply_to
+       )
        when is_map(input) do
     case ToolDescription.text_from_input(input) do
       narration when is_binary(narration) and narration != "" ->
@@ -88,7 +111,11 @@ defmodule Froth.Telegram.ToolExecution do
     end
   end
 
-  defp maybe_send_legacy_narration(%{"narration_markdown" => narration}, ctx, reply_to)
+  defp maybe_send_legacy_narration(
+         %{"narration_markdown" => narration},
+         ctx,
+         reply_to
+       )
        when is_binary(narration) and narration != "" do
     send_or_edit_narration(ctx, reply_to, String.trim(narration), :markdown)
   end
@@ -106,21 +133,29 @@ defmodule Froth.Telegram.ToolExecution do
          %Context{
            surface: %Surface{session_id: session_id, chat_id: chat_id},
            view: %View{
-             narration: %{message_id: message_id, text: current_text, mode: mode}
+             narration: %{
+               message_id: message_id,
+               text: current_text,
+               mode: mode
+             }
            }
          } = ctx,
          reply_to,
          narration,
          mode
        )
-       when is_binary(session_id) and is_integer(chat_id) and is_integer(message_id) and
+       when is_binary(session_id) and is_integer(chat_id) and
+              is_integer(message_id) and
               is_binary(current_text) and narration != "" do
     combined = append_narration(current_text, narration)
 
     if String.length(combined) <= @telegram_text_limit do
       case edit_narration(session_id, chat_id, message_id, combined, mode) do
-        {:ok, _sent} -> %{message_id: message_id, text: combined, mode: mode}
-        {:error, _reason} -> send_new_narration(ctx, reply_to, narration, mode)
+        {:ok, _sent} ->
+          %{message_id: message_id, text: combined, mode: mode}
+
+        {:error, _reason} ->
+          send_new_narration(ctx, reply_to, narration, mode)
       end
     else
       send_new_narration(ctx, reply_to, narration, mode)
@@ -129,7 +164,8 @@ defmodule Froth.Telegram.ToolExecution do
 
   # No existing narration — just post a fresh one.
   defp send_or_edit_narration(
-         %Context{surface: %Surface{session_id: session_id, chat_id: chat_id}} = ctx,
+         %Context{surface: %Surface{session_id: session_id, chat_id: chat_id}} =
+           ctx,
          reply_to,
          narration,
          mode
@@ -146,8 +182,23 @@ defmodule Froth.Telegram.ToolExecution do
 
     result =
       case mode do
-        :markdown -> BotAdapter.send_markdown(session_id, chat_id, reply_to, narration, opts)
-        :italic -> BotAdapter.send_italic(session_id, chat_id, reply_to, narration, opts)
+        :markdown ->
+          BotAdapter.send_markdown(
+            session_id,
+            chat_id,
+            reply_to,
+            narration,
+            opts
+          )
+
+        :italic ->
+          BotAdapter.send_italic(
+            session_id,
+            chat_id,
+            reply_to,
+            narration,
+            opts
+          )
       end
 
     case result do
@@ -156,7 +207,10 @@ defmodule Froth.Telegram.ToolExecution do
     end
   end
 
-  defp cycle_reply_markup(%Context{cycle_id: cycle_id, bot_config: %BotConfig{id: bot_id} = bc})
+  defp cycle_reply_markup(%Context{
+         cycle_id: cycle_id,
+         bot_config: %BotConfig{id: bot_id} = bc
+       })
        when is_binary(cycle_id) and is_binary(bot_id) do
     %{
       "@type" => "replyMarkupInlineKeyboard",
@@ -173,10 +227,22 @@ defmodule Froth.Telegram.ToolExecution do
   defp cycle_reply_markup(_ctx), do: nil
 
   defp edit_narration(session_id, chat_id, message_id, narration, :markdown),
-    do: BotAdapter.edit_message_markdown(session_id, chat_id, message_id, narration)
+    do:
+      BotAdapter.edit_message_markdown(
+        session_id,
+        chat_id,
+        message_id,
+        narration
+      )
 
   defp edit_narration(session_id, chat_id, message_id, narration, :italic),
-    do: BotAdapter.edit_message_italic(session_id, chat_id, message_id, narration)
+    do:
+      BotAdapter.edit_message_italic(
+        session_id,
+        chat_id,
+        message_id,
+        narration
+      )
 
   defp build_narration_message(sent, text, mode) when is_binary(text) do
     case sent_message_id(sent) do
@@ -222,7 +288,9 @@ defmodule Froth.Telegram.ToolExecution do
   end
 
   defp build_tool_outcome(
-         {:await, %{"sent_message" => sent_message, "message_text" => message_text} = data},
+         {:await,
+          %{"sent_message" => sent_message, "message_text" => message_text} =
+            data},
          narration_message,
          _input
        )

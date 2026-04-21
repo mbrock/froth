@@ -36,7 +36,8 @@ defmodule Froth.Tools.SpawnEngineer do
   end
 
   @impl true
-  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks) when is_map(input) do
+  def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks)
+      when is_map(input) do
     with {:ok, prompt} <- Support.required_trimmed_string(input, "prompt") do
       case Froth.Codex.Task.run(prompt, chat_id: Support.chat_id(ctx)) do
         {:ok, session_id} ->

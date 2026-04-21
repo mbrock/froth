@@ -7,7 +7,8 @@ defmodule FrothWeb.JobsLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    if connected?(socket), do: Process.send_after(self(), :refresh, @refresh_interval)
+    if connected?(socket),
+      do: Process.send_after(self(), :refresh, @refresh_interval)
 
     {:ok,
      socket
@@ -27,17 +28,20 @@ defmodule FrothWeb.JobsLive do
 
   @impl true
   def handle_event("filter-state", %{"state" => state}, socket) do
-    {:noreply, socket |> assign(:filter_state, state) |> assign(:page, 0) |> load_jobs()}
+    {:noreply,
+     socket |> assign(:filter_state, state) |> assign(:page, 0) |> load_jobs()}
   end
 
   @impl true
   def handle_event("filter-queue", %{"queue" => queue}, socket) do
-    {:noreply, socket |> assign(:filter_queue, queue) |> assign(:page, 0) |> load_jobs()}
+    {:noreply,
+     socket |> assign(:filter_queue, queue) |> assign(:page, 0) |> load_jobs()}
   end
 
   @impl true
   def handle_event("next-page", _, socket) do
-    {:noreply, socket |> assign(:page, socket.assigns.page + 1) |> load_jobs()}
+    {:noreply,
+     socket |> assign(:page, socket.assigns.page + 1) |> load_jobs()}
   end
 
   @impl true
@@ -67,7 +71,11 @@ defmodule FrothWeb.JobsLive do
     page_size = socket.assigns.page_size
 
     q =
-      from(j in Oban.Job, order_by: [desc: j.id], limit: ^page_size, offset: ^(page * page_size))
+      from(j in Oban.Job,
+        order_by: [desc: j.id],
+        limit: ^page_size,
+        offset: ^(page * page_size)
+      )
 
     q = if state != "all", do: where(q, [j], j.state == ^state), else: q
     q = if queue != "all", do: where(q, [j], j.queue == ^queue), else: q
@@ -94,7 +102,9 @@ defmodule FrothWeb.JobsLive do
     state_counts =
       stats
       |> Enum.group_by(& &1.state)
-      |> Enum.map(fn {state, rows} -> {state, Enum.reduce(rows, 0, &(&1.count + &2))} end)
+      |> Enum.map(fn {state, rows} ->
+        {state, Enum.reduce(rows, 0, &(&1.count + &2))}
+      end)
       |> Enum.into(%{})
 
     socket
@@ -170,7 +180,9 @@ defmodule FrothWeb.JobsLive do
               <td style="padding: 0.4rem;">{job.queue}</td>
               <td style="padding: 0.4rem;">{short_worker(job.worker)}</td>
               <td style="padding: 0.4rem; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                <span title={Jason.encode!(job.args)}>{summarize_args(job.args)}</span>
+                <span title={Jason.encode!(job.args)}>
+                  {summarize_args(job.args)}
+                </span>
               </td>
               <td style="padding: 0.4rem;">{job.attempt}/{job.max_attempts}</td>
               <td style="padding: 0.4rem;">{format_time(job.inserted_at)}</td>
@@ -194,7 +206,10 @@ defmodule FrothWeb.JobsLive do
                   </button>
                 <% end %>
                 <%= if job.errors != [] do %>
-                  <span title={Enum.join(job.errors, "\n\n")} style="color: #f88; cursor: help;">
+                  <span
+                    title={Enum.join(job.errors, "\n\n")}
+                    style="color: #f88; cursor: help;"
+                  >
                     ⚠
                   </span>
                 <% end %>

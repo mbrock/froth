@@ -3,11 +3,18 @@ defmodule FrothWeb.HeadlinesControllerTest do
 
   alias Froth.{ChatSummary, Event, Repo}
 
-  test "GET /froth/headlines renders the ledger as a normal HTML page", %{conn: conn} do
+  test "GET /froth/headlines renders the ledger as a normal HTML page", %{
+    conn: conn
+  } do
     chat_id = -1_003_690_254_489
 
     insert_summary(chat_id, ~D[2026-03-21], "The cave manifesto got retyped.")
-    insert_summary(chat_id, ~D[2026-03-22], "Cherry theory took over the night.")
+
+    insert_summary(
+      chat_id,
+      ~D[2026-03-22],
+      "Cherry theory took over the night."
+    )
 
     Repo.insert!(%Event{
       event: "froth.headlines.registered",
@@ -101,11 +108,19 @@ defmodule FrothWeb.HeadlinesControllerTest do
     assert html =~ "Podcast Archive Goes Live"
     refute html =~ "Nikolai Speaks Again"
 
-    assert Floki.find(document, ~s(a[href="/froth/headlines?chat_id=#{first_chat_id}"])) != []
-    assert Floki.find(document, ~s(a[href="/froth/headlines?chat_id=#{second_chat_id}"])) != []
+    assert Floki.find(
+             document,
+             ~s(a[href="/froth/headlines?chat_id=#{first_chat_id}"])
+           ) != []
+
+    assert Floki.find(
+             document,
+             ~s(a[href="/froth/headlines?chat_id=#{second_chat_id}"])
+           ) != []
   end
 
-  defp insert_summary(chat_id, %Date{} = date, summary_text) when is_integer(chat_id) do
+  defp insert_summary(chat_id, %Date{} = date, summary_text)
+       when is_integer(chat_id) do
     start_at = DateTime.new!(date, ~T[00:00:00], "Etc/UTC")
     end_at = DateTime.add(start_at, 86_400, :second)
 

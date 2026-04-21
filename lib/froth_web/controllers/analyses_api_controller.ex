@@ -14,9 +14,11 @@ defmodule FrothWeb.AnalysesApiController do
     json(conn, %{
       endpoint: "/froth/analyses/:chat_id",
       method: "GET",
-      description: "Returns analyses for a Telegram chat ordered by message_id ascending.",
+      description:
+        "Returns analyses for a Telegram chat ordered by message_id ascending.",
       query_params: %{
-        after: "Optional message_id cursor. Only analyses with message_id > after are returned.",
+        after:
+          "Optional message_id cursor. Only analyses with message_id > after are returned.",
         limit: "Optional page size. Defaults to 100 and is capped at 1000."
       },
       example: "/froth/analyses/#{@example_chat_id}?after=12345&limit=200"
@@ -25,7 +27,8 @@ defmodule FrothWeb.AnalysesApiController do
 
   def show(conn, %{"chat_id" => chat_id_param} = params) do
     with {:ok, chat_id} <- parse_integer(chat_id_param, "chat_id"),
-         {:ok, after_message_id} <- parse_optional_integer(params["after"], "after"),
+         {:ok, after_message_id} <-
+           parse_optional_integer(params["after"], "after"),
          {:ok, limit} <- parse_limit(params["limit"]) do
       analyses =
         chat_id
@@ -73,7 +76,9 @@ defmodule FrothWeb.AnalysesApiController do
 
   defp parse_limit(value) do
     with {:ok, parsed_limit} <- parse_integer(value, "limit"),
-         true <- parsed_limit >= 0 or {:error, {"limit", "must be a non-negative integer"}} do
+         true <-
+           parsed_limit >= 0 or
+             {:error, {"limit", "must be a non-negative integer"}} do
       {:ok, min(parsed_limit, @max_limit)}
     end
   end
@@ -90,5 +95,6 @@ defmodule FrothWeb.AnalysesApiController do
     end
   end
 
-  defp parse_integer(_value, param), do: {:error, {param, "must be an integer"}}
+  defp parse_integer(_value, param),
+    do: {:error, {param, "must be an integer"}}
 end

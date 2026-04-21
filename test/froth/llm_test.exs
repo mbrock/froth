@@ -44,7 +44,11 @@ defmodule Froth.LLMTest do
 
       assert request.output_config == %{"effort" => "xhigh"}
       assert request.max_tokens == 65_536
-      assert request.thinking == %{"type" => "adaptive", "display" => "summarized"}
+
+      assert request.thinking == %{
+               "type" => "adaptive",
+               "display" => "summarized"
+             }
     end
 
     test "explicit effort overrides the default" do
@@ -83,7 +87,10 @@ defmodule Froth.LLMTest do
                  thinking: %{"type" => "adaptive", "display" => "omitted"}
                )
 
-      assert request.thinking == %{"type" => "adaptive", "display" => "omitted"}
+      assert request.thinking == %{
+               "type" => "adaptive",
+               "display" => "omitted"
+             }
     end
   end
 end

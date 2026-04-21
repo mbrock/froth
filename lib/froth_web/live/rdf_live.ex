@@ -33,7 +33,9 @@ defmodule FrothWeb.RdfLive do
       _ ->
         # Show root: list of types with counts
         types = load_types()
-        {:noreply, assign(socket, subject: nil, data: nil, types: types, refs: [])}
+
+        {:noreply,
+         assign(socket, subject: nil, data: nil, types: types, refs: [])}
     end
   end
 
@@ -83,7 +85,9 @@ defmodule FrothWeb.RdfLive do
            "SELECT ?s ?label WHERE { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?label }"
          ) do
       {:ok, results} ->
-        Map.new(results, fn r -> {to_string(r["s"]), to_string(RDF.Term.value(r["label"]))} end)
+        Map.new(results, fn r ->
+          {to_string(r["s"]), to_string(RDF.Term.value(r["label"]))}
+        end)
 
       _ ->
         %{}
@@ -95,7 +99,9 @@ defmodule FrothWeb.RdfLive do
       {:ok, results} ->
         results
         |> Enum.group_by(fn r -> to_string(r["type"]) end)
-        |> Enum.map(fn {type, items} -> %{iri: type, count: length(items)} end)
+        |> Enum.map(fn {type, items} ->
+          %{iri: type, count: length(items)}
+        end)
         |> Enum.sort_by(& &1.count, :desc)
 
       _ ->
@@ -163,10 +169,16 @@ defmodule FrothWeb.RdfLive do
       <div id="rdf-page" class="min-h-screen bg-black text-white text-[13px]">
         <header class="sticky top-0 z-30 bg-black border-b border-white/10">
           <div class="max-w-4xl mx-auto px-3 py-2 flex items-center justify-between gap-3">
-            <.link navigate={~p"/froth/rdf"} class="text-xs text-white/70 hover:text-white">
+            <.link
+              navigate={~p"/froth/rdf"}
+              class="text-xs text-white/70 hover:text-white"
+            >
               RDF
             </.link>
-            <.link navigate={~p"/froth"} class="text-[11px] text-white/30 hover:text-white/60">
+            <.link
+              navigate={~p"/froth"}
+              class="text-[11px] text-white/30 hover:text-white/60"
+            >
               Back
             </.link>
           </div>
@@ -174,7 +186,13 @@ defmodule FrothWeb.RdfLive do
 
         <main class="max-w-4xl mx-auto px-3 pt-3 pb-10">
           <%= if @subject do %>
-            <.resource iri={@subject} data={@data} expanded={@expanded} labels={@labels} refs={@refs} />
+            <.resource
+              iri={@subject}
+              data={@data}
+              expanded={@expanded}
+              labels={@labels}
+              refs={@refs}
+            />
           <% else %>
             <.type_index types={@types} />
           <% end %>
@@ -237,11 +255,17 @@ defmodule FrothWeb.RdfLive do
       <div class="px-3 py-2 border-b border-white/10 text-[11px] text-white/50">
         Referenced by ({length(@refs)})
       </div>
-      <div :for={r <- @refs} class="px-3 py-1.5 border-t border-white/5 first:border-t-0 flex gap-3">
+      <div
+        :for={r <- @refs}
+        class="px-3 py-1.5 border-t border-white/5 first:border-t-0 flex gap-3"
+      >
         <div class="text-[11px] text-white/30 shrink-0">
           <.iri_value iri={to_string(r["p"])} />
         </div>
-        <.link navigate={iri_path(to_string(r["s"]))} class="min-w-0 truncate hover:text-white/90">
+        <.link
+          navigate={iri_path(to_string(r["s"]))}
+          class="min-w-0 truncate hover:text-white/90"
+        >
           <.iri_value iri={to_string(r["s"])} />
         </.link>
       </div>
@@ -360,7 +384,12 @@ defmodule FrothWeb.RdfLive do
               <% end %>
             </dt>
             <dd class="min-w-0 break-words">
-              <.rdf_value obj={obj} pred={pred} expanded={@expanded} labels={@labels} />
+              <.rdf_value
+                obj={obj}
+                pred={pred}
+                expanded={@expanded}
+                labels={@labels}
+              />
             </dd>
           </div>
         </dl>

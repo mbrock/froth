@@ -32,7 +32,9 @@ defmodule Froth.LLM.Providers.GeminiInteractionsTest do
             "id" => "call_1",
             "name" => "froth_echo",
             "input" => %{"text" => "hi"},
-            "extra_content" => %{"google" => %{"thought_signature" => "sig_123"}}
+            "extra_content" => %{
+              "google" => %{"thought_signature" => "sig_123"}
+            }
           }
         ]),
         Message.user([
@@ -80,7 +82,11 @@ defmodule Froth.LLM.Providers.GeminiInteractionsTest do
            ] = body["input"]
 
     assert user_content == [
-             %{"type" => "image", "data" => "aGVsbG8=", "mime_type" => "image/png"},
+             %{
+               "type" => "image",
+               "data" => "aGVsbG8=",
+               "mime_type" => "image/png"
+             },
              %{"type" => "text", "text" => "Edit this into a poster."}
            ]
 
@@ -158,7 +164,11 @@ defmodule Froth.LLM.Providers.GeminiInteractionsTest do
         %{
           "event_type" => "content.delta",
           "index" => 0,
-          "delta" => %{"type" => "image", "mime_type" => "image/png", "data" => "aGVs"}
+          "delta" => %{
+            "type" => "image",
+            "mime_type" => "image/png",
+            "data" => "aGVs"
+          }
         },
         store
       )
@@ -171,7 +181,11 @@ defmodule Froth.LLM.Providers.GeminiInteractionsTest do
         %{
           "event_type" => "content.delta",
           "index" => 0,
-          "delta" => %{"type" => "image", "data" => "bG8=", "resolution" => "high"}
+          "delta" => %{
+            "type" => "image",
+            "data" => "bG8=",
+            "resolution" => "high"
+          }
         },
         store
       )
@@ -296,11 +310,16 @@ defmodule Froth.LLM.Providers.GeminiInteractionsTest do
 
     refute done?
 
-    result = store |> Store.apply_edits(edits) |> GeminiInteractions.finalize()
+    result =
+      store |> Store.apply_edits(edits) |> GeminiInteractions.finalize()
+
     open_edit = Enum.find(edits, &(&1.op == :open))
     close_edit = Enum.find(edits, &(&1.op == :close))
 
-    assert open_edit.attrs["extra_content"] == %{"google" => %{"thought_signature" => "sig_123"}}
+    assert open_edit.attrs["extra_content"] == %{
+             "google" => %{"thought_signature" => "sig_123"}
+           }
+
     assert close_edit.attrs["input"] == %{"text" => "hi"}
 
     assert result.content == [
@@ -309,7 +328,9 @@ defmodule Froth.LLM.Providers.GeminiInteractionsTest do
                "id" => "call_1",
                "name" => "froth_echo",
                "input" => %{"text" => "hi"},
-               "extra_content" => %{"google" => %{"thought_signature" => "sig_123"}}
+               "extra_content" => %{
+                 "google" => %{"thought_signature" => "sig_123"}
+               }
              }
            ]
   end

@@ -66,14 +66,20 @@ defmodule Froth.TelegramBotCase do
   """
   def start_fake_session(opts \\ []) do
     session_id =
-      Keyword.get(opts, :session_id, "session-#{System.unique_integer([:positive])}")
+      Keyword.get(
+        opts,
+        :session_id,
+        "session-#{System.unique_integer([:positive])}"
+      )
 
     session_opts =
       opts
       |> Keyword.put(:session_id, session_id)
       |> Keyword.put(:test_pid, self())
 
-    ExUnit.Callbacks.start_supervised!({Froth.FakeTelegramSession, session_opts})
+    ExUnit.Callbacks.start_supervised!(
+      {Froth.FakeTelegramSession, session_opts}
+    )
 
     session_id
   end
@@ -94,7 +100,9 @@ defmodule Froth.TelegramBotCase do
       end)
 
     bot_id =
-      Keyword.get_lazy(opts, :id, fn -> "charlie-#{System.unique_integer([:positive])}" end)
+      Keyword.get_lazy(opts, :id, fn ->
+        "charlie-#{System.unique_integer([:positive])}"
+      end)
 
     model = Keyword.get_lazy(opts, :model, fn -> Froth.LLM.Fake.claim() end)
 
@@ -118,7 +126,11 @@ defmodule Froth.TelegramBotCase do
       |> Keyword.put(:model, model)
       |> Keyword.put_new(:name, Froth.Telegram.Bots.via(bot_id))
 
-    runtime = ExUnit.Callbacks.start_supervised!({Froth.Telegram.BotRuntime, bot_opts})
+    runtime =
+      ExUnit.Callbacks.start_supervised!(
+        {Froth.Telegram.BotRuntime, bot_opts}
+      )
+
     bot_ref = Froth.Telegram.Bots.via(bot_id)
     {bot, _config} = Froth.Telegram.Bot.snapshot(bot_ref)
 

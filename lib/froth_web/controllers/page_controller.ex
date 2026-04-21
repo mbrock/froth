@@ -26,18 +26,22 @@ defmodule FrothWeb.PageController do
         id: "froth-link-follow",
         href: ~p"/froth/follow",
         title: "Follow",
-        description: "Watch the event stream, search it, and inspect one entry at a time.",
+        description:
+          "Watch the event stream, search it, and inspect one entry at a time.",
         badge: "live",
         path_label: "/froth/follow",
         icon: "hero-rss",
-        icon_class: "border-emerald-400/20 bg-emerald-400/10 text-emerald-100",
-        badge_class: "border-emerald-400/20 bg-emerald-400/10 text-emerald-100"
+        icon_class:
+          "border-emerald-400/20 bg-emerald-400/10 text-emerald-100",
+        badge_class:
+          "border-emerald-400/20 bg-emerald-400/10 text-emerald-100"
       },
       %{
         id: "froth-link-headlines",
         href: ~p"/froth/headlines",
         title: "Headlines",
-        description: "Open the tabloid headline ledger for the latest registered stories.",
+        description:
+          "Open the tabloid headline ledger for the latest registered stories.",
         badge: "reader",
         path_label: "/froth/headlines",
         icon: "hero-newspaper",
@@ -48,7 +52,8 @@ defmodule FrothWeb.PageController do
         id: "froth-link-podcasts",
         href: ~p"/froth/podcasts",
         title: "Podcasts",
-        description: "Every generated episode with audio players and full manuscripts.",
+        description:
+          "Every generated episode with audio players and full manuscripts.",
         badge: "archive",
         path_label: "/froth/podcasts",
         icon: "hero-microphone",
@@ -59,7 +64,8 @@ defmodule FrothWeb.PageController do
         id: "froth-link-chronicle",
         href: ~p"/froth/summaries",
         title: "Chronicle",
-        description: "Read the long-form daily summaries in a plain document-style view.",
+        description:
+          "Read the long-form daily summaries in a plain document-style view.",
         badge: "archive",
         path_label: "/froth/summaries",
         icon: "hero-book-open",
@@ -70,7 +76,8 @@ defmodule FrothWeb.PageController do
         id: "froth-link-bot-context",
         href: ~p"/froth/bot-context",
         title: "Bot context",
-        description: "Inspect the XML-like context rendered for Telegram bot prompts.",
+        description:
+          "Inspect the XML-like context rendered for Telegram bot prompts.",
         badge: "prompt",
         path_label: "/froth/bot-context",
         icon: "hero-chat-bubble-left-right",
@@ -113,7 +120,8 @@ defmodule FrothWeb.PageController do
         id: "froth-link-jobs",
         href: ~p"/froth/jobs",
         title: "Jobs",
-        description: "Watch the queue, retry jobs, and inspect backlog state.",
+        description:
+          "Watch the queue, retry jobs, and inspect backlog state.",
         icon: "hero-wrench-screwdriver",
         icon_class: "border-emerald-400/20 bg-emerald-400/10 text-emerald-100"
       }

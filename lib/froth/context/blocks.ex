@@ -105,7 +105,8 @@ defmodule Froth.Context.Blocks do
   know which blocks describe images/PDFs/audio/video.
   """
   @spec binary_shaped?(Block.t()) :: boolean()
-  def binary_shaped?(%Block{attrs: attrs}), do: binary_mime?(Keyword.get(attrs, :mime))
+  def binary_shaped?(%Block{attrs: attrs}),
+    do: binary_mime?(Keyword.get(attrs, :mime))
 
   defp materialize_one(%Block{body: nil} = block) do
     block
@@ -113,7 +114,8 @@ defmodule Froth.Context.Blocks do
     |> materialize_children()
   end
 
-  defp materialize_one(%Block{body: body, attrs: attrs} = block) when is_binary(body) do
+  defp materialize_one(%Block{body: body, attrs: attrs} = block)
+       when is_binary(body) do
     cond do
       binary_mime?(Keyword.get(attrs, :mime)) ->
         materialize_binary(block, body, attrs)
@@ -133,7 +135,12 @@ defmodule Froth.Context.Blocks do
         # the LLM.
         sniffed_mime = MimeSniff.sniff(body) || @default_binary_mime
         promoted_attrs = Keyword.put(attrs, :mime, sniffed_mime)
-        materialize_binary(%Block{block | attrs: promoted_attrs}, body, promoted_attrs)
+
+        materialize_binary(
+          %Block{block | attrs: promoted_attrs},
+          body,
+          promoted_attrs
+        )
     end
   end
 
@@ -144,13 +151,15 @@ defmodule Froth.Context.Blocks do
     size = byte_size(trimmed)
     line_count = count_lines(trimmed)
 
-    if no_fold? or (size <= @inline_max_bytes and line_count <= @inline_max_lines) do
+    if no_fold? or
+         (size <= @inline_max_bytes and line_count <= @inline_max_lines) do
       block
       |> Map.put(:body, trimmed)
       |> Map.put(:attrs, put_text_facts(attrs, size, line_count))
       |> materialize_children()
     else
-      {:ok, blob} = Blobs.put(trimmed, mime: Keyword.get(attrs, :mime, "text/plain"))
+      {:ok, blob} =
+        Blobs.put(trimmed, mime: Keyword.get(attrs, :mime, "text/plain"))
 
       all_lines = split_lines(trimmed)
       head = Enum.take(all_lines, min(@head_lines, line_count))
@@ -199,7 +208,8 @@ defmodule Froth.Context.Blocks do
     end
   end
 
-  defp materialize_children(%Block{children: children} = block) when is_list(children) do
+  defp materialize_children(%Block{children: children} = block)
+       when is_list(children) do
     %Block{block | children: Enum.map(children, &materialize_one/1)}
   end
 
@@ -217,7 +227,9 @@ defmodule Froth.Context.Blocks do
   defp split_lines(bytes) when is_binary(bytes), do: String.split(bytes, "\n")
 
   defp count_lines(""), do: 0
-  defp count_lines(bytes) when is_binary(bytes), do: length(split_lines(bytes))
+
+  defp count_lines(bytes) when is_binary(bytes),
+    do: length(split_lines(bytes))
 
   # Anything that isn't plain text or one of the textual structured
   # formats counts as binary for materialization purposes. The empty
@@ -226,7 +238,10 @@ defmodule Froth.Context.Blocks do
   defp binary_mime?(""), do: false
 
   defp binary_mime?(mime) when is_binary(mime) do
-    case String.downcase(mime) |> String.split(";", parts: 2) |> List.first() |> String.trim() do
+    case String.downcase(mime)
+         |> String.split(";", parts: 2)
+         |> List.first()
+         |> String.trim() do
       "text/" <> _ -> false
       "application/json" -> false
       "application/xml" -> false

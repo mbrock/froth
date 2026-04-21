@@ -28,7 +28,10 @@ defmodule Froth.Cluster do
     end
   end
 
-  def configured_nodes(value \\ System.get_env("FROTH_CLUSTER_NODES"), opts \\ []) do
+  def configured_nodes(
+        value \\ System.get_env("FROTH_CLUSTER_NODES"),
+        opts \\ []
+      ) do
     case normalize_nodes_value(value) do
       :default -> default_nodes(opts)
       :disabled -> []
