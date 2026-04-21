@@ -132,10 +132,13 @@ defmodule FrothWeb.Router do
     # as long as you are also using SSL (which you should anyway).
     import Phoenix.LiveDashboard.Router
 
-    scope "/dev" do
+    scope "/froth/" do
       pipe_through :browser
 
-      live_dashboard "/dashboard", metrics: FrothWeb.Telemetry
+      live_dashboard "/dashboard/0",
+        metrics: FrothWeb.Telemetry,
+        live_socket_path: "/froth/live",
+        ecto_repos: [Froth.Repo]
     end
   end
 end

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>froth · luna-dd</title>
+
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: {
+        mono: ['"Berkeley Mono"', '"JetBrains Mono"', '"SF Mono"', 'ui-monospace', 'monospace'],
+        serif: ['"Equity OT A"', '"Equity Text A"', '"Iowan Old Style"', 'Georgia', 'serif'],
+        sans: ['"Söhne"', '"Inter Tight"', '-apple-system', 'BlinkMacSystemFont', '"Helvetica Neue"', 'sans-serif'],
+      },
+      fontSize: {
+        // name: [size, lineHeight]
+        '2xs': ['11px', '16px'],  // xs meta
+        'xs':  ['12px', '18px'],
+        'sm':  ['13px', '20px'],  // DEFAULT body
+        'base':['15px', '24px'],
+        'lg':  ['17px', '28px'],
+        'xl':  ['20px', '28px'],
+        '2xl': ['24px', '32px'],
+        '3xl': ['32px', '40px'],
+      },
+      colors: {
+        void: '#000000',
+        bg:   '#000000',
+        raised:'#0a0a0c',
+        sunken:'#000000',
+        glow: '#121217',
+        // Lines
+        line: { DEFAULT: '#1f1f28', strong: '#2d2d38', faint: '#141419' },
+        // Foreground ladder
+        fg: { DEFAULT: '#eceae3', dim: '#a8a49a', mute: '#6a6760', ghost: '#3e3c38' },
+        // Neon ink — named semantically
+        amber: { DEFAULT: '#e8a33d', soft: '#7a5423' },
+        cyan:  { DEFAULT: '#4bd4e3', soft: '#1e5a64' },
+        magenta:{DEFAULT: '#e86dc4', soft: '#6b2957' },
+        violet:{ DEFAULT: '#8b7ef0', soft: '#3a3268' },
+        green: { DEFAULT: '#5ae38a', soft: '#1f5a33' },
+        red:   { DEFAULT: '#ff6b6b', soft: '#6b2525' },
+        peach: { DEFAULT: '#ffb088', soft: '#6b3a22' },
+        blue:  { DEFAULT: '#7aa2ff', soft: '#2a3a6b' },
+        pink:  { DEFAULT: '#ff9fb3' },
+        lavender:{DEFAULT:'#c3b1e1' },
+      },
+      borderRadius: { DEFAULT: '0', hair: '2px', soft: '4px' },
+      letterSpacing: {
+        tighter: '-0.01em',
+        tight: '-0.005em',
+      },
+      animation: {
+        'blink': 'blink 1.1s steps(2) infinite',
+      },
+      keyframes: {
+        blink: { '50%': { opacity: '0' } },
+      },
+    },
+  },
+};
+</script>
+
+<link rel="stylesheet" href="base.css">
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+</head>
+<body class="bg-bg text-fg font-sans text-sm antialiased">
+<div id="root"></div>
+
+<script type="text/babel" src="components/core.jsx"></script>
+<script type="text/babel" src="components/artifacts.jsx"></script>
+<script type="text/babel" src="components/drawer.jsx"></script>
+<script type="text/babel" src="components/shell.jsx"></script>
+<script type="text/babel" src="components/app.jsx"></script>
+
+</body>
+</html>

@@ -82,7 +82,10 @@ defmodule Froth.MimeSniff do
   defp do_sniff(<<0x1F, 0x8B, _::binary>>), do: "application/gzip"
   defp do_sniff(<<0x42, 0x5A, 0x68, _::binary>>), do: "application/x-bzip2"
   defp do_sniff(<<0xFD, "7zXZ", 0x00, _::binary>>), do: "application/x-xz"
-  defp do_sniff(<<0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, _::binary>>), do: "application/x-7z-compressed"
+
+  defp do_sniff(<<0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, _::binary>>),
+    do: "application/x-7z-compressed"
+
   defp do_sniff(<<"Rar!", 0x1A, 0x07, _::binary>>), do: "application/vnd.rar"
   defp do_sniff(<<"ustar", _::binary>>), do: "application/x-tar"
 

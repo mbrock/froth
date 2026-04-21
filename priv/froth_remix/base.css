@@ -1,0 +1,50 @@
+/* Fonts and a bare reset. Everything else lives in Tailwind utilities. */
+
+@font-face {
+  font-family: "Berkeley Mono";
+  src: url("fonts/BerkeleyMono-Regular.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Berkeley Mono";
+  src: url("fonts/BerkeleyMono-Bold.woff2") format("woff2");
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Equity OT A";
+  src: url("fonts/EquityOTA-Regular.otf") format("opentype");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Equity OT A";
+  src: url("fonts/EquityOTA-Italic.otf") format("opentype");
+  font-weight: 400; font-style: italic; font-display: swap;
+}
+@font-face {
+  font-family: "Equity OT A";
+  src: url("fonts/EquityOTA-Bold.otf") format("opentype");
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+@import url("https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&display=swap");
+
+/* Bare reset — Tailwind preflight handles most of it, this is just extras. */
+html, body { margin: 0; padding: 0; background: #000; color: #eceae3; }
+body {
+  font-family: "Söhne", "Inter Tight", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  font-size: 13px;
+  line-height: 20px;
+  font-feature-settings: "ss01", "ss02", "calt";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Custom scrollbars — dark */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1f1f28; }
+::-webkit-scrollbar-thumb:hover { background: #2d2d38; }
+
+/* Keyframes that tailwind custom anims will reference */
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes pulse-amber { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }

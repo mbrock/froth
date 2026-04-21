@@ -215,11 +215,24 @@ defmodule FrothWeb.RemixLive do
     ~H"""
     <div
       class={[
-        "grid grid-cols-[56px_1fr_56px] gap-x-4 px-7 relative",
+        "relative px-4 md:grid md:grid-cols-[56px_1fr_56px] md:gap-x-4 md:px-7",
         if(@block?, do: "py-1.5", else: "py-0.5")
       ]}
     >
-      <div class="relative text-right">
+      <div class="mb-1 flex items-baseline justify-between gap-3 md:hidden">
+        <span
+          class={[
+            "font-sans font-medium tracking-tight inline-block max-w-full min-w-0 align-baseline truncate",
+            @color
+          ]}
+          title={@name}
+        >
+          {@name}
+        </span>
+        <span class="shrink-0 font-mono text-2xs text-fg-ghost tabular-nums">{@time}</span>
+      </div>
+
+      <div class="relative hidden text-right md:block md:col-start-1 md:row-start-1">
         <span
           class={[
             "font-sans font-medium tracking-tight inline-block max-w-full align-baseline truncate",
@@ -247,9 +260,9 @@ defmodule FrothWeb.RemixLive do
         />
       </div>
 
-      <div class="min-w-0">{render_slot(@inner_block)}</div>
+      <div class="min-w-0 md:col-start-2 md:row-start-1">{render_slot(@inner_block)}</div>
 
-      <div class="font-mono text-2xs text-fg-ghost tabular-nums text-right pt-[2px]">
+      <div class="hidden font-mono text-2xs text-fg-ghost tabular-nums text-right pt-[2px] md:block md:col-start-3 md:row-start-1">
         {@time}
       </div>
     </div>
