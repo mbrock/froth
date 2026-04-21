@@ -60,17 +60,31 @@ defmodule FrothWeb.RemixLive do
         <main class="flex-1 flex flex-col min-w-0">
           <div class="flex-1 overflow-y-auto">
             <div class="max-w-[960px] mx-auto py-6">
-              <.daybreak date={@room.date_label} range={@room.range} />
+              <.daybreak
+                weekday={@room.date_label.weekday}
+                date={@room.date_label.date}
+                range={@room.range}
+              />
 
               <%= for turn <- @room.turns do %>
                 <.turn
-                  turn={turn}
-                  person={@room.people[turn.who]}
-                  paid?={@paid?}
-                  playing?={@playing?}
-                  play_pos={@play_pos}
+                  name={@room.people[turn.who].name}
+                  color={@room.people[turn.who].color}
+                  time={turn.time}
+                  block?={turn.block?}
+                  threaded?={turn.threaded?}
+                  is_child?={turn.is_child?}
                   hot?={MapSet.member?(@lineage_set, turn.id)}
-                />
+                >
+                  <%= for block <- turn.body do %>
+                    <.turn_block
+                      block={block}
+                      paid?={@paid?}
+                      playing?={@playing?}
+                      play_pos={@play_pos}
+                    />
+                  <% end %>
+                </.turn>
               <% end %>
             </div>
           </div>
@@ -108,7 +122,14 @@ defmodule FrothWeb.RemixLive do
       <div class="py-2 overflow-y-auto flex-1">
         <div class="text-2xs text-fg-mute px-4 py-1.5">artifacts · today</div>
         <%= for item <- @room.sidebar_artifacts do %>
-          <.side_row item={item} active?={@active == item.key} />
+          <.side_row
+            glyph={item.glyph}
+            name={item.name}
+            meta={item.meta}
+            active?={@active == item.key}
+            click="open_drawer"
+            value_key={item.key}
+          />
         <% end %>
       </div>
 
@@ -128,84 +149,115 @@ defmodule FrothWeb.RemixLive do
     """
   end
 
-  defp side_row(assigns) do
+  @doc """
+  A sidebar row — glyph, name, optional meta, optional `phx-click`.
+  Reusable outside the remix mockup: see `FrothWeb.TimelineLive` for a
+  stripped-down usage.
+  """
+  attr :glyph, :string, default: " "
+  attr :name, :string, required: true
+  attr :meta, :string, default: nil
+  attr :active?, :boolean, default: false
+  attr :click, :string, default: nil
+  attr :value_key, :string, default: nil
+
+  def side_row(assigns) do
     ~H"""
     <div
       class={[
-        "flex items-baseline gap-2 px-4 py-1.5 cursor-pointer transition-colors",
+        "flex items-baseline gap-2 px-4 py-1.5 transition-colors",
+        @click && "cursor-pointer",
         if(@active?, do: "bg-amber/10 text-fg", else: "hover:bg-glow text-fg-dim")
       ]}
-      phx-click="open_drawer"
-      phx-value-key={@item.key}
+      phx-click={@click}
+      phx-value-key={@value_key}
     >
-      <span class="w-4 text-center text-fg-mute">{@item.glyph}</span>
-      <span class="flex-1 min-w-0 truncate">{@item.name}</span>
-      <span :if={@item.meta} class="text-2xs text-fg-ghost">{@item.meta}</span>
+      <span class="w-4 text-center text-fg-mute">{@glyph}</span>
+      <span class="flex-1 min-w-0 truncate">{@name}</span>
+      <span :if={@meta} class="text-2xs text-fg-ghost">{@meta}</span>
     </div>
     """
   end
 
-  defp daybreak(assigns) do
+  @doc """
+  The day-break header that sits above the transcript — weekday, date, range.
+  """
+  attr :weekday, :string, required: true
+  attr :date, :string, required: true
+  attr :range, :string, default: nil
+
+  def daybreak(assigns) do
     ~H"""
     <div class="grid grid-cols-[56px_1fr_56px] gap-x-4 px-7 py-2 items-baseline">
-      <div class="text-right text-fg-mute text-2xs">{@date.weekday}</div>
+      <div class="text-right text-fg-mute text-2xs">{@weekday}</div>
       <div class="text-fg-mute text-2xs">
-        {@date.date}
-        <span class="font-mono text-fg-ghost ml-3 tabular-nums">{@range}</span>
+        {@date}
+        <span :if={@range} class="font-mono text-fg-ghost ml-3 tabular-nums">{@range}</span>
       </div>
     </div>
     """
   end
 
-  defp turn(assigns) do
+  @doc """
+  One visual row in a transcript. `inner_block` is the message body —
+  plain text, a `.msg`, an artifact, whatever the caller wants.
+  """
+  attr :name, :string, required: true
+  attr :color, :string, default: "text-fg"
+  attr :time, :string, default: ""
+  attr :block?, :boolean, default: false
+  attr :threaded?, :boolean, default: false
+  attr :is_child?, :boolean, default: false
+  attr :hot?, :boolean, default: false
+  slot :inner_block, required: true
+
+  def turn(assigns) do
     ~H"""
     <div
       class={[
         "grid grid-cols-[56px_1fr_56px] gap-x-4 px-7 relative",
-        if(@turn.block?, do: "py-1.5", else: "py-0.5")
+        if(@block?, do: "py-1.5", else: "py-0.5")
       ]}
     >
       <div class="relative text-right">
-        <span class={["font-sans font-medium tracking-tight", @person.color]}>
-          {@person.name}
+        <span
+          class={[
+            "font-sans font-medium tracking-tight inline-block max-w-full align-baseline truncate",
+            @color
+          ]}
+          title={@name}
+        >
+          {@name}
         </span>
         <span
-          :if={@turn.threaded? and @hot?}
+          :if={@threaded? and @hot?}
           class="absolute left-[calc(100%+8px)] top-5 bottom-0 w-px bg-cyan shadow-[0_0_6px_-1px_rgba(75,212,227,0.7)]"
         />
         <span
-          :if={@turn.threaded? and not @hot?}
+          :if={@threaded? and not @hot?}
           class="absolute left-[calc(100%+8px)] top-5 bottom-0 w-px bg-line"
         />
         <span
-          :if={@turn.is_child? and @hot?}
+          :if={@is_child? and @hot?}
           class="absolute left-[calc(100%+6px)] top-2.5 w-2 h-2 -translate-x-1/2 bg-cyan shadow-[0_0_6px_-1px_rgba(75,212,227,0.7)]"
         />
         <span
-          :if={@turn.is_child? and not @hot?}
+          :if={@is_child? and not @hot?}
           class="absolute left-[calc(100%+6px)] top-2.5 w-2 h-2 -translate-x-1/2 bg-cyan/40"
         />
       </div>
 
-      <div class="min-w-0">
-        <%= for block <- @turn.body do %>
-          <.turn_block
-            block={block}
-            paid?={@paid?}
-            playing?={@playing?}
-            play_pos={@play_pos}
-          />
-        <% end %>
-      </div>
+      <div class="min-w-0">{render_slot(@inner_block)}</div>
 
       <div class="font-mono text-2xs text-fg-ghost tabular-nums text-right pt-[2px]">
-        {@turn.time}
+        {@time}
       </div>
     </div>
     """
   end
 
   # Each block inside a turn: inline message, an artifact, a quoted reply, …
+  # Remix-specific; only used by `RemixLive` below.
   defp turn_block(%{block: {:msg, _}} = assigns) do
     ~H"""
     <span class="text-fg-dim"><.msg parts={elem(@block, 1)} /></span>
@@ -247,9 +299,24 @@ defmodule FrothWeb.RemixLive do
     """
   end
 
-  # Inline text with lightweight segment markup, so the view-model stays
-  # pure data.
-  defp msg(assigns) do
+  @doc """
+  Inline text with lightweight tagged-segment markup, so the view-model
+  stays pure data:
+
+      [
+        "hey, ",
+        {:mention, "@orr"},
+        " — see ",
+        {:tag, "swedbank · operating"},
+        "?"
+      ]
+
+  Supported segments: plain binary, `{:mute, s}`, `{:mention, s}`,
+  `{:tag, s}`, `{:emoji, s}`, `{:raw, html}`.
+  """
+  attr :parts, :list, required: true
+
+  def msg(assigns) do
     ~H"""
     <%= for part <- @parts do %>
       <.msg_part part={part} />
@@ -627,12 +694,18 @@ defmodule FrothWeb.RemixLive do
     """
   end
 
-  defp composer(assigns) do
+  @doc """
+  The bottom composer input. Decorative by default — callers can pass
+  a `placeholder` and optional `phx-submit` wiring later.
+  """
+  attr :placeholder, :string, default: "say something, or / to call an agent"
+
+  def composer(assigns) do
     ~H"""
     <div class="border-t border-line bg-void px-7 py-3">
       <input
         type="text"
-        placeholder="say something, or / to call an agent"
+        placeholder={@placeholder}
         class="w-full max-w-[860px] mx-auto block bg-raised border border-line px-4 h-9 text-fg placeholder:text-fg-ghost focus:border-amber focus:outline-0 transition-colors text-[13px]"
       />
     </div>

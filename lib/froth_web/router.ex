@@ -52,6 +52,7 @@ defmodule FrothWeb.Router do
     live "/chat-stats/:day", ChatStatsLive, :index
     live "/jobs", JobsLive, :index
     live "/remix", RemixLive, :index
+    live "/timeline", TimelineLive, :index
   end
 
   scope "/froth/mini", FrothWeb do

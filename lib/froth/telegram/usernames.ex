@@ -20,6 +20,46 @@ defmodule Froth.Telegram.Usernames do
 
   def get_label(_user_id), do: nil
 
+  @doc """
+  Return a `%{user_id => short_name}` map for the given user ids, preferring
+  `first_name` when available, falling back to `@username`, then the
+  stored `label`. Does not touch Telegram — reads from
+  `telegram_usernames` only.
+  """
+  def short_name_map(user_ids) when is_list(user_ids) do
+    case normalize_user_ids(user_ids) do
+      [] ->
+        %{}
+
+      ids ->
+        Repo.all(
+          from(u in Username,
+            where: u.user_id in ^ids,
+            select: {u.user_id, u.first_name, u.username, u.label}
+          ),
+          log: false
+        )
+        |> Map.new(fn {uid, first, uname, label} ->
+          {uid, pick_short_name(first, uname, label, uid)}
+        end)
+    end
+  end
+
+  defp pick_short_name(first, _uname, _label, _uid) when is_binary(first) and first != "",
+    do: first
+
+  defp pick_short_name(_first, uname, _label, _uid) when is_binary(uname) and uname != "",
+    do: uname
+
+  defp pick_short_name(_first, _uname, label, _uid) when is_binary(label) and label != "" do
+    case label do
+      "@" <> rest -> rest
+      other -> other
+    end
+  end
+
+  defp pick_short_name(_first, _uname, _label, uid), do: "user:#{uid}"
+
   def label_map(user_ids, session_id \\ nil)
 
   def label_map(user_ids, session_id) when is_list(user_ids) do
