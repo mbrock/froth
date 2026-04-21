@@ -1,7 +1,7 @@
 {
   "name": "Froth",
   "short_name": "Froth",
-  "start_url": "/froth/",
+  "start_url": "/froth/timeline",
   "scope": "/froth/",
   "display": "standalone",
   "background_color": "#000000",
@@ -19,4 +19,3 @@
     }
   ]
 }
-

@@ -282,7 +282,11 @@ defmodule Froth.Telegram.Sync do
         {:ok, :duplicate}
 
       {:ok, saved} ->
-        Froth.broadcast(Telegram.chat_topic(saved.chat_id), {:message_persisted, saved.chat_id, saved})
+        Froth.broadcast(
+          Telegram.chat_topic(saved.chat_id),
+          {:message_persisted, saved.chat_id, saved}
+        )
+
         {:ok, :inserted}
 
       {:error, cs} ->

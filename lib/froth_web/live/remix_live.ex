@@ -213,12 +213,10 @@ defmodule FrothWeb.RemixLive do
 
   def turn(assigns) do
     ~H"""
-    <div
-      class={[
-        "relative px-4 md:grid md:grid-cols-[56px_1fr_56px] md:gap-x-4 md:px-7",
-        if(@block?, do: "py-1.5", else: "py-0.5")
-      ]}
-    >
+    <div class={[
+      "relative px-4 md:grid md:grid-cols-[56px_1fr_56px] md:gap-x-4 md:px-7",
+      if(@block?, do: "py-1.5", else: "py-0.5")
+    ]}>
       <div class="mb-1 flex items-baseline justify-between gap-3 md:hidden">
         <span
           class={[
@@ -414,7 +412,15 @@ defmodule FrothWeb.RemixLive do
         </defs>
         <rect width="400" height="290" fill="#070609" />
         <g transform="rotate(-3 200 145)">
-          <rect x="70" y="28" width="260" height="234" fill="#1c150c" stroke="#3a2d1c" stroke-width="0.6" />
+          <rect
+            x="70"
+            y="28"
+            width="260"
+            height="234"
+            fill="#1c150c"
+            stroke="#3a2d1c"
+            stroke-width="0.6"
+          />
           <rect x="70" y="28" width="260" height="234" fill="url(#invoice-paper)" />
           <g font-family="monospace" fill="#78726a">
             <text x="84" y="52" font-size="6.5" letter-spacing="0.4">VALSTS IEŅĒMUMU DIENESTS</text>
@@ -476,7 +482,9 @@ defmodule FrothWeb.RemixLive do
             tx <span class="font-mono text-fg-dim">{@artifact.tx_hash}</span>
           </span>
           <span class="text-fg-ghost">·</span>
-          <span class="text-fg-mute">settled <span class="font-mono">{@artifact.settled_at}</span></span>
+          <span class="text-fg-mute">
+            settled <span class="font-mono">{@artifact.settled_at}</span>
+          </span>
         </div>
       <% else %>
         <div class="flex items-baseline gap-3 mt-4 pt-3 border-t border-line">
@@ -832,9 +840,7 @@ defmodule FrothWeb.RemixLive do
         lineage: ["photo-invoice"],
         body: [
           {:artifact, "photo-invoice",
-           caption: "a photograph · 4032×3024 · heic",
-           lineage: [],
-           kind: :image}
+           caption: "a photograph · 4032×3024 · heic", lineage: [], kind: :image}
         ]
       },
       %{
@@ -926,7 +932,10 @@ defmodule FrothWeb.RemixLive do
              %{label: "binds invoice · LV-2026-00412", link: "parsed-invoice"}
            ],
            lines: [
-             %{kind: :cmd, text: "swed sign --account op --to LV08HABA055100… --amount 87540 --ref 2026-00412"},
+             %{
+               kind: :cmd,
+               text: "swed sign --account op --to LV08HABA055100… --amount 87540 --ref 2026-00412"
+             },
              %{kind: :ok, text: "signature captured · mira · 14:05:04", ms: "240ms"},
              %{kind: :cmd, text: "sepa broadcast --tx 0x7a1c4f09"},
              %{kind: :ok, text: "accepted by clearer · pending confirmation", ms: "612ms"},
@@ -1003,25 +1012,61 @@ defmodule FrothWeb.RemixLive do
            added: 3,
            deleted: 2,
            lines: [
-             %{kind: :ctx, a: "42", b: "42",
-               src: ~s|  &lt;div <span class="text-violet">className</span>=<span class="text-peach">"ledger-row"</span>&gt;|},
-             %{kind: :ctx, a: "43", b: "43",
-               src: ~s|    &lt;span <span class="text-violet">className</span>=<span class="text-peach">"when"</span>&gt;{<span class="text-cyan">row</span>.<span class="text-cyan">when</span>}&lt;/span&gt;|},
-             %{kind: :del, a: "44", b: "",
-               src: ~s|    &lt;span <span class="text-violet">className</span>=<span class="text-peach">"amt"</span>&gt;{<span class="text-cyan">row</span>.<span class="text-cyan">amt</span>}&lt;/span&gt;|},
-             %{kind: :add, a: "", b: "44",
-               src: ~s|    &lt;span <span class="text-violet">className</span>=<span class="text-peach">"amt"</span> <span class="text-violet">style</span>={{|},
-             %{kind: :add, a: "", b: "45",
-               src: ~s|      <span class="text-cyan">fontVariantNumeric</span>: <span class="text-peach">"tabular-nums"</span>,|},
-             %{kind: :add, a: "", b: "46",
-               src: ~s|      <span class="text-cyan">fontFeatureSettings</span>: <span class="text-peach">'"tnum"'</span>|},
-             %{kind: :add, a: "", b: "47",
-               src: ~s|    }}&gt;{<span class="text-cyan">row</span>.<span class="text-cyan">amt</span>}&lt;/span&gt;|},
+             %{
+               kind: :ctx,
+               a: "42",
+               b: "42",
+               src:
+                 ~s|  &lt;div <span class="text-violet">className</span>=<span class="text-peach">"ledger-row"</span>&gt;|
+             },
+             %{
+               kind: :ctx,
+               a: "43",
+               b: "43",
+               src:
+                 ~s|    &lt;span <span class="text-violet">className</span>=<span class="text-peach">"when"</span>&gt;{<span class="text-cyan">row</span>.<span class="text-cyan">when</span>}&lt;/span&gt;|
+             },
+             %{
+               kind: :del,
+               a: "44",
+               b: "",
+               src:
+                 ~s|    &lt;span <span class="text-violet">className</span>=<span class="text-peach">"amt"</span>&gt;{<span class="text-cyan">row</span>.<span class="text-cyan">amt</span>}&lt;/span&gt;|
+             },
+             %{
+               kind: :add,
+               a: "",
+               b: "44",
+               src:
+                 ~s|    &lt;span <span class="text-violet">className</span>=<span class="text-peach">"amt"</span> <span class="text-violet">style</span>={{|
+             },
+             %{
+               kind: :add,
+               a: "",
+               b: "45",
+               src:
+                 ~s|      <span class="text-cyan">fontVariantNumeric</span>: <span class="text-peach">"tabular-nums"</span>,|
+             },
+             %{
+               kind: :add,
+               a: "",
+               b: "46",
+               src:
+                 ~s|      <span class="text-cyan">fontFeatureSettings</span>: <span class="text-peach">'"tnum"'</span>|
+             },
+             %{
+               kind: :add,
+               a: "",
+               b: "47",
+               src:
+                 ~s|    }}&gt;{<span class="text-cyan">row</span>.<span class="text-cyan">amt</span>}&lt;/span&gt;|
+             },
              %{kind: :ctx, a: "45", b: "48", src: "  &lt;/div&gt;"}
            ],
            review: %{
              by: "orr",
-             html: ~s|tests pass <span class="font-mono text-green">42/42</span>, a visual-regression run flagged a 1px baseline shift at <span class="font-mono text-cyan">invoice.tsx:44</span> — patched above.|
+             html:
+               ~s|tests pass <span class="font-mono text-green">42/42</span>, a visual-regression run flagged a 1px baseline shift at <span class="font-mono text-cyan">invoice.tsx:44</span> — patched above.|
            }}
         ]
       },
@@ -1092,8 +1137,7 @@ defmodule FrothWeb.RemixLive do
         ],
         history: [
           %{when: "13:52:34", op: "create", what: "uploaded from phone", by: "mira"},
-          %{when: "13:54:12", op: "cite",
-            what: "referenced by vale/parsed-invoice", by: "vale"},
+          %{when: "13:54:12", op: "cite", what: "referenced by vale/parsed-invoice", by: "vale"},
           %{when: "17:00:42", op: "cite", what: "cited in podcast (0:14)", by: "vale"}
         ]
       },
@@ -1117,11 +1161,9 @@ defmodule FrothWeb.RemixLive do
         history: [
           %{when: "13:54:12", op: "create", what: "OCR parsed (9 fields)", by: "vale"},
           %{when: "14:04:58", op: "sign", what: "authorized by mira (touch-id)", by: "mira"},
-          %{when: "14:07:21", op: "settle",
-            what: "SEPA confirmed · block 21,417,308", by: "orr"},
+          %{when: "14:07:21", op: "settle", what: "SEPA confirmed · block 21,417,308", by: "orr"},
           %{when: "14:33:02", op: "cite", what: "quoted as bug reference", by: "jonas"},
-          %{when: "14:35:17", op: "revise",
-            what: "rendered via patched invoice.tsx", by: "orr"}
+          %{when: "14:35:17", op: "revise", what: "rendered via patched invoice.tsx", by: "orr"}
         ],
         body:
           "parsed fields: payer, amount, ref, due date, IBAN, issue date, fee code, interest, VAT id."
@@ -1142,11 +1184,9 @@ defmodule FrothWeb.RemixLive do
         ],
         history: [
           %{when: "14:05:01", op: "create", what: "signing flow invoked", by: "orr"},
-          %{when: "14:05:04", op: "sign",
-            what: "private key on phone accepted", by: "mira"},
+          %{when: "14:05:04", op: "sign", what: "private key on phone accepted", by: "mira"},
           %{when: "14:05:16", op: "emit", what: "broadcast to SEPA clearer", by: "orr"},
-          %{when: "14:07:21", op: "settle",
-            what: "confirmed · block 21,417,308", by: "orr"}
+          %{when: "14:07:21", op: "settle", what: "confirmed · block 21,417,308", by: "orr"}
         ]
       },
       "code-fix" => %{
@@ -1165,12 +1205,19 @@ defmodule FrothWeb.RemixLive do
           %{kind: "cite", name: "tuesday dispatch", by: "vale"}
         ],
         history: [
-          %{when: "14:35:02", op: "create",
-            what: "patch composed from jonas' trace", by: "orr"},
-          %{when: "14:35:14", op: "test",
-            what: "42/42 passing · visual-regression clean", by: "orr"},
-          %{when: "14:35:17", op: "merge",
-            what: "fast-forward to main · commit be44e1a", by: "orr"}
+          %{when: "14:35:02", op: "create", what: "patch composed from jonas' trace", by: "orr"},
+          %{
+            when: "14:35:14",
+            op: "test",
+            what: "42/42 passing · visual-regression clean",
+            by: "orr"
+          },
+          %{
+            when: "14:35:17",
+            op: "merge",
+            what: "fast-forward to main · commit be44e1a",
+            by: "orr"
+          }
         ]
       },
       "podcast" => %{
@@ -1188,8 +1235,12 @@ defmodule FrothWeb.RemixLive do
         ],
         descendants: [],
         history: [
-          %{when: "17:00:42", op: "create",
-            what: "rendered · 6:12 · 34 source citations", by: "vale"}
+          %{
+            when: "17:00:42",
+            op: "create",
+            what: "rendered · 6:12 · 34 source citations",
+            by: "vale"
+          }
         ]
       }
     }
@@ -1204,10 +1255,70 @@ defmodule FrothWeb.RemixLive do
 
   defp podcast_wave do
     [
-      0.3, 0.5, 0.7, 0.4, 0.8, 0.6, 0.9, 0.5, 0.3, 0.7, 0.8, 0.5, 0.4, 0.6, 0.9, 0.7,
-      0.8, 0.5, 0.6, 0.4, 0.3, 0.7, 0.9, 0.8, 0.5, 0.6, 0.4, 0.7, 0.3, 0.5, 0.8, 0.6,
-      0.9, 0.7, 0.4, 0.5, 0.3, 0.8, 0.6, 0.7, 0.4, 0.9, 0.5, 0.6, 0.3, 0.8, 0.7, 0.5,
-      0.4, 0.6, 0.9, 0.7, 0.3, 0.5, 0.8, 0.6, 0.4, 0.7, 0.9, 0.5, 0.3, 0.6, 0.8, 0.4
+      0.3,
+      0.5,
+      0.7,
+      0.4,
+      0.8,
+      0.6,
+      0.9,
+      0.5,
+      0.3,
+      0.7,
+      0.8,
+      0.5,
+      0.4,
+      0.6,
+      0.9,
+      0.7,
+      0.8,
+      0.5,
+      0.6,
+      0.4,
+      0.3,
+      0.7,
+      0.9,
+      0.8,
+      0.5,
+      0.6,
+      0.4,
+      0.7,
+      0.3,
+      0.5,
+      0.8,
+      0.6,
+      0.9,
+      0.7,
+      0.4,
+      0.5,
+      0.3,
+      0.8,
+      0.6,
+      0.7,
+      0.4,
+      0.9,
+      0.5,
+      0.6,
+      0.3,
+      0.8,
+      0.7,
+      0.5,
+      0.4,
+      0.6,
+      0.9,
+      0.7,
+      0.3,
+      0.5,
+      0.8,
+      0.6,
+      0.4,
+      0.7,
+      0.9,
+      0.5,
+      0.3,
+      0.6,
+      0.8,
+      0.4
     ]
   end
 end

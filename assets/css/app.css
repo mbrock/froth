@@ -188,13 +188,19 @@ html {
   height: 100%;
 }
 
+.app-root,
 .mini-root {
+  min-height: 100%;
+  margin: 0;
+  background: #000;
   height: 100%;
   overscroll-behavior-y: none;
   overflow: hidden;
 }
 
+.app-shell,
 .mini-shell {
+  min-height: 100vh;
   height: 100vh;
   max-height: 100vh;
   overflow: hidden;
@@ -202,8 +208,19 @@ html {
   text-size-adjust: 100%;
 }
 
-@supports (height: 100dvh) {
+@supports (-webkit-touch-callout: none) {
+  .app-shell,
   .mini-shell {
+    min-height: -webkit-fill-available;
+    height: -webkit-fill-available;
+    max-height: -webkit-fill-available;
+  }
+}
+
+@supports (height: 100dvh) {
+  .app-shell,
+  .mini-shell {
+    min-height: 100dvh;
     height: 100dvh;
     max-height: 100dvh;
   }

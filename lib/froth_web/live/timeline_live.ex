@@ -82,7 +82,10 @@ defmodule FrothWeb.TimelineLive do
   def handle_event("reload", _, socket), do: {:noreply, load_chat(socket)}
 
   @impl true
-  def handle_info({:message_persisted, chat_id, %TMsg{} = message}, %{assigns: %{chat_id: chat_id}} = socket) do
+  def handle_info(
+        {:message_persisted, chat_id, %TMsg{} = message},
+        %{assigns: %{chat_id: chat_id}} = socket
+      ) do
     {:noreply, append_message_block(socket, message)}
   end
 
@@ -137,8 +140,7 @@ defmodule FrothWeb.TimelineLive do
 
     reply_lookup =
       Map.new(messages, fn m ->
-        {m.message_id,
-         %{text: TMsg.text(m.raw), name: short_name_for(m.sender_id, short_names)}}
+        {m.message_id, %{text: TMsg.text(m.raw), name: short_name_for(m.sender_id, short_names)}}
       end)
 
     cycles = load_cycle_traces(chat_id, messages, short_names)
@@ -549,10 +551,17 @@ defmodule FrothWeb.TimelineLive do
     assign(socket, :cycle_topics, desired)
   end
 
-  defp track_cycle_link(socket, %CycleLink{cycle_id: cycle_id, chat_id: chat_id, inserted_at: inserted_at})
+  defp track_cycle_link(socket, %CycleLink{
+         cycle_id: cycle_id,
+         chat_id: chat_id,
+         inserted_at: inserted_at
+       })
        when is_binary(cycle_id) and is_integer(chat_id) do
     socket
-    |> assign(:cycle_inserted_at, Map.put(socket.assigns.cycle_inserted_at, cycle_id, inserted_at))
+    |> assign(
+      :cycle_inserted_at,
+      Map.put(socket.assigns.cycle_inserted_at, cycle_id, inserted_at)
+    )
     |> sync_cycle_topics(MapSet.put(socket.assigns.cycle_topics, cycle_id) |> MapSet.to_list())
   end
 
@@ -562,8 +571,19 @@ defmodule FrothWeb.TimelineLive do
     if out_of_order?(socket.assigns.latest_sort_key, dt) do
       load_chat(socket)
     else
-      short_names = ensure_short_names(socket.assigns.short_names, socket.assigns.session_id, [message.sender_id])
-      block = build_message_turn(message, short_names, socket.assigns.reply_lookup, socket.assigns.chat_id, dt)
+      short_names =
+        ensure_short_names(socket.assigns.short_names, socket.assigns.session_id, [
+          message.sender_id
+        ])
+
+      block =
+        build_message_turn(
+          message,
+          short_names,
+          socket.assigns.reply_lookup,
+          socket.assigns.chat_id,
+          dt
+        )
 
       blocks_to_append =
         maybe_daybreak(socket.assigns.latest_day_key, dt) ++ [block]
@@ -716,7 +736,9 @@ defmodule FrothWeb.TimelineLive do
 
   defp out_of_order_new_block?(socket, cycle_id, dt) do
     latest_sort_key = socket.assigns.latest_sort_key
-    not cycle_block_present?(socket.assigns.blocks, cycle_id) and out_of_order?(latest_sort_key, dt)
+
+    not cycle_block_present?(socket.assigns.blocks, cycle_id) and
+      out_of_order?(latest_sort_key, dt)
   end
 
   defp cycle_block_present?(blocks, cycle_id) do
@@ -743,7 +765,7 @@ defmodule FrothWeb.TimelineLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} variant={:plain}>
-      <div class="flex h-screen bg-void text-fg font-sans text-[13px] leading-5 antialiased">
+      <div class="app-shell safe-top flex min-h-0 bg-void text-fg font-sans text-[13px] leading-5 antialiased">
         <.sidebar
           chat_title={@chat_title}
           chat_id={@chat_id}
@@ -761,7 +783,7 @@ defmodule FrothWeb.TimelineLive do
           <div
             id="timeline-scroll"
             data-scroll-body
-            class="flex-1 overflow-y-auto"
+            class="safe-bottom flex-1 overflow-y-auto overscroll-contain"
           >
             <div id="timeline-blocks" phx-update="stream" class="max-w-[960px] mx-auto py-4 md:py-6">
               <div :for={{dom_id, item} <- @streams.blocks} id={dom_id}>
@@ -783,7 +805,7 @@ defmodule FrothWeb.TimelineLive do
 
   defp sidebar(assigns) do
     ~H"""
-    <aside class="w-[260px] shrink-0 border-r border-line bg-void hidden md:flex flex-col h-screen">
+    <aside class="w-[260px] shrink-0 border-r border-line bg-void hidden h-full md:flex flex-col">
       <div class="px-4 py-4 flex items-baseline gap-2 border-b border-line">
         <span class="text-amber">❡</span>
         <span class="text-fg font-medium tracking-tight">froth</span>
@@ -1021,7 +1043,9 @@ defmodule FrothWeb.TimelineLive do
           :if={@result && @result.label != "ok"}
           class={["ml-auto shrink-0 font-mono tabular-nums", @result.color]}
           title={@result.tooltip}
-        >{@result.label}</span>
+        >
+          {@result.label}
+        </span>
       </div>
 
       <.tool_input tool={@tool} input={@input} />
@@ -1032,7 +1056,8 @@ defmodule FrothWeb.TimelineLive do
 
   # ─── Tool input rendering ──────────────────────────────────────────────
 
-  defp tool_input(%{tool: "run_shell", input: %{"command" => cmd}} = assigns) when is_binary(cmd) do
+  defp tool_input(%{tool: "run_shell", input: %{"command" => cmd}} = assigns)
+       when is_binary(cmd) do
     assigns = assign(assigns, :cmd, cmd)
 
     ~H"""
@@ -1149,7 +1174,10 @@ defmodule FrothWeb.TimelineLive do
         kv_footer(attrs, :exit_code, &"exit #{&1}"),
         kv_footer(attrs, :lines, &"#{&1} line#{if &1 == 1, do: "", else: "s"}"),
         kv_footer(attrs, :size, &format_size/1),
-        if(rest != [], do: "+#{length(rest)} more block#{if length(rest) == 1, do: "", else: "s"}", else: nil)
+        if(rest != [],
+          do: "+#{length(rest)} more block#{if length(rest) == 1, do: "", else: "s"}",
+          else: nil
+        )
       ]
       |> Enum.reject(&is_nil/1)
 
@@ -1161,9 +1189,7 @@ defmodule FrothWeb.TimelineLive do
   end
 
   defp render_output({:ok, value}) when is_map(value) do
-    %{body: inspect(value, limit: 10, printable_limit: 1000, pretty: true),
-      kind: nil,
-      footer: []}
+    %{body: inspect(value, limit: 10, printable_limit: 1000, pretty: true), kind: nil, footer: []}
   end
 
   defp render_output({:error, message}) do
@@ -1234,7 +1260,6 @@ defmodule FrothWeb.TimelineLive do
   end
 
   defp summarize_result(_), do: nil
-
 
   defp reply_quote(assigns) do
     assigns =
