@@ -612,10 +612,6 @@ defmodule FrothWeb.TimelineLive do
 
   # ─── Agent cycle (tool calls) ─────────────────────────────────────────────
 
-  # Max lines rendered per output block before truncation.
-  @output_max_lines 12
-  @output_max_chars 900
-
   defp cycle_trace(assigns) do
     ~H"""
     <div class="flex flex-col gap-2">
@@ -665,7 +661,6 @@ defmodule FrothWeb.TimelineLive do
     assigns =
       assign(assigns,
         tool: entry[:tool] || "?",
-        tool_label: tool_display(entry[:tool] || "?"),
         narration: entry[:narration],
         input: entry[:input] || %{},
         result: summarize_result(entry[:result]),
@@ -674,9 +669,11 @@ defmodule FrothWeb.TimelineLive do
 
     ~H"""
     <div class="flex flex-col gap-1">
-      <div class="flex items-baseline gap-2 text-2xs text-fg-mute">
-        <span class="text-peach font-medium">{@tool_label}</span>
-        <span :if={@narration} class="truncate min-w-0" title={@narration}>· {@narration}</span>
+      <div
+        :if={@narration || (@result && @result.label != "ok")}
+        class="flex items-baseline gap-2 text-2xs text-fg-mute"
+      >
+        <span :if={@narration} class="truncate min-w-0" title={@narration}>{@narration}</span>
         <span
           :if={@result && @result.label != "ok"}
           class={["ml-auto shrink-0 font-mono tabular-nums", @result.color]}
@@ -689,19 +686,6 @@ defmodule FrothWeb.TimelineLive do
     </div>
     """
   end
-
-  # Humanised tool names. Underscores become spaces so `run_shell`
-  # reads as "run shell"; a few special cases are shortened.
-  defp tool_display("run_shell"), do: "shell"
-  defp tool_display("task_output"), do: "tail"
-  defp tool_display("list_tasks"), do: "tasks"
-  defp tool_display("elixir_eval"), do: "elixir"
-  defp tool_display("send_message"), do: "reply"
-
-  defp tool_display(tool) when is_binary(tool),
-    do: String.replace(tool, "_", " ")
-
-  defp tool_display(_), do: "?"
 
   # ─── Tool input rendering ──────────────────────────────────────────────
 
@@ -720,21 +704,15 @@ defmodule FrothWeb.TimelineLive do
     assigns = assign(assigns, :src, src)
 
     ~H"""
-    <div class="font-mono text-[12px] text-fg flex items-baseline gap-2 min-w-0">
-      <span class="text-green select-none shrink-0">GET</span>
-      <span class="truncate" title={@src}>{@src}</span>
-    </div>
+    <div class="font-mono text-[12px] text-cyan truncate" title={@src}>{@src}</div>
     """
   end
 
-  defp tool_input(%{tool: "pager", input: input} = assigns) when map_size(input) > 0 do
-    assigns = assign(assigns, :fields, pager_summary(input))
+  defp tool_input(%{tool: "pager", input: input} = assigns) do
+    assigns = assign(assigns, :summary, pager_summary(input))
 
     ~H"""
-    <div :if={@fields != ""} class="font-mono text-[12px] text-fg truncate">
-      <span class="text-green select-none">pager</span>
-      <span class="text-fg-mute"> {@fields}</span>
-    </div>
+    <div :if={@summary} class="font-mono text-[12px] text-fg-mute truncate">{@summary}</div>
     """
   end
 
@@ -747,10 +725,9 @@ defmodule FrothWeb.TimelineLive do
       )
 
     ~H"""
-    <div class="font-mono text-[12px] text-fg flex items-baseline gap-2">
-      <span class="text-green select-none">tail</span>
-      <span>{@id}</span>
-      <span :if={@lines} class="text-fg-ghost">· last {@lines}</span>
+    <div class="font-mono text-[12px] text-fg-mute flex items-baseline gap-2">
+      <span class="text-fg">{@id}</span>
+      <span :if={@lines}>· last {@lines}</span>
     </div>
     """
   end
@@ -767,14 +744,37 @@ defmodule FrothWeb.TimelineLive do
     """
   end
 
+  # Reduce pager input to the only two things worth glancing at: the
+  # line window it's scrolled to (if any) and any active pattern filter.
+  # The `id` / `mode` are noise for humans.
   defp pager_summary(input) do
-    pairs =
-      input
-      |> Enum.map(fn {k, v} -> "#{k}=#{inspect_compact(v)}" end)
-      |> Enum.sort()
+    from = input["from_line"]
+    n = input["lines"]
+    pattern = input["pattern"]
+    max = input["max"]
 
-    Enum.join(pairs, " ")
+    [
+      pager_range(from, n),
+      pattern && "match " <> inspect(pattern),
+      max && "max #{max}"
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" · ")
+    |> case do
+      "" -> nil
+      s -> s
+    end
   end
+
+  defp pager_range(nil, nil), do: nil
+  defp pager_range(nil, n) when is_integer(n), do: "first #{n} lines"
+
+  defp pager_range(from, nil) when is_integer(from), do: "from line #{from}"
+
+  defp pager_range(from, n) when is_integer(from) and is_integer(n),
+    do: "lines #{from}–#{from + n - 1}"
+
+  defp pager_range(_, _), do: nil
 
   defp input_summary(input) when map_size(input) == 0, do: nil
 
@@ -792,21 +792,14 @@ defmodule FrothWeb.TimelineLive do
     end)
   end
 
-  defp inspect_compact(v) when is_binary(v), do: inspect(v, printable_limit: 40)
-  defp inspect_compact(v), do: inspect(v, limit: 3, printable_limit: 40)
-
   # ─── Tool output rendering ─────────────────────────────────────────────
 
-  # `render_output` normalises any outcome into either `nil` (nothing to show)
-  # or a map with:
-  #   :body — a preformatted string (possibly truncated), or nil
-  #   :kind — "shell" / "error" / "await" / nil (used for colour)
-  #   :footer — optional list of small kv pairs ("exit 0", "12 lines")
-  #   :truncated? — bool
+  # Normalise any outcome into either `nil` (nothing to show) or
+  # `%{body, kind, footer}`. No text-level truncation — the scroll
+  # box in `tool_output/1` clips visually instead.
   defp render_output({:ok, [%{__struct__: Froth.Context.Block} = block | rest]}) do
     attrs = Map.get(block, :attrs, []) |> List.wrap()
-    body = Map.get(block, :body) || ""
-    {truncated_body, truncated?} = truncate_body(body)
+    body = Map.get(block, :body) |> normalize_body()
 
     footer =
       [
@@ -817,49 +810,33 @@ defmodule FrothWeb.TimelineLive do
       ]
       |> Enum.reject(&is_nil/1)
 
-    kind = Keyword.get(attrs, :kind)
-    %{body: truncated_body, kind: kind, footer: footer, truncated?: truncated?}
+    %{body: body, kind: Keyword.get(attrs, :kind), footer: footer}
   end
 
   defp render_output({:ok, value}) when is_binary(value) do
-    {body, truncated?} = truncate_body(value)
-    %{body: body, kind: nil, footer: [], truncated?: truncated?}
+    %{body: normalize_body(value), kind: nil, footer: []}
   end
 
   defp render_output({:ok, value}) when is_map(value) do
-    inspected = inspect(value, limit: 6, printable_limit: 400, pretty: true)
-    {body, truncated?} = truncate_body(inspected)
-    %{body: body, kind: nil, footer: [], truncated?: truncated?}
+    %{body: inspect(value, limit: 10, printable_limit: 1000, pretty: true),
+      kind: nil,
+      footer: []}
   end
 
   defp render_output({:error, message}) do
-    {body, truncated?} = truncate_body(to_string(message))
-    %{body: body, kind: "error", footer: [], truncated?: truncated?}
+    %{body: to_string(message), kind: "error", footer: []}
   end
 
   defp render_output(_), do: nil
+
+  defp normalize_body(nil), do: ""
+
+  defp normalize_body(body) when is_binary(body), do: String.trim_trailing(body)
 
   defp kv_footer(attrs, key, fun) do
     case Keyword.get(attrs, key) do
       nil -> nil
       value -> fun.(value)
-    end
-  end
-
-  defp truncate_body(body) when is_binary(body) do
-    trimmed = String.trim_trailing(body)
-    lines = String.split(trimmed, "\n")
-
-    cond do
-      length(lines) > @output_max_lines ->
-        kept = Enum.take(lines, @output_max_lines) |> Enum.join("\n")
-        {kept <> "\n… (" <> "#{length(lines) - @output_max_lines} more lines" <> ")", true}
-
-      byte_size(trimmed) > @output_max_chars ->
-        {String.slice(trimmed, 0, @output_max_chars) <> "…", true}
-
-      true ->
-        {trimmed, false}
     end
   end
 
@@ -878,16 +855,15 @@ defmodule FrothWeb.TimelineLive do
     ~H"""
     <div class="flex flex-col">
       <pre class={[
-        "font-mono text-[12px] leading-5 border border-line px-2 py-1 overflow-x-auto whitespace-pre-wrap break-words max-h-[240px] overflow-y-auto",
+        "font-mono text-[12px] leading-5 border border-line px-2 py-1 overflow-auto whitespace-pre max-h-[280px]",
         output_bg(@output.kind),
         output_color(@output.kind)
       ]}>{@output.body}</pre>
       <div
-        :if={@output.footer != [] or @output.truncated?}
+        :if={@output.footer != []}
         class="flex items-baseline gap-2 text-2xs text-fg-ghost font-mono tabular-nums px-1 pt-0.5"
       >
         <span :for={item <- @output.footer}>{item}</span>
-        <span :if={@output.truncated?} class="text-fg-mute">· truncated</span>
       </div>
     </div>
     """
