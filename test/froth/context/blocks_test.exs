@@ -151,4 +151,86 @@ defmodule Froth.Context.BlocksTest do
       assert Block.attr(child, :size) == 1000
     end
   end
+
+  describe "materialize/1 — non-JSON-safe text bodies" do
+    # These tests cover the guardrail that catches text-shaped blocks
+    # (typically shell output) carrying bytes Postgres refuses inside
+    # JSONB, and auto-promotes them to binary-shaped blocks — with a
+    # sniffed MIME when the leading bytes are recognizable.
+
+    test "text block with a NUL byte is promoted to octet-stream" do
+      body = "hello\0world"
+      [block] = Blocks.materialize([Block.new([kind: "shell"], body)])
+
+      assert is_nil(block.body)
+      assert Block.attr(block, :mime) == "application/octet-stream"
+      assert is_binary(Block.attr(block, :blob))
+      assert Block.attr(block, :size) == byte_size(body)
+      refute Keyword.has_key?(block.attrs, :head)
+      refute Keyword.has_key?(block.attrs, :tail)
+
+      {:ok, blob} = Blobs.get(Block.attr(block, :blob))
+      assert blob.bytes == body
+    end
+
+    test "text block with invalid UTF-8 is promoted to octet-stream" do
+      body = <<0xFF, 0xFE, 0xFD>>
+      [block] = Blocks.materialize([Block.new([kind: "shell"], body)])
+
+      assert is_nil(block.body)
+      assert Block.attr(block, :mime) == "application/octet-stream"
+      assert is_binary(Block.attr(block, :blob))
+
+      {:ok, blob} = Blobs.get(Block.attr(block, :blob))
+      assert blob.bytes == body
+    end
+
+    test "text block whose bytes start with a PNG signature is sniffed as image/png" do
+      png = <<0x89, "PNG\r\n", 0x1A, 0x0A, :crypto.strong_rand_bytes(128)::binary>>
+      [block] = Blocks.materialize([Block.new([kind: "shell"], png)])
+
+      assert is_nil(block.body)
+      assert Block.attr(block, :mime) == "image/png"
+      assert is_binary(Block.attr(block, :blob))
+      assert Block.attr(block, :size) == byte_size(png)
+
+      {:ok, blob} = Blobs.get(Block.attr(block, :blob))
+      assert blob.bytes == png
+    end
+
+    test "text block whose bytes start with %PDF- is sniffed as application/pdf" do
+      pdf = "%PDF-1.4\n" <> <<0, 1, 2, 3, 4, 5>>
+      [block] = Blocks.materialize([Block.new([kind: "shell"], pdf)])
+
+      assert is_nil(block.body)
+      assert Block.attr(block, :mime) == "application/pdf"
+      assert is_binary(Block.attr(block, :blob))
+    end
+
+    test "valid text with NUL bytes nested in a child is also promoted" do
+      body = "pre\0post"
+
+      [parent] =
+        Blocks.materialize([
+          Block.new([kind: "shell"], nil, [
+            Block.new([kind: "shell"], body)
+          ])
+        ])
+
+      [child] = parent.children
+      assert is_nil(child.body)
+      assert Block.attr(child, :mime) == "application/octet-stream"
+      assert is_binary(Block.attr(child, :blob))
+    end
+
+    test "clean text body is unaffected (no promotion, no blob)" do
+      [block] = Blocks.materialize([Block.new([kind: "shell"], "hello world")])
+
+      assert block.body == "hello world"
+      refute Block.attr(block, :mime)
+      refute Block.attr(block, :blob)
+      assert Block.attr(block, :size) == 11
+      assert Block.attr(block, :lines) == 1
+    end
+  end
 end

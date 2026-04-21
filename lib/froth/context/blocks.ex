@@ -26,6 +26,23 @@ defmodule Froth.Context.Blocks do
   block trees instead of having to side-channel them as raw provider
   content blocks.
 
+  ### Auto-promotion of non-JSON-safe text bodies
+
+  A text-shaped body whose bytes aren't safe to persist as JSON text
+  (invalid UTF-8, or an embedded NUL byte — Postgres refuses
+  `\\u0000` inside JSONB) is promoted to a binary-shaped block before
+  the usual split. `Froth.MimeSniff.sniff/1` looks at the leading
+  bytes and picks a concrete MIME (e.g. `image/png`) when it
+  recognizes the signature; otherwise the block is labeled
+  `application/octet-stream`. In both cases the bytes go to a blob
+  intact and the event row stays JSON-safe.
+
+  The practical win is that tools don't have to know ahead of time
+  whether their output is binary. A shell pipeline that prints a PNG
+  just works — it surfaces to the LLM as an image content part — and
+  a shell pipeline that dumps a core file just works too, landing in
+  a blob as `application/octet-stream`.
+
   ## `:no_fold`
 
   Tools can force an otherwise-large text body to stay inline by
@@ -53,12 +70,14 @@ defmodule Froth.Context.Blocks do
 
   alias Froth.Blobs
   alias Froth.Context.Block
+  alias Froth.MimeSniff
 
   @inline_max_bytes 2_400
   @inline_max_lines 80
   @head_lines 10
   @tail_lines 5
   @internal_attrs [:no_fold]
+  @default_binary_mime "application/octet-stream"
 
   @doc """
   Materialize a block list for persistence and rendering.
@@ -95,10 +114,26 @@ defmodule Froth.Context.Blocks do
   end
 
   defp materialize_one(%Block{body: body, attrs: attrs} = block) when is_binary(body) do
-    if binary_mime?(Keyword.get(attrs, :mime)) do
-      materialize_binary(block, body, attrs)
-    else
-      materialize_text(block, body, attrs)
+    cond do
+      binary_mime?(Keyword.get(attrs, :mime)) ->
+        materialize_binary(block, body, attrs)
+
+      json_text_safe?(body) ->
+        materialize_text(block, body, attrs)
+
+      true ->
+        # A text-shaped block came in carrying bytes that aren't safe
+        # to persist as JSON text (invalid UTF-8, or an embedded NUL
+        # byte that Postgres refuses inside JSONB). Rather than mangle
+        # the payload with replacement characters, promote the block
+        # to a binary-shaped one — sniffed down to a concrete MIME
+        # when we can recognize the signature — and let the binary
+        # path blob it. This is what lets a shell pipeline print a
+        # PNG and have it surface as an actual image content part to
+        # the LLM.
+        sniffed_mime = MimeSniff.sniff(body) || @default_binary_mime
+        promoted_attrs = Keyword.put(attrs, :mime, sniffed_mime)
+        materialize_binary(%Block{block | attrs: promoted_attrs}, body, promoted_attrs)
     end
   end
 
@@ -202,4 +237,13 @@ defmodule Froth.Context.Blocks do
   end
 
   defp binary_mime?(_), do: false
+
+  # A body is safe to persist as JSON text only if it is valid UTF-8
+  # *and* contains no NUL bytes — Postgres rejects `\u0000` inside
+  # JSONB/JSON text columns even though NUL is legal UTF-8.
+  defp json_text_safe?(body) when is_binary(body) do
+    String.valid?(body) and not String.contains?(body, <<0>>)
+  end
+
+  defp json_text_safe?(_), do: false
 end

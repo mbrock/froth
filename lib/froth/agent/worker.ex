@@ -226,7 +226,15 @@ defmodule Froth.Agent.Worker do
       ) do
     case find_invocation_in_list(invocations, ref) do
       %{tool_use: %ToolUse{id: ^tool_use_id}} = invocation ->
-        result = sanitize_tool_result(result)
+        # Materialize first so detection sees the original bytes
+        # (otherwise the UTF-8 fixup in sanitize_utf8/1 would clobber
+        # invalid sequences in, e.g., a shell-dumped PNG before the
+        # block layer ever got to recognize it as binary). After
+        # materialize, binary-shaped blocks have body: nil and all
+        # text-shaped blocks carry JSON-safe text, so sanitize is
+        # effectively only doing its job on non-block tool results
+        # (error strings, await data, yield reasons).
+        result = result |> materialize_result_blocks() |> sanitize_tool_result()
         worker = emit_tool_result_event(worker, invocation, result)
 
         worker
@@ -786,6 +794,16 @@ defmodule Froth.Agent.Worker do
 
   defp materialize_if_blocks(other), do: other
 
+  # Lift materialization over the tool-result control tuple so both
+  # event persistence and `collect_tool_result` observe the same
+  # blob-backed shape. Binary block bodies (images, PDFs, etc.) are
+  # externalized to blobs here, which keeps raw bytes — and, in
+  # particular, NUL bytes that Postgres refuses inside JSON text —
+  # out of the event row we persist a few lines later.
+  defp materialize_result_blocks({:ok, content}), do: {:ok, materialize_if_blocks(content)}
+  defp materialize_result_blocks({:error, content}), do: {:error, materialize_if_blocks(content)}
+  defp materialize_result_blocks(other), do: other
+
   defp format_yield_reason(reason) when is_binary(reason), do: "Yielding: #{reason}"
 
   defp format_yield_reason(reason),
@@ -801,12 +819,17 @@ defmodule Froth.Agent.Worker do
   defp sanitize_tool_result({:yield, reason}), do: {:yield, sanitize_utf8(reason)}
   defp sanitize_tool_result(result), do: sanitize_utf8(result)
 
+  # JSON-text safety for values bound for JSONB persistence. Fix up
+  # invalid UTF-8 sequences (replace with U+FFFD) and strip any NUL
+  # bytes, which Postgres refuses inside JSON text even though NUL is
+  # legal UTF-8. Block bodies are *not* passed through here — by the
+  # time sanitize runs the blocks have already been materialized, so
+  # binary-shaped block bodies are nil and text-shaped block bodies
+  # were gated through `Froth.Context.Blocks.json_text_safe?/1`.
   defp sanitize_utf8(value) when is_binary(value) do
-    if String.valid?(value) do
-      value
-    else
-      String.replace_invalid(value, @utf8_replacement)
-    end
+    value
+    |> ensure_valid_utf8()
+    |> strip_nul()
   end
 
   defp sanitize_utf8(value) when is_list(value), do: Enum.map(value, &sanitize_utf8/1)
@@ -815,7 +838,6 @@ defmodule Froth.Agent.Worker do
     %Froth.Context.Block{
       block
       | attrs: Enum.map(block.attrs, fn {k, v} -> {k, sanitize_utf8(v)} end),
-        body: sanitize_utf8(block.body),
         children: Enum.map(block.children, &sanitize_utf8/1)
     }
   end
@@ -834,6 +856,18 @@ defmodule Froth.Agent.Worker do
   end
 
   defp sanitize_utf8(value), do: value
+
+  defp ensure_valid_utf8(value) when is_binary(value) do
+    if String.valid?(value) do
+      value
+    else
+      String.replace_invalid(value, @utf8_replacement)
+    end
+  end
+
+  defp strip_nul(value) when is_binary(value) do
+    if String.contains?(value, <<0>>), do: String.replace(value, <<0>>, ""), else: value
+  end
 
   defp find_invocation({:working, %{invocations: invocations}}, ref) do
     find_invocation_in_list(invocations, ref)
