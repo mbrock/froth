@@ -214,12 +214,12 @@ defmodule Froth.Mix.Follow do
   end
 
   # Two lines per event:
-  #   TIME  LVL  family.kind  cycle=… span=… (duration)
-  #                key=value  key=value  …
-  # The second line is indented to align under the family.kind column,
-  # and is omitted when there is no interesting metadata. Colors are
-  # light — family hue, faint timestamps and keys, level badges for
-  # warn/error.
+  #   family.kind  cycle=… span=… (duration)                     HH:MM:SS
+  #     key=value  key=value  …
+  # The second line is a soft indent with priority-ordered scalar
+  # metadata. Map- and list-valued keys are skipped because they blow
+  # up the line width without ever being legible inline. Colors are a
+  # light accent when the output is a TTY.
   defp render_line(%Entry{} = entry) do
     ansi = IO.ANSI.enabled?()
     header = render_header(entry, ansi)
@@ -230,19 +230,17 @@ defmodule Froth.Mix.Follow do
     end
   end
 
-  @indent String.duplicate(" ", 19)
+  @indent "    "
 
   defp render_header(%Entry{} = entry, ansi) do
-    time = dim(format_time(entry.at), ansi)
-    level = level_tag(entry.level, ansi)
-    name = event_name(entry, ansi)
-    scope = scope_tag(entry, ansi)
-    duration = duration_tag(entry.duration_ms, ansi)
-
-    [time, "  ", level, "  ", name]
-    |> maybe_append(scope)
-    |> maybe_append(duration)
-    |> IO.iodata_to_binary()
+    [
+      level_tag(entry.level, ansi) <> event_name(entry, ansi),
+      scope_tag(entry, ansi),
+      duration_tag(entry.duration_ms, ansi),
+      dim(format_time(entry.at), ansi)
+    ]
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("  ")
   end
 
   defp render_meta_line(%Entry{metadata: metadata}, ansi) do
@@ -257,7 +255,7 @@ defmodule Froth.Mix.Follow do
             dim(k, ansi) <> "=" <> v
           end)
 
-        @indent <> truncate(body, 160)
+        @indent <> truncate(body, 180)
     end
   end
 
@@ -285,9 +283,6 @@ defmodule Froth.Mix.Follow do
   defp duration_tag(nil, _ansi), do: ""
   defp duration_tag(ms, ansi), do: dim("(#{ms}ms)", ansi)
 
-  defp maybe_append(iodata, ""), do: iodata
-  defp maybe_append(iodata, extra), do: [iodata, "  ", extra]
-
   defp format_time(%DateTime{} = dt),
     do: Calendar.strftime(dt, "%H:%M:%S.%f") |> String.slice(0, 12)
 
@@ -297,15 +292,15 @@ defmodule Froth.Mix.Follow do
   defp format_time(_), do: "--:--:--.---"
 
   defp level_tag(:error, ansi),
-    do: color(ansi, [:red, :bright], "ERR")
+    do: color(ansi, [:red, :bright], "ERR ")
 
   defp level_tag(:warn, ansi),
-    do: color(ansi, [:yellow, :bright], "WRN")
+    do: color(ansi, [:yellow, :bright], "WRN ")
 
   defp level_tag(:debug, ansi),
-    do: dim("dbg", ansi)
+    do: dim("dbg ", ansi)
 
-  defp level_tag(_, _ansi), do: "   "
+  defp level_tag(_, _ansi), do: ""
 
   defp meta_pairs(metadata) when map_size(metadata) == 0, do: []
 
@@ -321,8 +316,9 @@ defmodule Froth.Mix.Follow do
       "kind",
       "head_id"
     ])
+    |> Enum.reject(fn {_k, v} -> is_map(v) or is_list(v) end)
     |> Enum.sort_by(&pair_weight/1)
-    |> Enum.take(6)
+    |> Enum.take(8)
     |> Enum.map(fn {k, v} -> {k, short(v)} end)
   end
 

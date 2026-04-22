@@ -108,6 +108,10 @@ defmodule Froth.Follow.Entry do
       String.ends_with?(name, ".start") -> :debug
       String.starts_with?(name, "froth.http.sse") -> :debug
       name == "froth.llm.edit" -> :debug
+      name == "froth.telegram.cnode.unexpected" -> :debug
+      name == "froth.telegram.cnode.output" -> :debug
+      name == "froth.telegram.cnode.node_up" -> :debug
+      name == "froth.telegram.cnode.node_down" -> :debug
       true -> :info
     end
   end
