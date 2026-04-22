@@ -1,12 +1,10 @@
 defmodule Froth.Mix.Follow do
   @moduledoc false
 
-  alias Froth.Follow.{Entry, Filter, Projector, Renderer, Source, Timeline}
+  alias Froth.Follow.{Entry, Filter, Source}
   alias Froth.Mix.LiveNode
 
-  @handler_id "froth-follow"
   @default_tail 80
-  @render_state_limit 2_000
 
   @spec main([String.t()]) :: no_return()
   def main(args) do
@@ -34,39 +32,21 @@ defmodule Froth.Mix.Follow do
         span_id: opts[:span]
       )
 
-    events = fetch_events(node, filter)
-    handler_id = unique_handler_id()
-
-    attach_handler!(node, handler_id, events)
+    subscribe_remote_events!(node)
 
     IO.puts("Connected to #{node}")
-    IO.puts(follow_banner(events, filter, mode))
+    IO.puts(follow_banner(filter, mode))
 
     Process.flag(:trap_exit, true)
 
-    try do
-      state = render_recent_history(mode, filter, tail)
-
-      loop(node, %{
-        mode: mode,
-        filter: filter,
-        matched_entries: state.matched_entries,
-        visible_entries: state.visible_entries
-      })
-    after
-      :rpc.call(node, :telemetry, :detach, [handler_id])
-    end
-  end
-
-  def handle_telemetry_event(event_name, measurements, metadata, %{pid: pid}) do
-    send(pid, {:telemetry_event, event_name, measurements, metadata})
+    render_recent_history(mode, filter, tail)
+    loop(node, %{mode: mode, filter: filter})
   end
 
   defp parse_args(args) do
     OptionParser.parse(args,
       strict: [
         help: :boolean,
-        raw: :boolean,
         errors: :boolean,
         cycle: :string,
         span: :string,
@@ -79,7 +59,9 @@ defmodule Froth.Mix.Follow do
     """
     Usage: bin/follow [EVENT_PREFIX] [options]
 
-    Follow telemetry events on the running node.
+    Subscribe to the `events` pub/sub topic on the running node and
+    print each event as a single line. A prefix argument narrows the
+    stream (e.g. `bin/follow froth.agent` only shows agent events).
 
         bin/follow
         bin/follow --tail 120
@@ -89,7 +71,6 @@ defmodule Froth.Mix.Follow do
 
     Options:
       --tail N     Number of recent matching entries to print before following
-      --raw        Render raw event names and metadata
       --errors     Render only warn/error entries
       --cycle ID   Restrict to a cycle id prefix
       --span ID    Restrict to a span id prefix
@@ -123,83 +104,80 @@ defmodule Froth.Mix.Follow do
     end
   end
 
-  defp attach_handler!(node, handler_id, events) do
-    case :rpc.call(node, :telemetry, :attach_many, [
-           handler_id,
-           events,
-           &__MODULE__.handle_telemetry_event/4,
-           %{pid: self()}
-         ]) do
-      :ok ->
+  # Subscribe to the remote node's "events" topic by spawning a
+  # process there that forwards each broadcast back to us. Phoenix
+  # pubsub is node-local, so we can't just subscribe from here.
+  defp subscribe_remote_events!(node) do
+    me = self()
+
+    case :rpc.call(node, __MODULE__, :start_remote_subscriber, [me]) do
+      {:ok, _pid} ->
         :ok
 
       {:badrpc, reason} ->
-        abort("Could not attach telemetry handler: #{inspect(reason)}")
+        abort("Could not subscribe to events on #{node}: #{inspect(reason)}")
 
       other ->
-        abort("Could not attach telemetry handler: #{inspect(other)}")
+        abort("Could not subscribe to events on #{node}: #{inspect(other)}")
     end
   end
 
-  defp fetch_events(node, filter) do
-    case :rpc.call(node, Froth.Telemetry, :events, []) do
-      events when is_list(events) ->
-        filter_events(events, Filter.event_segments(filter))
+  @doc false
+  def start_remote_subscriber(target_pid) when is_pid(target_pid) do
+    pid =
+      spawn(fn ->
+        :ok = Phoenix.PubSub.subscribe(Froth.PubSub, "events")
+        ref = Process.monitor(target_pid)
+        forward_loop(target_pid, ref)
+      end)
 
-      {:badrpc, reason} ->
-        abort("Could not fetch telemetry events: #{inspect(reason)}")
+    {:ok, pid}
+  end
 
-      other ->
-        abort("Could not fetch telemetry events: #{inspect(other)}")
+  defp forward_loop(target_pid, ref) do
+    receive do
+      {:event, _event} = msg ->
+        send(target_pid, msg)
+        forward_loop(target_pid, ref)
+
+      {:DOWN, ^ref, :process, ^target_pid, _reason} ->
+        :ok
+
+      _other ->
+        forward_loop(target_pid, ref)
     end
   end
 
-  defp follow_banner(events, filter, mode) do
+  defp follow_banner(filter, mode) do
     filter_summary = Filter.summary(filter)
 
-    [
-      "Following #{length(events)} telemetry events",
-      if(filter_summary == [],
+    prefix =
+      if filter_summary == [],
         do: "",
         else: " (#{Enum.join(filter_summary, ", ")})"
-      ),
-      " ",
-      mode_label(mode),
-      "\n"
-    ]
+
+    "Following events#{prefix} #{mode_label(mode)}\n"
   end
 
   defp parse_mode(opts) do
-    cond do
-      opts[:raw] -> :raw
-      opts[:errors] -> :errors
-      true -> :smart
-    end
+    if opts[:errors], do: :errors, else: :smart
   end
 
-  defp mode_label(:raw), do: "(raw mode)"
-  defp mode_label(:errors), do: "(errors mode)"
-  defp mode_label(:smart), do: "(smart mode)"
+  defp mode_label(:errors), do: "(errors only)"
+  defp mode_label(_), do: "(all)"
 
   defp parse_event_prefix([]), do: nil
   defp parse_event_prefix([filter]), do: filter
 
-  defp filter_events(events, nil), do: events
-
-  defp filter_events(events, prefix) do
-    Enum.filter(events, fn event ->
-      event
-      |> Enum.map(&Atom.to_string/1)
-      |> List.starts_with?(prefix)
-    end)
-  end
-
   defp loop(node, %{mode: mode, filter: filter} = state) do
     receive do
-      {:telemetry_event, event_name, measurements, metadata} ->
-        entry = Projector.from_live(event_name, measurements, metadata)
+      {:event, event} ->
+        entry = Entry.from_event(event)
 
-        state = update_render_state(state, entry, filter, mode)
+        if Filter.matches?(entry, filter) and Entry.visible?(entry, mode) do
+          IO.puts(render_line(entry))
+        end
+
         loop(node, state)
 
       {:nodedown, ^node} ->
@@ -207,96 +185,94 @@ defmodule Froth.Mix.Follow do
     end
   end
 
-  defp render_recent_history(_mode, _filter, 0) do
-    %{matched_entries: [], visible_entries: []}
-  end
+  defp render_recent_history(_mode, _filter, 0), do: :ok
 
   defp render_recent_history(mode, filter, tail) do
-    matched_entries =
-      Source.recent_entries(
-        filter: filter,
-        limit: history_fetch_limit(tail, mode)
-      )
+    entries =
+      Source.recent_entries(filter: filter, limit: tail * 4)
       |> Enum.reverse()
-
-    visible_entries =
-      matched_entries
       |> Enum.filter(&Entry.visible?(&1, mode))
       |> Enum.take(-tail)
 
-    if visible_entries != [] do
+    if entries != [] do
       IO.puts(
-        "Recent matching entries (last #{length(visible_entries)} shown):"
+        "Recent matching entries (last #{length(entries)} shown):\n"
       )
 
-      IO.puts("")
-
-      tree_map = Timeline.tree_map(visible_entries)
-      cycle_summaries = Timeline.cycle_summaries(matched_entries)
-
-      Enum.each(visible_entries, fn entry ->
-        IO.write(
-          Renderer.to_ansi(entry, mode,
-            tree_prefix: tree_prefix(tree_map, entry)
-          )
-        )
-
-        IO.write("\n")
-        maybe_render_cycle_summary(entry, cycle_summaries, mode)
-      end)
-
+      Enum.each(entries, &IO.puts(render_line(&1)))
       IO.write("\n")
     end
 
-    %{
-      matched_entries: limit_entries(matched_entries),
-      visible_entries: limit_entries(visible_entries)
-    }
+    :ok
   end
 
-  defp history_fetch_limit(tail, :raw), do: tail
+  defp render_line(%Entry{} = entry) do
+    parts =
+      [
+        format_time(entry.at),
+        level_tag(entry.level),
+        entry.event,
+        scope_suffix(entry),
+        metadata_sketch(entry.metadata),
+        duration_suffix(entry.duration_ms)
+      ]
+      |> Enum.reject(&(&1 in [nil, ""]))
 
-  defp history_fetch_limit(tail, _mode) when is_integer(tail) and tail > 0 do
-    max(tail * 4, tail)
+    Enum.join(parts, "  ")
   end
 
-  defp history_fetch_limit(_tail, _mode), do: 0
+  defp format_time(%DateTime{} = dt),
+    do: Calendar.strftime(dt, "%H:%M:%S.%f") |> String.slice(0, 12)
 
-  defp update_render_state(state, entry, filter, mode) do
-    if Filter.matches?(entry, filter) do
-      matched_entries = limit_entries(state.matched_entries ++ [entry])
-      visible? = Entry.visible?(entry, mode)
+  defp format_time(%NaiveDateTime{} = dt),
+    do: Calendar.strftime(dt, "%H:%M:%S.%f") |> String.slice(0, 12)
 
-      visible_entries =
-        if visible? do
-          limit_entries(state.visible_entries ++ [entry])
-        else
-          state.visible_entries
-        end
+  defp format_time(_), do: "--:--:--.---"
 
-      if visible? do
-        tree_map = Timeline.tree_map(visible_entries)
-        cycle_summaries = Timeline.cycle_summaries(matched_entries)
+  defp level_tag(:error), do: "ERR"
+  defp level_tag(:warn), do: "WRN"
+  defp level_tag(:debug), do: "dbg"
+  defp level_tag(_), do: "   "
 
-        IO.write(
-          Renderer.to_ansi(entry, mode,
-            tree_prefix: tree_prefix(tree_map, entry)
-          )
-        )
-
-        IO.write("\n")
-        maybe_render_cycle_summary(entry, cycle_summaries, mode)
-      end
-
-      %{
-        state
-        | matched_entries: matched_entries,
-          visible_entries: visible_entries
-      }
-    else
-      state
-    end
+  defp scope_suffix(%Entry{cycle_id: cycle_id, span_id: span_id}) do
+    [
+      cycle_id && "cycle=#{String.slice(cycle_id, 0, 12)}",
+      span_id && "span=#{String.slice(span_id, 0, 12)}"
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" ")
   end
+
+  defp metadata_sketch(metadata) when map_size(metadata) == 0, do: ""
+
+  defp metadata_sketch(metadata) do
+    metadata
+    |> Map.drop([
+      "system_time",
+      "blob_ref",
+      "cycle_id",
+      "span_id",
+      "parent_id",
+      "seq",
+      "kind"
+    ])
+    |> Enum.sort_by(fn {k, _} -> k end)
+    |> Enum.take(6)
+    |> Enum.map_join(" ", fn {k, v} -> "#{k}=#{short(v)}" end)
+  end
+
+  defp short(v) when is_binary(v) do
+    if String.length(v) > 60, do: String.slice(v, 0, 60) <> "…", else: v
+  end
+
+  defp short(v) when is_integer(v) or is_float(v) or is_boolean(v),
+    do: to_string(v)
+
+  defp short(nil), do: "nil"
+  defp short(v), do: inspect(v, limit: 4, printable_limit: 60)
+
+  defp duration_suffix(nil), do: ""
+  defp duration_suffix(ms), do: "(#{ms}ms)"
 
   defp ensure_repo_started! do
     Mix.Task.run("loadpaths")
@@ -320,36 +296,6 @@ defmodule Froth.Mix.Follow do
       end
     end
   end
-
-  defp unique_handler_id do
-    "#{@handler_id}-#{System.pid()}-#{System.unique_integer([:positive])}"
-  end
-
-  defp limit_entries(entries), do: Enum.take(entries, -@render_state_limit)
-
-  defp tree_prefix(tree_map, entry) do
-    entry
-    |> entry_id()
-    |> then(&Map.get(tree_map, &1, %{prefix: ""}))
-    |> Map.fetch!(:prefix)
-  end
-
-  defp entry_id(%Entry{id: id}), do: to_string(id)
-
-  defp maybe_render_cycle_summary(entry, cycle_summaries, mode)
-       when mode in [:smart, :errors] and entry.family == "cycle" and
-              entry.kind in ["stop", "completed", "failed", "cancelled"] do
-    case Map.get(cycle_summaries, entry.cycle_id) do
-      nil ->
-        :ok
-
-      summary ->
-        IO.write(Renderer.cycle_summary_to_ansi(summary))
-        IO.write("\n")
-    end
-  end
-
-  defp maybe_render_cycle_summary(_entry, _cycle_summaries, _mode), do: :ok
 
   defp abort(message) do
     IO.puts(:stderr, message)

@@ -4,13 +4,14 @@ defmodule Froth.Follow.SourceTest do
   alias Froth.Follow.{Filter, Source}
   alias Froth.Repo
 
-  setup do
-    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Froth.Repo, shared: false)
+  setup tags do
+    Repo.put_test_context(tags)
+    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
     on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
     :ok
   end
 
-  test "recent_entries projects and filters persisted telemetry rows" do
+  test "recent_entries projects and filters persisted event rows" do
     insert_event(%{
       event: "froth.agent.tool.completed",
       inserted_at: ~U[2026-03-23 16:00:00Z],
@@ -37,10 +38,11 @@ defmodule Froth.Follow.SourceTest do
         limit: 10
       )
 
-    assert entry.family == "tool"
-    assert entry.scope == "read_tool_transcript"
-    assert entry.summary == "completed"
-    assert entry.detail =~ "cycle=01KMDKN3"
+    assert entry.event == "froth.agent.tool.completed"
+    assert entry.family == "agent"
+    assert entry.kind == "tool.completed"
+    assert entry.cycle_id == "01KMDKN3GHAC7B814PD3GB4THP"
+    assert entry.duration_ms == 56
   end
 
   defp insert_event(attrs) do

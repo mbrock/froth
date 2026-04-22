@@ -91,30 +91,13 @@ defmodule Froth.Codex.SessionTest do
       "s_test_" <>
         Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
 
-    handler_id =
-      "codex-session-test-" <>
-        Base.url_encode64(:crypto.strong_rand_bytes(6), padding: false)
-
     previous_executable = System.get_env("CODEX_EXECUTABLE")
     System.put_env("CODEX_EXECUTABLE", "/definitely/not-a-real-codex")
-    test_pid = self()
 
-    :ok =
-      :telemetry.attach_many(
-        handler_id,
-        [
-          [:froth, :codex, :session, :start],
-          [:froth, :codex, :session, :close_requested],
-          [:froth, :codex, :session, :stop]
-        ],
-        fn event_name, measurements, metadata, _config ->
-          send(test_pid, {:telemetry, event_name, measurements, metadata})
-        end,
-        nil
-      )
+    :ok = Phoenix.PubSub.subscribe(Froth.PubSub, "events")
 
     on_exit(fn ->
-      :telemetry.detach(handler_id)
+      Phoenix.PubSub.unsubscribe(Froth.PubSub, "events")
 
       if is_binary(previous_executable) do
         System.put_env("CODEX_EXECUTABLE", previous_executable)
@@ -130,32 +113,41 @@ defmodule Froth.Codex.SessionTest do
 
     assert is_binary(span_id)
 
-    assert_receive {:telemetry, [:froth, :codex, :session, :start],
-                    %{system_time: _},
-                    %{
+    assert_receive {:event,
+                    %Froth.Event{
+                      event: "froth.codex.session.start",
                       span_id: ^span_id,
                       parent_id: nil,
-                      session_id: ^session_id
+                      metadata: %{"session_id" => ^session_id}
                     }}
 
     assert :ok = Session.close(session_id)
 
-    assert_receive {:telemetry, [:froth, :codex, :session, :close_requested],
-                    %{}, %{parent_id: ^span_id, session_id: ^session_id}}
+    assert_receive {:event,
+                    %Froth.Event{
+                      event: "froth.codex.session.close_requested",
+                      parent_id: ^span_id,
+                      metadata: %{"session_id" => ^session_id}
+                    }}
 
-    assert_receive {:telemetry, [:froth, :codex, :session, :stop],
-                    %{duration: _},
-                    %{
+    assert_receive {:event,
+                    %Froth.Event{
+                      event: "froth.codex.session.stop",
                       span_id: ^span_id,
-                      session_id: ^session_id,
-                      reason: :requested
+                      metadata: %{
+                        "session_id" => ^session_id,
+                        "reason" => "requested"
+                      }
                     }}
 
     assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
     assert Session.child_spec(session_id: session_id).restart == :transient
 
-    refute_receive {:telemetry, [:froth, :codex, :session, :start],
-                    _measurements, %{session_id: ^session_id}},
+    refute_receive {:event,
+                    %Froth.Event{
+                      event: "froth.codex.session.start",
+                      metadata: %{"session_id" => ^session_id}
+                    }},
                    100
 
     assert :ok = Session.close(session_id)

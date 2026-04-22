@@ -104,18 +104,41 @@ defmodule FrothWeb.TimelineLive do
     {:noreply, socket}
   end
 
-  def handle_info({:event, event, _message}, socket) do
+  # Every cycle event lands here now that Agent.append_event broadcasts
+  # uniformly. We only re-render when a kind that could change the
+  # rendered trace arrives — otherwise the cycle card is still accurate
+  # and a full cycle_traces reload would just burn a query for no
+  # visible change.
+  def handle_info({:event, event}, socket) do
     cycle_id = event.metadata["cycle_id"]
+    kind = event.metadata["kind"]
 
-    if is_binary(cycle_id) and
-         MapSet.member?(socket.assigns.cycle_topics, cycle_id) do
-      {:noreply, refresh_cycle_block(socket, cycle_id)}
-    else
-      {:noreply, socket}
+    cond do
+      not is_binary(cycle_id) ->
+        {:noreply, socket}
+
+      not MapSet.member?(socket.assigns.cycle_topics, cycle_id) ->
+        {:noreply, socket}
+
+      cycle_event_affects_render?(kind) ->
+        {:noreply, refresh_cycle_block(socket, cycle_id)}
+
+      true ->
+        {:noreply, socket}
     end
   end
 
   def handle_info(_, socket), do: {:noreply, socket}
+
+  defp cycle_event_affects_render?(kind) do
+    kind in [
+      "message.appended",
+      "tool.completed",
+      "tool.failed",
+      "tool.timed_out",
+      "control.outcome"
+    ]
+  end
 
   # ─────────────────────────────────────────────────────────────────────────
   # Data loading

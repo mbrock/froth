@@ -1007,12 +1007,6 @@ defmodule Froth.Agent.Worker do
   end
 
   defp emit_tool_started_event(worker, %ToolUse{} = tool_use, span_id) do
-    Span.execute(
-      [:froth, :agent, :tool, :started],
-      worker.cycle_span_id,
-      Map.put(tool_event_meta(worker, tool_use), :span_id, span_id)
-    )
-
     append_event(worker, %{
       kind: "tool.started",
       head_id: worker.head_id,
@@ -1029,19 +1023,6 @@ defmodule Froth.Agent.Worker do
 
   defp emit_tool_result_event(worker, invocation, result) do
     duration_ms = tool_duration_ms(invocation)
-
-    Span.execute(
-      [:froth, :agent, :tool, :completed],
-      worker.cycle_span_id,
-      Map.put(
-        tool_event_meta(worker, invocation.tool_use, %{
-          result_type: tool_result_type(result)
-        }),
-        :span_id,
-        invocation.span_id
-      ),
-      %{duration: tool_duration(invocation)}
-    )
 
     worker =
       append_event(worker, %{
@@ -1077,19 +1058,6 @@ defmodule Froth.Agent.Worker do
   defp emit_tool_failed_event(worker, invocation, reason) do
     duration_ms = tool_duration_ms(invocation)
 
-    Span.execute(
-      [:froth, :agent, :tool, :failed],
-      worker.cycle_span_id,
-      Map.put(
-        tool_event_meta(worker, invocation.tool_use, %{
-          error: truncate_tool_detail(reason)
-        }),
-        :span_id,
-        invocation.span_id
-      ),
-      %{duration: tool_duration(invocation)}
-    )
-
     worker =
       emit_control_outcome(
         worker,
@@ -1120,17 +1088,6 @@ defmodule Froth.Agent.Worker do
   defp emit_tool_timed_out_event(worker, invocation) do
     timeout_ms = invocation.timeout_ms
     duration_ms = tool_duration_ms(invocation)
-
-    Span.execute(
-      [:froth, :agent, :tool, :timed_out],
-      worker.cycle_span_id,
-      Map.put(
-        tool_event_meta(worker, invocation.tool_use, %{timeout_ms: timeout_ms}),
-        :span_id,
-        invocation.span_id
-      ),
-      %{duration: tool_duration(invocation)}
-    )
 
     worker =
       emit_control_outcome(
@@ -1164,19 +1121,6 @@ defmodule Froth.Agent.Worker do
     span_id = Keyword.get(opts, :span_id, worker.cycle_span_id)
     parent_span_id = Keyword.get(opts, :parent_span_id, worker.cycle_span_id)
 
-    Span.execute(
-      [:froth, :agent, :control, :outcome],
-      parent_span_id,
-      %{
-        cycle_id: worker.cycle.id,
-        head_id: worker.head_id,
-        span_id: span_id,
-        tool_use_id: data["tool_use_id"],
-        outcome: outcome
-      }
-      |> Map.merge(stringify_map(data))
-    )
-
     append_event(worker, %{
       kind: "control.outcome",
       head_id: worker.head_id,
@@ -1185,19 +1129,6 @@ defmodule Froth.Agent.Worker do
       tool_use_id: data["tool_use_id"],
       data: Map.put(stringify_map(data), "outcome", outcome)
     })
-  end
-
-  defp tool_event_meta(worker, %ToolUse{} = tool_use, extra_meta \\ %{}) do
-    Map.merge(
-      %{
-        cycle_id: worker.cycle.id,
-        head_id: worker.head_id,
-        tool_use_id: tool_use.id,
-        tool_name: tool_use.name,
-        input_keys: tool_input_keys(tool_use.input)
-      },
-      extra_meta
-    )
   end
 
   defp tool_event_data(worker, %ToolUse{} = tool_use, extra \\ %{}) do
@@ -1222,12 +1153,6 @@ defmodule Froth.Agent.Worker do
   end
 
   defp tool_input_keys(_), do: []
-
-  defp tool_duration(%{started_at: started_at}) when is_integer(started_at) do
-    System.monotonic_time() - started_at
-  end
-
-  defp tool_duration(_), do: 0
 
   defp tool_duration_ms(%{started_at: started_at})
        when is_integer(started_at) do
@@ -1284,16 +1209,6 @@ defmodule Froth.Agent.Worker do
 
   defp format_tool_error(reason) when is_binary(reason), do: reason
   defp format_tool_error(reason), do: inspect(reason)
-
-  defp truncate_tool_detail(detail) when is_binary(detail) do
-    if String.length(detail) > 240 do
-      String.slice(detail, 0, 240) <> "..."
-    else
-      detail
-    end
-  end
-
-  defp truncate_tool_detail(detail), do: detail
 
   defp maybe_emit_silent_stop(worker, response, metadata, diagnostics) do
     if worker.reply_sent? or assistant_visible_reply?(response) do

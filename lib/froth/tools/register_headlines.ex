@@ -99,12 +99,6 @@ defmodule Froth.Tools.RegisterHeadlines do
              hooks
            ) do
         {:ok, _sent} ->
-          store_headlines_registered_event(
-            date,
-            chat_id,
-            normalized_headlines
-          )
-
           Span.execute(
             [:froth, :headlines, :registered],
             nil,
@@ -246,21 +240,6 @@ defmodule Froth.Tools.RegisterHeadlines do
       |> elem(0)
 
     {text, entities}
-  end
-
-  defp store_headlines_registered_event(date, chat_id, headlines)
-       when is_binary(date) and is_integer(chat_id) and is_list(headlines) do
-    %Event{}
-    |> Event.changeset(%{
-      event: "froth.headlines.registered",
-      metadata: %{
-        "date" => date,
-        "chat_id" => Integer.to_string(chat_id),
-        "headlines" => headlines
-      },
-      measurements: %{"count" => length(headlines)}
-    })
-    |> Repo.insert!(log: false)
   end
 
   defp normalize_headline_fields(emoji, title, sentence, from_time, to_time) do

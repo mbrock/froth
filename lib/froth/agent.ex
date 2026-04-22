@@ -61,8 +61,11 @@ defmodule Froth.Agent do
           {:stream, event} ->
             {[{:stream, event}], {pid, ref}}
 
-          {:event, event, msg} ->
-            {[{:event, event, msg}], {pid, ref}}
+          {:event, event} ->
+            {[{:event, event}], {pid, ref}}
+
+          {:message, msg} ->
+            {[{:message, msg}], {pid, ref}}
 
           {:DOWN, ^ref, :process, ^pid, :normal} ->
             {:halt, {pid, ref}}
@@ -102,7 +105,7 @@ defmodule Froth.Agent do
     {data, blob_ref} = maybe_offload_payload(cycle_id, kind, data)
     seq = normalize_event_seq(seq) || next_event_seq(cycle_id)
 
-    metadata =
+    meta =
       data
       |> stringify_map()
       |> Map.merge(%{
@@ -123,22 +126,17 @@ defmodule Froth.Agent do
         Map.get(attrs, :tool_use_id) || Map.get(attrs, "tool_use_id")
       )
       |> maybe_put_metadata("blob_ref", blob_ref)
+      |> maybe_put_metadata(
+        "span_id",
+        Map.get(attrs, :span_id) || Map.get(attrs, "span_id")
+      )
 
-    %Event{}
-    |> Event.changeset(%{
-      event: agent_event_name(kind),
-      span_id:
-        stringify_or_nil(
-          Map.get(attrs, :span_id) || Map.get(attrs, "span_id")
-        ),
-      parent_id:
-        stringify_or_nil(
-          Map.get(attrs, :parent_span_id) || Map.get(attrs, "parent_span_id")
-        ),
-      measurements: event_measurements(metadata),
-      metadata: metadata
-    })
-    |> Repo.insert!()
+    parent_id =
+      Map.get(attrs, :parent_span_id) || Map.get(attrs, "parent_span_id")
+
+    measurements = event_measurements(meta)
+
+    Span.execute(agent_event_path(kind), parent_id, meta, measurements)
   end
 
   @spec merge_cycle_usage(Cycle.t(), map() | nil) :: Cycle.t()
@@ -642,7 +640,7 @@ defmodule Froth.Agent do
         parent_id: head_id
       })
 
-    event =
+    _event =
       append_event(
         cycle,
         %{
@@ -654,7 +652,12 @@ defmodule Froth.Agent do
         seq
       )
 
-    Froth.broadcast("cycle:#{cycle.id}", {:event, event, saved})
+    # Span.execute already broadcast {:event, event} on "events" and
+    # "cycle:#{cycle.id}". We additionally publish the hydrated
+    # Message struct on the cycle topic so consumers that want the
+    # full message (bot replies, tool view rendering) don't have to
+    # re-read it from the DB.
+    Froth.broadcast("cycle:#{cycle.id}", {:message, saved})
 
     {saved, saved.id}
   end
@@ -981,7 +984,9 @@ defmodule Froth.Agent do
 
   defp event_measurements(_metadata), do: %{}
 
-  defp agent_event_name(kind) when is_binary(kind), do: "froth.agent.#{kind}"
+  defp agent_event_path(kind) when is_binary(kind) do
+    [:froth, :agent | String.split(kind, ".") |> Enum.map(&String.to_atom/1)]
+  end
 
   defp stringify_atom(nil), do: nil
   defp stringify_atom(value) when is_atom(value), do: Atom.to_string(value)

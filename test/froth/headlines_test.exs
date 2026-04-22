@@ -275,7 +275,7 @@ defmodule Froth.HeadlinesTest do
     assert {:stream, {:text_delta, "done"}} in items
 
     assert Enum.any?(items, fn
-             {:event, _event, %AgentMessage{role: :agent} = message} ->
+             {:message, %AgentMessage{role: :agent} = message} ->
                AgentMessage.extract_text(message) == "done"
 
              _ ->
@@ -283,9 +283,8 @@ defmodule Froth.HeadlinesTest do
            end)
   end
 
-  test "register_headlines emits telemetry, formats the chat message, and reports progress" do
+  test "register_headlines emits an event, formats the chat message, and reports progress" do
     test_pid = self()
-    handler_id = "headlines-test-#{System.unique_integer([:positive])}"
     chat_id = unique_chat_id()
 
     insert_summary(chat_id, ~D[2026-03-20], "An earlier scandal.")
@@ -312,16 +311,7 @@ defmodule Froth.HeadlinesTest do
     })
     |> Repo.insert!()
 
-    :telemetry.attach(
-      handler_id,
-      [:froth, :headlines, :registered],
-      fn event_name, measurements, metadata, pid ->
-        send(pid, {:telemetry, event_name, measurements, metadata})
-      end,
-      test_pid
-    )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    :ok = Phoenix.PubSub.subscribe(Froth.PubSub, "events")
 
     assert {:ok, [%Froth.Context.Block{} = block]} =
              Tools.execute(
@@ -367,13 +357,17 @@ defmodule Froth.HeadlinesTest do
     assert Froth.Context.Block.attr(block, :count) == 2
     assert Froth.Context.Block.attr(block, :next_unfinished) == "2026-03-21"
 
-    assert_receive {:telemetry, [:froth, :headlines, :registered],
-                    %{count: 2}, metadata},
+    assert_receive {:event,
+                    %Event{
+                      event: "froth.headlines.registered",
+                      measurements: %{"count" => 2},
+                      metadata: metadata
+                    }},
                    5_000
 
-    assert metadata[:date] == "2026-03-22"
-    assert metadata[:chat_id] == chat_id
-    assert length(metadata[:headlines]) == 2
+    assert metadata["date"] == "2026-03-22"
+    assert metadata["chat_id"] == chat_id
+    assert length(metadata["headlines"]) == 2
 
     assert_receive {:sent_message, "charlie", ^chat_id, text, opts}, 5_000
 
@@ -421,7 +415,6 @@ defmodule Froth.HeadlinesTest do
            ]) ==
              "https://t.me/charliebuddybot/tool?startapp=cycle_charlie_cycle-123"
 
-    assert [:froth, :headlines, :registered] in Froth.Telemetry.events()
   end
 
   test "register_headlines progress accumulates across successive registrations" do

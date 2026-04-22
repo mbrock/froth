@@ -1,18 +1,20 @@
 defmodule Froth.Follow.FilterTest do
   use ExUnit.Case, async: true
 
-  alias Froth.Follow.{Filter, Projector}
+  alias Froth.Follow.{Entry, Filter}
 
-  test "matches event prefix and cycle prefix against projected entries" do
+  test "matches event prefix and cycle prefix" do
     entry =
-      Projector.from_live(
-        [:froth, :agent, :tool, :completed],
-        %{duration_ms: 12},
-        %{
-          cycle_id: "01KMDKN3GHAC7B814PD3GB4THP",
-          tool_name: "read_tool_transcript"
-        }
-      )
+      Entry.from_event(%Froth.Event{
+        id: Ecto.UUID.generate(),
+        event: "froth.agent.tool.completed",
+        measurements: %{"duration_ms" => 12},
+        metadata: %{
+          "cycle_id" => "01KMDKN3GHAC7B814PD3GB4THP",
+          "tool_name" => "read_tool_transcript"
+        },
+        inserted_at: DateTime.utc_now()
+      })
 
     assert Filter.matches?(
              entry,
@@ -23,7 +25,7 @@ defmodule Froth.Follow.FilterTest do
     refute Filter.matches?(entry, Filter.new(cycle_id: "01OTHER"))
   end
 
-  test "splits event prefixes for telemetry subscription filtering" do
+  test "summary renders the filter as key=value pairs" do
     filter = Filter.new(event_prefix: "froth.agent.tool")
 
     assert Filter.event_segments(filter) == ["froth", "agent", "tool"]

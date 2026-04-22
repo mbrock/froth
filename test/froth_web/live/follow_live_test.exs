@@ -5,7 +5,7 @@ defmodule FrothWeb.FollowLiveTest do
 
   alias Froth.Repo
 
-  test "smart mode renders projected semantic entries", %{conn: conn} do
+  test "renders recent events from the events table", %{conn: conn} do
     id =
       insert_event(%{
         event: "froth.agent.tool.completed",
@@ -20,47 +20,11 @@ defmodule FrothWeb.FollowLiveTest do
     {:ok, view, _html} = live(conn, ~p"/froth/follow")
 
     assert has_element?(view, "#follow-reader")
-    assert has_element?(view, "#follow-mode-smart")
-    assert has_element?(view, "#follow-entry-#{id}", "read_tool_transcript")
-    assert has_element?(view, "#follow-entry-#{id}", "completed")
-    assert has_element?(view, "#follow-entry-#{id}", "tool")
-
-    view
-    |> element("#follow-entry-#{id}")
-    |> render_click()
-
-    assert has_element?(view, "#follow-pin-cycle-#{id}")
-    assert has_element?(view, "#follow-entry-#{id}", "read_tool_transcript")
-    assert has_element?(view, "#follow-entry-#{id}", "completed")
+    assert has_element?(view, "#follow-entry-#{id}", "froth.agent.tool.completed")
+    assert has_element?(view, "#follow-entry-#{id}", "tool_name=read_tool_transcript")
   end
 
-  test "raw mode reveals entries hidden in smart mode", %{conn: conn} do
-    id =
-      insert_event(%{
-        event: "froth.llm.edit",
-        metadata: %{
-          "provider" => "anthropic",
-          "op" => "append",
-          "resource_id" => "message/blocks/0"
-        }
-      })
-
-    {:ok, view, _html} = live(conn, ~p"/froth/follow")
-
-    refute has_element?(view, "#follow-entry-#{id}")
-
-    view
-    |> element("#follow-mode-raw")
-    |> render_click()
-
-    assert_patch(view, ~p"/froth/follow?mode=raw")
-    assert has_element?(view, "#follow-entry-#{id}", "froth.llm.edit")
-    assert has_element?(view, "#follow-entry-#{id}", "provider=anthropic")
-  end
-
-  test "errors mode focuses the timeline on failures and warnings", %{
-    conn: conn
-  } do
+  test "errors mode hides non-error rows", %{conn: conn} do
     ok_id =
       insert_event(%{
         event: "froth.agent.tool.completed",
@@ -72,10 +36,9 @@ defmodule FrothWeb.FollowLiveTest do
 
     error_id =
       insert_event(%{
-        event: "froth.agent.control.outcome",
+        event: "froth.agent.tool.failed",
         metadata: %{
           "cycle_id" => "01KMDKN3GHAC7B814PD3GB4THP",
-          "outcome" => "tool_error",
           "tool_name" => "run_shell",
           "error" => "tool timed out after 30000ms"
         }
@@ -88,11 +51,11 @@ defmodule FrothWeb.FollowLiveTest do
     |> render_click()
 
     assert_patch(view, ~p"/froth/follow?mode=errors")
-    assert has_element?(view, "#follow-entry-#{error_id}", "tool error")
+    assert has_element?(view, "#follow-entry-#{error_id}")
     refute has_element?(view, "#follow-entry-#{ok_id}")
   end
 
-  test "cycle pinning narrows the timeline to one run", %{conn: conn} do
+  test "cycle filter narrows the feed", %{conn: conn} do
     cycle_id = "01KMDKN3GHAC7B814PD3GB4THP"
 
     matching_id =
@@ -113,79 +76,30 @@ defmodule FrothWeb.FollowLiveTest do
         }
       })
 
-    {:ok, view, _html} = live(conn, ~p"/froth/follow")
-
-    view
-    |> element("#follow-entry-#{matching_id}")
-    |> render_click()
-
-    view
-    |> element("#follow-pin-cycle-#{matching_id}")
-    |> render_click()
-
-    assert_patch(view, ~p"/froth/follow?cycle=01KMDKN3GHAC7B814PD3GB4THP")
-
-    assert has_element?(
-             view,
-             "#follow-reader",
-             "cycle #{String.slice(cycle_id, 0, 12)}"
-           )
+    {:ok, view, _html} = live(conn, ~p"/froth/follow?cycle=#{cycle_id}")
 
     assert has_element?(view, "#follow-entry-#{matching_id}")
     refute has_element?(view, "#follow-entry-#{other_id}")
   end
 
-  test "query params restore a scoped raw view", %{conn: conn} do
-    cycle_id = "01KMDKN3GHAC7B814PD3GB4THP"
-
-    matching_id =
-      insert_event(%{
-        event: "froth.llm.edit",
-        metadata: %{
-          "provider" => "anthropic",
-          "cycle_id" => cycle_id
-        }
-      })
-
-    other_id =
-      insert_event(%{
-        event: "froth.llm.edit",
-        metadata: %{
-          "provider" => "openai",
-          "cycle_id" => "01OTHERCYCLE00000000000000"
-        }
-      })
-
-    {:ok, view, _html} =
-      live(conn, ~p"/froth/follow?cycle=01KMDKN3GHAC7B814PD3GB4THP&mode=raw")
-
-    assert has_element?(
-             view,
-             "#follow-reader",
-             "cycle #{String.slice(cycle_id, 0, 12)}"
-           )
-
-    assert has_element?(
-             view,
-             "#follow-entry-#{matching_id}",
-             "froth.llm.edit"
-           )
-
-    refute has_element?(view, "#follow-entry-#{other_id}")
-  end
-
-  test "live telemetry appends new matching entries", %{conn: conn} do
+  test "live events arriving via pub/sub append to the feed", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/froth/follow")
 
-    send(
-      view.pid,
-      {:telemetry_event, [:froth, :agent, :tool, :completed],
-       %{"duration_ms" => 17},
-       %{tool_name: "live_echo", cycle_id: "01LIVECYCLE00000000000000"}}
-    )
+    event = %Froth.Event{
+      id: Ecto.UUID.generate(),
+      event: "froth.agent.tool.completed",
+      measurements: %{"duration_ms" => 17},
+      metadata: %{
+        "tool_name" => "live_echo",
+        "cycle_id" => "01LIVECYCLE00000000000000"
+      },
+      inserted_at: DateTime.utc_now()
+    }
+
+    send(view.pid, {:event, event})
 
     assert has_element?(view, "#follow-entries", "live_echo")
-    assert has_element?(view, "#follow-entries", "completed")
+    assert has_element?(view, "#follow-entries", "froth.agent.tool.completed")
   end
 
   defp insert_event(attrs) do

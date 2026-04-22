@@ -251,8 +251,11 @@ defmodule Froth.Agent.CycleRuntime do
           {:stream, event} ->
             {[{:stream, event}], acc}
 
-          {:event, event, msg} ->
-            {[{:event, event, msg}], acc}
+          {:event, event} ->
+            {[{:event, event}], acc}
+
+          {:message, msg} ->
+            {[{:message, msg}], acc}
 
           {:DOWN, ^ref, :process, ^pid, :normal} ->
             {:halt, acc}
@@ -280,8 +283,7 @@ defmodule Froth.Agent.CycleRuntime do
       opts
       |> event_stream_for()
       |> Enum.reduce(nil, fn
-        {:event, _event, %Froth.Agent.Message{role: :agent} = message},
-        _acc ->
+        {:message, %Froth.Agent.Message{role: :agent} = message}, _acc ->
           message
 
         _other, acc ->

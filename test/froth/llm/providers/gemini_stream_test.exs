@@ -5,6 +5,19 @@ defmodule LLM.Providers.GeminiStreamTest do
   alias LLM.Message
   alias Req.Test, as: ReqTest
 
+  setup tags do
+    Froth.Repo.put_test_context(tags)
+
+    pid =
+      Ecto.Adapters.SQL.Sandbox.start_owner!(
+        Froth.Repo,
+        shared: not tags[:async]
+      )
+
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
+    :ok
+  end
+
   test "stream_single sends Gemini web search grounding without nil response modalities" do
     stub_name = {:gemini_web_search, System.unique_integer([:positive])}
     previous_req_defaults = Req.default_options()

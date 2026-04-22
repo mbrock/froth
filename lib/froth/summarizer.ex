@@ -78,7 +78,7 @@ defmodule Froth.Summarizer do
             IO.write("\n---\n")
             nil
 
-          {:event, _event, %{role: :agent} = msg}, _acc ->
+          {:message, %{role: :agent} = msg}, _acc ->
             Message.extract_text(msg.content)
 
           _, acc ->

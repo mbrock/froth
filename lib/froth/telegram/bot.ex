@@ -180,15 +180,17 @@ defmodule Froth.Telegram.Bot do
   end
 
   def handle_info(
-        {:event, _event, %Message{role: :agent, content: content}},
+        {:message, %Message{role: :agent, content: content}},
         state
       ) do
     {:noreply, send_agent_response(state, content)}
   end
 
-  def handle_info({:event, _event, %Message{}}, state) do
+  def handle_info({:message, %Message{}}, state) do
     {:noreply, state}
   end
+
+  def handle_info({:event, _event}, state), do: {:noreply, state}
 
   def handle_info({:stream, _event}, state), do: {:noreply, state}
 

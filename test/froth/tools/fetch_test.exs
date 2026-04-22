@@ -12,7 +12,17 @@ defmodule Froth.Tools.FetchTest do
   alias Froth.Tools.Fetch
   alias Req.Test, as: ReqTest
 
-  setup do
+  setup tags do
+    Froth.Repo.put_test_context(tags)
+
+    pid =
+      Ecto.Adapters.SQL.Sandbox.start_owner!(
+        Froth.Repo,
+        shared: not tags[:async]
+      )
+
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
+
     previous_req_defaults = Req.default_options()
     on_exit(fn -> Req.default_options(previous_req_defaults) end)
     :ok

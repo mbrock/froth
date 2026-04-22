@@ -178,25 +178,9 @@ defmodule Froth.Agent.WorkerTest do
     assert reason == :normal
   end
 
-  defp attach_tool_telemetry do
-    handler_id = "worker-test-telemetry-#{System.unique_integer([:positive])}"
-
-    :ok =
-      :telemetry.attach_many(
-        handler_id,
-        [
-          [:froth, :agent, :tool, :started],
-          [:froth, :agent, :tool, :completed],
-          [:froth, :agent, :tool, :failed],
-          [:froth, :agent, :tool, :timed_out]
-        ],
-        fn event_name, measurements, metadata, pid ->
-          send(pid, {:telemetry_event, event_name, measurements, metadata})
-        end,
-        self()
-      )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+  defp subscribe_events do
+    :ok = Phoenix.PubSub.subscribe(Froth.PubSub, "events")
+    on_exit(fn -> Phoenix.PubSub.unsubscribe(Froth.PubSub, "events") end)
   end
 
   defp cycle_message_events(cycle_id) do
@@ -795,7 +779,7 @@ defmodule Froth.Agent.WorkerTest do
     end
 
     test "times out stalled tools using the worker-owned deadline" do
-      attach_tool_telemetry()
+      subscribe_events()
 
       executor =
         start_executor(fn %ToolUse{}, _context ->
@@ -817,25 +801,31 @@ defmodule Froth.Agent.WorkerTest do
       last_message = List.last(messages)
       [tool_result] = last_message["content"]
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :started],
-                      %{},
-                      %{
-                        tool_name: "froth_echo",
-                        tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"
+      assert_receive {:event,
+                      %Event{
+                        event: "froth.agent.tool.started",
+                        metadata: %{
+                          "tool_name" => "froth_echo",
+                          "tool_use_id" =>
+                            "toolu_01723uR8LLoYDLV4oqbtHEd4"
+                        }
                       }},
                      5000
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :timed_out],
-                      measurements,
-                      %{
-                        timeout_ms: 10,
-                        tool_name: "froth_echo",
-                        tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"
+      assert_receive {:event,
+                      %Event{
+                        event: "froth.agent.tool.timed_out",
+                        metadata: %{
+                          "timeout_ms" => 10,
+                          "tool_name" => "froth_echo",
+                          "tool_use_id" => "toolu_01723uR8LLoYDLV4oqbtHEd4",
+                          "duration_ms" => duration_ms
+                        }
                       }},
                      5000
 
-      assert is_integer(measurements.duration)
-      assert measurements.duration > 0
+      assert is_integer(duration_ms)
+      assert duration_ms >= 0
 
       assert tool_result == %{
                "type" => "tool_result",
@@ -848,7 +838,7 @@ defmodule Froth.Agent.WorkerTest do
     end
 
     test "uses tool-specific timeout overrides when no cycle timeout is configured" do
-      attach_tool_telemetry()
+      subscribe_events()
       model = FakeLLM.claim()
 
       previous_overrides =
@@ -904,17 +894,20 @@ defmodule Froth.Agent.WorkerTest do
          }}
       )
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :timed_out],
-                      measurements,
-                      %{
-                        timeout_ms: 10,
-                        tool_name: "slow_tool",
-                        tool_use_id: "call_1"
+      assert_receive {:event,
+                      %Event{
+                        event: "froth.agent.tool.timed_out",
+                        metadata: %{
+                          "timeout_ms" => 10,
+                          "tool_name" => "slow_tool",
+                          "tool_use_id" => "call_1",
+                          "duration_ms" => duration_ms
+                        }
                       }},
                      5000
 
-      assert is_integer(measurements.duration)
-      assert measurements.duration > 0
+      assert is_integer(duration_ms)
+      assert duration_ms >= 0
 
       assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5000
 
@@ -941,8 +934,8 @@ defmodule Froth.Agent.WorkerTest do
       wait_for_exit(pid)
     end
 
-    test "emits completed tool telemetry with duration and metadata" do
-      attach_tool_telemetry()
+    test "emits completed tool event with duration and metadata" do
+      subscribe_events()
 
       executor =
         start_executor(fn %ToolUse{input: %{"text" => text}}, _context ->
@@ -954,36 +947,42 @@ defmodule Froth.Agent.WorkerTest do
           executor: executor
         )
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :started],
-                      %{},
-                      %{
-                        cycle_id: cycle_id,
-                        tool_name: "froth_echo",
-                        tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4",
-                        input_keys: ["text"]
+      assert_receive {:event,
+                      %Event{
+                        event: "froth.agent.tool.started",
+                        metadata: %{
+                          "cycle_id" => cycle_id,
+                          "tool_name" => "froth_echo",
+                          "tool_use_id" => "toolu_01723uR8LLoYDLV4oqbtHEd4",
+                          "input_keys" => ["text"]
+                        }
                       }},
                      5000
 
       assert is_binary(cycle_id)
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :completed],
-                      measurements,
-                      %{
-                        cycle_id: ^cycle_id,
-                        result_type: "text",
-                        tool_name: "froth_echo",
-                        tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"
+      assert_receive {:event,
+                      %Event{
+                        event: "froth.agent.tool.completed",
+                        metadata: %{
+                          "cycle_id" => ^cycle_id,
+                          "result_type" => "text",
+                          "tool_name" => "froth_echo",
+                          "tool_use_id" =>
+                            "toolu_01723uR8LLoYDLV4oqbtHEd4",
+                          "duration_ms" => duration_ms
+                        }
                       }},
                      5000
 
-      assert is_integer(measurements.duration)
-      assert measurements.duration > 0
+      assert is_integer(duration_ms)
+      assert duration_ms >= 0
 
       wait_for_exit(pid)
     end
 
-    test "emits failed tool telemetry when a tool returns an error result" do
-      attach_tool_telemetry()
+    test "emits failed tool event when a tool returns an error result" do
+      subscribe_events()
 
       executor =
         start_executor(fn %ToolUse{}, _context ->
@@ -995,25 +994,32 @@ defmodule Froth.Agent.WorkerTest do
           executor: executor
         )
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :started],
-                      %{},
-                      %{
-                        tool_name: "froth_echo",
-                        tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"
+      assert_receive {:event,
+                      %Event{
+                        event: "froth.agent.tool.started",
+                        metadata: %{
+                          "tool_name" => "froth_echo",
+                          "tool_use_id" =>
+                            "toolu_01723uR8LLoYDLV4oqbtHEd4"
+                        }
                       }},
                      5000
 
-      assert_receive {:telemetry_event, [:froth, :agent, :tool, :failed],
-                      measurements,
-                      %{
-                        error: "echo failed",
-                        tool_name: "froth_echo",
-                        tool_use_id: "toolu_01723uR8LLoYDLV4oqbtHEd4"
+      assert_receive {:event,
+                      %Event{
+                        event: "froth.agent.tool.failed",
+                        metadata: %{
+                          "error" => "echo failed",
+                          "tool_name" => "froth_echo",
+                          "tool_use_id" =>
+                            "toolu_01723uR8LLoYDLV4oqbtHEd4",
+                          "duration_ms" => duration_ms
+                        }
                       }},
                      5000
 
-      assert is_integer(measurements.duration)
-      assert measurements.duration > 0
+      assert is_integer(duration_ms)
+      assert duration_ms >= 0
 
       wait_for_exit(pid)
     end
@@ -1158,12 +1164,13 @@ defmodule Froth.Agent.WorkerTest do
       assert %Cycle{} = cycle
 
       all = Enum.to_list(stream)
-      events = Enum.filter(all, &match?({:event, _, _}, &1))
-      assert length(events) >= 1
+      messages = Enum.filter(all, &match?({:message, %Message{}}, &1))
+      assert length(messages) >= 1
 
-      {:event, last_event, last_msg} = List.last(events)
-      assert %Event{} = last_event
+      {:message, last_msg} = List.last(messages)
       assert last_msg.role == :agent
+
+      assert Enum.any?(all, &match?({:event, %Event{}}, &1))
     end
 
     test "streams tool use cycle events in order" do
@@ -1193,8 +1200,8 @@ defmodule Froth.Agent.WorkerTest do
       {_cycle, stream} = Froth.Agent.run(message, config)
 
       all = Enum.to_list(stream)
-      events = Enum.filter(all, &match?({:event, _, _}, &1))
-      roles = Enum.map(events, fn {:event, _event, msg} -> msg.role end)
+      messages = Enum.filter(all, &match?({:message, %Message{}}, &1))
+      roles = Enum.map(messages, fn {:message, msg} -> msg.role end)
       assert roles == [:agent, :user, :agent]
     end
 
@@ -1237,8 +1244,8 @@ defmodule Froth.Agent.WorkerTest do
 
       all = Task.await(collector, 10_000)
 
-      events = Enum.filter(all, &match?({:event, _, _}, &1))
-      {:event, _event, last_msg} = List.last(events)
+      messages = Enum.filter(all, &match?({:message, %Message{}}, &1))
+      {:message, last_msg} = List.last(messages)
       assert last_msg.role == :agent
     end
   end

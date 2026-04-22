@@ -76,7 +76,7 @@ defmodule Froth.Application do
       _ ->
         [
           Froth.Repo,
-          Froth.Telemetry.Store,
+          Froth.Telemetry.Logger,
           {Oban, Application.fetch_env!(:froth, Oban)},
           Froth.Telegram,
           Froth.Telegram.Bots,

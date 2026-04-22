@@ -24,7 +24,6 @@ config :froth, Oban,
 config :froth, Froth.Telegram.Bot, []
 
 config :froth, :jbo_dictionary_preload, false
-config :froth, Froth.Telemetry.Store, enabled: false
 
 # Print only warnings and errors during test
 config :logger, level: :warning

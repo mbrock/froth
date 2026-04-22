@@ -1,7 +1,7 @@
 defmodule FrothWeb.FollowLive do
   use FrothWeb, :live_view
 
-  alias Froth.Follow.{Entry, Filter, Projector, Source}
+  alias Froth.Follow.{Entry, Filter, Source}
 
   @page_size 3000
   @max_entries 5000
@@ -9,12 +9,7 @@ defmodule FrothWeb.FollowLive do
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
-      :telemetry.attach_many(
-        telemetry_handler_id(socket),
-        Froth.Telemetry.events(),
-        &__MODULE__.handle_telemetry_event/4,
-        %{pid: self()}
-      )
+      :ok = Phoenix.PubSub.subscribe(Froth.PubSub, "events")
     end
 
     {:ok,
@@ -51,21 +46,8 @@ defmodule FrothWeb.FollowLive do
   end
 
   @impl true
-  def terminate(_reason, socket) do
-    :telemetry.detach(telemetry_handler_id(socket))
-    :ok
-  end
-
-  def handle_telemetry_event(event_name, measurements, metadata, %{pid: pid}) do
-    send(pid, {:telemetry_event, event_name, measurements, metadata})
-  end
-
-  @impl true
-  def handle_info(
-        {:telemetry_event, event_name, measurements, metadata},
-        socket
-      ) do
-    entry = Projector.from_live(event_name, measurements, metadata)
+  def handle_info({:event, %Froth.Event{} = event}, socket) do
+    entry = Entry.from_event(event)
 
     if matches_entry?(
          entry,
@@ -85,6 +67,8 @@ defmodule FrothWeb.FollowLive do
       {:noreply, socket}
     end
   end
+
+  def handle_info(_other, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("search", %{"filters" => %{"q" => q}}, socket) do
@@ -159,7 +143,7 @@ defmodule FrothWeb.FollowLive do
                 id="follow-search-input"
                 class="block w-full border border-white/10 bg-black px-2 py-1 text-[12px] leading-5 text-zinc-100 placeholder:text-zinc-500 focus:border-white/30 focus:outline-none"
                 phx-debounce="150"
-                placeholder="search event, detail, metadata"
+                placeholder="search event, metadata"
               />
             </.form>
 
@@ -171,17 +155,7 @@ defmodule FrothWeb.FollowLive do
               data-active={@view_mode == :smart}
               class={mode_button_class(@view_mode, :smart)}
             >
-              smart
-            </button>
-            <button
-              id="follow-mode-raw"
-              type="button"
-              phx-click="set-mode"
-              phx-value-mode="raw"
-              data-active={@view_mode == :raw}
-              class={mode_button_class(@view_mode, :raw)}
-            >
-              raw
+              all
             </button>
             <button
               id="follow-mode-errors"
@@ -222,26 +196,14 @@ defmodule FrothWeb.FollowLive do
           >
             <span>scope</span>
             <%= if @follow_filter.cycle_id do %>
-              <button
-                id="follow-scope-cycle"
-                type="button"
-                phx-click="pin-cycle"
-                phx-value-cycle={@follow_filter.cycle_id}
-                class="appearance-none border-0 bg-transparent p-0 font-[inherit] cursor-pointer text-zinc-300 transition hover:text-zinc-100"
-              >
+              <span class="text-zinc-300">
                 cycle {truncate_id(@follow_filter.cycle_id, 12)}
-              </button>
+              </span>
             <% end %>
             <%= if @follow_filter.span_id do %>
-              <button
-                id="follow-scope-span"
-                type="button"
-                phx-click="pin-span"
-                phx-value-span={@follow_filter.span_id}
-                class="appearance-none border-0 bg-transparent p-0 font-[inherit] cursor-pointer text-zinc-300 transition hover:text-zinc-100"
-              >
+              <span class="text-zinc-300">
                 span {truncate_id(@follow_filter.span_id, 12)}
-              </button>
+              </span>
             <% end %>
             <button
               id="follow-clear-scope"
@@ -267,17 +229,67 @@ defmodule FrothWeb.FollowLive do
             <tbody :if={@entry_count == 0} id="follow-empty-state">
               <tr>
                 <td class="px-2 py-3 text-[12px] text-zinc-500">
-                  No matching entries. Adjust the search, clear scope pinning, or wait for new telemetry.
+                  No matching events. Adjust the search or wait for new events.
                 </td>
               </tr>
             </tbody>
 
-            <.follow_feed_entry
+            <tbody
               :for={{dom_id, item} <- @streams.entries}
               id={dom_id}
-              item={item}
-              view_mode={@view_mode}
-            />
+              phx-click="select-entry"
+              phx-value-id={item.entry.id}
+              aria-selected={item.selected?}
+              class="cursor-pointer"
+            >
+              <tr class={[
+                "align-top transition-colors",
+                item.selected? && "bg-white/[0.04]",
+                !item.selected? && "hover:bg-white/[0.02]"
+              ]}>
+                <td class="w-[8rem] border-b border-white/10 px-2 py-0.5 text-[11px] leading-4 text-zinc-500">
+                  {format_time(item.entry.at)}
+                </td>
+                <td class={[
+                  "border-b border-white/10 px-2 py-0.5 text-[11px] leading-4",
+                  level_class(item.entry.level)
+                ]}>
+                  {item.entry.event}
+                </td>
+                <td class="border-b border-white/10 px-2 py-0.5 text-[10px] leading-4 text-zinc-400">
+                  <div :if={item.entry.cycle_id}>
+                    <button
+                      id={"follow-pin-cycle-#{item.entry.id}"}
+                      type="button"
+                      phx-click="pin-cycle"
+                      phx-value-cycle={item.entry.cycle_id}
+                      class="hover:text-zinc-100"
+                    >
+                      cycle {truncate_id(item.entry.cycle_id, 12)}
+                    </button>
+                  </div>
+                  <div :if={item.entry.span_id}>
+                    <button
+                      id={"follow-pin-span-#{item.entry.id}"}
+                      type="button"
+                      phx-click="pin-span"
+                      phx-value-span={item.entry.span_id}
+                      class="hover:text-zinc-100"
+                    >
+                      span {truncate_id(item.entry.span_id, 12)}
+                    </button>
+                  </div>
+                </td>
+                <td class="border-b border-white/10 px-2 py-0.5 text-[10px] leading-4 text-zinc-400 break-words whitespace-pre-wrap">
+                  {metadata_sketch(item.entry.metadata)}
+                </td>
+                <td class="w-[5rem] border-b border-white/10 px-2 py-0.5 text-right text-[10px] leading-4 text-zinc-500">
+                  <div :if={item.entry.duration_ms}>
+                    {item.entry.duration_ms}ms
+                  </div>
+                </td>
+              </tr>
+            </tbody>
           </table>
 
           <div id="follow-feed-end" data-scroll-end></div>
@@ -296,113 +308,31 @@ defmodule FrothWeb.FollowLive do
     |> Enum.reverse()
   end
 
-  defp follow_feed_entry(assigns) do
-    ~H"""
-    <% secondary_text = entry_secondary_text(@item.entry, @view_mode) %>
-    <% exit_value = exit_code(@item.entry) %>
-    <tbody
-      id={@id}
-      phx-click="select-entry"
-      phx-value-id={entry_id(@item.entry)}
-      aria-selected={@item.selected?}
-      class="cursor-pointer"
-    >
-      <tr :if={@item.group_break?}>
-        <td
-          colspan="5"
-          class={[
-            "border-b border-white/10 px-2 pb-0.5 pt-2 text-[9px] uppercase tracking-[0.22em]",
-            group_label_class(group_kind(@item.entry))
-          ]}
-        >
-          {@item.group_label}
-        </td>
-      </tr>
-
-      <tr class={[
-        "align-top transition-colors",
-        @item.selected? && "bg-white/[0.04]",
-        !@item.selected? && "hover:bg-white/[0.02]"
-      ]}>
-        <td class="w-[7.25rem] border-b border-white/10 px-2 py-0.5 text-[11px] leading-4 text-zinc-500">
-          {format_time(@item.entry.at)}
-        </td>
-        <td class={[
-          "border-b border-white/10 px-2 py-0.5 text-[11px] uppercase tracking-[0.18em] leading-4",
-          family_column_palette(@item.entry)
-        ]}>
-          {family_short_label(@item.entry.family)}
-        </td>
-        <td class={[
-          "border-b border-white/10 px-2 py-0.5 text-[11px] leading-4",
-          scope_column_class(@item.entry)
-        ]}>
-          <div class="flex flex-wrap items-center gap-1">
-            <span>{scope_label(@item.entry)}</span>
-            <%= if @item.entry.cycle_id do %>
-              <button
-                id={"follow-pin-cycle-#{@item.entry.id}"}
-                type="button"
-                phx-click="pin-cycle"
-                phx-value-cycle={@item.entry.cycle_id}
-                class="text-[10px] uppercase tracking-[0.16em] text-zinc-400 hover:text-zinc-100"
-              >
-                pin cycle
-              </button>
-            <% end %>
-            <%= if @item.entry.span_id do %>
-              <button
-                id={"follow-pin-span-#{@item.entry.id}"}
-                type="button"
-                phx-click="pin-span"
-                phx-value-span={@item.entry.span_id}
-                class="text-[10px] uppercase tracking-[0.16em] text-zinc-400 hover:text-zinc-100"
-              >
-                pin span
-              </button>
-            <% end %>
-          </div>
-        </td>
-        <td class="border-b border-white/10 px-2 py-0.5">
-          <div class={summary_class(@item.entry)}>
-            {entry_primary_text(@item.entry, @view_mode)}
-          </div>
-          <div :if={secondary_text} class={secondary_text_class(@item.entry)}>
-            {secondary_text}
-          </div>
-        </td>
-        <td class="border-b border-white/10 px-2 py-0.5 text-right text-[10px] leading-4 text-zinc-500">
-          <div :if={@item.entry.duration_ms}>{@item.entry.duration_ms}ms</div>
-          <div :if={exit_value} class={exit_badge_class(exit_value)}>
-            exit {exit_value}
-          </div>
-        </td>
-      </tr>
-    </tbody>
-    """
-  end
-
   defp sync_entries(socket) do
-    matching_entries =
+    matching =
       socket.assigns.entries
       |> matching_entries(
         socket.assigns.follow_filter,
         socket.assigns.filter_text
       )
 
-    visible_entries =
-      Enum.filter(
-        matching_entries,
-        &Entry.visible?(&1, socket.assigns.view_mode)
-      )
+    visible =
+      Enum.filter(matching, &Entry.visible?(&1, socket.assigns.view_mode))
 
     selected_entry =
-      selected_entry_state(visible_entries, socket.assigns.selected_entry_id)
+      Enum.find(visible, &(&1.id == socket.assigns.selected_entry_id)) ||
+        List.last(visible)
 
-    selected_entry_id = selected_entry && entry_id(selected_entry)
+    selected_entry_id = selected_entry && selected_entry.id
 
     stream_items =
-      build_stream_items(visible_entries, selected_entry_id)
+      Enum.map(visible, fn entry ->
+        %{
+          dom_id: "follow-entry-#{entry.id}",
+          entry: entry,
+          selected?: entry.id == selected_entry_id
+        }
+      end)
 
     socket
     |> assign(:entry_count, length(stream_items))
@@ -418,30 +348,8 @@ defmodule FrothWeb.FollowLive do
     end)
   end
 
-  defp build_stream_items(entries, selected_entry_id) do
-    {items, _previous} =
-      Enum.map_reduce(entries, nil, fn entry, previous_entry ->
-        item = %{
-          dom_id: "follow-entry-#{entry_id(entry)}",
-          entry: entry,
-          selected?: entry_id(entry) == selected_entry_id,
-          group_break?: group_key(entry) != group_key(previous_entry),
-          group_label: group_label(entry)
-        }
-
-        {item, entry}
-      end)
-
-    items
-  end
-
-  defp matches_entry?(
-         %Entry{} = entry,
-         %Filter{} = follow_filter,
-         text_filter
-       ) do
-    Filter.matches?(entry, follow_filter) and
-      matches_text?(entry, text_filter)
+  defp matches_entry?(%Entry{} = entry, %Filter{} = follow_filter, text) do
+    Filter.matches?(entry, follow_filter) and matches_text?(entry, text)
   end
 
   defp matches_text?(_entry, nil), do: true
@@ -452,23 +360,9 @@ defmodule FrothWeb.FollowLive do
     haystack =
       [
         entry.event,
-        entry.family,
-        entry.kind,
-        entry.scope,
-        entry.summary,
-        entry.detail,
-        inspect(entry.measurements,
-          pretty: false,
-          printable_limit: 400,
-          limit: 20
-        ),
-        inspect(entry.metadata,
-          pretty: false,
-          printable_limit: 400,
-          limit: 20
-        )
+        inspect(entry.metadata, limit: 20, printable_limit: 400),
+        inspect(entry.measurements, limit: 10, printable_limit: 200)
       ]
-      |> Enum.reject(&is_nil/1)
       |> Enum.map(&String.downcase/1)
       |> Enum.join("\n")
 
@@ -476,13 +370,9 @@ defmodule FrothWeb.FollowLive do
   end
 
   defp filter_from_params(params) do
-    Filter.new(
-      cycle_id: params["cycle"],
-      span_id: params["span"]
-    )
+    Filter.new(cycle_id: params["cycle"], span_id: params["span"])
   end
 
-  defp parse_view_mode("raw"), do: :raw
   defp parse_view_mode("errors"), do: :errors
   defp parse_view_mode(_), do: :smart
 
@@ -515,9 +405,8 @@ defmodule FrothWeb.FollowLive do
 
   defp normalize_query_value(_key, value), do: normalize_filter_value(value)
 
-  defp mode_param(:raw), do: "raw"
   defp mode_param(:errors), do: "errors"
-  defp mode_param(:smart), do: nil
+  defp mode_param(_), do: nil
 
   defp normalize_filter_value(nil), do: nil
 
@@ -531,11 +420,6 @@ defmodule FrothWeb.FollowLive do
   defp search_form(filter_text),
     do: to_form(%{"q" => filter_text || ""}, as: :filters)
 
-  defp telemetry_handler_id(socket),
-    do: "follow-live-#{inspect(socket.root_pid || self())}"
-
-  defp entry_id(%Entry{id: id}), do: to_string(id)
-
   defp format_time(%DateTime{} = dt),
     do: Calendar.strftime(dt, "%H:%M:%S.%f") |> String.slice(0, 12)
 
@@ -544,305 +428,50 @@ defmodule FrothWeb.FollowLive do
 
   defp format_time(_), do: "--:--:--.---"
 
-  defp entry_primary_text(entry, :raw), do: entry.event
-  defp entry_primary_text(%Entry{summary: summary}, _mode), do: summary
-
-  defp entry_secondary_text(entry, :raw) do
-    join_sentence([
-      raw_measurements(entry.measurements),
-      raw_context(entry.metadata)
-    ])
-  end
-
-  defp entry_secondary_text(%Entry{} = entry, mode)
-       when mode in [:smart, :errors] do
-    join_sentence([
-      entry.detail,
-      smart_context(entry)
-    ])
-  end
-
-  defp smart_context(%Entry{family: family} = entry) do
-    context =
-      case family do
-        "tool" ->
-          join_sentence([
-            entry.tool_use_id && "call=#{truncate_id(entry.tool_use_id, 10)}"
-          ])
-
-        "llm" ->
-          join_sentence([
-            entry.kind != "edit" && "kind=#{entry.kind}"
-          ])
-
-        "telegram" ->
-          join_sentence([
-            entry.message_id && "message=#{truncate_id(entry.message_id, 10)}"
-          ])
-
-        "control" ->
-          join_sentence([
-            entry.tool_use_id && "call=#{truncate_id(entry.tool_use_id, 10)}"
-          ])
-
-        _ ->
-          nil
-      end
-
-    context
-  end
-
-  defp raw_measurements(measurements) when map_size(measurements) == 0,
-    do: nil
-
-  defp raw_measurements(measurements) do
-    measurements
-    |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
-    |> Enum.map(fn {key, value} -> "#{key}=#{format_value(value)}" end)
-    |> Enum.join(" ")
-  end
-
-  defp raw_context(metadata) when map_size(metadata) == 0, do: nil
-
-  defp raw_context(metadata) do
-    metadata
-    |> Map.drop(["system_time"])
-    |> Map.take(
-      ~w(provider model cycle_id span_id parent_id tool_use_id message_id result_type op status exit_code reason phase kind scope level)
-    )
-    |> Enum.sort_by(fn {key, _value} -> key end)
-    |> Enum.map(fn {key, value} -> "#{key}=#{format_value(value)}" end)
-    |> join_sentence()
-  end
-
-  defp format_value(value) when is_binary(value), do: value
-  defp format_value(value) when is_atom(value), do: Atom.to_string(value)
-
-  defp format_value(value) when is_integer(value),
-    do: Integer.to_string(value)
-
-  defp format_value(value) when is_float(value), do: Float.to_string(value)
-  defp format_value(true), do: "true"
-  defp format_value(false), do: "false"
-  defp format_value(value), do: inspect(value, limit: 10, printable_limit: 80)
-
   defp truncate_id(nil, _max), do: nil
-
-  defp truncate_id(value, max) do
-    value
-    |> to_string()
-    |> String.slice(0, max)
-  end
-
-  defp selected_entry_state(entries, selected_entry_id) do
-    selected_entry =
-      Enum.find(entries, &(entry_id(&1) == selected_entry_id)) ||
-        List.last(entries)
-
-    selected_entry
-  end
-
-  defp scope_label(%Entry{scope: scope}) when is_binary(scope), do: scope
-
-  defp scope_label(%Entry{cycle_id: cycle_id}) when is_binary(cycle_id),
-    do: "cycle #{truncate_id(cycle_id, 12)}"
-
-  defp scope_label(%Entry{span_id: span_id}) when is_binary(span_id),
-    do: "span #{truncate_id(span_id, 12)}"
-
-  defp scope_label(%Entry{}), do: "-"
+  defp truncate_id(value, max), do: value |> to_string() |> String.slice(0, max)
 
   defp mode_button_class(current_mode, mode) do
     base =
       "appearance-none border-0 bg-transparent p-0 font-[inherit] cursor-pointer text-[11px] uppercase tracking-[0.18em] transition hover:text-zinc-100"
 
     active =
-      case {current_mode, mode} do
-        {:smart, :smart} ->
-          "text-zinc-50 underline decoration-white/30 underline-offset-4"
-
-        {:raw, :raw} ->
-          "text-zinc-50 underline decoration-white/30 underline-offset-4"
-
-        {:errors, :errors} ->
-          "text-amber-100 underline decoration-amber-200/40 underline-offset-4"
-
-        _ ->
-          "text-zinc-400"
-      end
+      if current_mode == mode,
+        do: "text-zinc-50 underline decoration-white/30 underline-offset-4",
+        else: "text-zinc-400"
 
     [base, active]
   end
 
-  defp join_sentence(parts) do
-    parts
-    |> Enum.reject(&(&1 in [nil, ""]))
-    |> Enum.join(" ")
-    |> case do
-      "" -> nil
-      text -> text
-    end
+  defp level_class(:error), do: "text-rose-200"
+  defp level_class(:warn), do: "text-amber-100"
+  defp level_class(:debug), do: "text-zinc-500"
+  defp level_class(_), do: "text-zinc-100"
+
+  # Render a one-line sketch of the metadata, dropping noise keys and
+  # truncating long values. Good enough for the UI; the full bag is
+  # still on the Entry struct for anyone who wants to click through.
+  defp metadata_sketch(metadata) when map_size(metadata) == 0, do: ""
+
+  defp metadata_sketch(metadata) do
+    metadata
+    |> Map.drop(["system_time", "blob_ref"])
+    |> Enum.sort_by(fn {key, _} -> key end)
+    |> Enum.map_join(" ", fn {key, value} ->
+      "#{key}=#{format_value(value)}"
+    end)
+    |> String.slice(0, 400)
   end
 
-  defp group_key(nil), do: nil
-
-  defp group_key(%Entry{cycle_id: cycle_id}) when is_binary(cycle_id),
-    do: {:cycle, cycle_id}
-
-  defp group_key(%Entry{span_id: span_id}) when is_binary(span_id),
-    do: {:span, span_id}
-
-  defp group_key(%Entry{family: family}),
-    do: {:family, family_group_key(family)}
-
-  defp group_kind(%Entry{cycle_id: cycle_id}) when is_binary(cycle_id),
-    do: :cycle
-
-  defp group_kind(%Entry{span_id: span_id}) when is_binary(span_id), do: :span
-  defp group_kind(%Entry{family: family}), do: family_group_key(family)
-
-  defp group_label(%Entry{cycle_id: cycle_id}) when is_binary(cycle_id),
-    do: "cycle #{truncate_id(cycle_id, 12)}"
-
-  defp group_label(%Entry{span_id: span_id}) when is_binary(span_id),
-    do: "span #{truncate_id(span_id, 12)}"
-
-  defp group_label(%Entry{family: family}),
-    do: "#{family_label(family)} stream"
-
-  defp group_label_class(:cycle),
-    do: "text-[9px] uppercase tracking-[0.18em] text-sky-100"
-
-  defp group_label_class(:span),
-    do: "text-[9px] uppercase tracking-[0.18em] text-violet-100"
-
-  defp group_label_class(:agent),
-    do: "text-[9px] uppercase tracking-[0.18em] text-sky-100"
-
-  defp group_label_class(:tool),
-    do: "text-[9px] uppercase tracking-[0.18em] text-emerald-100"
-
-  defp group_label_class(:llm),
-    do: "text-[9px] uppercase tracking-[0.18em] text-fuchsia-100"
-
-  defp group_label_class(:telegram),
-    do: "text-[9px] uppercase tracking-[0.18em] text-sky-100"
-
-  defp group_label_class(_),
-    do: "text-[9px] uppercase tracking-[0.18em] text-zinc-300"
-
-  defp scope_column_class(%Entry{family: "think"}),
-    do: "whitespace-normal text-[11px] leading-5 text-cyan-200/70"
-
-  defp scope_column_class(%Entry{}),
-    do: "whitespace-normal text-[11px] leading-5 text-zinc-400"
-
-  defp summary_class(%Entry{level: :error}),
-    do: "text-[11px] font-semibold leading-4 text-rose-200"
-
-  defp summary_class(%Entry{level: :warn}),
-    do: "text-[11px] font-semibold leading-4 text-amber-100"
-
-  defp summary_class(%Entry{family: "cycle"}),
-    do: "text-[11px] font-semibold leading-4 text-sky-100"
-
-  defp summary_class(%Entry{family: "think"}),
-    do: "text-[11px] font-medium leading-4 text-cyan-100/75"
-
-  defp summary_class(%Entry{family: "tool"}),
-    do: "text-[11px] font-semibold leading-4 text-emerald-100"
-
-  defp summary_class(%Entry{family: family}) when family in ["llm", "codex"],
-    do: "text-[11px] font-semibold leading-4 text-fuchsia-100"
-
-  defp summary_class(%Entry{family: "telegram"}),
-    do: "text-[11px] font-semibold leading-4 text-sky-100"
-
-  defp summary_class(%Entry{family: "task"}),
-    do: "text-[11px] font-semibold leading-4 text-teal-100"
-
-  defp summary_class(%Entry{}),
-    do: "text-[11px] font-semibold leading-4 text-zinc-50"
-
-  defp secondary_text_class(%Entry{family: "think"}),
-    do:
-      "whitespace-pre-wrap break-words font-[JetBrains_Mono,ui-monospace,SFMono-Regular,Menlo,Monaco,monospace] text-[10px] leading-4 text-cyan-100/55"
-
-  defp secondary_text_class(%Entry{level: :error}),
-    do:
-      "whitespace-pre-wrap break-words font-[JetBrains_Mono,ui-monospace,SFMono-Regular,Menlo,Monaco,monospace] text-[10px] leading-4 text-rose-200/80"
-
-  defp secondary_text_class(%Entry{}),
-    do:
-      "whitespace-pre-wrap break-words font-[JetBrains_Mono,ui-monospace,SFMono-Regular,Menlo,Monaco,monospace] text-[10px] leading-4 text-zinc-400"
-
-  defp family_short_label("control"), do: "ctrl"
-  defp family_short_label("message"), do: "msg"
-  defp family_short_label("telegram"), do: "tg"
-  defp family_short_label(family), do: family
-
-  defp family_label(family) do
-    case family do
-      "control" ->
-        "control"
-
-      "message" ->
-        "message"
-
-      _ ->
-        case family_group_key(family) do
-          :agent -> "agent"
-          :tool -> "tool"
-          :llm -> "llm"
-          :telegram -> "telegram"
-          :system -> "system"
-        end
-    end
+  defp format_value(value) when is_binary(value) do
+    if String.length(value) > 80, do: String.slice(value, 0, 80) <> "…", else: value
   end
 
-  defp family_column_palette(%Entry{level: :error}), do: "text-rose-200"
-  defp family_column_palette(%Entry{level: :warn}), do: "text-amber-100"
-  defp family_column_palette(%Entry{family: "cycle"}), do: "text-sky-100"
-  defp family_column_palette(%Entry{family: "think"}), do: "text-cyan-100/75"
-  defp family_column_palette(%Entry{family: "tool"}), do: "text-emerald-100"
-
-  defp family_column_palette(%Entry{family: family})
-       when family in ["llm", "codex"],
-       do: "text-fuchsia-100"
-
-  defp family_column_palette(%Entry{family: "telegram"}), do: "text-sky-100"
-  defp family_column_palette(%Entry{family: "task"}), do: "text-teal-100"
-  defp family_column_palette(%Entry{}), do: "text-zinc-300"
-
-  defp exit_code(%Entry{metadata: metadata}) do
-    case metadata["exit_code"] do
-      value when is_integer(value) ->
-        value
-
-      value when is_binary(value) ->
-        case Integer.parse(value) do
-          {parsed, ""} -> parsed
-          _ -> nil
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp exit_badge_class(code) when is_integer(code) and code != 0,
-    do: "text-[10px] uppercase tracking-[0.18em] text-rose-100"
-
-  defp exit_badge_class(_code),
-    do: "text-[10px] uppercase tracking-[0.18em] text-zinc-300"
-
-  defp family_group_key(family)
-       when family in ["cycle", "think", "control", "message"],
-       do: :agent
-
-  defp family_group_key("tool"), do: :tool
-  defp family_group_key("llm"), do: :llm
-  defp family_group_key("codex"), do: :llm
-  defp family_group_key("telegram"), do: :telegram
-  defp family_group_key(_), do: :system
+  defp format_value(value) when is_atom(value), do: Atom.to_string(value)
+  defp format_value(value) when is_integer(value), do: Integer.to_string(value)
+  defp format_value(value) when is_float(value), do: Float.to_string(value)
+  defp format_value(true), do: "true"
+  defp format_value(false), do: "false"
+  defp format_value(nil), do: "nil"
+  defp format_value(value), do: inspect(value, limit: 6, printable_limit: 80)
 end

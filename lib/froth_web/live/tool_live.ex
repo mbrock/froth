@@ -115,7 +115,7 @@ defmodule FrothWeb.ToolLive do
   end
 
   @impl true
-  def handle_info({:event, _event, %AgentMessage{} = msg}, socket) do
+  def handle_info({:message, %AgentMessage{} = msg}, socket) do
     events = socket.assigns.agent_events ++ [agent_event_from_message(msg)]
 
     socket =

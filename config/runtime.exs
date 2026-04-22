@@ -63,9 +63,6 @@ if config_env() != :test do
   config :froth, FrothWeb.Endpoint, http: endpoint_http
 end
 
-config :froth, Froth.Telemetry.Store,
-  enabled: config_env() != :test and node_role != :worker
-
 # The app usually runs on the host while Fuseki runs in Docker, so localhost is
 # the right default here. Override this when Froth itself runs in Docker or the
 # SPARQL service is reachable on a different network path.
