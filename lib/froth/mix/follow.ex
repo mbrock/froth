@@ -48,6 +48,7 @@ defmodule Froth.Mix.Follow do
       strict: [
         help: :boolean,
         errors: :boolean,
+        debug: :boolean,
         cycle: :string,
         span: :string,
         tail: :integer
@@ -72,6 +73,7 @@ defmodule Froth.Mix.Follow do
     Options:
       --tail N     Number of recent matching entries to print before following
       --errors     Render only warn/error entries
+      --debug      Include debug-level events (llm.edit, sse deltas, span starts)
       --cycle ID   Restrict to a cycle id prefix
       --span ID    Restrict to a span id prefix
       --help       Show this help
@@ -160,11 +162,16 @@ defmodule Froth.Mix.Follow do
   end
 
   defp parse_mode(opts) do
-    if opts[:errors], do: :errors, else: :smart
+    cond do
+      opts[:errors] -> :errors
+      opts[:debug] -> :raw
+      true -> :smart
+    end
   end
 
   defp mode_label(:errors), do: "(errors only)"
-  defp mode_label(_), do: "(all)"
+  defp mode_label(:raw), do: "(with debug)"
+  defp mode_label(_), do: "(info+)"
 
   defp parse_event_prefix([]), do: nil
   defp parse_event_prefix([filter]), do: filter
@@ -206,20 +213,80 @@ defmodule Froth.Mix.Follow do
     :ok
   end
 
+  # Two lines per event:
+  #   TIME  LVL  family.kind  cycle=… span=… (duration)
+  #                key=value  key=value  …
+  # The second line is indented to align under the family.kind column,
+  # and is omitted when there is no interesting metadata. Colors are
+  # light — family hue, faint timestamps and keys, level badges for
+  # warn/error.
   defp render_line(%Entry{} = entry) do
-    parts =
-      [
-        format_time(entry.at),
-        level_tag(entry.level),
-        entry.event,
-        scope_suffix(entry),
-        metadata_sketch(entry.metadata),
-        duration_suffix(entry.duration_ms)
-      ]
-      |> Enum.reject(&(&1 in [nil, ""]))
+    ansi = IO.ANSI.enabled?()
+    header = render_header(entry, ansi)
 
-    Enum.join(parts, "  ")
+    case render_meta_line(entry, ansi) do
+      nil -> header
+      meta -> header <> "\n" <> meta
+    end
   end
+
+  @indent String.duplicate(" ", 19)
+
+  defp render_header(%Entry{} = entry, ansi) do
+    time = dim(format_time(entry.at), ansi)
+    level = level_tag(entry.level, ansi)
+    name = event_name(entry, ansi)
+    scope = scope_tag(entry, ansi)
+    duration = duration_tag(entry.duration_ms, ansi)
+
+    [time, "  ", level, "  ", name]
+    |> maybe_append(scope)
+    |> maybe_append(duration)
+    |> IO.iodata_to_binary()
+  end
+
+  defp render_meta_line(%Entry{metadata: metadata}, ansi) do
+    case meta_pairs(metadata) do
+      [] ->
+        nil
+
+      pairs ->
+        body =
+          pairs
+          |> Enum.map_join("  ", fn {k, v} ->
+            dim(k, ansi) <> "=" <> v
+          end)
+
+        @indent <> truncate(body, 160)
+    end
+  end
+
+  defp event_name(%Entry{event: event, family: family, kind: kind}, ansi) do
+    if String.starts_with?(event, "froth.") do
+      colorize_family(family, ansi) <> dim(".", ansi) <> kind
+    else
+      event
+    end
+  end
+
+  defp scope_tag(%Entry{cycle_id: cycle_id, span_id: span_id}, ansi) do
+    [
+      cycle_id && "cycle=" <> String.slice(cycle_id, 0, 12),
+      span_id && "span=" <> String.slice(span_id, 0, 12)
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" ")
+    |> case do
+      "" -> ""
+      s -> dim(s, ansi)
+    end
+  end
+
+  defp duration_tag(nil, _ansi), do: ""
+  defp duration_tag(ms, ansi), do: dim("(#{ms}ms)", ansi)
+
+  defp maybe_append(iodata, ""), do: iodata
+  defp maybe_append(iodata, extra), do: [iodata, "  ", extra]
 
   defp format_time(%DateTime{} = dt),
     do: Calendar.strftime(dt, "%H:%M:%S.%f") |> String.slice(0, 12)
@@ -229,23 +296,20 @@ defmodule Froth.Mix.Follow do
 
   defp format_time(_), do: "--:--:--.---"
 
-  defp level_tag(:error), do: "ERR"
-  defp level_tag(:warn), do: "WRN"
-  defp level_tag(:debug), do: "dbg"
-  defp level_tag(_), do: "   "
+  defp level_tag(:error, ansi),
+    do: color(ansi, [:red, :bright], "ERR")
 
-  defp scope_suffix(%Entry{cycle_id: cycle_id, span_id: span_id}) do
-    [
-      cycle_id && "cycle=#{String.slice(cycle_id, 0, 12)}",
-      span_id && "span=#{String.slice(span_id, 0, 12)}"
-    ]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.join(" ")
-  end
+  defp level_tag(:warn, ansi),
+    do: color(ansi, [:yellow, :bright], "WRN")
 
-  defp metadata_sketch(metadata) when map_size(metadata) == 0, do: ""
+  defp level_tag(:debug, ansi),
+    do: dim("dbg", ansi)
 
-  defp metadata_sketch(metadata) do
+  defp level_tag(_, _ansi), do: "   "
+
+  defp meta_pairs(metadata) when map_size(metadata) == 0, do: []
+
+  defp meta_pairs(metadata) do
     metadata
     |> Map.drop([
       "system_time",
@@ -254,11 +318,29 @@ defmodule Froth.Mix.Follow do
       "span_id",
       "parent_id",
       "seq",
-      "kind"
+      "kind",
+      "head_id"
     ])
-    |> Enum.sort_by(fn {k, _} -> k end)
+    |> Enum.sort_by(&pair_weight/1)
     |> Enum.take(6)
-    |> Enum.map_join(" ", fn {k, v} -> "#{k}=#{short(v)}" end)
+    |> Enum.map(fn {k, v} -> {k, short(v)} end)
+  end
+
+  # Pull a few particularly useful keys to the front (provider, model,
+  # tool_name, text_preview, reason, error, outcome), then alphabetical.
+  defp pair_weight({key, _}) do
+    priority = %{
+      "provider" => 0,
+      "model" => 1,
+      "tool_name" => 2,
+      "outcome" => 3,
+      "reason" => 4,
+      "error" => 5,
+      "text_preview" => 6,
+      "role" => 7
+    }
+
+    {Map.get(priority, key, 100), key}
   end
 
   defp short(v) when is_binary(v) do
@@ -271,8 +353,50 @@ defmodule Froth.Mix.Follow do
   defp short(nil), do: "nil"
   defp short(v), do: inspect(v, limit: 4, printable_limit: 60)
 
-  defp duration_suffix(nil), do: ""
-  defp duration_suffix(ms), do: "(#{ms}ms)"
+  defp truncate(text, max) when byte_size(text) > max,
+    do: binary_part(text, 0, max) <> "…"
+
+  defp truncate(text, _max), do: text
+
+  # Family palette: light touch, easy on dark and light terminals.
+  defp colorize_family(family, ansi) do
+    codes =
+      case family do
+        "agent" -> [:cyan]
+        "http" -> [:faint]
+        "anthropic" -> [:magenta]
+        "openai" -> [:magenta]
+        "gemini" -> [:magenta]
+        "google" -> [:magenta]
+        "grok" -> [:magenta]
+        "xai" -> [:magenta]
+        "llm" -> [:magenta]
+        "codex" -> [:green]
+        "telegram" -> [:blue]
+        "tools" -> [:yellow]
+        "tasks" -> [:yellow]
+        "browser" -> [:yellow]
+        "web" -> [:yellow]
+        "headlines" -> [:green]
+        "replicate" -> [:green]
+        "podcast" -> [:green]
+        _ -> [:default_color]
+      end
+
+    color(ansi, codes, family)
+  end
+
+  defp color(true, codes, text) do
+    IO.iodata_to_binary([
+      Enum.map(codes, &IO.ANSI.format_fragment(&1, true)),
+      text,
+      IO.ANSI.reset()
+    ])
+  end
+
+  defp color(false, _codes, text), do: text
+
+  defp dim(text, ansi), do: color(ansi, [:faint], text)
 
   defp ensure_repo_started! do
     Mix.Task.run("loadpaths")

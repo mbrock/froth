@@ -83,6 +83,7 @@ defmodule Froth.Follow.Entry do
 
   def visible?(%__MODULE__{}, :raw), do: true
   def visible?(%__MODULE__{level: level}, :errors), do: level == :error
+  def visible?(%__MODULE__{level: :debug}, :smart), do: false
   def visible?(%__MODULE__{}, :smart), do: true
 
   defp split_name(name) when is_binary(name) do
@@ -106,6 +107,7 @@ defmodule Froth.Follow.Entry do
       String.ends_with?(name, ".error") -> :error
       String.ends_with?(name, ".start") -> :debug
       String.starts_with?(name, "froth.http.sse") -> :debug
+      name == "froth.llm.edit" -> :debug
       true -> :info
     end
   end
