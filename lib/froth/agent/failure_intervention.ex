@@ -5,8 +5,9 @@ defmodule Froth.Agent.FailureIntervention do
   alias Froth.Agent.{Cycle, Surface, ToolUse}
   alias Froth.Agent.CycleRuntime.{Context, View}
   alias Froth.Agent.Message, as: AgentMessage
-  alias Froth.LLM
-  alias Froth.LLM.Message, as: LLMMessage
+  alias Froth.ApiKeys
+  alias LLM.Message, as: LLMMessage
+  alias LLM
   alias Froth.Repo
   alias Froth.Telegram.Bot.Config, as: BotConfig
   alias Froth.Telegram.{BotAdapter, MessageIdSync, PendingAsk, PendingAsks}
@@ -218,7 +219,8 @@ defmodule Froth.Agent.FailureIntervention do
         fn _event -> :ok end,
         model: model,
         provider: provider,
-        api_key: LLM.api_key_for_provider(provider),
+        api_key: ApiKeys.active_key_for_provider(provider),
+        max_tokens: 16_384,
         tools: [deliver_failure_report_spec()],
         system: report_system_prompt()
       )

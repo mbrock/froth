@@ -33,7 +33,7 @@ defmodule Froth.Codex.Task do
       )
   """
 
-  alias Froth.Telemetry.Span
+  alias Span
   alias Froth.Codex.Session, as: CodexSession
   alias Froth.Codex.TaskWatcher
   alias Froth.Telegram.BotAdapter

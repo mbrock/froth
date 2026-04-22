@@ -1,9 +1,10 @@
-defmodule Froth.LLM.Providers.OpenAIResponsesTest do
+defmodule LLM.Providers.OpenAIResponsesTest do
   use ExUnit.Case, async: true
 
-  alias Froth.LLM.{Message, Store}
-  alias Froth.LLM.Providers.OpenAIResponses
-  alias Froth.LLM.Request
+  alias LLM.Store
+  alias LLM.Providers.OpenAIResponses
+  alias LLM.Request
+  alias LLM.Message
 
   test "build_request encodes responses-api input, instructions, tools, reasoning, and verbosity" do
     request = %Request{
@@ -271,7 +272,7 @@ defmodule Froth.LLM.Providers.OpenAIResponsesTest do
         edit.resource == ["message"] and edit.path == ["reasoning_summary"]
       end)
 
-    assert Froth.LLM.Edit.project_event(summary_edit) ==
+    assert LLM.Edit.project_event(summary_edit) ==
              {:thinking_summary,
               %{
                 "thinking" =>

@@ -4,8 +4,8 @@ defmodule Froth.Telegram.AskFlowTest do
   import Ecto.Query
 
   alias Froth.Agent.Message
-  alias Froth.LLM.Message, as: LLMMessage
-  alias Froth.LLM.Request
+  alias LLM.Message, as: LLMMessage
+  alias LLM.Request
   alias Froth.Telegram.PendingAsk
 
   test "ask pauses a cycle, waits for a free-form answer, and resumes with a real tool result" do

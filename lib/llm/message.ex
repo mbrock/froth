@@ -1,4 +1,4 @@
-defmodule Froth.LLM.Message do
+defmodule LLM.Message do
   @moduledoc false
 
   @type role :: :system | :user | :assistant

@@ -6,9 +6,9 @@ defmodule Froth.Agent.WorkerTest do
   alias Froth.ObjectStore
   alias Froth.Agent.{Config, Cycle, Message, Worker, ToolUse}
   alias Froth.Event
-  alias Froth.LLM.Fake, as: FakeLLM
-  alias Froth.LLM.Message, as: LLMMessage
-  alias Froth.LLM.Request
+  alias LLM.Fake, as: FakeLLM
+  alias LLM.Message, as: LLMMessage
+  alias LLM.Request
   alias Froth.Repo
 
   setup do
@@ -681,84 +681,6 @@ defmodule Froth.Agent.WorkerTest do
       assert Enum.map(messages, & &1.role) == [:user, :agent, :user, :agent]
     end
 
-    test "continues after provider-managed MCP tools without invoking the local executor" do
-      test_pid = self()
-      model = FakeLLM.claim()
-
-      executor =
-        start_executor(fn tool_use, _context ->
-          send(test_pid, {:tool_executed, tool_use})
-          "unexpected"
-        end)
-
-      {pid, cycle} =
-        start_worker([Message.user("what is 2+2?")], nil,
-          provider: :fakeai,
-          model: model,
-          executor: executor
-        )
-
-      ref = Process.monitor(pid)
-
-      assert_receive {FakeLLM, turn_1,
-                      %Request{messages: [%LLMMessage{role: :user}]}},
-                     5_000
-
-      FakeLLM.reply(
-        turn_1,
-        {:ok,
-         %{
-           content: [
-             %{
-               "type" => "mcp_tool_use",
-               "id" => "mcptoolu_1",
-               "name" => "compute",
-               "server_name" => "wolfram",
-               "input" => %{"query" => "2+2"}
-             },
-             %{
-               "type" => "mcp_tool_result",
-               "tool_use_id" => "mcptoolu_1",
-               "content" => [%{"type" => "text", "text" => "4"}]
-             }
-           ],
-           stop_reason: "pause_turn"
-         }}
-      )
-
-      assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5_000
-      refute_receive {:tool_executed, _tool_use}, 200
-
-      assert %LLMMessage{role: :assistant, content: assistant_blocks} =
-               List.last(request_2.messages)
-
-      assert Enum.any?(assistant_blocks, &(&1["type"] == "mcp_tool_use"))
-      assert Enum.any?(assistant_blocks, &(&1["type"] == "mcp_tool_result"))
-
-      FakeLLM.reply(
-        turn_2,
-        {:ok,
-         %{
-           text: "The answer is 4.",
-           content: [%{"type" => "text", "text" => "The answer is 4."}],
-           stop_reason: "end_turn"
-         }}
-      )
-
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
-
-      messages = cycle_messages(cycle.id)
-      assert Enum.map(messages, & &1.role) == [:user, :agent, :agent]
-
-      assert Enum.any?(
-               hd(tl(messages)).content,
-               &(&1["type"] == "mcp_tool_use")
-             )
-
-      cycle = Repo.get!(Cycle, cycle.id)
-      assert cycle.status == :completed
-    end
-
     test "stops the cycle only on an explicit yield result" do
       model = FakeLLM.claim()
 
@@ -1276,7 +1198,7 @@ defmodule Froth.Agent.WorkerTest do
       assert roles == [:agent, :user, :agent]
     end
 
-    test "routes provider selection through Froth.LLM" do
+    test "routes provider selection through LLM" do
       model = FakeLLM.claim()
       executor = start_executor(fn _, _ -> "ok" end)
 

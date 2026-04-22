@@ -1,9 +1,9 @@
-defmodule Froth.LLM.Client do
+defmodule LLM.Client do
   @moduledoc false
 
-  alias Froth.LLM
-  alias Froth.LLM.Request
-  alias Froth.Telemetry.Span
+  alias LLM
+  alias LLM.Request
+  alias Span
 
   @spec stream_request(atom(), Request.t(), LLM.on_event(), keyword()) ::
           {:ok, map()} | {:error, term()}

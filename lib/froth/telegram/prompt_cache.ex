@@ -1,7 +1,7 @@
 defmodule Froth.Telegram.PromptCache do
   @moduledoc false
 
-  alias Froth.LLM
+  alias LLM
 
   @default_cache_control %{"type" => "ephemeral", "ttl" => "1h"}
   @tail_breakpoint_backoff 3

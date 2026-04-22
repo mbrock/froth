@@ -6,7 +6,7 @@ defmodule Froth.Codex.Events do
   import Ecto.Query
 
   alias Froth.Codex.Event
-  alias Froth.Telemetry.Span
+  alias Span
   alias Froth.Repo
 
   @max_stored_entries 2_000

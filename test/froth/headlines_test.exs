@@ -8,8 +8,8 @@ defmodule Froth.HeadlinesTest do
   alias Froth.Event
   alias Froth.Headlines
   alias Froth.Inference.Tools
-  alias Froth.LLM.Message, as: LLMMessage
-  alias Froth.LLM.Request
+  alias LLM.Message, as: LLMMessage
+  alias LLM.Request
 
   test "extract builds the summary prompt and passes the expected tools to adhoc" do
     chat_id = unique_chat_id()
@@ -588,7 +588,7 @@ defmodule Froth.HeadlinesTest do
     remaining_ms = max(deadline_ms - System.monotonic_time(:millisecond), 0)
 
     receive do
-      {Froth.LLM.Fake, from, %Request{} = request} ->
+      {LLM.Fake, from, %Request{} = request} ->
         if headlines_request?(request) do
           {from, request}
         else

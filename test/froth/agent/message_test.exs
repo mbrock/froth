@@ -2,7 +2,7 @@ defmodule Froth.Agent.MessageTest do
   use ExUnit.Case, async: true
 
   alias Froth.Agent.Message
-  alias Froth.LLM.Message, as: LLMMessage
+  alias LLM.Message, as: LLMMessage
 
   test "to_llm_message converts user text into normalized llm content" do
     assert %LLMMessage{

@@ -1,9 +1,10 @@
-defmodule Froth.LLM.Providers.GeminiInteractions do
+defmodule LLM.Providers.GeminiInteractions do
   @moduledoc false
 
-  @behaviour Froth.LLM.Provider
+  @behaviour LLM.Provider
 
-  alias Froth.LLM.{Edit, Message, Request, Store}
+  alias LLM.{Edit, Request, Store}
+  alias LLM.Message
 
   @media_types ["image", "audio", "document", "video"]
 

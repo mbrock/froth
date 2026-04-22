@@ -2,7 +2,7 @@ defmodule Froth.Agent.Message do
   use Ecto.Schema
 
   alias Froth.Agent.Message.Content
-  alias Froth.LLM.Message, as: LLMMessage
+  alias LLM.Message, as: LLMMessage
 
   @type t :: %__MODULE__{
           id: String.t() | nil,

@@ -25,7 +25,7 @@ defmodule Froth.Telegram do
 
   alias Froth.DurableFiles
   alias Froth.Telegram.SessionConfig
-  alias Froth.Telemetry.Span
+  alias Span
   alias Vix.Vips.Image, as: Vimage
 
   def start_link(_opts) do

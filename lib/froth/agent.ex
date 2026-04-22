@@ -5,8 +5,9 @@ defmodule Froth.Agent do
 
   import Ecto.Query
 
+  alias LLM
   alias Froth.Agent.{Config, Cycle, Message, ToolDescription, Worker}
-  alias Froth.{Event, LLM, ObjectStore, Repo}
+  alias Froth.{Event, ObjectStore, Repo}
 
   @payload_blob_threshold 8_000
   @preview_string_limit 320
@@ -508,7 +509,7 @@ defmodule Froth.Agent do
             []
 
           %{"type" => type, "input" => input} = block
-          when type in ["tool_use", "mcp_tool_use"] ->
+          when type == "tool_use" ->
             narration = ToolDescription.text_from_input(input)
             tool = format_trace_tool_name(block)
 
@@ -527,9 +528,12 @@ defmodule Froth.Agent do
 
       %{"role" => "user", "content" => content} when is_list(content) ->
         Enum.flat_map(content, fn
-          %{"type" => type, "content" => result_content, "tool_use_id" => _id} =
-              block
-          when type in ["tool_result", "mcp_tool_result"] ->
+          %{
+            "type" => "tool_result",
+            "content" => result_content,
+            "tool_use_id" => _id
+          } =
+              block ->
             text = tool_result_text(result_content)
             is_error? = block["is_error"] == true
 
@@ -564,11 +568,6 @@ defmodule Froth.Agent do
   end
 
   defp failure_report?(_), do: false
-
-  defp format_trace_tool_name(%{"server_name" => server_name, "name" => name})
-       when is_binary(server_name) and server_name != "" and is_binary(name) do
-    "#{server_name}/#{name}"
-  end
 
   defp format_trace_tool_name(%{"name" => name}) when is_binary(name),
     do: name

@@ -151,7 +151,7 @@ defmodule Froth.Telegram.BotAdapter do
 
         Process.put(cache_key, allowed)
 
-        Froth.Telemetry.Span.execute(
+        Span.execute(
           [:froth, :telegram, :bot_adapter, :chat_access_check],
           nil,
           %{chat_id: chat_id, allowed: allowed}

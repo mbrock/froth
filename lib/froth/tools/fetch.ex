@@ -29,7 +29,7 @@ defmodule Froth.Tools.Fetch do
   alias Froth.Agent.ToolUse
   alias Froth.Context.Block
   alias Froth.DurableFiles
-  alias Froth.Telemetry.Span
+  alias Span
   alias Froth.Web.Lightpanda
 
   defmodule Fetched do

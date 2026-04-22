@@ -8,7 +8,7 @@ defmodule Froth.Telegram.Bots do
   use Supervisor
 
   alias Froth.Telegram.Charlie
-  alias Froth.Telemetry.Span
+  alias Span
 
   @registry Froth.Telegram.BotRegistry
   @supervisor Froth.Telegram.BotSupervisor

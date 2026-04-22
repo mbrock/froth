@@ -7,7 +7,7 @@ defmodule Froth.Tasks do
 
   alias Froth.{Repo, Task, TaskEvent, TaskTelegramLink}
   alias Froth.Telegram.SyntheticMessage
-  alias Froth.Telemetry.Span
+  alias Span
   import Ecto.Query
 
   @pubsub Froth.PubSub

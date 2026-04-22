@@ -1,7 +1,7 @@
-defmodule Froth.LLM.Provider do
+defmodule LLM.Provider do
   @moduledoc false
 
-  alias Froth.LLM.{Edit, Request, Store}
+  alias LLM.{Edit, Request, Store}
 
   @type transport_request :: %{
           required(:url) => String.t(),

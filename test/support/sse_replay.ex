@@ -3,7 +3,7 @@ defmodule Froth.SSEReplay do
   Test helper that replays recorded Anthropic SSE fixtures through the
   real Anthropic provider pipeline.
 
-  A replayer is a `GenServer` that claims a `Froth.LLM.Fake` model id
+  A replayer is a `GenServer` that claims a `LLM.Fake` model id
   and, whenever the cycle makes an LLM call against that model, loads
   the next turn's SSE fixture from
   `test/fixtures/sse/<fixture>/turn_N.sse`, runs it through the
@@ -25,9 +25,9 @@ defmodule Froth.SSEReplay do
 
   use GenServer
 
-  alias Froth.LLM.Edit
-  alias Froth.LLM.Providers.Anthropic, as: AnthropicProvider
-  alias Froth.LLM.Store
+  alias LLM.Edit
+  alias LLM.Providers.Anthropic, as: AnthropicProvider
+  alias LLM.Store
 
   @fixtures_dir Path.expand("../fixtures/sse", __DIR__)
 
@@ -54,7 +54,7 @@ defmodule Froth.SSEReplay do
   def init(opts) when is_list(opts) do
     fixture = Keyword.fetch!(opts, :fixture)
     notify_pid = Keyword.get(opts, :notify_pid)
-    model = Froth.LLM.Fake.claim()
+    model = LLM.Fake.claim()
 
     {:ok,
      %{
@@ -69,7 +69,7 @@ defmodule Froth.SSEReplay do
   def handle_call(:model, _from, state), do: {:reply, state.model, state}
 
   @impl true
-  def handle_info({Froth.LLM.Fake, from, request}, state) do
+  def handle_info({LLM.Fake, from, request}, state) do
     if is_pid(state.notify_pid) do
       case AnthropicProvider.build_request(request) do
         {:ok, transport} ->
@@ -89,7 +89,7 @@ defmodule Froth.SSEReplay do
       send(state.notify_pid, {:replay_done, state.turn})
     end
 
-    Froth.LLM.Fake.reply(from, result)
+    LLM.Fake.reply(from, result)
     {:noreply, %{state | turn: state.turn + 1}}
   end
 

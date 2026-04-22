@@ -44,7 +44,7 @@ defmodule Froth.TelegramBotCase do
 
   using do
     quote do
-      alias Froth.LLM.Fake, as: FakeLLM
+      alias LLM.Fake, as: FakeLLM
       alias Froth.Repo
       alias Froth.Telegram.Bot
 
@@ -104,7 +104,7 @@ defmodule Froth.TelegramBotCase do
         "charlie-#{System.unique_integer([:positive])}"
       end)
 
-    model = Keyword.get_lazy(opts, :model, fn -> Froth.LLM.Fake.claim() end)
+    model = Keyword.get_lazy(opts, :model, fn -> LLM.Fake.claim() end)
 
     _ = start_fake_session(session_id: session_id)
 

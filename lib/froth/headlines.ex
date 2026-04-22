@@ -29,6 +29,7 @@ defmodule Froth.Headlines do
 
   @default_chat_id -1_003_690_254_489
   @model "gpt-5.4"
+  @max_tokens 16_384
   @system_prompt "You are a tabloid editor."
 
   @spec start(keyword()) :: {Froth.Agent.Cycle.t(), Enumerable.t()}
@@ -94,6 +95,7 @@ defmodule Froth.Headlines do
       provider: provider,
       system: @system_prompt,
       model: model,
+      max_tokens: @max_tokens,
       tools: headline_tools(),
       tool_executor: nil,
       context: %{chat_id: chat_id},

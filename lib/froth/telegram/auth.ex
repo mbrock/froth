@@ -190,7 +190,7 @@ defmodule Froth.Telegram.Auth do
         loop(state)
 
       other ->
-        Froth.Telemetry.Span.execute(
+        Span.execute(
           [:froth, :telegram, :auth, :ignored],
           nil,
           %{message: other}

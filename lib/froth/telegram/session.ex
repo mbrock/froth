@@ -8,7 +8,7 @@ defmodule Froth.Telegram.Session do
 
   use GenServer
 
-  alias Froth.Telemetry.Span
+  alias Span
   alias Froth.Telegram.Calls
 
   def start_link(config) when is_map(config) do

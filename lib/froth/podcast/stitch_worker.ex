@@ -5,7 +5,7 @@ defmodule Froth.Podcast.StitchWorker do
   """
   use Oban.Worker, queue: :podcast, max_attempts: 3
 
-  alias Froth.Telemetry.Span
+  alias Span
   import Ecto.Query
 
   @default_pause_ms 300

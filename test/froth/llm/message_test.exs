@@ -1,7 +1,7 @@
-defmodule Froth.LLM.MessageTest do
+defmodule LLM.MessageTest do
   use ExUnit.Case, async: true
 
-  alias Froth.LLM.Message
+  alias LLM.Message
 
   test "normalizes maps and stringifies block keys" do
     assert {:ok, %Message{} = message} =

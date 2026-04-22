@@ -775,11 +775,11 @@ defmodule FrothWeb.InferenceSessionsLive do
         Map.get(block, :thinking)
 
       is_binary(Map.get(block, "content")) and
-          api_block_kind(block) in ["tool_result", "mcp_tool_result"] ->
+          api_block_kind(block) == "tool_result" ->
         Map.get(block, "content")
 
       is_binary(Map.get(block, :content)) and
-          api_block_kind(block) in ["tool_result", "mcp_tool_result"] ->
+          api_block_kind(block) == "tool_result" ->
         Map.get(block, :content)
 
       true ->
@@ -796,7 +796,7 @@ defmodule FrothWeb.InferenceSessionsLive do
       type in ["text", "thinking"] ->
         nil
 
-      type in ["tool_use", "mcp_tool_use"] ->
+      type == "tool_use" ->
         input = Map.get(block, "input") || Map.get(block, :input)
         if(is_nil(input), do: pretty_json(block), else: pretty_json(input))
 

@@ -23,6 +23,7 @@ defmodule Froth.Summarizer do
   import Ecto.Query
 
   @model "claude-opus-4-6"
+  @max_tokens 65_536
 
   @system_prompt """
   You are writing a narrative daily summary of a Telegram group chat. \
@@ -50,7 +51,12 @@ defmodule Froth.Summarizer do
       covered_to_unix = summary_covered_to_unix(max_message_unix, to_unix)
       prompt = build_prompt(transcript, prior, from_unix, prompt_to_unix)
 
-      config = %Config{system: @system_prompt, model: @model, tools: []}
+      config = %Config{
+        system: @system_prompt,
+        model: @model,
+        max_tokens: @max_tokens,
+        tools: []
+      }
 
       user_msg =
         Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})

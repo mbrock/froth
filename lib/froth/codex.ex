@@ -19,7 +19,7 @@ defmodule Froth.Codex do
   """
 
   use GenServer
-  alias Froth.Telemetry.Span
+  alias Span
 
   @type server :: GenServer.server()
   @type method :: String.t()

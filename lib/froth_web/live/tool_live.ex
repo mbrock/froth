@@ -627,7 +627,7 @@ defmodule FrothWeb.ToolLive do
          idx,
          state
        )
-       when role == :agent and type in ["tool_use", "mcp_tool_use"] do
+       when role == :agent and type == "tool_use" do
     apply_tool_use(state, event_id, idx, block)
   end
 
@@ -638,7 +638,7 @@ defmodule FrothWeb.ToolLive do
          idx,
          state
        )
-       when type in ["tool_result", "mcp_tool_result"] do
+       when type == "tool_result" do
     apply_tool_result(state, event_id, idx, block)
   end
 
@@ -725,11 +725,6 @@ defmodule FrothWeb.ToolLive do
       })
       |> ensure_tool_entry(key)
     end
-  end
-
-  defp format_tool_block_name(%{"server_name" => server_name, "name" => name})
-       when is_binary(server_name) and server_name != "" and is_binary(name) do
-    "#{server_name}/#{name}"
   end
 
   defp format_tool_block_name(%{"name" => name}) when is_binary(name),
@@ -1118,18 +1113,17 @@ defmodule FrothWeb.ToolLive do
 
         Enum.reduce(blocks, acc, fn
           %{"type" => type, "id" => id, "name" => name}, pending
-          when type in ["tool_use", "mcp_tool_use"] and is_binary(id) and
-                 is_binary(name) ->
+          when type == "tool_use" and is_binary(id) and is_binary(name) ->
             if name == "send_message",
               do: pending,
               else: MapSet.put(pending, id)
 
           %{"type" => type, "id" => id}, pending
-          when type in ["tool_use", "mcp_tool_use"] and is_binary(id) ->
+          when type == "tool_use" and is_binary(id) ->
             MapSet.put(pending, id)
 
           %{"type" => type, "tool_use_id" => id}, pending
-          when type in ["tool_result", "mcp_tool_result"] and is_binary(id) ->
+          when type == "tool_result" and is_binary(id) ->
             MapSet.delete(pending, id)
 
           _, pending ->
@@ -1448,14 +1442,13 @@ defmodule FrothWeb.ToolLive do
         Enum.reduce(blocks, {calls, resolved}, fn
           %{"type" => type, "id" => id, "name" => name},
           {call_acc, result_acc}
-          when type in ["tool_use", "mcp_tool_use"] and is_binary(id) and
-                 is_binary(name) ->
+          when type == "tool_use" and is_binary(id) and is_binary(name) ->
             if name == "send_message",
               do: {call_acc, result_acc},
               else: {MapSet.put(call_acc, id), result_acc}
 
           %{"type" => type, "tool_use_id" => id}, {call_acc, result_acc}
-          when type in ["tool_result", "mcp_tool_result"] and is_binary(id) ->
+          when type == "tool_result" and is_binary(id) ->
             {call_acc, MapSet.put(result_acc, id)}
 
           _, acc ->

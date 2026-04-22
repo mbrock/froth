@@ -1,56 +1,22 @@
-defmodule Froth.LLM.Fake do
+defmodule LLM.Fake do
   @moduledoc """
   Test-only fake LLM server addressed by model id.
 
   A test calls `claim/0` to mint a unique model id like
   `"fakeai-slop-XXXXXX"` and registers the current process as the server
   for that id. The bot/worker/etc. is started using that model. When
-  production code calls `Froth.LLM.stream_single/3` (or `stream/3`), the
+  production code calls `LLM.stream_single/3` (or `stream/3`), the
   request is routed through the normal pipeline; once the model's
-  resolved provider is `:fakeai`, `Froth.LLM.stream/3` delegates here
-  and we deliver the full `%Froth.LLM.Request{}` to the registered pid
-  as a message. The test asserts on the request and replies inline:
-
-      test "something" do
-        model = Froth.LLM.Fake.claim()
-        bot = start_supervised!({Bot, model: model, ...})
-        send(bot, {:telegram_update, ...})
-
-        assert_receive {Froth.LLM.Fake, from, request}, 5_000
-        assert [%Froth.LLM.Message{role: :user}] = request.messages
-
-        Froth.LLM.Fake.reply(from, {:ok, %{
-          content: [%{"type" => "text", "text" => "hi"}],
-          stop_reason: "end_turn"
-        }})
-      end
-
-  The request result is normalized to the same map shape that real
-  providers return (`text`, `content`, `stop_reason`, `usage`, `model`,
-  `message_id`, `diagnostics`). Tests only need to spell out fields they
-  care about.
-
-  Errors returned via `reply/2` are wrapped in a non-retryable
-  `{:fake_llm_error, reason}` tuple so the upstream retry loop in
-  `Froth.LLM.stream_with_retries/5` can never engage on them.
-
-  The Registry entry dies with the registering process, so no explicit
-  teardown is needed: when the test pid exits, the model id is freed.
+  resolved provider is `:fakeai`, `LLM.stream/3` delegates here
+  and we deliver the full `%LLM.Request{}` to the registered pid
+  as a message. The test asserts on the request and replies inline.
   """
 
-  alias Froth.LLM.Request
+  alias LLM.Request
 
   @registry __MODULE__.Registry
   @default_timeout :timer.seconds(30)
 
-  @doc """
-  Mint a unique fakeai model id and register the current process as the
-  server for that id. Returns the model id (a string).
-
-  Must be called from the process that will serve the LLM calls (usually
-  the test process). The registration is auto-cleaned when that process
-  exits.
-  """
   @spec claim() :: String.t()
   def claim do
     model =
@@ -61,14 +27,6 @@ defmodule Froth.LLM.Fake do
     model
   end
 
-  @doc """
-  Called from `Froth.LLM.stream/3` when a request's provider module is
-  `Froth.LLM.Providers.Fake`. Delivers the request to the pid
-  registered for `request.model` and blocks waiting for the reply.
-
-  The `on_event` callback is carried in the `from` handle so tests can
-  invoke it via `emit/2` to simulate streaming deltas before replying.
-  """
   @spec stream(Request.t(), (term() -> any())) ::
           {:ok, map()} | {:error, term()}
   def stream(%Request{model: model} = request, on_event)
@@ -97,18 +55,6 @@ defmodule Froth.LLM.Fake do
     end
   end
 
-  @doc """
-  Reply to a fake LLM call received via `assert_receive`.
-
-  The reply is normalized so that a real, retryable error shape can
-  never be produced by a fake. `{:ok, map}` is passed through with
-  missing fields defaulted; anything else is wrapped as
-  `{:error, {:fake_llm_error, reason}}`.
-
-  Accepts either the 3-tuple `from` handle delivered with the call or a
-  bare `{pid, ref}` pair, so existing tests that pattern-match just the
-  pid/ref still work.
-  """
   @spec reply(
           {pid(), reference(), (term() -> any())} | {pid(), reference()},
           term()
@@ -120,18 +66,12 @@ defmodule Froth.LLM.Fake do
     :ok
   end
 
-  @doc """
-  Invoke the stream's `on_event` callback from the test process, to
-  simulate streaming deltas (e.g. `{:text_delta, "..."}`) before
-  replying.
-  """
   @spec emit({pid(), reference(), (term() -> any())}, term()) :: :ok
   def emit({_pid, _ref, on_event}, event) when is_function(on_event, 1) do
     on_event.(event)
     :ok
   end
 
-  @doc false
   def registry_name, do: @registry
 
   defp normalize_result({:ok, result}, %Request{model: model})

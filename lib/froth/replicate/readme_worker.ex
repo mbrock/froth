@@ -3,7 +3,7 @@ defmodule Froth.Replicate.ReadmeWorker do
   use Oban.Worker, queue: :github, max_attempts: 5
 
   alias Froth.Repo
-  alias Froth.Telemetry.Span
+  alias Span
   alias Froth.Replicate.Model
 
   import Ecto.Query

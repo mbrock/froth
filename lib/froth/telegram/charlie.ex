@@ -11,6 +11,7 @@ defmodule Froth.Telegram.Charlie do
   @default_bot_username "charliebuddybot"
   @default_session_id "charlie"
   @default_model "claude-opus-4-7"
+  @default_max_tokens 65_536
 
   def default_config do
     cfg = Application.get_env(:froth, __MODULE__, [])
@@ -23,6 +24,7 @@ defmodule Froth.Telegram.Charlie do
       owner_user_id: Keyword.get(cfg, :owner_user_id, 0),
       session_id: @default_session_id,
       model: @default_model,
+      max_tokens: @default_max_tokens,
       failure_report_model: "gpt-5.4",
       system_prompt_fun: &CharliePrompt.system_prompt/2,
       name_triggers: [

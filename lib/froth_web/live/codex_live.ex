@@ -2,7 +2,7 @@ defmodule FrothWeb.CodexLive do
   use FrothWeb, :live_view
 
   alias Froth.Codex.Events, as: CodexEvents
-  alias Froth.Telemetry.Span
+  alias Span
   alias Froth.Codex.Session, as: CodexSession
 
   @default_model "gpt-5.4"
@@ -1098,7 +1098,8 @@ defmodule FrothWeb.CodexLive do
          _entry,
          _active_assistant_entry_id,
          _active_turn_id
-       ), do: false
+       ),
+       do: false
 
   defp normalize_optional_integer(value) when is_integer(value), do: value
 
@@ -1653,7 +1654,8 @@ defmodule FrothWeb.CodexLive do
          _started_at_ms,
          _last_turn_elapsed_ms,
          _now_ms
-       ), do: nil
+       ),
+       do: nil
 
   defp tool_progress_badge(%{tool_total: 0}), do: nil
 

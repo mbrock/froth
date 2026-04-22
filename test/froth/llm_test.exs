@@ -2,8 +2,9 @@ defmodule Froth.LLMTest do
   use Froth.AnthropicCase, async: true
 
   alias Froth.ApiKey
-  alias Froth.LLM
+  alias Froth.ApiKeys
   alias Froth.Repo
+  alias LLM
 
   test "resolves provider names from provider refs and model prefixes" do
     assert :openai = LLM.resolve_provider_name(:openai, nil)
@@ -27,65 +28,37 @@ defmodule Froth.LLMTest do
       inserted_at: ~U[2026-03-09 10:05:00Z]
     })
 
-    assert LLM.active_api_key(["grok", "xai"]) == "new-key"
-    assert LLM.active_api_key(:grok) == "new-key"
-    assert LLM.active_api_key(:gemini) == nil
+    assert ApiKeys.active_key(["grok", "xai"]) == "new-key"
+    assert ApiKeys.active_key_for_provider(:grok) == "new-key"
+    assert ApiKeys.active_key_for_provider(:gemini) == nil
   end
 
-  describe "build_request/2 defaults for claude-opus-4-7" do
-    test "defaults effort, max tokens, and thinking display" do
-      assert {:ok, request} =
+  describe "build_request/2" do
+    test "requires an explicit provider" do
+      assert {:error, :missing_provider} =
                LLM.build_request(
                  [LLM.Message.user("hello")],
                  api_key: "test-key",
-                 provider: :anthropic,
                  model: "claude-opus-4-7"
                )
-
-      assert request.output_config == %{"effort" => "xhigh"}
-      assert request.max_tokens == 65_536
-
-      assert request.thinking == %{
-               "type" => "adaptive",
-               "display" => "summarized"
-             }
     end
 
-    test "explicit effort overrides the default" do
+    test "does not inject provider config defaults" do
       assert {:ok, request} =
                LLM.build_request(
                  [LLM.Message.user("hello")],
                  api_key: "test-key",
                  provider: :anthropic,
                  model: "claude-opus-4-7",
+                 max_tokens: 4096,
+                 system: "system prompt",
+                 thinking: %{"type" => "adaptive", "display" => "omitted"},
                  effort: "high"
                )
 
+      assert request.system == "system prompt"
+      assert request.max_tokens == 4096
       assert request.output_config == %{"effort" => "high"}
-    end
-
-    test "explicit max effort is preserved" do
-      assert {:ok, request} =
-               LLM.build_request(
-                 [LLM.Message.user("hello")],
-                 api_key: "test-key",
-                 provider: :anthropic,
-                 model: "claude-opus-4-7",
-                 effort: "max"
-               )
-
-      assert request.output_config == %{"effort" => "max"}
-    end
-
-    test "explicit thinking display is preserved" do
-      assert {:ok, request} =
-               LLM.build_request(
-                 [LLM.Message.user("hello")],
-                 api_key: "test-key",
-                 provider: :anthropic,
-                 model: "claude-opus-4-7",
-                 thinking: %{"type" => "adaptive", "display" => "omitted"}
-               )
 
       assert request.thinking == %{
                "type" => "adaptive",

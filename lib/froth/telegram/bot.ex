@@ -34,7 +34,7 @@ defmodule Froth.Telegram.Bot do
   alias Froth.Telegram.Names
   alias Froth.Telegram.PendingAsks
   alias Froth.Telegram.PromptCache
-  alias Froth.Telemetry.Span
+  alias Span
 
   defstruct [
     :bot_config,
@@ -479,7 +479,9 @@ defmodule Froth.Telegram.Bot do
                      query,
                      bot_config,
                      pending_ask,
-                     alternative, index: index)
+                     alternative,
+                     index: index
+                   )
                ) do
           {:callback_pending_ask, query_id, resolved_pending_ask, alternative,
            message_id}
@@ -596,7 +598,8 @@ defmodule Froth.Telegram.Bot do
          _bot_config,
          _mentioned?,
          _is_reply_to_bot
-       ), do: nil
+       ),
+       do: nil
 
   defp pending_ask_accepts_message_answer?(pending_ask) do
     AwaitControl.accepts_message_answer?(pending_ask)
@@ -714,6 +717,7 @@ defmodule Froth.Telegram.Bot do
     base_config = %Config{
       system: system_prompt,
       model: bc.model,
+      max_tokens: bc.max_tokens,
       tools: resolve_tool_specs(bc),
       tool_executor: self(),
       context: %{
@@ -752,7 +756,8 @@ defmodule Froth.Telegram.Bot do
          _text,
          _user_content,
          _system_prompt
-       ), do: state
+       ),
+       do: state
 
   defp launch_cycle_worker(
          state,
@@ -1173,7 +1178,8 @@ defmodule Froth.Telegram.Bot do
          _bot_config,
          _pending_ask,
          _answer
-       ), do: %{}
+       ),
+       do: %{}
 
   defp resolution_config_for_callback(
          query,
@@ -1339,6 +1345,7 @@ defmodule Froth.Telegram.Bot do
     %Config{
       system: resolve_system_prompt(pending_ask.chat_id, nil, bc),
       model: bc.model,
+      max_tokens: bc.max_tokens,
       tools: resolve_tool_specs(bc),
       tool_executor: self(),
       context: %{

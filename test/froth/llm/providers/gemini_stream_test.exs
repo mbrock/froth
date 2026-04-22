@@ -1,8 +1,8 @@
-defmodule Froth.LLM.Providers.GeminiStreamTest do
+defmodule LLM.Providers.GeminiStreamTest do
   use ExUnit.Case, async: false
 
-  alias Froth.LLM
-  alias Froth.LLM.Message
+  alias LLM
+  alias LLM.Message
   alias Req.Test, as: ReqTest
 
   test "stream_single sends Gemini web search grounding without nil response modalities" do

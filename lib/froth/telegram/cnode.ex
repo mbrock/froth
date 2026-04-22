@@ -8,7 +8,7 @@ defmodule Froth.Telegram.Cnode do
 
   use GenServer
 
-  alias Froth.Telemetry.Span
+  alias Span
 
   @name __MODULE__
 
@@ -502,7 +502,8 @@ defmodule Froth.Telegram.Cnode do
   defp fail_pending_tgcalls_status(
          %{pending_tgcalls_status: nil} = state,
          _reason
-       ), do: state
+       ),
+       do: state
 
   defp fail_pending_tgcalls_status(
          %{pending_tgcalls_status: pending} = state,

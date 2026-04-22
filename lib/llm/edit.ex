@@ -1,4 +1,4 @@
-defmodule Froth.LLM.Edit do
+defmodule LLM.Edit do
   @moduledoc false
 
   @type op :: :open | :set | :append | :merge | :delete | :close
@@ -60,8 +60,7 @@ defmodule Froth.LLM.Edit do
        })
        when is_binary(id) and is_binary(name) do
     {:tool_use_start,
-     %{"id" => id, "name" => name, "input" => Map.get(attrs, "input", %{})}
-     |> maybe_put("server_name", Map.get(attrs, "server_name"))}
+     %{"id" => id, "name" => name, "input" => Map.get(attrs, "input", %{})}}
   end
 
   defp do_project(%__MODULE__{
@@ -69,16 +68,14 @@ defmodule Froth.LLM.Edit do
          resource: ["message", "blocks", _idx],
          attrs: %{"type" => type, "id" => id, "name" => name} = attrs
        })
-       when is_binary(id) and is_binary(name) and
-              type in ["tool_use", "mcp_tool_use"] do
+       when is_binary(id) and is_binary(name) and type == "tool_use" do
     {:tool_use_start,
      %{
        "type" => type,
        "id" => id,
        "name" => name,
        "input" => Map.get(attrs, "input")
-     }
-     |> maybe_put("server_name", Map.get(attrs, "server_name"))}
+     }}
   end
 
   # -- tool_use_delta: partial JSON on tool_calls or blocks --
@@ -116,15 +113,16 @@ defmodule Froth.LLM.Edit do
   defp do_project(%__MODULE__{
          op: :close,
          resource: ["message", "blocks", _idx],
-         attrs:
-           %{"type" => type, "id" => id, "name" => name, "input" => input} =
-             attrs
+         attrs: %{
+           "type" => type,
+           "id" => id,
+           "name" => name,
+           "input" => input
+         }
        })
-       when is_binary(id) and is_binary(name) and
-              type in ["tool_use", "mcp_tool_use"] do
+       when is_binary(id) and is_binary(name) and type == "tool_use" do
     {:tool_use_stop,
-     %{"type" => type, "id" => id, "name" => name, "input" => input}
-     |> maybe_put("server_name", Map.get(attrs, "server_name"))}
+     %{"type" => type, "id" => id, "name" => name, "input" => input}}
   end
 
   # -- usage --
@@ -197,8 +195,4 @@ defmodule Froth.LLM.Edit do
   # -- fallback --
 
   defp do_project(_edit), do: nil
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, _key, ""), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

@@ -5,7 +5,7 @@ defmodule Froth.Replicate.SyncWorker do
   """
   use Oban.Worker, queue: :replicate, max_attempts: 3
 
-  alias Froth.Telemetry.Span
+  alias Span
 
   @api_base "https://api.replicate.com/v1"
 

@@ -22,7 +22,7 @@ defmodule Froth.Replicate do
   """
 
   alias Froth.Repo
-  alias Froth.Telemetry.Span
+  alias Span
   alias Froth.Replicate.Prediction
 
   import Ecto.Query
@@ -32,7 +32,7 @@ defmodule Froth.Replicate do
   @poll_interval_ms 2_000
 
   defp api_token do
-    case Froth.LLM.active_api_key("replicate") do
+    case Froth.ApiKeys.active_key("replicate") do
       nil -> raise "No replicate API key found in api_keys table"
       key -> key
     end

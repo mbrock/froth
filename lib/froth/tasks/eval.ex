@@ -10,7 +10,7 @@ defmodule Froth.Tasks.Eval do
 
   use GenServer, restart: :temporary
 
-  alias Froth.Telemetry.Span
+  alias Span
 
   @eval_await_ms 3_000
   @idle_timeout_ms :timer.minutes(10)

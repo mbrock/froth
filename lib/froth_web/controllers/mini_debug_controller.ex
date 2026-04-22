@@ -1,7 +1,7 @@
 defmodule FrothWeb.MiniDebugController do
   use FrothWeb, :controller
 
-  alias Froth.Telemetry.Span
+  alias Span
 
   def create(conn, %{"logs" => logs}) when is_list(logs) do
     for entry <- logs do

@@ -709,7 +709,9 @@ defmodule FrothWeb.TimelineLive do
                     stream_insert(
                       acc,
                       :blocks,
-                      timeline_stream_item(next_block), at: -1)
+                      timeline_stream_item(next_block),
+                      at: -1
+                    )
                   end)
 
                 {:update, blocks} ->

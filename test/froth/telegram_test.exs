@@ -119,7 +119,9 @@ defmodule Froth.TelegramTest do
              Froth.Telegram.send_image(
                session_id,
                chat_id,
-               [sample_tensor(), sample_tensor()], caption: "album caption")
+               [sample_tensor(), sample_tensor()],
+               caption: "album caption"
+             )
 
     on_exit(fn ->
       File.rm(first_metadata["local_path"])

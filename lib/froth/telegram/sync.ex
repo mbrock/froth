@@ -12,7 +12,7 @@ defmodule Froth.Telegram.Sync do
 
   use GenServer
 
-  alias Froth.Telemetry.Span
+  alias Span
   alias Froth.Telegram
   alias Froth.Telegram.Message
   alias Froth.Repo

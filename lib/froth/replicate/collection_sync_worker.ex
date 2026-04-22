@@ -3,7 +3,7 @@ defmodule Froth.Replicate.CollectionSyncWorker do
   use Oban.Worker, queue: :replicate, max_attempts: 5
 
   alias Froth.Repo
-  alias Froth.Telemetry.Span
+  alias Span
   alias Froth.Replicate.{Collection, Model}
 
   @api_base "https://api.replicate.com/v1"

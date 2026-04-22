@@ -35,7 +35,7 @@ defmodule Froth.Web.Lightpanda do
   (`:ok | :timeout | :error`).
   """
 
-  alias Froth.Telemetry.Span
+  alias Span
 
   @default_timeout_ms 30_000
   @default_wait_ms 5_000

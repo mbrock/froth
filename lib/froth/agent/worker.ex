@@ -11,8 +11,9 @@ defmodule Froth.Agent.Worker do
 
   alias Froth.Agent
   alias Froth.Agent.{Config, Cycle, TaskBridge, ToolResult, ToolUse}
-  alias Froth.LLM
-  alias Froth.Telemetry.Span
+  alias Froth.ApiKeys
+  alias Span
+  alias LLM
 
   @default_tool_timeout_ms 30_000
   @default_tool_timeout_overrides %{}
@@ -212,13 +213,6 @@ defmodule Froth.Agent.Worker do
         maybe_tools_done(
           start_tools(%{worker | saw_tool_use?: true}, tool_uses)
         )
-
-      continue_after_provider_tools?(response_metadata, response.content) ->
-        cycle = Agent.update_cycle(worker.cycle, %{status: :running})
-
-        {:noreply,
-         %{worker | cycle: cycle, phase: :continuing, saw_tool_use?: true},
-         {:continue, :think}}
 
       true ->
         worker =
@@ -431,10 +425,11 @@ defmodule Froth.Agent.Worker do
 
     opts =
       [
-        api_key: LLM.api_key_for_provider(provider),
+        api_key: ApiKeys.active_key_for_provider(provider),
         system: worker.config.system || "",
         provider: provider,
         model: worker.config.model,
+        max_tokens: worker.config.max_tokens,
         tools: worker.config.tools,
         thinking: worker.config.thinking,
         effort: worker.config.effort,
@@ -511,20 +506,6 @@ defmodule Froth.Agent.Worker do
   end
 
   defp parse_tool_uses(_), do: []
-
-  defp continue_after_provider_tools?(metadata, content)
-       when is_map(metadata) and is_list(content) do
-    metadata["stop_reason"] in ["pause_turn", "tool_use"] and
-      Enum.any?(content, &provider_managed_tool_block?/1)
-  end
-
-  defp continue_after_provider_tools?(_metadata, _content), do: false
-
-  defp provider_managed_tool_block?(%{"type" => type})
-       when type in ["mcp_tool_use", "mcp_tool_result"],
-       do: true
-
-  defp provider_managed_tool_block?(_block), do: false
 
   defp start_tools(worker, tool_uses) do
     cycle = Agent.update_cycle(worker.cycle, %{status: :waiting_on_tools})
@@ -1414,12 +1395,7 @@ defmodule Froth.Agent.Worker do
   defp response_id_from_message_id(_metadata), do: nil
 
   defp assistant_output_block?(%{"type" => type})
-       when type in [
-              "tool_use",
-              "mcp_tool_use",
-              "mcp_tool_result",
-              "thinking"
-            ],
+       when type in ["tool_use", "tool_result", "thinking"],
        do: false
 
   defp assistant_output_block?(%{"type" => "text", "text" => text})
@@ -1631,7 +1607,8 @@ defmodule Froth.Agent.Worker do
 
   defp await_user_input_result?(%ToolResult{
          control_outcome: "await_user_input"
-       }), do: true
+       }),
+       do: true
 
   defp await_user_input_result?(_result), do: false
 

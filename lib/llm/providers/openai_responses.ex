@@ -1,4 +1,4 @@
-defmodule Froth.LLM.Providers.OpenAIResponses do
+defmodule LLM.Providers.OpenAIResponses do
   @moduledoc """
   Provider for the OpenAI/xAI Responses API (`/v1/responses`).
 
@@ -6,9 +6,10 @@ defmodule Froth.LLM.Providers.OpenAIResponses do
   so this single provider handles both vendors.
   """
 
-  @behaviour Froth.LLM.Provider
+  @behaviour LLM.Provider
 
-  alias Froth.LLM.{Edit, Message, Request, Store}
+  alias LLM.{Edit, Request, Store}
+  alias LLM.Message
 
   @retryable_response_statuses ["failed", "incomplete"]
 

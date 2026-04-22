@@ -75,7 +75,7 @@ defmodule Froth.Podcast do
      with interruptions rather than a conversation with segments.
   """
 
-  alias Froth.Telemetry.Span
+  alias Span
 
   @default_model "minimax/speech-2.8-hd"
   @default_pause_ms 300

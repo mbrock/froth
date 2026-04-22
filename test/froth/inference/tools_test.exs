@@ -2,28 +2,17 @@ defmodule Froth.Inference.ToolsTest do
   use Froth.TelegramBotCase, async: true
 
   alias Froth.Analysis
-  alias Froth.ApiKey
   alias Froth.Agent.{Cycle, CycleRuntime}
   alias Froth.Context.Block
   alias Froth.Inference.Tools
-  alias Froth.LLM.Message, as: LLMMessage
-  alias Froth.LLM.Request
+  alias LLM.Message, as: LLMMessage
+  alias LLM.Request
   alias Froth.Task
   alias Froth.Telegram.CycleLink
   alias Froth.Telegram.Message, as: TelegramMessage
   alias Froth.Telegram.PendingAsk
   alias Froth.Telegram.SessionConfig
   alias Froth.Telegram.Username
-
-  test "specs_for_api does not expose MCP endpoints even when a Wolfram key is available" do
-    Repo.insert!(%ApiKey{
-      name: "wolfram",
-      provider: "wolfram",
-      key: "wolfram-token"
-    })
-
-    refute Enum.any?(Tools.specs_for_api(), &(&1["type"] == "mcp_endpoint"))
-  end
 
   test "fetch is exposed in tool specs" do
     spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "fetch"))

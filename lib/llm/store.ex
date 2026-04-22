@@ -1,7 +1,7 @@
-defmodule Froth.LLM.Store do
+defmodule LLM.Store do
   @moduledoc false
 
-  alias Froth.LLM.Edit
+  alias LLM.Edit
 
   @type path_segment :: String.t() | integer()
   @type t :: %__MODULE__{

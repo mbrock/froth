@@ -10,7 +10,7 @@ defmodule Froth.Codex.Session do
   use GenServer
 
   alias Froth.Codex.Events, as: CodexEvents
-  alias Froth.Telemetry.Span
+  alias Span
 
   @registry Froth.Codex.SessionRegistry
   @supervisor Froth.Codex.SessionSupervisor

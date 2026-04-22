@@ -1,10 +1,10 @@
-defmodule Froth.LLM.Providers.GeminiInteractionsTest do
+defmodule LLM.Providers.GeminiInteractionsTest do
   use ExUnit.Case, async: true
 
-  alias Froth.LLM.Message
-  alias Froth.LLM.Providers.GeminiInteractions
-  alias Froth.LLM.Request
-  alias Froth.LLM.Store
+  alias LLM.Message
+  alias LLM.Providers.GeminiInteractions
+  alias LLM.Request
+  alias LLM.Store
 
   test "build_request encodes neutral media blocks, tool results, and response modalities" do
     request = %Request{

@@ -1,7 +1,7 @@
-defmodule Froth.LLM.Request do
+defmodule LLM.Request do
   @moduledoc false
 
-  alias Froth.LLM.Message
+  alias LLM.Message
 
   @type t :: %__MODULE__{
           provider: module(),

@@ -63,7 +63,7 @@ defmodule Froth.Application do
       {Finch, name: Froth.Finch},
       {Phoenix.PubSub, name: Froth.PubSub},
       {Task.Supervisor, name: Froth.TaskSupervisor},
-      {Registry, keys: :unique, name: Froth.LLM.Fake.Registry},
+      {Registry, keys: :unique, name: LLM.Fake.Registry},
       cluster_supervisor_child()
     ]
   end

@@ -1,7 +1,7 @@
-defmodule Froth.LLM.Transport.SSETest do
+defmodule LLM.Transport.SSETest do
   use ExUnit.Case, async: true
 
-  alias Froth.LLM.Transport.SSE
+  alias LLM.Transport.SSE
 
   test "flushes a final unterminated event at end of stream" do
     assert {:ok,

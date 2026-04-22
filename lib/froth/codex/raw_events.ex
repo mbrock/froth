@@ -10,7 +10,7 @@ defmodule Froth.Codex.RawEvents do
   import Ecto.Query
 
   alias Froth.Codex.RawEvent
-  alias Froth.Telemetry.Span
+  alias Span
   alias Froth.Repo
 
   @spec append_notification(

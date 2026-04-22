@@ -136,7 +136,7 @@ defmodule Froth.Analyzer.VideoWorker do
   end
 
   defp upload_to_gemini(data, mime_type) do
-    api_key = Froth.LLM.active_api_key(["gemini", "google"])
+    api_key = Froth.ApiKeys.active_key(["gemini", "google"])
 
     url =
       "https://generativelanguage.googleapis.com/upload/v1beta/files?key=#{api_key}"

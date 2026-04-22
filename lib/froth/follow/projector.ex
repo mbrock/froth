@@ -909,7 +909,8 @@ defmodule Froth.Follow.Projector do
   defp hidden_by_default?(
          ["froth", "codex", "notification_received"],
          _metadata
-       ), do: true
+       ),
+       do: true
 
   defp hidden_by_default?(["froth", "codex", "send_raw"], _metadata), do: true
   defp hidden_by_default?(["froth", "http", "sse" | _], _metadata), do: true
@@ -920,7 +921,8 @@ defmodule Froth.Follow.Projector do
   defp hidden_by_default?(
          ["froth", "telegram", "cnode", "output"],
          _metadata
-       ), do: true
+       ),
+       do: true
 
   defp hidden_by_default?(["froth", "telegram", "bot", "update"], metadata) do
     metadata["action"] == "ignore" and

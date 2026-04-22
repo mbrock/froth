@@ -1,4 +1,4 @@
-defmodule Froth.Telemetry.Span do
+defmodule Span do
   @moduledoc """
   Span wrapper that generates IDs and manages parent-child linking.
 

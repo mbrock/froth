@@ -260,7 +260,8 @@ defmodule Froth.DailyDigest do
          _chat_id,
          _opts,
          _extract_headlines_fun
-       ), do: :ok
+       ),
+       do: :ok
 
   defp maybe_generate_missing_headlines(
          sendable_summaries,

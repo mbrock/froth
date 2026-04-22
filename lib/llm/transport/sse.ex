@@ -1,4 +1,4 @@
-defmodule Froth.LLM.Transport.SSE do
+defmodule LLM.Transport.SSE do
   @moduledoc """
   SSE transport for LLM streaming. Posts JSON, consumes a text/event-stream
   response, parses events per RFC 8895, feeds decoded payloads to a callback.
@@ -24,18 +24,19 @@ defmodule Froth.LLM.Transport.SSE do
       when is_binary(url) and is_list(headers) and is_map(body) and
              is_function(fun, 3) do
     receive_timeout = Keyword.get(opts, :receive_timeout, 60_000)
-    finch = Keyword.get(opts, :finch, Froth.Finch)
 
-    request =
-      Req.new(
+    request_opts =
+      [
         method: :post,
         url: url,
         headers: headers ++ [{"content-type", "application/json"}],
         json: body,
         into: :self,
-        receive_timeout: receive_timeout,
-        finch: finch
-      )
+        receive_timeout: receive_timeout
+      ]
+      |> maybe_put_opt(:finch, Keyword.get(opts, :finch))
+
+    request = Req.new(request_opts)
 
     case Req.request(request) do
       {:ok, %Req.Response{status: status, body: async_body}}
@@ -275,4 +276,7 @@ defmodule Froth.LLM.Transport.SSE do
       value
     end
   end
+
+  defp maybe_put_opt(opts, _key, nil), do: opts
+  defp maybe_put_opt(opts, key, value), do: Keyword.put(opts, key, value)
 end

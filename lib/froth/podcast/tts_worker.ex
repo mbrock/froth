@@ -7,7 +7,7 @@ defmodule Froth.Podcast.TtsWorker do
   """
   use Oban.Worker, queue: :podcast, max_attempts: 10
 
-  alias Froth.Telemetry.Span
+  alias Span
 
   @impl true
   def backoff(%Oban.Job{attempt: attempt}) do

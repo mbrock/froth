@@ -11,7 +11,7 @@ defmodule Froth.Tools.RegisterHeadlines do
   alias Froth.Repo
   alias Froth.Telegram.Bot.Config, as: BotConfig
   alias Froth.Telegram.BotAdapter
-  alias Froth.Telemetry.Span
+  alias Span
   alias Froth.Tools.Support
   import Ecto.Query
 
