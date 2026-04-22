@@ -39,8 +39,9 @@ defmodule Froth.Mix.Follow do
 
     Process.flag(:trap_exit, true)
 
-    render_recent_history(mode, filter, tail)
-    loop(node, %{mode: mode, filter: filter})
+    state0 = %{mode: mode, filter: filter, tree: %{}}
+    state1 = render_recent_history(state0, tail)
+    loop(node, state1)
   end
 
   defp parse_args(args) do
@@ -181,9 +182,21 @@ defmodule Froth.Mix.Follow do
       {:event, event} ->
         entry = Entry.from_event(event)
 
-        if Filter.matches?(entry, filter) and Entry.visible?(entry, mode) do
-          IO.puts(render_line(entry))
-        end
+        # Always update the span tree so hierarchy stays accurate —
+        # even for events we're about to hide. Only emit output when
+        # the entry passes the filter and the visibility mode.
+        {depth, tree} = depth_for(entry, state.tree)
+        state = %{state | tree: tree}
+
+        state =
+          cond do
+            !Filter.matches?(entry, filter) -> state
+            !Entry.visible?(entry, mode) -> state
+            dedupe_hidden?(entry) -> state
+            true ->
+              IO.puts(render_entry(entry, depth))
+              state
+          end
 
         loop(node, state)
 
@@ -192,91 +205,259 @@ defmodule Froth.Mix.Follow do
     end
   end
 
-  defp render_recent_history(_mode, _filter, 0), do: :ok
+  defp render_recent_history(state, 0), do: state
 
-  defp render_recent_history(mode, filter, tail) do
+  defp render_recent_history(%{mode: mode, filter: filter} = state, tail) do
+    # Pull a generous history tail so hidden-but-tree-shaping events
+    # (the Span .start events and .cnode debug noise) still populate
+    # the tree, then walk in chronological order.
     entries =
-      Source.recent_entries(filter: filter, limit: tail * 4)
+      Source.recent_entries(filter: filter, limit: tail * 6)
       |> Enum.reverse()
-      |> Enum.filter(&Entry.visible?(&1, mode))
-      |> Enum.take(-tail)
 
-    if entries != [] do
-      IO.puts(
-        "Recent matching entries (last #{length(entries)} shown):\n"
-      )
+    visible_count =
+      entries |> Enum.count(&Entry.visible?(&1, mode)) |> min(tail)
 
-      Enum.each(entries, &IO.puts(render_line(&1)))
+    if visible_count == 0 do
+      state
+    else
+      IO.puts("Recent matching entries (last #{visible_count} shown):\n")
+
+      # Window the entries so we keep the last `tail` visible ones,
+      # along with anything before them needed to seed the tree.
+      entries = last_n_with_context(entries, mode, tail)
+
+      tree =
+        Enum.reduce(entries, state.tree, fn entry, tree ->
+          {depth, tree} = depth_for(entry, tree)
+
+          if Entry.visible?(entry, mode) and not dedupe_hidden?(entry) do
+            IO.puts(render_entry(entry, depth))
+          end
+
+          tree
+        end)
+
       IO.write("\n")
+      %{state | tree: tree}
     end
-
-    :ok
   end
 
-  # Two lines per event:
-  #   family.kind  cycle=… span=… (duration)                     HH:MM:SS
-  #     key=value  key=value  …
-  # The second line is a soft indent with priority-ordered scalar
-  # metadata. Map- and list-valued keys are skipped because they blow
-  # up the line width without ever being legible inline. Colors are a
-  # light accent when the output is a TTY.
-  defp render_line(%Entry{} = entry) do
+  defp last_n_with_context(entries, mode, n) do
+    visible_indexes =
+      entries
+      |> Enum.with_index()
+      |> Enum.filter(fn {e, _i} -> Entry.visible?(e, mode) end)
+      |> Enum.map(fn {_e, i} -> i end)
+
+    case visible_indexes do
+      [] ->
+        entries
+
+      idxs ->
+        first_visible = Enum.at(idxs, max(length(idxs) - n, 0))
+        Enum.drop(entries, first_visible)
+    end
+  end
+
+  # The stream is rendered as a nested tree: each event is placed at
+  # the depth of its span within the open-span ancestry. Opening
+  # events ("*.start" / "*.started") push; closing events ("*.stop"
+  # / "*.completed" / "*.failed" / "*.timed_out" / "*.cancelled" /
+  # "*.exception") pop. Glyphs signal open vs close vs point. The
+  # output is two lines per event:
+  #
+  #     GLYPH  family.kind  verb
+  #       HH:MM:SS  (duration)  key=value  key=value  …
+  #
+  # indented by depth*2 spaces. The indent makes the span tree
+  # legible; removing it is what made the previous flat layout
+  # feel like a dump.
+  defp render_entry(%Entry{} = entry, depth) do
     ansi = IO.ANSI.enabled?()
-    header = render_header(entry, ansi)
+    indent = String.duplicate("  ", depth)
+    header = indent <> render_header(entry, ansi)
 
     case render_meta_line(entry, ansi) do
       nil -> header
-      meta -> header <> "\n" <> meta
+      meta -> header <> "\n" <> indent <> meta
     end
   end
 
-  @indent "    "
+  # Events that only duplicate a sibling. The Span-level
+  # froth.agent.cycle.stop fires alongside the agent-level
+  # cycle.completed/failed/cancelled events but carries only the
+  # raw duration — we hide it so the cycle shows up once with
+  # its rich metadata. The tree still updates from the hidden
+  # event so the span closes correctly.
+  defp dedupe_hidden?(%Entry{event: "froth.agent.cycle.stop"}), do: true
+  defp dedupe_hidden?(_), do: false
 
   defp render_header(%Entry{} = entry, ansi) do
-    [
-      level_tag(entry.level, ansi) <> event_name(entry, ansi),
-      scope_tag(entry, ansi),
-      duration_tag(entry.duration_ms, ansi),
-      dim(format_time(entry.at), ansi)
-    ]
+    glyph = glyph_for(entry, ansi)
+    level = level_tag(entry.level, ansi)
+    name = event_name(entry, ansi)
+    verb = verb_tag(entry, ansi)
+
+    [glyph <> level <> name, verb]
     |> Enum.reject(&(&1 == ""))
     |> Enum.join("  ")
   end
 
-  defp render_meta_line(%Entry{metadata: metadata}, ansi) do
-    case meta_pairs(metadata) do
-      [] ->
-        nil
+  defp render_meta_line(%Entry{} = entry, ansi) do
+    pairs = meta_pairs(entry.metadata)
+    time = dim(format_time(entry.at), ansi)
+    duration = duration_tag(entry.duration_ms, ansi)
 
-      pairs ->
-        body =
-          pairs
-          |> Enum.map_join("  ", fn {k, v} ->
-            dim(k, ansi) <> "=" <> v
-          end)
+    body =
+      pairs
+      |> Enum.map_join("  ", fn {k, v} -> dim(k, ansi) <> "=" <> v end)
 
-        @indent <> truncate(body, 180)
+    parts =
+      ["  " <> time, duration, body]
+      |> Enum.reject(&(&1 in ["", "  "]))
+
+    case parts do
+      ["  " <> _ = first] when pairs == [] and duration == "" -> first
+      parts -> Enum.join(parts, "  ")
+    end
+    |> case do
+      "" -> nil
+      line -> truncate(line, 200)
+    end
+  end
+
+  # Span tree tracking. Each entry may open a new span, close an
+  # existing one, or fire as a point event inside one. We identify
+  # the span by `span_id`, fall back to `parent_id` for nesting of
+  # fresh spans, and for spanless events (like message.appended) we
+  # ask "what's the deepest currently-open span in this cycle?" and
+  # tuck them in one level below it.
+  defp depth_for(%Entry{} = entry, tree) do
+    close? = close_event?(entry)
+    open? = open_event?(entry)
+    sid = entry.span_id
+
+    cond do
+      is_binary(sid) and Map.has_key?(tree, sid) ->
+        # already-known span — close or point-in-span
+        depth = tree[sid].depth
+        tree = if close?, do: Map.delete(tree, sid), else: tree
+        {depth, tree}
+
+      is_binary(sid) and open? ->
+        parent_depth =
+          case entry.parent_id do
+            p when is_binary(p) ->
+              case Map.get(tree, p) do
+                %{depth: d} -> d
+                _ -> -1
+              end
+
+            _ ->
+              -1
+          end
+
+        depth = parent_depth + 1
+        {depth, Map.put(tree, sid, %{depth: depth, cycle_id: entry.cycle_id})}
+
+      is_binary(sid) ->
+        # new point event with a span_id we haven't seen — treat as
+        # floating under its parent if any, else at top.
+        parent_depth =
+          case entry.parent_id do
+            p when is_binary(p) ->
+              case Map.get(tree, p) do
+                %{depth: d} -> d
+                _ -> -1
+              end
+
+            _ ->
+              -1
+          end
+
+        {parent_depth + 1, tree}
+
+      is_binary(entry.cycle_id) ->
+        # spanless event (e.g. message.appended) — tuck it one level
+        # below the deepest open span in this cycle.
+        depth =
+          tree
+          |> Map.values()
+          |> Enum.filter(&(&1.cycle_id == entry.cycle_id))
+          |> Enum.map(& &1.depth)
+          |> Enum.max(fn -> -1 end)
+
+        {depth + 1, tree}
+
+      true ->
+        {0, tree}
+    end
+  end
+
+  @open_suffixes ~w(.start .started)
+  @close_suffixes ~w(
+    .stop .completed .failed .timed_out .cancelled .exception
+  )
+
+  defp open_event?(%Entry{event: name}),
+    do: Enum.any?(@open_suffixes, &String.ends_with?(name, &1))
+
+  defp close_event?(%Entry{event: name}),
+    do: Enum.any?(@close_suffixes, &String.ends_with?(name, &1))
+
+  defp glyph_for(%Entry{} = entry, ansi) do
+    cond do
+      entry.level == :error ->
+        color(ansi, [:red, :bright], "✗ ")
+
+      close_event?(entry) ->
+        color(ansi, [:green], "● ")
+
+      open_event?(entry) ->
+        color(ansi, [:yellow], "∘ ")
+
+      true ->
+        dim("· ", ansi)
+    end
+  end
+
+  defp verb_tag(%Entry{event: name}, ansi) do
+    cond do
+      String.ends_with?(name, ".start") -> color(ansi, [:faint], "started")
+      String.ends_with?(name, ".started") -> color(ansi, [:faint], "started")
+      String.ends_with?(name, ".stop") -> color(ansi, [:faint], "completed")
+      String.ends_with?(name, ".completed") -> color(ansi, [:faint], "completed")
+      String.ends_with?(name, ".failed") -> color(ansi, [:red], "failed")
+      String.ends_with?(name, ".timed_out") -> color(ansi, [:red], "timed out")
+      String.ends_with?(name, ".cancelled") -> color(ansi, [:faint], "cancelled")
+      String.ends_with?(name, ".exception") -> color(ansi, [:red], "exception")
+      true -> ""
     end
   end
 
   defp event_name(%Entry{event: event, family: family, kind: kind}, ansi) do
     if String.starts_with?(event, "froth.") do
-      colorize_family(family, ansi) <> dim(".", ansi) <> kind
+      # Strip the verb suffix from kind; the verb renders separately.
+      base =
+        kind
+        |> String.replace_suffix(".start", "")
+        |> String.replace_suffix(".started", "")
+        |> String.replace_suffix(".stop", "")
+        |> String.replace_suffix(".completed", "")
+        |> String.replace_suffix(".failed", "")
+        |> String.replace_suffix(".timed_out", "")
+        |> String.replace_suffix(".cancelled", "")
+        |> String.replace_suffix(".exception", "")
+
+      family_colored = colorize_family(family, ansi)
+
+      case base do
+        "" -> family_colored
+        bare -> family_colored <> dim(".", ansi) <> bare
+      end
     else
       event
-    end
-  end
-
-  defp scope_tag(%Entry{cycle_id: cycle_id, span_id: span_id}, ansi) do
-    [
-      cycle_id && "cycle=" <> String.slice(cycle_id, 0, 12),
-      span_id && "span=" <> String.slice(span_id, 0, 12)
-    ]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.join(" ")
-    |> case do
-      "" -> ""
-      s -> dim(s, ansi)
     end
   end
 
