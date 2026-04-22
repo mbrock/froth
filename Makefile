@@ -1,4 +1,4 @@
-.PHONY: setup cnode tgcalls-smoke tgcalls-plugin tgcalls-runtime-smoke install nif
+.PHONY: setup cnode tgcalls-smoke tgcalls-plugin install nif dev-db-up dev-db-down dev-db-logs dev-full
 
 ERTS_INCLUDE := $(shell erl -noshell -eval 'io:format("~s/erts-~s/include", [code:root_dir(), erlang:system_info(version)])' -s init stop)
 
@@ -15,9 +15,6 @@ tgcalls-smoke:
 tgcalls-plugin:
 	bin/build_tgcalls_register_plugin
 
-tgcalls-runtime-smoke: tgcalls-plugin
-	mix froth.tgcalls.smoke
-
 nif: priv/speex_resample_nif.so
 
 priv/speex_resample_nif.so: c_src/speex_resample_nif.c
@@ -28,3 +25,15 @@ install:
 	ln -sf /srv/froth/froth.service $(HOME)/.config/systemd/user/froth.service
 	systemctl --user daemon-reload
 	systemctl --user enable --now froth
+
+dev-db-up:
+	bin/dev_db up
+
+dev-db-down:
+	bin/dev_db down
+
+dev-db-logs:
+	bin/dev_db logs
+
+dev-full:
+	bin/dev_full

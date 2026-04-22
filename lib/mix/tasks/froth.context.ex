@@ -18,6 +18,7 @@ defmodule Mix.Tasks.Froth.Context do
   use Mix.Task
 
   alias Froth.Agent.{Cycle, Message}
+  alias Froth.Mix.LiveNode
 
   @impl Mix.Task
   def run(args) do
@@ -31,7 +32,7 @@ defmodule Mix.Tasks.Froth.Context do
         ]
       )
 
-    node = connect!()
+    node = LiveNode.connect!("froth_context")
 
     case Keyword.get(opts, :cycle) do
       cycle_id when is_binary(cycle_id) and cycle_id != "" ->
@@ -328,26 +329,6 @@ defmodule Mix.Tasks.Froth.Context do
   end
 
   defp response_id_from_message_id(_metadata), do: nil
-
-  defp connect! do
-    node = Froth.Cluster.rpc_target_node()
-
-    cookie =
-      case System.get_env("ERLANG_COOKIE") do
-        nil -> File.read!(Path.expand("~/.erlang.cookie")) |> String.trim()
-        val -> val
-      end
-
-    Node.start(:"froth_context_#{System.pid()}", name_domain: :shortnames)
-    Node.set_cookie(String.to_atom(cookie))
-
-    unless Node.connect(node) do
-      Mix.shell().error("Could not connect to #{node}")
-      System.halt(1)
-    end
-
-    node
-  end
 
   defp abort(message) do
     Mix.shell().error(message)

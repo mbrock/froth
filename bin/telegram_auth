@@ -1,0 +1,33 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+APP_ROOT="${FROTH_APP_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}"
+
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/runtime_env.sh"
+load_froth_env "$APP_ROOT"
+
+if [ $# -lt 1 ]; then
+  echo "Usage: bin/telegram_auth SESSION_ID [--print-updates important|all|false] [--use-bot]" >&2
+  exit 1
+fi
+
+SESSION_ID="$1"
+shift
+
+USE_BOT=0
+for arg in "$@"; do
+  if [ "$arg" = "--use-bot" ]; then
+    USE_BOT=1
+    break
+  fi
+done
+
+cd "$APP_ROOT"
+
+if [ "$USE_BOT" -eq 1 ]; then
+  exec mix froth.telegram.auth --session "$SESSION_ID" "$@"
+else
+  exec mix froth.telegram.auth --session "$SESSION_ID" --user "$@"
+fi

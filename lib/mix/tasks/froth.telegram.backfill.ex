@@ -15,6 +15,8 @@ defmodule Mix.Tasks.Froth.Telegram.Backfill do
 
   use Mix.Task
 
+  alias Froth.Mix.LiveNode
+
   @impl Mix.Task
   def run(args) do
     {opts, _positional, invalid} =
@@ -39,7 +41,7 @@ defmodule Mix.Tasks.Froth.Telegram.Backfill do
       abort("--chat-limit must be a positive integer")
     end
 
-    node = connect!()
+    node = LiveNode.connect!("telegram_backfill")
     gl = Process.group_leader()
     session_id = Keyword.get(opts, :session) || resolve_session_id(node, gl)
 
@@ -108,25 +110,6 @@ defmodule Mix.Tasks.Froth.Telegram.Backfill do
             "Pass --session SESSION_ID."
         )
     end
-  end
-
-  defp connect! do
-    node = Froth.Cluster.rpc_target_node()
-
-    cookie =
-      case System.get_env("ERLANG_COOKIE") do
-        nil -> File.read!(Path.expand("~/.erlang.cookie")) |> String.trim()
-        val -> val
-      end
-
-    Node.start(:"telegram_backfill_#{System.pid()}", name_domain: :shortnames)
-    Node.set_cookie(String.to_atom(cookie))
-
-    unless Node.connect(node) do
-      abort("Could not connect to #{node}")
-    end
-
-    node
   end
 
   defp abort(msg) do

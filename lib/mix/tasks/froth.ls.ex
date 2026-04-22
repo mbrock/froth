@@ -15,6 +15,8 @@ defmodule Mix.Tasks.Froth.Ls do
 
   use Mix.Task
 
+  alias Froth.Mix.LiveNode
+
   @impl Mix.Task
   def run(args) do
     {opts, _positional, invalid} =
@@ -31,7 +33,7 @@ defmodule Mix.Tasks.Froth.Ls do
       abort("--limit must be a positive integer")
     end
 
-    node = connect!()
+    node = LiveNode.connect!("froth_ls")
     gl = Process.group_leader()
 
     Mix.shell().info("Inspecting #{node}...")
@@ -107,8 +109,17 @@ defmodule Mix.Tasks.Froth.Ls do
         }
       end)
 
+    chat_source =
+      if is_binary(session_filter) and session_filter != "" do
+        from(m in "telegram_messages",
+          where: m.telegram_session_id == ^session_filter
+        )
+      else
+        "telegram_messages"
+      end
+
     chat_query =
-      from(m in "telegram_messages",
+      from(m in chat_source,
         group_by: [m.telegram_session_id, m.chat_id],
         select: %{
           session_id: m.telegram_session_id,
@@ -121,13 +132,6 @@ defmodule Mix.Tasks.Froth.Ls do
         order_by: [desc: max(m.inserted_at)],
         limit: ^limit
       )
-
-    chat_query =
-      if is_binary(session_filter) and session_filter != "" do
-        from(m in chat_query, where: m.session_id == ^session_filter)
-      else
-        chat_query
-      end
 
     chats = Froth.Repo.all(chat_query, log: false)
 
@@ -177,25 +181,6 @@ defmodule Mix.Tasks.Froth.Ls do
     unix
     |> DateTime.from_unix!()
     |> Calendar.strftime("%Y-%m-%d %H:%M:%S")
-  end
-
-  defp connect! do
-    node = Froth.Cluster.rpc_target_node()
-
-    cookie =
-      case System.get_env("ERLANG_COOKIE") do
-        nil -> File.read!(Path.expand("~/.erlang.cookie")) |> String.trim()
-        val -> val
-      end
-
-    Node.start(:"froth_ls_#{System.pid()}", name_domain: :shortnames)
-    Node.set_cookie(String.to_atom(cookie))
-
-    unless Node.connect(node) do
-      abort("Could not connect to #{node}")
-    end
-
-    node
   end
 
   defp abort(msg) do

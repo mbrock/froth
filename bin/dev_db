@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONTAINER_NAME="${FROTH_DEV_DB_CONTAINER:-froth-dev-postgres}"
+IMAGE="${FROTH_DEV_DB_IMAGE:-postgres:17}"
+PORT="${FROTH_DEV_DB_PORT:-5432}"
+USER_NAME="${FROTH_DEV_DB_USER:-froth}"
+PASSWORD="${FROTH_DEV_DB_PASSWORD:-froth}"
+VOLUME_NAME="${FROTH_DEV_DB_VOLUME:-froth-dev-postgres-data}"
+
+usage() {
+  cat <<EOF
+Usage: bin/dev_db <up|down|logs|psql|status>
+
+Environment overrides:
+  FROTH_DEV_DB_CONTAINER   container name    (default: $CONTAINER_NAME)
+  FROTH_DEV_DB_IMAGE       image             (default: $IMAGE)
+  FROTH_DEV_DB_PORT        host port         (default: $PORT)
+  FROTH_DEV_DB_USER        postgres user     (default: $USER_NAME)
+  FROTH_DEV_DB_PASSWORD    postgres password (default: $PASSWORD)
+  FROTH_DEV_DB_VOLUME      docker volume     (default: $VOLUME_NAME)
+EOF
+}
+
+require_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "docker is required for bin/dev_db" >&2
+    exit 1
+  fi
+
+  if ! docker info >/dev/null 2>&1; then
+    echo "docker daemon is not running" >&2
+    exit 1
+  fi
+}
+
+container_exists() {
+  docker ps -a --format '{{.Names}}' | grep -Fxq "$CONTAINER_NAME"
+}
+
+container_running() {
+  docker ps --format '{{.Names}}' | grep -Fxq "$CONTAINER_NAME"
+}
+
+wait_ready() {
+  local attempt=0
+
+  until docker exec "$CONTAINER_NAME" pg_isready -U "$USER_NAME" >/dev/null 2>&1; do
+    attempt=$((attempt + 1))
+
+    if [ "$attempt" -ge 30 ]; then
+      echo "postgres did not become ready in time" >&2
+      exit 1
+    fi
+
+    sleep 1
+  done
+}
+
+cmd="${1:-}"
+
+case "$cmd" in
+  up)
+    require_docker
+
+    if container_running; then
+      echo "$CONTAINER_NAME is already running on port $PORT"
+      exit 0
+    fi
+
+    if container_exists; then
+      docker start "$CONTAINER_NAME" >/dev/null
+    else
+      docker run -d \
+        --name "$CONTAINER_NAME" \
+        -e POSTGRES_USER="$USER_NAME" \
+        -e POSTGRES_PASSWORD="$PASSWORD" \
+        -p "$PORT:5432" \
+        -v "$VOLUME_NAME:/var/lib/postgresql/data" \
+        "$IMAGE" >/dev/null
+    fi
+
+    wait_ready
+    echo "$CONTAINER_NAME is ready on localhost:$PORT"
+    ;;
+  down)
+    require_docker
+
+    if container_running; then
+      docker stop "$CONTAINER_NAME" >/dev/null
+      echo "$CONTAINER_NAME stopped"
+    else
+      echo "$CONTAINER_NAME is not running"
+    fi
+    ;;
+  logs)
+    require_docker
+    exec docker logs -f "$CONTAINER_NAME"
+    ;;
+  psql)
+    require_docker
+    exec docker exec -it "$CONTAINER_NAME" psql -U "$USER_NAME"
+    ;;
+  status)
+    require_docker
+    docker ps -a --filter "name=^${CONTAINER_NAME}$" \
+      --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+    ;;
+  *)
+    usage >&2
+    exit 1
+    ;;
+esac

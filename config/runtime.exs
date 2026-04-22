@@ -55,11 +55,13 @@ config :froth, :node_role, node_role
 #
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
-if System.get_env("PHX_SERVER") do
+if config_env() != :test and System.get_env("PHX_SERVER") do
   config :froth, FrothWeb.Endpoint, server: true
 end
 
-config :froth, FrothWeb.Endpoint, http: endpoint_http
+if config_env() != :test do
+  config :froth, FrothWeb.Endpoint, http: endpoint_http
+end
 
 config :froth, Froth.Telemetry.Store,
   enabled: config_env() != :test and node_role != :worker

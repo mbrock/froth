@@ -4,7 +4,16 @@
 #    or: echo 'IO.puts("hello")' | bin/rpc
 set -e
 COOKIE="${ERLANG_COOKIE:-$(cat ~/.erlang.cookie 2>/dev/null)}"
-NODE="${RPC_NODE:-froth@$(hostname -s)}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+APP_ROOT="${FROTH_APP_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}"
+
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/runtime_env.sh"
+load_froth_env "$APP_ROOT"
+
+NODE="${RPC_NODE:-$(froth_node_name)}"
+CLIENT_NODE="$(froth_rpc_client_name "$NODE")"
+set_froth_elixir_node_args "$CLIENT_NODE"
 
 if [ $# -gt 0 ]; then
   CODE="$1"
@@ -27,4 +36,4 @@ result = :rpc.call(:"${NODE}", Froth.RPC, :eval, [gl, code])
 IO.inspect(result, limit: :infinity, printable_limit: :infinity)
 ENDSCRIPT
 
-exec elixir --sname "rpc_$$" --cookie "$COOKIE" "$RUNNER"
+exec elixir "$FROTH_ELIXIR_NODE_FLAG" "$FROTH_ELIXIR_NODE_VALUE" --cookie "$COOKIE" "$RUNNER"

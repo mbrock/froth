@@ -33,42 +33,10 @@ defmodule Froth.Telegram.Auth do
   def run(session_id \\ "default", opts \\ []) do
     _ = stop()
 
-    use_bot = Keyword.get(opts, :use_bot, true)
-    print_updates = Keyword.get(opts, :print_updates, :all)
-
     pid =
       spawn(fn ->
         try do
-          :ok = Froth.Telegram.subscribe(session_id)
-
-          Froth.Telegram.send(session_id, %{
-            "@type" => "getAuthorizationState"
-          })
-
-          # Load defaults from DB config if available
-          db_config =
-            case Froth.Repo.get(Froth.Telegram.SessionConfig, session_id) do
-              nil -> %{}
-              sc -> Froth.Telegram.SessionConfig.to_session_config(sc)
-            end
-
-          loop(%{
-            session_id: session_id,
-            db_config: db_config,
-            use_bot: use_bot,
-            print_updates: print_updates,
-            api_id: Keyword.get(opts, :api_id) || db_config[:api_id],
-            api_hash: Keyword.get(opts, :api_hash) || db_config[:api_hash],
-            prompted_api?: false,
-            sent_tdlib_parameters?: false,
-            sent_encryption_key?: false,
-            sent_bot_token?: false,
-            sent_phone?: false,
-            sent_code?: false,
-            sent_password?: false,
-            ready?: false,
-            last_auth_type: nil
-          })
+          run_loop(session_id, opts)
         rescue
           e ->
             IO.puts("[tdlib] auth helper crashed: #{Exception.message(e)}")
@@ -78,6 +46,17 @@ defmodule Froth.Telegram.Auth do
 
     Process.register(pid, @name)
     {:ok, pid}
+  end
+
+  @doc """
+  Drive TDLib authentication in the current process until it reaches
+  `authorizationStateReady`, then return `{:ok, :ready}`.
+
+  Intended for terminal wrappers that authenticate via RPC without `iex`.
+  """
+  def run_blocking(session_id \\ "default", opts \\ []) do
+    _ = stop()
+    run_loop(session_id, Keyword.put(opts, :stop_on_ready, true))
   end
 
   @doc "Stop the currently running auth loop (if any)."
@@ -123,6 +102,46 @@ defmodule Froth.Telegram.Auth do
     IO.puts(line)
   end
 
+  defp run_loop(session_id, opts) do
+    use_bot = Keyword.get(opts, :use_bot, true)
+
+    print_updates =
+      normalize_print_updates(Keyword.get(opts, :print_updates, :important))
+
+    stop_on_ready? = Keyword.get(opts, :stop_on_ready, false)
+
+    :ok = Froth.Telegram.subscribe(session_id)
+
+    Froth.Telegram.send(session_id, %{
+      "@type" => "getAuthorizationState"
+    })
+
+    db_config =
+      case Froth.Repo.get(Froth.Telegram.SessionConfig, session_id) do
+        nil -> %{}
+        sc -> Froth.Telegram.SessionConfig.to_session_config(sc)
+      end
+
+    loop(%{
+      session_id: session_id,
+      db_config: db_config,
+      use_bot: use_bot,
+      print_updates: print_updates,
+      stop_on_ready?: stop_on_ready?,
+      api_id: Keyword.get(opts, :api_id) || db_config[:api_id],
+      api_hash: Keyword.get(opts, :api_hash) || db_config[:api_hash],
+      prompted_api?: false,
+      sent_tdlib_parameters?: false,
+      sent_encryption_key?: false,
+      sent_bot_token?: false,
+      sent_phone?: false,
+      sent_code?: false,
+      sent_password?: false,
+      ready?: false,
+      last_auth_type: nil
+    })
+  end
+
   defp loop(state) do
     receive do
       {:telegram_update, %{"@type" => "error"} = err} ->
@@ -131,10 +150,15 @@ defmodule Froth.Telegram.Auth do
         state =
           case err do
             %{"code" => 400, "message" => msg} when is_binary(msg) ->
-              maybe_prompt_api(state, msg)
+              state
+              |> maybe_prompt_api(msg)
+              |> reset_retry_state()
+              |> retry_last_auth_state()
 
             _ ->
               state
+              |> reset_retry_state()
+              |> retry_last_auth_state()
           end
 
         loop(state)
@@ -166,12 +190,12 @@ defmodule Froth.Telegram.Auth do
 
       {:telegram_update, %{"@type" => "authorizationStateReady"} = auth_state} ->
         state = handle_auth_state(auth_state, state)
-        loop(state)
+        maybe_finish(state)
 
       {:telegram_update, %{"@type" => "updateAuthorizationState"} = upd} ->
         auth_state = get_in(upd, ["authorization_state"]) || %{}
         state = handle_auth_state(auth_state, state)
-        loop(state)
+        maybe_finish(state)
 
       {:telegram_update,
        %{
@@ -179,7 +203,13 @@ defmodule Froth.Telegram.Auth do
          "name" => name,
          "value" => %{"value" => v}
        } = _upd} ->
-        log(state, :dim, "option #{name}=#{v}")
+        if should_print_update?(
+             %{"@type" => "updateOption"},
+             state.print_updates
+           ) do
+          log(state, :dim, "option #{name}=#{v}")
+        end
+
         loop(state)
 
       {:telegram_update, %{"@type" => "updateOption"} = _upd} ->
@@ -203,6 +233,12 @@ defmodule Froth.Telegram.Auth do
         loop(state)
     end
   end
+
+  defp maybe_finish(%{ready?: true, stop_on_ready?: true}) do
+    {:ok, :ready}
+  end
+
+  defp maybe_finish(state), do: loop(state)
 
   defp handle_auth_state(
          %{"@type" => "authorizationStateWaitTdlibParameters"},
@@ -362,9 +398,7 @@ defmodule Froth.Telegram.Auth do
   end
 
   defp print_update(upd, state) do
-    if state.print_updates == false do
-      :ok
-    else
+    if should_print_update?(upd, state.print_updates) do
       case upd do
         %{"@type" => "error", "code" => code, "message" => msg} ->
           log(state, :err, "#{code}: #{msg}")
@@ -389,8 +423,29 @@ defmodule Froth.Telegram.Auth do
         other ->
           log(state, :dim, inspect(other))
       end
+    else
+      :ok
     end
   end
+
+  defp should_print_update?(_upd, false), do: false
+  defp should_print_update?(_upd, :all), do: true
+  defp should_print_update?(%{"@type" => "error"}, :important), do: true
+  defp should_print_update?(%{"@type" => "user"}, :important), do: true
+
+  defp should_print_update?(
+         %{"@type" => "authorizationState" <> _},
+         :important
+       ),
+       do: true
+
+  defp should_print_update?(
+         %{"@type" => "updateAuthorizationState"},
+         :important
+       ),
+       do: true
+
+  defp should_print_update?(_upd, :important), do: false
 
   defp print_message(state, msg) do
     chat_id = msg["chat_id"]
@@ -490,6 +545,53 @@ defmodule Froth.Telegram.Auth do
       state
     end
   end
+
+  defp reset_retry_state(
+         %{last_auth_type: "authorizationStateWaitTdlibParameters"} = state
+       ) do
+    %{state | sent_tdlib_parameters?: false}
+  end
+
+  defp reset_retry_state(
+         %{last_auth_type: "authorizationStateWaitEncryptionKey"} = state
+       ) do
+    %{state | sent_encryption_key?: false}
+  end
+
+  defp reset_retry_state(
+         %{last_auth_type: "authorizationStateWaitPhoneNumber"} = state
+       ) do
+    %{state | sent_phone?: false, sent_bot_token?: false}
+  end
+
+  defp reset_retry_state(
+         %{last_auth_type: "authorizationStateWaitCode"} = state
+       ) do
+    %{state | sent_code?: false}
+  end
+
+  defp reset_retry_state(
+         %{last_auth_type: "authorizationStateWaitPassword"} = state
+       ) do
+    %{state | sent_password?: false}
+  end
+
+  defp reset_retry_state(state), do: state
+
+  defp retry_last_auth_state(%{last_auth_type: nil} = state), do: state
+
+  defp retry_last_auth_state(%{last_auth_type: type} = state) do
+    handle_auth_state(%{"@type" => type}, state)
+  end
+
+  defp normalize_print_updates(false), do: false
+  defp normalize_print_updates(:important), do: :important
+  defp normalize_print_updates(:all), do: :all
+  defp normalize_print_updates("false"), do: false
+  defp normalize_print_updates("important"), do: :important
+  defp normalize_print_updates("all"), do: :all
+  defp normalize_print_updates(nil), do: :important
+  defp normalize_print_updates(_), do: :important
 
   defp to_required!(nil, name), do: raise("#{name} is not set")
   defp to_required!("", name), do: raise("#{name} is not set")

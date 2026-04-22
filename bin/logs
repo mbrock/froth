@@ -1,5 +1,17 @@
-#!/bin/bash
-# Tail froth logs. Pass extra journalctl args if you want.
-# Usage: bin/logs        (follow)
-#        bin/logs -n 100  (last 100 lines)
-exec journalctl --user -u froth -o cat --no-hostname "$@"
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+case "$(uname -s)" in
+  Darwin)
+    exec "$SCRIPT_DIR/launch_agent" logs "$@"
+    ;;
+  Linux)
+    exec journalctl --user -u froth -o cat --no-hostname "$@"
+    ;;
+  *)
+    echo "Unsupported OS for bin/logs" >&2
+    exit 1
+    ;;
+esac

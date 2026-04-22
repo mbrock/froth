@@ -15,8 +15,14 @@ if(NOT EXISTS "${TDLIB_DIR}/CMakeLists.txt")
   message(FATAL_ERROR "TDLib submodule not found at ${TDLIB_DIR}. Did you run `git submodule update --init --recursive`?")
 endif()
 
+option(FROTH_TDLIB_CNODE_ENABLE_TGCALLS
+  "Build TgCalls support into froth_tdlib_cnode"
+  ON
+)
+
 set(TGCALLS_DIR "${FROTH_PROJECT_ROOT}/vendor/tgcalls")
-if(NOT EXISTS "${TGCALLS_DIR}/tgcalls/Instance.cpp")
+if((FROTH_TDLIB_CNODE_ENABLE_TGCALLS OR FROTH_TGCALLS_BUILD_REGISTER_PLUGIN) AND
+   NOT EXISTS "${TGCALLS_DIR}/tgcalls/Instance.cpp")
   message(FATAL_ERROR "tgcalls submodule not found at ${TGCALLS_DIR}. Did you run `git submodule update --init --recursive`?")
 endif()
 
@@ -116,56 +122,58 @@ if(NOT EI_LIB)
   message(FATAL_ERROR "Failed to find libei under ${ERL_ROOT}/usr/lib")
 endif()
 
-set(FROTH_TGCALLS_FULL_SOURCES
-  src/tgcalls_compat_shim.cpp
-  src/tgcalls_register_plugin.cpp
-  "${TGCALLS_DIR}/tgcalls/Instance.cpp"
-  "${TGCALLS_DIR}/tgcalls/InstanceImpl.cpp"
-  "${TGCALLS_DIR}/tgcalls/Manager.cpp"
-  "${TGCALLS_DIR}/tgcalls/MediaManager.cpp"
-  "${TGCALLS_DIR}/tgcalls/Message.cpp"
-  "${TGCALLS_DIR}/tgcalls/EncryptedConnection.cpp"
-  "${TGCALLS_DIR}/tgcalls/NetworkManager.cpp"
-  "${TGCALLS_DIR}/tgcalls/ThreadLocalObject.cpp"
-  "${TGCALLS_DIR}/tgcalls/StaticThreads.cpp"
-  "${TGCALLS_DIR}/tgcalls/FieldTrialsConfig.cpp"
-  "${TGCALLS_DIR}/tgcalls/ChannelManager.cpp"
-  "${TGCALLS_DIR}/tgcalls/CodecSelectHelper.cpp"
-  "${TGCALLS_DIR}/tgcalls/CryptoHelper.cpp"
-  "${TGCALLS_DIR}/tgcalls/SctpDataChannelProviderInterfaceImpl.cpp"
-  "${TGCALLS_DIR}/tgcalls/LogSinkImpl.cpp"
-  "${TGCALLS_DIR}/tgcalls/TurnCustomizerImpl.cpp"
-  "${TGCALLS_DIR}/tgcalls/AudioDeviceHelper.cpp"
-  "${TGCALLS_DIR}/tgcalls/VideoCaptureInterface.cpp"
-  "${TGCALLS_DIR}/tgcalls/VideoCaptureInterfaceImpl.cpp"
-  "${TGCALLS_DIR}/tgcalls/FakeVideoTrackSource.cpp"
-  "${TGCALLS_DIR}/tgcalls/FakeAudioDeviceModule.cpp"
-  "${TGCALLS_DIR}/tgcalls/third-party/json11.cpp"
-  "${TGCALLS_DIR}/tgcalls/utils/gzip.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2/InstanceV2Impl.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2/ContentNegotiation.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2/DirectNetworkingImpl.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2/ExternalSignalingConnection.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2/NativeNetworkingImpl.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2/RawTcpSocket.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2/ReflectorPort.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2/ReflectorRelayPortFactory.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2/Signaling.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2/SignalingConnection.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2/SignalingEncryption.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2/SignalingSctpConnection.cpp"
-  "${TGCALLS_DIR}/tgcalls/v2_4_0_0/Signaling_4_0_0.cpp"
-  "${TGCALLS_DIR}/tgcalls/platform/fake/FakeInterface.cpp"
-  "${TGCALLS_DIR}/tgcalls/group/AVIOContextImpl.cpp"
-  "${TGCALLS_DIR}/tgcalls/group/AudioStreamingPart.cpp"
-  "${TGCALLS_DIR}/tgcalls/group/AudioStreamingPartInternal.cpp"
-  "${TGCALLS_DIR}/tgcalls/group/AudioStreamingPartPersistentDecoder.cpp"
-  "${TGCALLS_DIR}/tgcalls/group/GroupInstanceCustomImpl.cpp"
-  "${TGCALLS_DIR}/tgcalls/group/GroupJoinPayloadInternal.cpp"
-  "${TGCALLS_DIR}/tgcalls/group/GroupNetworkManager.cpp"
-  "${TGCALLS_DIR}/tgcalls/group/StreamingMediaContext.cpp"
-  "${TGCALLS_DIR}/tgcalls/group/VideoStreamingPart.cpp"
-)
+if(FROTH_TDLIB_CNODE_ENABLE_TGCALLS)
+  set(FROTH_TGCALLS_FULL_SOURCES
+    src/tgcalls_compat_shim.cpp
+    src/tgcalls_register_plugin.cpp
+    "${TGCALLS_DIR}/tgcalls/Instance.cpp"
+    "${TGCALLS_DIR}/tgcalls/InstanceImpl.cpp"
+    "${TGCALLS_DIR}/tgcalls/Manager.cpp"
+    "${TGCALLS_DIR}/tgcalls/MediaManager.cpp"
+    "${TGCALLS_DIR}/tgcalls/Message.cpp"
+    "${TGCALLS_DIR}/tgcalls/EncryptedConnection.cpp"
+    "${TGCALLS_DIR}/tgcalls/NetworkManager.cpp"
+    "${TGCALLS_DIR}/tgcalls/ThreadLocalObject.cpp"
+    "${TGCALLS_DIR}/tgcalls/StaticThreads.cpp"
+    "${TGCALLS_DIR}/tgcalls/FieldTrialsConfig.cpp"
+    "${TGCALLS_DIR}/tgcalls/ChannelManager.cpp"
+    "${TGCALLS_DIR}/tgcalls/CodecSelectHelper.cpp"
+    "${TGCALLS_DIR}/tgcalls/CryptoHelper.cpp"
+    "${TGCALLS_DIR}/tgcalls/SctpDataChannelProviderInterfaceImpl.cpp"
+    "${TGCALLS_DIR}/tgcalls/LogSinkImpl.cpp"
+    "${TGCALLS_DIR}/tgcalls/TurnCustomizerImpl.cpp"
+    "${TGCALLS_DIR}/tgcalls/AudioDeviceHelper.cpp"
+    "${TGCALLS_DIR}/tgcalls/VideoCaptureInterface.cpp"
+    "${TGCALLS_DIR}/tgcalls/VideoCaptureInterfaceImpl.cpp"
+    "${TGCALLS_DIR}/tgcalls/FakeVideoTrackSource.cpp"
+    "${TGCALLS_DIR}/tgcalls/FakeAudioDeviceModule.cpp"
+    "${TGCALLS_DIR}/tgcalls/third-party/json11.cpp"
+    "${TGCALLS_DIR}/tgcalls/utils/gzip.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2/InstanceV2Impl.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2/ContentNegotiation.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2/DirectNetworkingImpl.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2/ExternalSignalingConnection.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2/NativeNetworkingImpl.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2/RawTcpSocket.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2/ReflectorPort.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2/ReflectorRelayPortFactory.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2/Signaling.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2/SignalingConnection.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2/SignalingEncryption.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2/SignalingSctpConnection.cpp"
+    "${TGCALLS_DIR}/tgcalls/v2_4_0_0/Signaling_4_0_0.cpp"
+    "${TGCALLS_DIR}/tgcalls/platform/fake/FakeInterface.cpp"
+    "${TGCALLS_DIR}/tgcalls/group/AVIOContextImpl.cpp"
+    "${TGCALLS_DIR}/tgcalls/group/AudioStreamingPart.cpp"
+    "${TGCALLS_DIR}/tgcalls/group/AudioStreamingPartInternal.cpp"
+    "${TGCALLS_DIR}/tgcalls/group/AudioStreamingPartPersistentDecoder.cpp"
+    "${TGCALLS_DIR}/tgcalls/group/GroupInstanceCustomImpl.cpp"
+    "${TGCALLS_DIR}/tgcalls/group/GroupJoinPayloadInternal.cpp"
+    "${TGCALLS_DIR}/tgcalls/group/GroupNetworkManager.cpp"
+    "${TGCALLS_DIR}/tgcalls/group/StreamingMediaContext.cpp"
+    "${TGCALLS_DIR}/tgcalls/group/VideoStreamingPart.cpp"
+  )
+endif()
 
 if(FROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN)
   if(FROTH_WEBRTC_OUT STREQUAL "")
@@ -286,8 +294,6 @@ if(FROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN)
     "${EI_INCLUDE_DIR}"
     "${TDLIB_DIR}"
     "${FROTH_TDJSON_INCLUDE_DIR}"
-    "${TGCALLS_DIR}"
-    "${TGCALLS_DIR}/tgcalls"
     "${FROTH_WEBRTC_ROOT}"
     "${FROTH_WEBRTC_OUT}/gen"
     "${FROTH_WEBRTC_ROOT}/buildtools/third_party/libc++"
@@ -298,6 +304,12 @@ if(FROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN)
     "${FROTH_RNNOISE_DIR}/include"
     "${FROTH_OVERLAY_DIR}"
   )
+  if(FROTH_TDLIB_CNODE_ENABLE_TGCALLS)
+    target_include_directories(froth_tdlib_cnode PRIVATE
+      "${TGCALLS_DIR}"
+      "${TGCALLS_DIR}/tgcalls"
+    )
+  endif()
 
   target_compile_options(froth_tdlib_cnode PRIVATE
     -fPIC
@@ -340,6 +352,7 @@ if(FROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN)
   )
 
   target_compile_definitions(froth_tdlib_cnode PRIVATE
+    FROTH_TDLIB_CNODE_ENABLE_TGCALLS=$<BOOL:${FROTH_TDLIB_CNODE_ENABLE_TGCALLS}>
     USE_UDEV
     __STDC_CONSTANT_MACROS
     __STDC_FORMAT_MACROS
@@ -412,13 +425,15 @@ if(FROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN)
 else()
   add_subdirectory("${TDLIB_DIR}" "${CMAKE_BINARY_DIR}/tdlib" EXCLUDE_FROM_ALL)
 
-  add_library(froth_tgcalls_core STATIC
-    "${TGCALLS_DIR}/tgcalls/Instance.cpp"
-  )
+  if(FROTH_TDLIB_CNODE_ENABLE_TGCALLS)
+    add_library(froth_tgcalls_core STATIC
+      "${TGCALLS_DIR}/tgcalls/Instance.cpp"
+    )
 
-  target_include_directories(froth_tgcalls_core PUBLIC
-    "${TGCALLS_DIR}"
-  )
+    target_include_directories(froth_tgcalls_core PUBLIC
+      "${TGCALLS_DIR}"
+    )
+  endif()
 
   add_executable(froth_tdlib_cnode
     src/main.cpp
@@ -429,13 +444,28 @@ else()
     "${TDLIB_DIR}"
   )
 
+  if(FROTH_TDLIB_CNODE_ENABLE_TGCALLS)
+    target_include_directories(froth_tdlib_cnode PRIVATE
+      "${TGCALLS_DIR}"
+    )
+  endif()
+
+  target_compile_definitions(froth_tdlib_cnode PRIVATE
+    FROTH_TDLIB_CNODE_ENABLE_TGCALLS=$<BOOL:${FROTH_TDLIB_CNODE_ENABLE_TGCALLS}>
+  )
+
   target_link_libraries(froth_tdlib_cnode PRIVATE
     tdjson
-    froth_tgcalls_core
     "${EI_LIB}"
     ${CMAKE_DL_LIBS}
     Threads::Threads
   )
+
+  if(FROTH_TDLIB_CNODE_ENABLE_TGCALLS)
+    target_link_libraries(froth_tdlib_cnode PRIVATE
+      froth_tgcalls_core
+    )
+  endif()
 
   if(UNIX AND NOT APPLE)
     # Allow dlopen()-ed plugins to resolve C++ symbols from this executable.

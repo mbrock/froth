@@ -47,12 +47,8 @@ defmodule Froth.Telegram.AskFlowTest do
 
     assert_pending_ask_message_id(prompt_message_id)
 
-    waiting_state = :sys.get_state(bot)
-    assert is_pid(waiting_state.cycle_state.cycle_runtime_pid)
-    waiting_runtime_pid = waiting_state.cycle_state.cycle_runtime_pid
-
-    assert :sys.get_state(waiting_state.cycle_state.cycle_runtime_pid).context.view.awaiting_user_input? ==
-             true
+    {waiting_state, waiting_runtime_pid} =
+      assert_bot_awaiting_user_input(bot)
 
     waiting_messages = cycle_messages(waiting_state.cycle_state.cycle_id)
 
@@ -294,9 +290,8 @@ defmodule Froth.Telegram.AskFlowTest do
 
     assert_pending_ask_message_id(prompt_message_id)
 
-    waiting_state = :sys.get_state(bot)
-    assert is_pid(waiting_state.cycle_state.cycle_runtime_pid)
-    waiting_runtime_pid = waiting_state.cycle_state.cycle_runtime_pid
+    {waiting_state, waiting_runtime_pid} =
+      assert_bot_awaiting_user_input(bot)
 
     waiting_messages = cycle_messages(waiting_state.cycle_state.cycle_id)
 
@@ -450,9 +445,8 @@ defmodule Froth.Telegram.AskFlowTest do
         await_message_id
       )
 
-    waiting_state = :sys.get_state(bot)
-    assert is_pid(waiting_state.cycle_state.cycle_runtime_pid)
-    waiting_runtime_pid = waiting_state.cycle_state.cycle_runtime_pid
+    {waiting_state, waiting_runtime_pid} =
+      assert_bot_awaiting_user_input(bot)
 
     assert task_id in Froth.Agent.CycleRuntime.active_task_ids(
              waiting_state.cycle_state.cycle_id
@@ -892,6 +886,35 @@ defmodule Froth.Telegram.AskFlowTest do
 
   defp assert_pending_ask_message_id(message_id, 0) do
     flunk("pending ask did not sync to message_id #{message_id}")
+  end
+
+  defp assert_bot_awaiting_user_input(bot, attempts \\ 300)
+
+  defp assert_bot_awaiting_user_input(bot, attempts)
+       when is_pid(bot) and attempts > 0 do
+    waiting_state = :sys.get_state(bot)
+    runtime_pid = waiting_state.cycle_state.cycle_runtime_pid
+
+    cond do
+      not is_pid(runtime_pid) ->
+        receive do
+        after
+          20 -> assert_bot_awaiting_user_input(bot, attempts - 1)
+        end
+
+      :sys.get_state(runtime_pid).context.view.awaiting_user_input? ->
+        {waiting_state, runtime_pid}
+
+      true ->
+        receive do
+        after
+          20 -> assert_bot_awaiting_user_input(bot, attempts - 1)
+        end
+    end
+  end
+
+  defp assert_bot_awaiting_user_input(_bot, 0) do
+    flunk("bot did not reach awaiting_user_input state")
   end
 
   defp fetch_pending_ask_by_question(

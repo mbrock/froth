@@ -383,6 +383,8 @@ defmodule Froth.Inference.ToolsTest do
              "elixir_eval"
            ]
 
+    assert :ok = wait_for_task_status(result["task_id"], "completed")
+
     task = Repo.get!(Task, result["task_id"])
     assert task.type == "agent"
     assert task.status == "completed"
@@ -989,5 +991,25 @@ defmodule Froth.Inference.ToolsTest do
 
   defp wait_for_runtime(cycle_id, 0) do
     flunk("cycle runtime #{cycle_id} did not start in time")
+  end
+
+  defp wait_for_task_status(task_id, status, attempts \\ 100)
+
+  defp wait_for_task_status(task_id, status, attempts)
+       when is_binary(task_id) and is_binary(status) and attempts > 0 do
+    case Repo.get!(Task, task_id).status do
+      ^status ->
+        :ok
+
+      _other ->
+        receive do
+        after
+          10 -> wait_for_task_status(task_id, status, attempts - 1)
+        end
+    end
+  end
+
+  defp wait_for_task_status(task_id, status, 0) do
+    flunk("task #{task_id} did not reach status #{inspect(status)} in time")
   end
 end

@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Wrapper for systemd: sources asdf and runs mix phx.server with --sname.
+# Standalone local full-node bootstrap for development.
 set -euo pipefail
 
 export HOME="${HOME:-$(eval echo ~$(whoami))}"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.asdf/shims:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
-. "$HOME/.asdf/asdf.sh"
+
+if [ -f "$HOME/.asdf/asdf.sh" ]; then
+  # shellcheck disable=SC1090
+  . "$HOME/.asdf/asdf.sh"
+fi
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 APP_ROOT="${FROTH_APP_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}"
@@ -14,7 +18,15 @@ APP_ROOT="${FROTH_APP_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}"
 load_froth_env "$APP_ROOT"
 
 cd "$APP_ROOT"
+
+export FROTH_NODE_ROLE="${FROTH_NODE_ROLE:-full}"
+export FROTH_CLUSTER_NODES="${FROTH_CLUSTER_NODES:-off}"
+export FROTH_DISABLE_CHARLIE="${FROTH_DISABLE_CHARLIE:-1}"
+export FROTH_DAILY_DIGEST_ENABLED="${FROTH_DAILY_DIGEST_ENABLED:-0}"
 export PHX_SERVER="${PHX_SERVER:-true}"
+
 epmd -daemon
+mix ecto.create
+mix ecto.migrate
 set_froth_elixir_node_args
 exec elixir --erl "-kernel connect_all false prevent_overlapping_partitions false" "$FROTH_ELIXIR_NODE_FLAG" "$FROTH_ELIXIR_NODE_VALUE" -S mix phx.server

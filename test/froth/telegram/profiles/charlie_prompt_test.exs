@@ -3,7 +3,7 @@ defmodule Froth.Telegram.Profiles.CharliePromptTest do
 
   alias Froth.Telegram.Profiles.CharliePrompt
 
-  test "reads system prompt from priv/charlie-prompt.md" do
+  test "reads system prompt from priv assets" do
     prompt = CharliePrompt.system_prompt(123, %{})
 
     assert prompt =~ "You are Charlie"

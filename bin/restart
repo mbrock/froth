@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
-# Restart froth via systemd user service.
 set -euo pipefail
 
-systemctl --user restart froth
-echo "Restarted. Logs: journalctl --user -u froth -f"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+case "$(uname -s)" in
+  Darwin)
+    exec "$SCRIPT_DIR/launch_agent" restart
+    ;;
+  Linux)
+    systemctl --user restart froth
+    echo "Restarted. Logs: journalctl --user -u froth -f"
+    ;;
+  *)
+    echo "Unsupported OS for bin/restart" >&2
+    exit 1
+    ;;
+esac

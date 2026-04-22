@@ -6,6 +6,7 @@ defmodule Froth.Cluster do
   @default_timeout_ms 30_000
   @node_split ~r/[\s,]+/
   @valid_node_name ~r/^[A-Za-z][A-Za-z0-9_-]*@[A-Za-z0-9][A-Za-z0-9._-]*$/
+  @valid_host_name ~r/^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
   def topologies do
     if Node.alive?() do
@@ -47,7 +48,10 @@ defmodule Froth.Cluster do
   end
 
   def local_node_name do
-    "froth@" <> short_hostname()
+    case explicit_local_node_name() do
+      nil -> "froth@" <> short_hostname()
+      node -> Atom.to_string(node)
+    end
   end
 
   def rpc_target_node_name do
@@ -118,6 +122,32 @@ defmodule Froth.Cluster do
 
       _ ->
         "localhost"
+    end
+  end
+
+  defp explicit_local_node_name do
+    case normalize_node_value(System.get_env("FROTH_NODE_NAME")) do
+      nil ->
+        explicit_local_node_name_from_host()
+
+      node ->
+        node
+    end
+  end
+
+  defp explicit_local_node_name_from_host do
+    case System.get_env("FROTH_NODE_HOST") do
+      host when is_binary(host) ->
+        host = String.trim(host)
+
+        if host != "" and Regex.match?(@valid_host_name, host) do
+          String.to_atom("froth@" <> host)
+        else
+          nil
+        end
+
+      _ ->
+        nil
     end
   end
 

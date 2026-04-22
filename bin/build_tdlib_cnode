@@ -15,8 +15,36 @@ WEBRTC_OUT="${WEBRTC_OUT:-$ROOT/vendor/webrtc/out/froth_headless}"
 CLANGXX="${CLANGXX:-$ROOT/vendor/webrtc/third_party/llvm-build/Release+Asserts/bin/clang++}"
 CLANG="${CLANG:-$(dirname "$CLANGXX")/clang}"
 SYSROOT="${SYSROOT:-$ROOT/vendor/webrtc/build/linux/debian_bullseye_amd64-sysroot}"
-CXX_TOOLCHAIN="${FROTH_TDLIB_CNODE_CXX_TOOLCHAIN:-chromium}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
+
+if [[ -n "${FROTH_TDLIB_CNODE_CXX_TOOLCHAIN:-}" ]]; then
+  CXX_TOOLCHAIN="$FROTH_TDLIB_CNODE_CXX_TOOLCHAIN"
+elif [[ -f "$CLANGXX" && -f "$CLANG" && -d "$SYSROOT" && -f "$WEBRTC_OUT/obj/libwebrtc.a" ]]; then
+  CXX_TOOLCHAIN="chromium"
+else
+  CXX_TOOLCHAIN="system"
+fi
+
+if [[ -n "${FROTH_TDLIB_CNODE_ENABLE_TGCALLS:-}" ]]; then
+  TGCALLS_MODE="$FROTH_TDLIB_CNODE_ENABLE_TGCALLS"
+elif [[ "$CXX_TOOLCHAIN" == "chromium" ]]; then
+  TGCALLS_MODE="on"
+else
+  TGCALLS_MODE="off"
+fi
+
+case "${TGCALLS_MODE,,}" in
+  1|on|true|yes)
+    TGCALLS_CMAKE=ON
+    ;;
+  0|off|false|no)
+    TGCALLS_CMAKE=OFF
+    ;;
+  *)
+    echo "Unknown FROTH_TDLIB_CNODE_ENABLE_TGCALLS=$TGCALLS_MODE (expected: on|off)" >&2
+    exit 1
+    ;;
+esac
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -126,7 +154,8 @@ case "$CXX_TOOLCHAIN" in
 
     tdjson_build_dir="$SRC_DIR/build/tdjson-system"
     configure_build "$tdjson_build_dir" \
-      -DFROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN=OFF
+      -DFROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN=OFF \
+      -DFROTH_TDLIB_CNODE_ENABLE_TGCALLS="$TGCALLS_CMAKE"
 
     cmake --build "$tdjson_build_dir" --target tdjson -j
 
@@ -158,13 +187,15 @@ case "$CXX_TOOLCHAIN" in
       -DFROTH_SYSROOT="$SYSROOT" \
       -DFROTH_OVERLAY_DIR="$overlay_dir" \
       -DFROTH_TDJSON_LIBRARY="$tdjson_lib" \
-      -DFROTH_TDJSON_INCLUDE_DIR="$tdjson_include_dir"
+      -DFROTH_TDJSON_INCLUDE_DIR="$tdjson_include_dir" \
+      -DFROTH_TDLIB_CNODE_ENABLE_TGCALLS="$TGCALLS_CMAKE"
 
     cmake --build "$build_dir" --target froth_tdlib_cnode -j
     ;;
   system)
     configure_build "$build_dir" \
-      -DFROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN=OFF
+      -DFROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN=OFF \
+      -DFROTH_TDLIB_CNODE_ENABLE_TGCALLS="$TGCALLS_CMAKE"
 
     cmake --build "$build_dir" --target froth_tdlib_cnode -j
     ;;
@@ -176,4 +207,4 @@ esac
 
 copy_outputs "$build_dir" "${tdjson_lib:-}"
 
-echo "Built $OUT_DIR/tdlib_cnode (toolchain: $CXX_TOOLCHAIN)"
+echo "Built $OUT_DIR/tdlib_cnode (toolchain: $CXX_TOOLCHAIN, tgcalls: ${TGCALLS_CMAKE,,})"

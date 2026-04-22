@@ -10,6 +10,8 @@ defmodule Mix.Tasks.Froth.Summarize do
 
   use Mix.Task
 
+  alias Froth.Mix.LiveNode
+
   @impl Mix.Task
   def run(args) do
     {opts, _positional, invalid} =
@@ -19,7 +21,7 @@ defmodule Mix.Tasks.Froth.Summarize do
       abort("Unknown arguments: #{Enum.map_join(invalid, " ", &elem(&1, 0))}")
     end
 
-    node = connect!()
+    node = LiveNode.connect!("summarize")
     gl = Process.group_leader()
     chat_id = resolve_chat_id(node, gl)
 
@@ -125,25 +127,6 @@ defmodule Mix.Tasks.Froth.Summarize do
       {:ok, date} -> date
       {:error, _} -> abort("Invalid date: #{str}. Use YYYY-MM-DD format.")
     end
-  end
-
-  defp connect! do
-    node = Froth.Cluster.rpc_target_node()
-
-    cookie =
-      case System.get_env("ERLANG_COOKIE") do
-        nil -> File.read!(Path.expand("~/.erlang.cookie")) |> String.trim()
-        val -> val
-      end
-
-    Node.start(:"summarize_#{System.pid()}", :shortnames)
-    Node.set_cookie(String.to_atom(cookie))
-
-    unless Node.connect(node) do
-      abort("Could not connect to #{node}")
-    end
-
-    node
   end
 
   defp abort(msg) do

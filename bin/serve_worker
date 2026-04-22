@@ -13,6 +13,11 @@ fi
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 APP_ROOT="${FROTH_APP_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}"
 
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/runtime_env.sh"
+load_froth_env "$APP_ROOT"
+
 cd "$APP_ROOT"
 epmd -daemon
-exec elixir --erl "-kernel connect_all false prevent_overlapping_partitions false" --sname froth -S mix run --no-halt
+set_froth_elixir_node_args
+exec elixir --erl "-kernel connect_all false prevent_overlapping_partitions false" "$FROTH_ELIXIR_NODE_FLAG" "$FROTH_ELIXIR_NODE_VALUE" -S mix run --no-halt

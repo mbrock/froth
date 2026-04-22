@@ -86,22 +86,17 @@ defmodule Froth.Telegram.Usernames do
         missing_ids = Enum.reject(user_ids, &Map.has_key?(persisted, &1))
 
         fetched =
-          missing_ids
-          |> Task.async_stream(
-            fn user_id ->
-              {user_id, fetch_and_store_label(user_id, session_id)}
-            end,
-            ordered: false,
-            max_concurrency: 8,
-            timeout: :infinity
-          )
-          |> Enum.reduce(%{}, fn
-            {:ok, {user_id, label}}, acc
-            when is_binary(label) and label != "" ->
-              Map.put(acc, user_id, label)
+          Enum.reduce(missing_ids, %{}, fn user_id, acc ->
+            # Context rendering only resolves a small sender window, so keep
+            # username upserts deterministic and avoid deadlocks across
+            # concurrent requests/tests that touch the same user ids.
+            case fetch_and_store_label(user_id, session_id) do
+              label when is_binary(label) and label != "" ->
+                Map.put(acc, user_id, label)
 
-            _, acc ->
-              acc
+              _ ->
+                acc
+            end
           end)
 
         Map.merge(persisted, fetched)

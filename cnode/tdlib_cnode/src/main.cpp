@@ -1,11 +1,13 @@
 #include <ei.h>
 #include <td/telegram/td_json_client.h>
+#if defined(FROTH_TDLIB_CNODE_ENABLE_TGCALLS) && FROTH_TDLIB_CNODE_ENABLE_TGCALLS
 #include <tgcalls/Instance.h>
 #include <tgcalls/FakeAudioDeviceModule.h>
 #include <tgcalls/StaticThreads.h>
 #include <tgcalls/group/GroupInstanceCustomImpl.h>
 #include <api/scoped_refptr.h>
 #include <modules/audio_device/include/audio_device.h>
+#endif
 
 #include <chrono>
 #include <algorithm>
@@ -56,6 +58,19 @@ struct TgcallsRegistrationState {
 
 #if defined(__GNUC__) || defined(__clang__)
 extern "C" bool froth_tgcalls_register() __attribute__((weak));
+#endif
+
+#if !defined(FROTH_TDLIB_CNODE_ENABLE_TGCALLS) || !FROTH_TDLIB_CNODE_ENABLE_TGCALLS
+struct DisabledTgcallsInstance {
+  template <typename StopCallback>
+  void stop(StopCallback &&) {}
+
+  void addExternalAudioSamples(std::vector<uint8_t>) {}
+
+  void receiveSignalingData(std::vector<uint8_t>) {}
+
+  void setJoinResponsePayload(const std::string &) {}
+};
 #endif
 
 struct Opts {
@@ -236,6 +251,11 @@ std::string json_escape(const std::string &input) {
 TgcallsRegistrationState load_tgcalls_registration() {
   TgcallsRegistrationState state;
 
+#if !defined(FROTH_TDLIB_CNODE_ENABLE_TGCALLS) || !FROTH_TDLIB_CNODE_ENABLE_TGCALLS
+  state.source = "disabled";
+  state.error = "tgcalls support disabled at build time";
+  return state;
+#else
 #if defined(__GNUC__) || defined(__clang__)
   if (froth_tgcalls_register != nullptr) {
     state.source = "linked";
@@ -285,6 +305,7 @@ TgcallsRegistrationState load_tgcalls_registration() {
 #endif
 
   return state;
+#endif
 }
 
 const TgcallsRegistrationState &tgcalls_registration_state() {
@@ -294,6 +315,18 @@ const TgcallsRegistrationState &tgcalls_registration_state() {
 
 std::string tgcalls_status_json() {
   const auto &registration = tgcalls_registration_state();
+#if !defined(FROTH_TDLIB_CNODE_ENABLE_TGCALLS) || !FROTH_TDLIB_CNODE_ENABLE_TGCALLS
+  std::ostringstream out;
+  out << "{\"linked\":false,\"engine_available\":false"
+      << ",\"registered_versions\":[]"
+      << ",\"max_layer\":0"
+      << ",\"registration_source\":\"" << json_escape(registration.source) << "\""
+      << ",\"registration_attempted\":" << (registration.attempted ? "true" : "false")
+      << ",\"registration_ok\":" << (registration.ok ? "true" : "false")
+      << ",\"plugin_path\":\"" << json_escape(registration.plugin_path) << "\""
+      << ",\"registration_error\":\"" << json_escape(registration.error) << "\"}";
+  return out.str();
+#else
   const auto versions = tgcalls::Meta::Versions();
   const bool engine_available = !versions.empty();
 
@@ -315,6 +348,7 @@ std::string tgcalls_status_json() {
       << ",\"plugin_path\":\"" << json_escape(registration.plugin_path) << "\""
       << ",\"registration_error\":\"" << json_escape(registration.error) << "\"}";
   return out.str();
+#endif
 }
 
 bool decode_bool_atom(const char *buf, int *index, bool &value) {
@@ -372,7 +406,16 @@ struct CallAudioBridgeState {
 };
 
 bool queue_audio_frame(const std::shared_ptr<CallAudioBridgeState> &bridge,
-                       const tgcalls::AudioFrame &frame) {
+#if defined(FROTH_TDLIB_CNODE_ENABLE_TGCALLS) && FROTH_TDLIB_CNODE_ENABLE_TGCALLS
+                       const tgcalls::AudioFrame &frame
+#else
+                       const void *
+#endif
+                       ) {
+#if !defined(FROTH_TDLIB_CNODE_ENABLE_TGCALLS) || !FROTH_TDLIB_CNODE_ENABLE_TGCALLS
+  (void)bridge;
+  return false;
+#else
   if (!bridge || frame.audio_samples == nullptr || frame.num_samples == 0 ||
       frame.bytes_per_sample == 0) {
     return false;
@@ -395,8 +438,10 @@ bool queue_audio_frame(const std::shared_ptr<CallAudioBridgeState> &bridge,
   }
 
   return true;
+#endif
 }
 
+#if defined(FROTH_TDLIB_CNODE_ENABLE_TGCALLS) && FROTH_TDLIB_CNODE_ENABLE_TGCALLS
 class QueueingRenderer final : public tgcalls::FakeAudioDeviceModule::Renderer {
  public:
   explicit QueueingRenderer(std::shared_ptr<CallAudioBridgeState> bridge)
@@ -430,6 +475,7 @@ class SilenceRecorder final : public tgcalls::FakeAudioDeviceModule::Recorder {
  private:
   std::vector<int16_t> samples_;
 };
+#endif
 
 using CallAudioSubscribers = std::unordered_map<int64_t, std::vector<erlang_pid>>;
 using CallAudioPlaybacks = std::unordered_map<int64_t, PcmPlaybackState>;
@@ -450,7 +496,11 @@ struct TgCallRuntime {
   std::string session_id;
   std::string version;
   bool is_outgoing = false;
+#if defined(FROTH_TDLIB_CNODE_ENABLE_TGCALLS) && FROTH_TDLIB_CNODE_ENABLE_TGCALLS
   std::unique_ptr<tgcalls::Instance> instance;
+#else
+  std::unique_ptr<DisabledTgcallsInstance> instance;
+#endif
   std::shared_ptr<CallAudioBridgeState> audio_bridge;
 };
 
@@ -458,7 +508,11 @@ using TgCallRuntimes = std::unordered_map<int64_t, TgCallRuntime>;
 
 struct TgGroupCallRuntime {
   std::string session_id;
+#if defined(FROTH_TDLIB_CNODE_ENABLE_TGCALLS) && FROTH_TDLIB_CNODE_ENABLE_TGCALLS
   std::unique_ptr<tgcalls::GroupInstanceInterface> instance;
+#else
+  std::unique_ptr<DisabledTgcallsInstance> instance;
+#endif
   std::shared_ptr<CallAudioBridgeState> audio_bridge;
 };
 
@@ -673,7 +727,7 @@ void stop_tgcalls_runtime(TgCallRuntimes &runtimes, int64_t call_id) {
   }
 
   if (it->second.instance) {
-    it->second.instance->stop([](tgcalls::FinalState) {});
+    it->second.instance->stop([](auto...) {});
   }
 
   runtimes.erase(it);
@@ -703,6 +757,20 @@ bool start_tgcalls_runtime(TgCallRuntimes &runtimes,
                            const std::vector<ParsedRtcServer> &parsed_servers,
                            const std::string &custom_parameters,
                            std::string &error) {
+#if !defined(FROTH_TDLIB_CNODE_ENABLE_TGCALLS) || !FROTH_TDLIB_CNODE_ENABLE_TGCALLS
+  (void)runtimes;
+  (void)pending_signaling;
+  (void)call_id;
+  (void)session_id;
+  (void)version;
+  (void)is_outgoing;
+  (void)allow_p2p;
+  (void)encryption_key;
+  (void)parsed_servers;
+  (void)custom_parameters;
+  error = "tgcalls support disabled at build time";
+  return false;
+#else
   if (session_id.empty()) {
     error = "missing session_id";
     return false;
@@ -846,6 +914,7 @@ bool start_tgcalls_runtime(TgCallRuntimes &runtimes,
 
   runtimes[call_id] = std::move(runtime);
   return true;
+#endif
 }
 
 bool start_tgcalls_group_runtime(TgGroupCallRuntimes &runtimes,
@@ -853,6 +922,14 @@ bool start_tgcalls_group_runtime(TgGroupCallRuntimes &runtimes,
                                  int64_t group_call_id,
                                  const std::string &session_id,
                                  std::string &error) {
+#if !defined(FROTH_TDLIB_CNODE_ENABLE_TGCALLS) || !FROTH_TDLIB_CNODE_ENABLE_TGCALLS
+  (void)runtimes;
+  (void)pending_join_payloads;
+  (void)group_call_id;
+  (void)session_id;
+  error = "tgcalls support disabled at build time";
+  return false;
+#else
   if (session_id.empty()) {
     error = "missing session_id";
     return false;
@@ -917,6 +994,7 @@ bool start_tgcalls_group_runtime(TgGroupCallRuntimes &runtimes,
   runtimes[group_call_id] = std::move(runtime);
 
   return true;
+#endif
 }
 
 void flush_pending_signaling(PendingCallSignalingQueue &pending_signaling,
@@ -1375,7 +1453,7 @@ int main(int argc, char **argv) {
                          call_it != tgcalls_runtimes.end();) {
                       if (call_it->second.session_id == session_id) {
                         if (call_it->second.instance) {
-                          call_it->second.instance->stop([](tgcalls::FinalState) {});
+                          call_it->second.instance->stop([](auto...) {});
                         }
                         call_audio_playbacks.erase(call_it->first);
                         call_audio_subscribers.erase(call_it->first);
