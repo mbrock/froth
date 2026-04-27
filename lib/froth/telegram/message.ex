@@ -95,6 +95,50 @@ defmodule Froth.Telegram.Message do
 
   def reply_to_message_id(_payload), do: nil
 
+  @doc """
+  Forward attribution from a TDLib message, or `nil` for non-forwards.
+
+  Returns a map shaped like:
+
+      %{kind: :user,    user_id: 12345}
+      %{kind: :hidden,  name: "Mr Satya Humbaba"}
+      %{kind: :chat,    chat_id: -100..., signature: "Pavel Durov" | nil}
+      %{kind: :channel, chat_id: -100..., message_id: 13631488, signature: nil}
+  """
+  def forward_info(%{"forward_info" => %{"origin" => %{"@type" => type} = origin}}) do
+    case type do
+      "messageOriginUser" ->
+        %{kind: :user, user_id: origin["sender_user_id"]}
+
+      "messageOriginHiddenUser" ->
+        %{kind: :hidden, name: origin["sender_name"]}
+
+      "messageOriginChat" ->
+        %{
+          kind: :chat,
+          chat_id: origin["sender_chat_id"],
+          signature: present(origin["author_signature"])
+        }
+
+      "messageOriginChannel" ->
+        %{
+          kind: :channel,
+          chat_id: origin["chat_id"],
+          message_id: origin["message_id"],
+          signature: present(origin["author_signature"])
+        }
+
+      _ ->
+        nil
+    end
+  end
+
+  def forward_info(_payload), do: nil
+
+  defp present(nil), do: nil
+  defp present(""), do: nil
+  defp present(value) when is_binary(value), do: value
+
   @doc "Extract sender_id (user or chat) from a TDLib message map."
   def extract_sender_id(%{"sender_id" => %{"user_id" => uid}}), do: uid
   def extract_sender_id(%{"sender_id" => %{"chat_id" => cid}}), do: cid

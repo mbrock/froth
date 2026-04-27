@@ -160,7 +160,8 @@ defmodule FrothWeb.TimelineLive do
     _labels = Names.sender_label_map(messages, session_id)
 
     sender_ids = messages |> Enum.map(& &1.sender_id) |> Enum.uniq()
-    short_names = Usernames.short_name_map(sender_ids)
+    forwarded_user_ids = forwarded_user_ids(messages)
+    short_names = Usernames.short_name_map(sender_ids ++ forwarded_user_ids)
     chat_title = Names.chat_name(chat_id, session_id)
 
     participants = participants(messages, short_names)
@@ -407,6 +408,7 @@ defmodule FrothWeb.TimelineLive do
     text = raw_text || media_placeholder(m.raw)
     reply_id = TMsg.reply_to_message_id(m.raw)
     sender_id = m.sender_id || 0
+    forward = forward_attribution(m.raw, short_names)
 
     body =
       cond do
@@ -429,7 +431,8 @@ defmodule FrothWeb.TimelineLive do
        time: format_time(dt),
        body: body,
        media_text: text,
-       reply: reply_lookup[reply_id]
+       reply: reply_lookup[reply_id],
+       forward: forward
      }}
   end
 
@@ -637,9 +640,7 @@ defmodule FrothWeb.TimelineLive do
         ensure_short_names(
           socket.assigns.short_names,
           socket.assigns.session_id,
-          [
-            message.sender_id
-          ]
+          [message.sender_id | forwarded_user_ids([message])]
         )
 
       block =
@@ -998,6 +999,7 @@ defmodule FrothWeb.TimelineLive do
         time={@turn.time}
         block?={block_turn?(@turn)}
       >
+        <.forward_badge :if={@turn.forward} forward={@turn.forward} />
         <.reply_quote :if={@turn.reply} reply={@turn.reply} />
         <.message_body turn={@turn} />
       </Remix.turn>
@@ -1021,7 +1023,8 @@ defmodule FrothWeb.TimelineLive do
   end
 
   defp block_turn?(turn) do
-    turn.reply != nil or multi_paragraph?(turn) or photo_body?(turn)
+    turn.forward != nil or turn.reply != nil or multi_paragraph?(turn) or
+      photo_body?(turn)
   end
 
   defp multi_paragraph?(%{body: paragraphs}) when is_list(paragraphs),
@@ -1591,6 +1594,52 @@ defmodule FrothWeb.TimelineLive do
   end
 
   defp summarize_result(_), do: nil
+
+  # ---------------------------------------------------------------------------
+  # Forward attribution
+  # ---------------------------------------------------------------------------
+
+  defp forwarded_user_ids(messages) do
+    messages
+    |> Enum.map(fn m -> TMsg.forward_info(m.raw) end)
+    |> Enum.flat_map(fn
+      %{kind: :user, user_id: uid} when is_integer(uid) -> [uid]
+      _ -> []
+    end)
+    |> Enum.uniq()
+  end
+
+  defp forward_attribution(raw, short_names) do
+    case TMsg.forward_info(raw) do
+      nil ->
+        nil
+
+      %{kind: :user, user_id: uid} ->
+        %{label: short_name_for(uid, short_names), origin: "user"}
+
+      %{kind: :hidden, name: name} ->
+        %{label: present_name(name), origin: "hidden"}
+
+      %{kind: :chat, signature: sig} ->
+        %{label: present_name(sig) || "a chat", origin: "chat"}
+
+      %{kind: :channel, signature: sig} ->
+        %{label: present_name(sig) || "a channel", origin: "channel"}
+    end
+  end
+
+  defp present_name(name) when is_binary(name) and name != "", do: name
+  defp present_name(_), do: nil
+
+  defp forward_badge(assigns) do
+    ~H"""
+    <div class="mb-1 border-l-2 border-fg-mute/40 pl-3 py-0.5">
+      <span class="text-fg-mute font-sans text-2xs italic">
+        ⤴ forwarded from {@forward.label}
+      </span>
+    </div>
+    """
+  end
 
   defp reply_quote(assigns) do
     assigns =
