@@ -161,6 +161,7 @@ defmodule Froth.Tools.Pager do
   defp dispatch(blob_id, "read", input) do
     from_line = bounded_integer(input["from_line"], 1, 1, 10_000_000)
     lines = bounded_integer(input["lines"], 80, 1, 1000)
+    explicit_lines? = Map.has_key?(input, "lines")
 
     case Blobs.page(blob_id, from_line: from_line, lines: lines) do
       {:ok, ""} ->
@@ -176,13 +177,15 @@ defmodule Froth.Tools.Pager do
         {:ok,
          [
            Block.new(
-             [
-               kind: "page",
-               blob: blob_id,
-               from_line: from_line,
-               lines_requested: lines,
-               no_fold: true
-             ],
+             maybe_no_fold(
+               [
+                 kind: "page",
+                 blob: blob_id,
+                 from_line: from_line,
+                 lines_requested: lines
+               ],
+               explicit_lines?
+             ),
              text
            )
          ]}
@@ -243,6 +246,9 @@ defmodule Froth.Tools.Pager do
   defp dispatch(_blob_id, mode, _input) do
     {:error, "unknown pager mode: #{inspect(mode)}"}
   end
+
+  defp maybe_no_fold(attrs, true), do: Keyword.put(attrs, :no_fold, true)
+  defp maybe_no_fold(attrs, false), do: attrs
 
   defp bounded_integer(value, default, lower_bound, upper_bound)
        when is_integer(default) and is_integer(lower_bound) and

@@ -2,8 +2,12 @@ defmodule Froth.Inference.PagerToolTest do
   use ExUnit.Case, async: true
 
   alias Froth.{Blobs, Repo}
+  alias Froth.Agent.{Surface, ToolUse}
+  alias Froth.Agent.CycleRuntime.{Context, View}
   alias Froth.Context.Block
+  alias Froth.Context.Blocks
   alias Froth.Inference.Tools
+  alias Froth.Tools.Pager
 
   setup do
     pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
@@ -29,6 +33,14 @@ defmodule Froth.Inference.PagerToolTest do
     defp call(input), do: Tools.execute("pager", input, 0, [])
 
     defp single_block!({:ok, [%Block{} = block]}), do: block
+
+    defp pager_context do
+      %Context{
+        cycle_id: "test-cycle",
+        surface: %Surface{},
+        view: %View{}
+      }
+    end
 
     test "mode=stat returns a metadata-only block", %{blob_id: id} do
       block =
@@ -66,6 +78,42 @@ defmodule Froth.Inference.PagerToolTest do
       assert Block.attr(block, :from_line) == 10
       assert Block.attr(block, :no_fold) == true
       assert block.body == "line 10\nline 11\nline 12"
+    end
+
+    test "mode=read with explicit lines returns the full requested slice over the fold threshold" do
+      body =
+        Enum.map_join(1..241, "\n", fn line ->
+          "line #{line} #{String.duplicate("x", 80)}"
+        end)
+
+      {:ok, blob} = Blobs.put(body)
+
+      input = %{
+        "id" => blob.id,
+        "mode" => "read",
+        "from_line" => 1,
+        "lines" => 241
+      }
+
+      block =
+        Pager.execute(
+          pager_context(),
+          %ToolUse{id: "toolu_pager", name: "pager", input: input},
+          []
+        )
+        |> single_block!()
+
+      assert block.body == body
+      assert block.children == []
+      assert Block.attr(block, :no_fold) == true
+
+      [materialized] = Blocks.materialize([block])
+
+      assert materialized.body == body
+      assert materialized.children == []
+      refute Keyword.has_key?(materialized.attrs, :head)
+      refute Keyword.has_key?(materialized.attrs, :tail)
+      refute Keyword.has_key?(materialized.attrs, :omitted)
     end
 
     test "mode=read default (no mode) starts from line 1", %{blob_id: id} do
