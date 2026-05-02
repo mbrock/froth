@@ -13,9 +13,6 @@ defmodule Froth.Telegram.Charlie do
   @default_model "claude-opus-4-6"
   @default_max_tokens 65_536
 
-  @typo_triggers File.read!(Path.join([__DIR__, "..", "..", "..", "priv", "charlie", "typos.txt"]))
-                 |> String.split("\n", trim: true)
-
   def default_config do
     cfg = Application.get_env(:froth, __MODULE__, [])
 
@@ -31,14 +28,15 @@ defmodule Froth.Telegram.Charlie do
       failure_report_model: "gpt-5.4",
       system_prompt_fun: &CharliePrompt.system_prompt/2,
       name_triggers: [
-                        "charkie",
-                        "charlie",
-                        "calling all robots",
-                        "calling all the robots",
-                        "calling on all robots",
-                        "calling on all the robots",
-                        "calling on the robots"
-                      ] ++ @typo_triggers,
+              "charlie",
+              "charkie",
+              "tartlie",
+              "calling all robots",
+              "calling all the robots",
+              "calling on all robots",
+              "calling on all the robots",
+              "calling on the robots"
+            ],
       tools_module: CharlieTools,
       chronicle_dir: Application.app_dir(:froth, "priv/chronicle"),
       # recent_window_target_hours: 4,

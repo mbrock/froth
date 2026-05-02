@@ -86,8 +86,10 @@ defmodule Froth.Telegram.BotAdapter do
   def mentioned?(msg, bot_username, bot_user_id, name_triggers)
       when is_map(msg) and is_binary(bot_username) and is_integer(bot_user_id) and
              is_list(name_triggers) do
+    text = get_in(msg, ["content", "text", "text"]) || ""
     mentioned?(msg, bot_username, bot_user_id) or
-      name_triggered?(msg, name_triggers)
+      name_triggered?(msg, name_triggers) or
+      fuzzy_name_match?(text, "charlie", 2)
   end
 
   defp name_triggered?(msg, triggers) when is_list(triggers) do
@@ -105,6 +107,47 @@ defmodule Froth.Telegram.BotAdapter do
       end
     end)
   end
+
+  # Levenshtein edit distance for fuzzy name matching (Patty's typos)
+  defp levenshtein(s, t) when is_binary(s) and is_binary(t) do
+    s_graphemes = String.graphemes(s)
+    t_graphemes = String.graphemes(t)
+    s_len = length(s_graphemes)
+    t_len = length(t_graphemes)
+
+    if s_len == 0 do
+      t_len
+    else
+      if t_len == 0 do
+        s_len
+      else
+        # Build matrix row by row
+        first_row = Enum.to_list(0..t_len)
+
+        Enum.reduce(Enum.with_index(s_graphemes, 1), first_row, fn {s_char, i}, prev_row ->
+          Enum.reduce(Enum.with_index(t_graphemes, 1), {[i], i - 1}, fn {t_char, j}, {row, diag} ->
+            cost = if s_char == t_char, do: 0, else: 1
+            val = min(min(List.last(row) + 1, Enum.at(prev_row, j) + 1), diag + cost)
+            {row ++ [val], Enum.at(prev_row, j)}
+          end)
+          |> elem(0)
+        end)
+        |> List.last()
+      end
+    end
+  end
+
+  defp fuzzy_name_match?(text, name, max_distance) do
+    words = String.split(String.downcase(text), ~r/[^a-z]+/, trim: true)
+    target = String.downcase(name)
+
+    Enum.any?(words, fn word ->
+      # Only check words roughly the right length to avoid wasting time
+      abs(String.length(word) - String.length(target)) <= max_distance and
+        levenshtein(word, target) <= max_distance
+    end)
+  end
+
 
   # Allow DMs from owner or any explicitly allowed user
   # Mikael, Daniel, John Sherman
