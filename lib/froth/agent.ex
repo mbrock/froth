@@ -872,13 +872,32 @@ defmodule Froth.Agent do
   defp safe_json(nil), do: %{}
   defp safe_json(other), do: %{"value" => safe_value(other)}
 
-  defp safe_value(v) when is_binary(v), do: v
+  defp safe_value(nil), do: nil
+
+  defp safe_value(v) when is_binary(v) do
+    if json_text_safe?(v) do
+      v
+    else
+      %{
+        "bytes" => byte_size(v),
+        "sha256" => hash_binary(v),
+        "encoding" => "binary"
+      }
+    end
+  end
+
   defp safe_value(v) when is_number(v), do: v
   defp safe_value(v) when is_boolean(v), do: v
   defp safe_value(v) when is_atom(v), do: to_string(v)
   defp safe_value(v) when is_list(v), do: Enum.map(v, &safe_value/1)
   defp safe_value(%{} = v), do: safe_json(v)
   defp safe_value(v), do: inspect(v)
+
+  defp json_text_safe?(value) when is_binary(value) do
+    String.valid?(value) and not String.contains?(value, <<0>>)
+  end
+
+  defp json_text_safe?(_value), do: false
 
   defp stringify_map(map) when is_map(map) do
     Map.new(map, fn {key, value} ->
@@ -893,6 +912,7 @@ defmodule Froth.Agent do
   defp stringify_value(value) when is_list(value),
     do: Enum.map(value, &stringify_value/1)
 
+  defp stringify_value(nil), do: nil
   defp stringify_value(value) when is_boolean(value), do: value
   defp stringify_value(value) when is_atom(value), do: to_string(value)
   defp stringify_value(value), do: value

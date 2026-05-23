@@ -103,6 +103,24 @@ defmodule Froth.Context.BlocksTest do
       assert length(Block.attr(block, :tail)) == 5
       assert Block.attr(block, :omitted) == 85
     end
+
+    test "materialize is idempotent for no_fold text blocks" do
+      big = Enum.map_join(1..200, "\n", &"line #{&1}")
+
+      [once] =
+        Blocks.materialize([
+          Block.new([kind: "page", blob: "01TEST", no_fold: true], big)
+        ])
+
+      [twice] = Blocks.materialize([once])
+
+      assert once.body == big
+      assert twice.body == big
+      assert Block.attr(twice, :lines) == 200
+      refute Keyword.has_key?(twice.attrs, :head)
+      refute Keyword.has_key?(twice.attrs, :tail)
+      refute Keyword.has_key?(twice.attrs, :omitted)
+    end
   end
 
   describe "materialize/1 — binary-shaped" do
@@ -143,6 +161,23 @@ defmodule Froth.Context.BlocksTest do
       assert is_nil(block.body)
       assert is_binary(Block.attr(block, :blob))
       assert Block.attr(block, :size) == 4
+    end
+
+    test "pre-sized binary bodies are still blobbed" do
+      bytes = <<0xFF, 0xD8, 0xFF, 0xE0, "JFIF", 0x00, 0x01, 0x02>>
+
+      [block] =
+        Blocks.materialize([
+          Block.new([kind: "fetched", mime: "image/jpeg", size: 12], bytes)
+        ])
+
+      assert is_nil(block.body)
+      assert is_binary(Block.attr(block, :blob))
+      assert Block.attr(block, :size) == byte_size(bytes)
+
+      {:ok, blob} = Blobs.get(Block.attr(block, :blob))
+      assert blob.bytes == bytes
+      assert blob.mime == "image/jpeg"
     end
 
     test "binary block with :no_fold keeps the body inline" do

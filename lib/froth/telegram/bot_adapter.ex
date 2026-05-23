@@ -87,6 +87,7 @@ defmodule Froth.Telegram.BotAdapter do
       when is_map(msg) and is_binary(bot_username) and is_integer(bot_user_id) and
              is_list(name_triggers) do
     text = get_in(msg, ["content", "text", "text"]) || ""
+
     mentioned?(msg, bot_username, bot_user_id) or
       name_triggered?(msg, name_triggers) or
       fuzzy_name_match?(text, "charlie", 2)
@@ -124,12 +125,23 @@ defmodule Froth.Telegram.BotAdapter do
         # Build matrix row by row
         first_row = Enum.to_list(0..t_len)
 
-        Enum.reduce(Enum.with_index(s_graphemes, 1), first_row, fn {s_char, i}, prev_row ->
-          Enum.reduce(Enum.with_index(t_graphemes, 1), {[i], i - 1}, fn {t_char, j}, {row, diag} ->
-            cost = if s_char == t_char, do: 0, else: 1
-            val = min(min(List.last(row) + 1, Enum.at(prev_row, j) + 1), diag + cost)
-            {row ++ [val], Enum.at(prev_row, j)}
-          end)
+        Enum.reduce(Enum.with_index(s_graphemes, 1), first_row, fn {s_char, i},
+                                                                   prev_row ->
+          Enum.reduce(
+            Enum.with_index(t_graphemes, 1),
+            {[i], i - 1},
+            fn {t_char, j}, {row, diag} ->
+              cost = if s_char == t_char, do: 0, else: 1
+
+              val =
+                min(
+                  min(List.last(row) + 1, Enum.at(prev_row, j) + 1),
+                  diag + cost
+                )
+
+              {row ++ [val], Enum.at(prev_row, j)}
+            end
+          )
           |> elem(0)
         end)
         |> List.last()
@@ -147,7 +159,6 @@ defmodule Froth.Telegram.BotAdapter do
         levenshtein(word, target) <= max_distance
     end)
   end
-
 
   # Allow DMs from owner or any explicitly allowed user
   # Mikael, Daniel, John Sherman

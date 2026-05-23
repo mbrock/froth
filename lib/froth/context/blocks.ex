@@ -108,13 +108,32 @@ defmodule Froth.Context.Blocks do
   def binary_shaped?(%Block{attrs: attrs}),
     do: binary_mime?(Keyword.get(attrs, :mime))
 
-  defp materialize_one(%Block{body: nil} = block) do
+  defp materialize_one(%Block{} = block) do
+    if materialized?(block) do
+      materialize_children(block)
+    else
+      materialize_unmaterialized(block)
+    end
+  end
+
+  defp materialized?(%Block{body: nil}), do: true
+
+  defp materialized?(%Block{attrs: attrs, body: body}) when is_binary(body) do
+    Keyword.has_key?(attrs, :size) and
+      not binary_mime?(Keyword.get(attrs, :mime)) and
+      Keyword.has_key?(attrs, :lines) and
+      json_text_safe?(body)
+  end
+
+  defp materialized?(_), do: false
+
+  defp materialize_unmaterialized(%Block{body: nil} = block) do
     block
     |> Map.put(:attrs, drop_internal_attrs(block.attrs))
     |> materialize_children()
   end
 
-  defp materialize_one(%Block{body: body, attrs: attrs} = block)
+  defp materialize_unmaterialized(%Block{body: body, attrs: attrs} = block)
        when is_binary(body) do
     cond do
       binary_mime?(Keyword.get(attrs, :mime)) ->
@@ -198,7 +217,7 @@ defmodule Froth.Context.Blocks do
 
       new_attrs =
         attrs
-        |> Keyword.put_new(:size, size)
+        |> Keyword.put(:size, size)
         |> Keyword.put(:blob, blob.id)
 
       block
@@ -219,8 +238,8 @@ defmodule Froth.Context.Blocks do
 
   defp put_text_facts(attrs, size, lines) do
     attrs
-    |> Keyword.put_new(:size, size)
-    |> Keyword.put_new(:lines, lines)
+    |> Keyword.put(:size, size)
+    |> Keyword.put(:lines, lines)
   end
 
   defp split_lines(""), do: []

@@ -53,6 +53,36 @@ defmodule Froth.Agent.ToolResultTest do
       assert api["content"] =~ "hello world"
     end
 
+    test "explicit pager reads stay inline in the API content" do
+      body =
+        Enum.map_join(1..241, "\n", fn line ->
+          "line #{line} #{String.duplicate("x", 80)}"
+        end)
+
+      blocks =
+        Blocks.materialize([
+          Block.new(
+            [
+              kind: "page",
+              blob: "01K00000000000000000000000",
+              from_line: 1,
+              lines_requested: 241,
+              no_fold: true
+            ],
+            body
+          )
+        ])
+
+      result = ToolResult.new("call_1", blocks)
+      api = ToolResult.to_api(result)
+
+      assert is_binary(api["content"])
+      assert api["content"] =~ "line 1 "
+      assert api["content"] =~ "line 241 "
+      refute api["content"] =~ "<omitted"
+      refute api["content"] =~ "use pager to read more"
+    end
+
     test "block list with a binary block becomes [text, image] content parts" do
       bytes = :crypto.strong_rand_bytes(2048)
 

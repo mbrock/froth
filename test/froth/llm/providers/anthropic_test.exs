@@ -192,4 +192,68 @@ defmodule LLM.Providers.AnthropicTest do
              "content" => [%{"type" => "text", "text" => "done"}]
            }
   end
+
+  test "build_request preserves long pager tool results in later same-cycle turns" do
+    long_page =
+      Enum.map_join(1..241, "\n", fn line ->
+        "line #{line} #{String.duplicate("x", 80)}"
+      end)
+
+    request = %Request{
+      provider: Anthropic,
+      headers: [{"x-api-key", "test"}],
+      model: "claude-opus-4-7",
+      system: "system prompt",
+      max_tokens: 1024,
+      messages: [
+        Message.user("read long output"),
+        Message.assistant([
+          %{
+            "type" => "tool_use",
+            "id" => "call_1",
+            "name" => "pager",
+            "input" => %{"id" => "blob:01K", "lines" => 241}
+          }
+        ]),
+        Message.user([
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "call_1",
+            "content" => long_page
+          }
+        ]),
+        Message.assistant([
+          %{
+            "type" => "tool_use",
+            "id" => "call_2",
+            "name" => "froth_echo",
+            "input" => %{"text" => "inspect previous result"}
+          }
+        ])
+      ]
+    }
+
+    {:ok, %{body: body}} = Anthropic.build_request(request)
+
+    assert [
+             _initial,
+             _tool_call,
+             %{
+               "role" => "user",
+               "content" => [
+                 %{
+                   "type" => "tool_result",
+                   "tool_use_id" => "call_1",
+                   "content" => encoded_content
+                 }
+               ]
+             },
+             _next_tool_call
+           ] = body["messages"]
+
+    assert encoded_content =~ "line 1 "
+    assert encoded_content =~ "line 241 "
+    refute encoded_content =~ "<omitted"
+    refute encoded_content =~ "use pager to read more"
+  end
 end

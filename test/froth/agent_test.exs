@@ -5,6 +5,7 @@ defmodule Froth.Agent.WorkerTest do
   alias Froth.Agent
   alias Froth.ObjectStore
   alias Froth.Agent.{Config, Cycle, Message, Worker, ToolUse}
+  alias Froth.Context.Block
   alias Froth.Event
   alias LLM.Fake, as: FakeLLM
   alias LLM.Message, as: LLMMessage
@@ -253,6 +254,25 @@ defmodule Froth.Agent.WorkerTest do
 
     assert event.metadata["text_preview"] == long_text
     refute event.metadata["text_preview"] =~ "..."
+  end
+
+  test "append_event summarizes non-JSON-safe binary data" do
+    cycle = Repo.insert!(%Cycle{})
+    bytes = <<0xFF, 0xD8, 0x00>>
+
+    event =
+      Agent.append_event(cycle, %{
+        kind: "tool.completed",
+        data: %{result: %{body: bytes}}
+      })
+
+    assert event.metadata["result"]["body"] == %{
+             "bytes" => byte_size(bytes),
+             "sha256" =>
+               :crypto.hash(:sha256, bytes)
+               |> Base.encode16(case: :lower),
+             "encoding" => "binary"
+           }
   end
 
   test "update_cycle preserves boolean values in nested config maps" do
@@ -541,6 +561,132 @@ defmodule Froth.Agent.WorkerTest do
       wait_for_exit(pid)
     end
 
+    test "keeps unfolded long block tool results through later calls in the same cycle" do
+      body =
+        Enum.map_join(1..241, "\n", fn line ->
+          "line #{line} #{String.duplicate("x", 80)}"
+        end)
+
+      model = FakeLLM.claim()
+
+      executor =
+        start_executor(fn %ToolUse{}, _context ->
+          {:ok,
+           [
+             Block.new(
+               [
+                 kind: "page",
+                 blob: "01K00000000000000000000000",
+                 from_line: 1,
+                 lines_requested: 241,
+                 no_fold: true
+               ],
+               body
+             )
+           ]}
+        end)
+
+      {pid, _cycle} =
+        start_worker([Message.user("read long output")], nil,
+          provider: :fakeai,
+          model: model,
+          executor: executor
+        )
+
+      assert_receive {FakeLLM, turn_1,
+                      %Request{messages: [%LLMMessage{role: :user}]}},
+                     5000
+
+      FakeLLM.reply(
+        turn_1,
+        {:ok,
+         %{
+           content: [
+             %{
+               "type" => "tool_use",
+               "id" => "call_1",
+               "name" => "froth_echo",
+               "input" => %{"text" => "read long output"}
+             }
+           ],
+           stop_reason: "tool_use"
+         }}
+      )
+
+      assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5000
+
+      assert %LLMMessage{
+               role: :user,
+               content: [
+                 %{
+                   "type" => "tool_result",
+                   "tool_use_id" => "call_1",
+                   "content" => content
+                 }
+               ]
+             } = List.last(request_2.messages)
+
+      assert content =~ "line 1 "
+      assert content =~ "line 241 "
+      refute content =~ "<omitted"
+      refute content =~ "use pager to read more"
+
+      FakeLLM.reply(
+        turn_2,
+        {:ok,
+         %{
+           content: [
+             %{
+               "type" => "tool_use",
+               "id" => "call_2",
+               "name" => "froth_echo",
+               "input" => %{"text" => "inspect previous result"}
+             }
+           ],
+           stop_reason: "tool_use"
+         }}
+      )
+
+      assert_receive {FakeLLM, turn_3, %Request{} = request_3}, 5000
+
+      persisted_content =
+        Enum.find_value(request_3.messages, fn
+          %LLMMessage{
+            role: :user,
+            content: [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "call_1",
+                "content" => content
+              }
+            ]
+          } ->
+            content
+
+          _ ->
+            nil
+        end)
+
+      assert is_binary(persisted_content)
+
+      assert persisted_content =~ "line 1 "
+      assert persisted_content =~ "line 241 "
+      refute persisted_content =~ "<omitted"
+      refute persisted_content =~ "use pager to read more"
+
+      FakeLLM.reply(
+        turn_3,
+        {:ok,
+         %{
+           text: "done",
+           content: [%{"type" => "text", "text" => "done"}],
+           stop_reason: "stop"
+         }}
+      )
+
+      wait_for_exit(pid)
+    end
+
     test "persists all messages including tool results" do
       executor =
         start_executor(fn %ToolUse{input: %{"text" => text}}, _context ->
@@ -602,6 +748,43 @@ defmodule Froth.Agent.WorkerTest do
                <<"echoed: test message", replacement::binary>>
 
       assert String.valid?(completed.metadata["result"])
+    end
+
+    test "blobifies pre-sized binary block tool results before event persistence" do
+      bytes = <<0xFF, 0xD8, 0xFF, 0xE0, "JFIF", 0x00, 0x01, 0x02>>
+
+      executor =
+        start_executor(fn %ToolUse{}, _context ->
+          {:ok,
+           [
+             Block.new(
+               [
+                 kind: "fetched",
+                 mime: "image/jpeg",
+                 filename: "photo.jpg",
+                 size: byte_size(bytes)
+               ],
+               bytes
+             )
+           ]}
+        end)
+
+      {pid, cycle} =
+        start_worker([Message.user("echo test message")], "tool_use_echo",
+          executor: executor
+        )
+
+      wait_for_exit(pid)
+
+      completed = latest_cycle_event(cycle.id, "tool.completed")
+      [block] = completed.metadata["result"]["blocks"]
+      attrs = Map.new(block["attrs"], &{&1["k"], &1["v"]})
+
+      assert completed.metadata["result_type"] == "blocks"
+      assert is_nil(block["body"])
+      assert attrs["mime"] == "image/jpeg"
+      assert attrs["size"] == byte_size(bytes)
+      assert is_binary(attrs["blob"])
     end
 
     test "continues thinking when tool result text merely contains Yielding:" do

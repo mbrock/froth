@@ -105,7 +105,9 @@ defmodule Froth.Telegram.Message do
       %{kind: :chat,    chat_id: -100..., signature: "Pavel Durov" | nil}
       %{kind: :channel, chat_id: -100..., message_id: 13631488, signature: nil}
   """
-  def forward_info(%{"forward_info" => %{"origin" => %{"@type" => type} = origin}}) do
+  def forward_info(%{
+        "forward_info" => %{"origin" => %{"@type" => type} = origin}
+      }) do
     case type do
       "messageOriginUser" ->
         %{kind: :user, user_id: origin["sender_user_id"]}
