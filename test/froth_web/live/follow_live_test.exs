@@ -20,8 +20,18 @@ defmodule FrothWeb.FollowLiveTest do
     {:ok, view, _html} = live(conn, ~p"/froth/follow")
 
     assert has_element?(view, "#follow-reader")
-    assert has_element?(view, "#follow-entry-#{id}", "froth.agent.tool.completed")
-    assert has_element?(view, "#follow-entry-#{id}", "tool_name=read_tool_transcript")
+
+    assert has_element?(
+             view,
+             "#follow-entry-#{id}",
+             "froth.agent.tool.completed"
+           )
+
+    assert has_element?(
+             view,
+             "#follow-entry-#{id}",
+             "tool_name=read_tool_transcript"
+           )
   end
 
   test "errors mode hides non-error rows", %{conn: conn} do

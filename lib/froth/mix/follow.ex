@@ -190,9 +190,15 @@ defmodule Froth.Mix.Follow do
 
         state =
           cond do
-            !Filter.matches?(entry, filter) -> state
-            !Entry.visible?(entry, mode) -> state
-            dedupe_hidden?(entry) -> state
+            !Filter.matches?(entry, filter) ->
+              state
+
+            !Entry.visible?(entry, mode) ->
+              state
+
+            dedupe_hidden?(entry) ->
+              state
+
             true ->
               IO.puts(render_entry(entry, depth))
               state
@@ -424,15 +430,32 @@ defmodule Froth.Mix.Follow do
 
   defp verb_tag(%Entry{event: name}, ansi) do
     cond do
-      String.ends_with?(name, ".start") -> color(ansi, [:faint], "started")
-      String.ends_with?(name, ".started") -> color(ansi, [:faint], "started")
-      String.ends_with?(name, ".stop") -> color(ansi, [:faint], "completed")
-      String.ends_with?(name, ".completed") -> color(ansi, [:faint], "completed")
-      String.ends_with?(name, ".failed") -> color(ansi, [:red], "failed")
-      String.ends_with?(name, ".timed_out") -> color(ansi, [:red], "timed out")
-      String.ends_with?(name, ".cancelled") -> color(ansi, [:faint], "cancelled")
-      String.ends_with?(name, ".exception") -> color(ansi, [:red], "exception")
-      true -> ""
+      String.ends_with?(name, ".start") ->
+        color(ansi, [:faint], "started")
+
+      String.ends_with?(name, ".started") ->
+        color(ansi, [:faint], "started")
+
+      String.ends_with?(name, ".stop") ->
+        color(ansi, [:faint], "completed")
+
+      String.ends_with?(name, ".completed") ->
+        color(ansi, [:faint], "completed")
+
+      String.ends_with?(name, ".failed") ->
+        color(ansi, [:red], "failed")
+
+      String.ends_with?(name, ".timed_out") ->
+        color(ansi, [:red], "timed out")
+
+      String.ends_with?(name, ".cancelled") ->
+        color(ansi, [:faint], "cancelled")
+
+      String.ends_with?(name, ".exception") ->
+        color(ansi, [:red], "exception")
+
+      true ->
+        ""
     end
   end
 

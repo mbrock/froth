@@ -42,10 +42,12 @@ defmodule Froth.Telegram.Bot do
     :runtime_ref,
     debounce_timer: nil,
     debounce_msg: nil,
+    pending_messages: :queue.new(),
     pending_ask_resumes: []
   ]
 
   @game_url "https://1.foo/name-game-3"
+  @pending_message_limit 10
 
   def child_spec(opts) when is_map(opts), do: child_spec(Map.to_list(opts))
 
@@ -175,7 +177,7 @@ defmodule Froth.Telegram.Bot do
 
       msg ->
         state = %{state | debounce_msg: nil}
-        {:noreply, start_cycle_from_message(state, msg)}
+        {:noreply, fire_debounced_cycle(state, msg)}
     end
   end
 
@@ -217,7 +219,7 @@ defmodule Froth.Telegram.Bot do
 
   @impl true
   def handle_cast({:start_inference_session, msg}, state) when is_map(msg) do
-    {:noreply, start_cycle_from_message(state, msg)}
+    {:noreply, start_or_queue_cycle(state, msg)}
   end
 
   def handle_cast({:stop_cycle, cycle_id}, state) when is_binary(cycle_id) do
@@ -298,7 +300,7 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp dispatch_update_action(state, {:mention, msg}) do
-    debounce_or_start(state, msg)
+    start_or_queue_cycle(state, msg)
   end
 
   defp dispatch_update_action(
@@ -653,20 +655,68 @@ defmodule Froth.Telegram.Bot do
 
   # --- Debounce ---
 
+  defp start_or_queue_cycle(%{cycle_state: nil} = state, msg) do
+    debounce_or_start(state, msg)
+  end
+
+  defp start_or_queue_cycle(state, msg) do
+    enqueue_pending_message(state, msg)
+  end
+
+  defp fire_debounced_cycle(%{cycle_state: nil} = state, msg) do
+    start_cycle_from_message(state, msg)
+  end
+
+  defp fire_debounced_cycle(state, msg) do
+    enqueue_pending_message(state, msg)
+  end
+
   defp debounce_or_start(state, msg) do
     debounce_ms = state.bot_config.debounce_ms
 
-    if debounce_ms > 0 and is_nil(state.cycle_state) do
+    if debounce_ms > 0 do
       # Cancel existing timer if any
       if state.debounce_timer, do: Process.cancel_timer(state.debounce_timer)
 
       timer = Process.send_after(self(), :debounce_fire, debounce_ms)
       %{state | debounce_timer: timer, debounce_msg: msg}
     else
-      # No debounce or already in a cycle — fire immediately
+      # No debounce configured; the bot is idle, so start now.
       start_cycle_from_message(state, msg)
     end
   end
+
+  defp enqueue_pending_message(state, msg) when is_map(msg) do
+    pending_messages =
+      msg
+      |> :queue.in(state.pending_messages)
+      |> trim_pending_messages()
+
+    %{state | pending_messages: pending_messages}
+  end
+
+  defp trim_pending_messages(pending_messages) do
+    if :queue.len(pending_messages) > @pending_message_limit do
+      {{:value, _oldest}, pending_messages} = :queue.out(pending_messages)
+      pending_messages
+    else
+      pending_messages
+    end
+  end
+
+  defp maybe_start_next_pending_message(%{cycle_state: nil} = state) do
+    case :queue.out(state.pending_messages) do
+      {{:value, msg}, pending_messages} ->
+        state
+        |> Map.put(:pending_messages, pending_messages)
+        |> start_cycle_from_message(msg)
+
+      {:empty, _pending_messages} ->
+        state
+    end
+  end
+
+  defp maybe_start_next_pending_message(state), do: state
 
   defp start_cycle_from_message(state, msg) when is_map(msg) do
     chat_id = msg["chat_id"]
@@ -696,11 +746,8 @@ defmodule Froth.Telegram.Bot do
               is_binary(text) and is_binary(system_prompt) do
     bc = state.bot_config
 
-    # Per RFC-0021 step 3: every inbound user message starts its own
-    # root cycle. Parallel cycles in the same chat are allowed and
-    # expected; the Bot's `cycle_state` just tracks the most recent
-    # one for DOWN/stop-active dispatch. Older cycles keep running
-    # under their own `CycleRuntime` registered in `CycleRegistry`.
+    # The bot runs one root cycle at a time. Inbound triggers that arrive
+    # while this state is live are queued and promoted after reset.
     BotAdapter.send_typing(bc.session_id, chat_id)
 
     initial_content =
@@ -897,10 +944,14 @@ defmodule Froth.Telegram.Bot do
     state
   end
 
-  # Clear `cycle_state` — back to "idle". The runtime process is assumed
-  # to be terminating or already gone; background task bookkeeping lived
-  # on it and goes with it.
-  defp reset_cycle_state(state), do: %{state | cycle_state: nil}
+  # Clear `cycle_state` and promote the next queued trigger if there is one.
+  # The runtime process is assumed to be terminating or already gone; background
+  # task bookkeeping lived on it and goes with it.
+  defp reset_cycle_state(state) do
+    state
+    |> Map.put(:cycle_state, nil)
+    |> maybe_start_next_pending_message()
+  end
 
   defp maybe_resume_pending_ask(%{pending_ask_resumes: []} = state), do: state
 

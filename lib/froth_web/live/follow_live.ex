@@ -429,7 +429,9 @@ defmodule FrothWeb.FollowLive do
   defp format_time(_), do: "--:--:--.---"
 
   defp truncate_id(nil, _max), do: nil
-  defp truncate_id(value, max), do: value |> to_string() |> String.slice(0, max)
+
+  defp truncate_id(value, max),
+    do: value |> to_string() |> String.slice(0, max)
 
   defp mode_button_class(current_mode, mode) do
     base =
@@ -464,11 +466,16 @@ defmodule FrothWeb.FollowLive do
   end
 
   defp format_value(value) when is_binary(value) do
-    if String.length(value) > 80, do: String.slice(value, 0, 80) <> "…", else: value
+    if String.length(value) > 80,
+      do: String.slice(value, 0, 80) <> "…",
+      else: value
   end
 
   defp format_value(value) when is_atom(value), do: Atom.to_string(value)
-  defp format_value(value) when is_integer(value), do: Integer.to_string(value)
+
+  defp format_value(value) when is_integer(value),
+    do: Integer.to_string(value)
+
   defp format_value(value) when is_float(value), do: Float.to_string(value)
   defp format_value(true), do: "true"
   defp format_value(false), do: "false"

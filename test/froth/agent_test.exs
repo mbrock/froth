@@ -989,8 +989,7 @@ defmodule Froth.Agent.WorkerTest do
                         event: "froth.agent.tool.started",
                         metadata: %{
                           "tool_name" => "froth_echo",
-                          "tool_use_id" =>
-                            "toolu_01723uR8LLoYDLV4oqbtHEd4"
+                          "tool_use_id" => "toolu_01723uR8LLoYDLV4oqbtHEd4"
                         }
                       }},
                      5000
@@ -1151,8 +1150,7 @@ defmodule Froth.Agent.WorkerTest do
                           "cycle_id" => ^cycle_id,
                           "result_type" => "text",
                           "tool_name" => "froth_echo",
-                          "tool_use_id" =>
-                            "toolu_01723uR8LLoYDLV4oqbtHEd4",
+                          "tool_use_id" => "toolu_01723uR8LLoYDLV4oqbtHEd4",
                           "duration_ms" => duration_ms
                         }
                       }},
@@ -1182,8 +1180,7 @@ defmodule Froth.Agent.WorkerTest do
                         event: "froth.agent.tool.started",
                         metadata: %{
                           "tool_name" => "froth_echo",
-                          "tool_use_id" =>
-                            "toolu_01723uR8LLoYDLV4oqbtHEd4"
+                          "tool_use_id" => "toolu_01723uR8LLoYDLV4oqbtHEd4"
                         }
                       }},
                      5000
@@ -1194,8 +1191,7 @@ defmodule Froth.Agent.WorkerTest do
                         metadata: %{
                           "error" => "echo failed",
                           "tool_name" => "froth_echo",
-                          "tool_use_id" =>
-                            "toolu_01723uR8LLoYDLV4oqbtHEd4",
+                          "tool_use_id" => "toolu_01723uR8LLoYDLV4oqbtHEd4",
                           "duration_ms" => duration_ms
                         }
                       }},

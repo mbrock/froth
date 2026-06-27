@@ -414,7 +414,6 @@ defmodule Froth.HeadlinesTest do
              "url"
            ]) ==
              "https://t.me/charliebuddybot/tool?startapp=cycle_charlie_cycle-123"
-
   end
 
   test "register_headlines progress accumulates across successive registrations" do
