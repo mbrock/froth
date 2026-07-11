@@ -75,7 +75,12 @@ defmodule Froth.Telegram.BotContext do
 
   defp build(chat_id, opts) when is_integer(chat_id) and is_list(opts) do
     before_unix = opt_before_unix(opts)
-    chapters = load_chapters(opts[:chronicle_dir])
+
+    chapters =
+      load_chapters(opts[:chronicle_dir]) ++ load_weekly_chapters(chat_id)
+
+    daily_summaries =
+      load_daily_summaries(chat_id, before_unix, opts[:daily_summary_limit])
 
     db_rows = fetch_recent(chat_id, before_unix, opts)
     db_rows = limit_recent_rows(db_rows, opts)
@@ -92,6 +97,7 @@ defmodule Froth.Telegram.BotContext do
 
     %Context{
       chapters: chapters,
+      daily_summaries: daily_summaries,
       chat_context: recent.chat_context,
       recent_messages: recent_messages
     }
@@ -115,6 +121,44 @@ defmodule Froth.Telegram.BotContext do
         []
     end
   end
+
+  defp load_weekly_chapters(chat_id) do
+    Froth.WeeklySummarizer.list(chat_id)
+    |> Enum.map(fn summary ->
+      from_date = DateTime.from_unix!(summary.from_date) |> DateTime.to_date()
+
+      to_date =
+        DateTime.from_unix!(summary.to_date)
+        |> DateTime.to_date()
+        |> Date.add(-1)
+
+      %{
+        name: "week-#{from_date}-to-#{to_date}",
+        text: summary.summary_text
+      }
+    end)
+  end
+
+  defp load_daily_summaries(_chat_id, _before_unix, nil), do: []
+
+  defp load_daily_summaries(chat_id, before_unix, limit)
+       when is_integer(limit) and limit > 0 do
+    Queries.daily_summaries(chat_id, before_unix)
+    |> Enum.group_by(& &1.from_date)
+    |> Enum.map(fn {_date, rows} ->
+      Enum.max_by(rows, &String.length(&1.summary_text))
+    end)
+    |> Enum.sort_by(& &1.from_date)
+    |> Enum.take(-limit)
+    |> Enum.map(fn summary ->
+      %{
+        date: DateTime.from_unix!(summary.from_date) |> DateTime.to_date(),
+        text: summary.summary_text
+      }
+    end)
+  end
+
+  defp load_daily_summaries(_chat_id, _before_unix, _limit), do: []
 
   defp render(%Context{} = ctx) do
     ctx
@@ -308,6 +352,13 @@ defmodule Froth.Telegram.BotContext do
 
     base =
       maybe_put_opt(base, :chronicle_dir, Map.get(bot_config, :chronicle_dir))
+
+    base =
+      maybe_put_opt(
+        base,
+        :daily_summary_limit,
+        Map.get(bot_config, :daily_summary_limit)
+      )
 
     base =
       maybe_put_opt(

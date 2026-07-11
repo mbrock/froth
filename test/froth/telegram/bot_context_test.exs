@@ -526,6 +526,85 @@ defmodule Froth.Telegram.BotContextTest do
     assert prompt =~ "recent context"
   end
 
+  test "database-backed weekly chronicles follow the manual chapters" do
+    chat_id = unique_chat_id()
+    session_id = "test-session-#{System.unique_integer([:positive])}"
+    from_date = ~D[2026-03-24]
+    to_date = ~D[2026-03-30]
+
+    Repo.insert!(
+      ChatSummary.changeset(%ChatSummary{}, %{
+        chat_id: chat_id,
+        from_date:
+          DateTime.new!(from_date, ~T[00:00:00], "Etc/UTC")
+          |> DateTime.to_unix(),
+        to_date:
+          DateTime.new!(to_date, ~T[00:00:00], "Etc/UTC")
+          |> DateTime.to_unix(),
+        agent: "claude-opus-4-6",
+        summary_text: "The first automatic weekly chapter.",
+        message_count: 42,
+        metadata: %{"kind" => "weekly_chronicle"}
+      })
+    )
+
+    parts =
+      BotContext.render_parts(chat_id,
+        telegram_session_id: session_id,
+        chronicle_dir: nil
+      )
+
+    prompt = Enum.join(parts, "")
+    assert prompt =~ ~s(<chapter name=week-2026-03-24-to-2026-03-29>)
+    assert prompt =~ "The first automatic weekly chapter."
+  end
+
+  test "weekly chapters are followed by a fixed rolling tail of daily summaries" do
+    chat_id = unique_chat_id()
+
+    Repo.insert!(
+      ChatSummary.changeset(%ChatSummary{}, %{
+        chat_id: chat_id,
+        from_date: day_start_unix(~D[2026-03-30]),
+        to_date: day_start_unix(~D[2026-04-06]),
+        agent: "claude-opus-4-6",
+        summary_text: "The weekly chapter.",
+        message_count: 70,
+        metadata: %{"kind" => "weekly_chronicle"}
+      })
+    )
+
+    for offset <- 0..7 do
+      date = Date.add(~D[2026-04-01], offset)
+
+      insert_summary(
+        chat_id,
+        day_start_unix(date),
+        day_start_unix(Date.add(date, 1)),
+        "Daily summary #{date}"
+      )
+    end
+
+    prompt =
+      BotContext.render_parts(chat_id,
+        chronicle_dir: nil,
+        daily_summary_limit: 7
+      )
+      |> Enum.join("")
+
+    weekly_pos = position(prompt, "The weekly chapter.")
+    first_daily_pos = position(prompt, "Daily summary 2026-04-02")
+
+    assert weekly_pos < first_daily_pos
+    refute prompt =~ "Daily summary 2026-04-01"
+
+    for offset <- 1..7 do
+      date = Date.add(~D[2026-04-01], offset)
+      assert prompt =~ ~s(<daily-summary date=#{date}>)
+      assert prompt =~ "Daily summary #{date}"
+    end
+  end
+
   test "attaches cycle traces to the linked recent message and omits send_message noise" do
     bot_config = bot_config()
     chat_id = unique_chat_id()
@@ -679,6 +758,14 @@ defmodule Froth.Telegram.BotContextTest do
         "text" => %{"text" => Keyword.fetch!(opts, :text)}
       }
     }
+  end
+
+  defp day_start_unix(date),
+    do: DateTime.new!(date, ~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
+
+  defp position(text, needle) do
+    {position, _length} = :binary.match(text, needle)
+    position
   end
 
   defp insert_summary(chat_id, from_date, to_date, summary_text) do

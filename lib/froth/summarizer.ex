@@ -147,6 +147,7 @@ defmodule Froth.Summarizer do
     Repo.all(
       from(s in ChatSummary,
         where: s.chat_id == ^chat_id and s.to_date <= ^before_unix,
+        where: s.from_date != s.to_date and s.to_date - s.from_date <= 86_400,
         order_by: [asc: s.from_date],
         select: %{
           from_date: s.from_date,

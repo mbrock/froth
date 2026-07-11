@@ -20,6 +20,7 @@ defmodule Froth.Telegram.BotContextHTML do
     View model for a complete bot context prompt.
     """
     defstruct chapters: [],
+              daily_summaries: [],
               chat_context: nil,
               recent_messages: []
 
@@ -73,6 +74,7 @@ defmodule Froth.Telegram.BotContextHTML do
 
     @type t :: %__MODULE__{
             chapters: [chapter()],
+            daily_summaries: [%{date: Date.t(), text: String.t()}],
             chat_context: chat_context() | nil,
             recent_messages: [recent_message()]
           }
@@ -89,6 +91,10 @@ defmodule Froth.Telegram.BotContextHTML do
         <.page_break />
       <% end %>
       <.chapter name={chapter.name} text={chapter.text} />
+    <% end %>
+    <%= for summary <- @ctx.daily_summaries do %>
+      <.page_break />
+      <.daily_summary date={summary.date} text={summary.text} />
     <% end %>
     <%= if @ctx.recent_messages != [] do %>
       <%= for {m, idx} <- Enum.with_index(@ctx.recent_messages) do %>
@@ -121,6 +127,17 @@ defmodule Froth.Telegram.BotContextHTML do
     <chapter name={@name}>
       {@text}
     </chapter>
+    """
+  end
+
+  attr :date, Date, required: true
+  attr :text, :string, required: true
+
+  def daily_summary(assigns) do
+    ~H"""
+    <daily-summary date={Date.to_iso8601(@date)}>
+      {@text}
+    </daily-summary>
     """
   end
 

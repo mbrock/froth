@@ -39,6 +39,7 @@ defmodule Froth.Telegram.Charlie do
       ],
       tools_module: CharlieTools,
       chronicle_dir: Application.app_dir(:froth, "priv/chronicle"),
+      daily_summary_limit: 7,
       # recent_window_target_hours: 4,
       # recent_window_min_hours: 1,
       # recent_window_backfill_hours: 8,

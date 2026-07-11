@@ -18,7 +18,15 @@ defmodule Froth.DailyDigest do
 
   require Logger
 
-  alias Froth.{ChatSummary, Event, Headlines, Repo, Summarizer, Telegram}
+  alias Froth.{
+    ChatSummary,
+    Event,
+    Headlines,
+    Repo,
+    Summarizer,
+    Telegram,
+    WeeklySummarizer
+  }
 
   @default_chat_id -1_003_690_254_489
   @default_session_id "charlie"
@@ -46,6 +54,7 @@ defmodule Froth.DailyDigest do
           pending_dates: [Date.t()],
           summarized_dates: [Date.t()],
           no_message_dates: [Date.t()],
+          summarized_weeks: [{Date.t(), Date.t()}],
           sent_dates: [Date.t()]
         }
 
@@ -71,6 +80,20 @@ defmodule Froth.DailyDigest do
     summarize_day_fun =
       Keyword.get(opts, :summarize_day_fun, &Summarizer.summarize_day/2)
 
+    pending_weekly_ranges_fun =
+      Keyword.get(
+        opts,
+        :pending_weekly_ranges_fun,
+        &WeeklySummarizer.pending_ranges/2
+      )
+
+    summarize_week_fun =
+      Keyword.get(
+        opts,
+        :summarize_week_fun,
+        &WeeklySummarizer.summarize_range/3
+      )
+
     extract_headlines_fun =
       Keyword.get(opts, :extract_headlines_fun, fn digest_chat_id,
                                                    extract_opts ->
@@ -86,6 +109,7 @@ defmodule Froth.DailyDigest do
       Keyword.get(opts, :send_document_fun, &Telegram.send_document/4)
 
     pending_dates = pending_summary_dates_fun.(chat_id, today)
+    pending_weeks = pending_weekly_ranges_fun.(chat_id, today)
 
     with {:ok,
           %{
@@ -93,6 +117,8 @@ defmodule Froth.DailyDigest do
             no_message_dates: no_message_dates
           }} <-
            summarize_pending_dates(chat_id, pending_dates, summarize_day_fun),
+         {:ok, summarized_weeks} <-
+           summarize_pending_weeks(chat_id, pending_weeks, summarize_week_fun),
          sendable_summaries <- unsent_daily_summaries(chat_id, today),
          :ok <-
            maybe_generate_missing_headlines(
@@ -114,6 +140,7 @@ defmodule Froth.DailyDigest do
          pending_dates: pending_dates,
          summarized_dates: summarized_dates,
          no_message_dates: no_message_dates,
+         summarized_weeks: summarized_weeks,
          sent_dates: sent_dates
        }}
     end
@@ -232,6 +259,27 @@ defmodule Froth.DailyDigest do
         end
       end
     )
+  end
+
+  defp summarize_pending_weeks(_chat_id, [], _summarize_week_fun),
+    do: {:ok, []}
+
+  defp summarize_pending_weeks(chat_id, ranges, summarize_week_fun)
+       when is_integer(chat_id) and is_list(ranges) and
+              is_function(summarize_week_fun, 3) do
+    Enum.reduce_while(ranges, {:ok, []}, fn {from_date, to_date} = range,
+                                            {:ok, acc} ->
+      case summarize_week_fun.(chat_id, from_date, to_date) do
+        {:ok, _summary} ->
+          {:cont, {:ok, acc ++ [range]}}
+
+        {:error, :no_summaries} ->
+          {:cont, {:ok, acc}}
+
+        {:error, reason} ->
+          {:halt, {:error, {:weekly_summarize_failed, range, reason}}}
+      end
+    end)
   end
 
   defp unsent_daily_summaries(chat_id, today)
@@ -716,6 +764,7 @@ defmodule Froth.DailyDigest do
     Logger.info(
       "DailyDigest completed for chat #{state.chat_id}: " <>
         "#{length(result.summarized_dates)} summarized, " <>
+        "#{length(result.summarized_weeks)} weekly chapters, " <>
         "#{length(result.no_message_dates)} empty, " <>
         "#{length(result.sent_dates)} sent."
     )

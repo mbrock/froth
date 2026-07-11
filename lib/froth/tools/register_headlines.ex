@@ -366,6 +366,7 @@ defmodule Froth.Tools.RegisterHeadlines do
     Repo.all(
       from(s in ChatSummary,
         where: s.chat_id == ^chat_id,
+        where: s.from_date != s.to_date and s.to_date - s.from_date <= 86_400,
         distinct:
           fragment("timezone('UTC', to_timestamp(?))::date", s.from_date),
         order_by:

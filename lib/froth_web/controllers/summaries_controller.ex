@@ -9,6 +9,8 @@ defmodule FrothWeb.SummariesController do
     summaries =
       from(s in "chat_summaries",
         where: s.chat_id == ^@chat_id,
+        where: s.from_date != s.to_date,
+        where: fragment("? - ? <= 86400", s.to_date, s.from_date),
         select: %{
           id: s.id,
           from_date: s.from_date,

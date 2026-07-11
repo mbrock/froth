@@ -33,5 +33,8 @@ defmodule Froth.ChatSummary do
       :summary_text,
       :message_count
     ])
+    |> unique_constraint([:chat_id, :from_date, :to_date],
+      name: :chat_summaries_weekly_chronicle_range_index
+    )
   end
 end
