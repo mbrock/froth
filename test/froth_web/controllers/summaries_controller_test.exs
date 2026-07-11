@@ -41,6 +41,8 @@ defmodule FrothWeb.SummariesControllerTest do
              ~s(nav a[aria-current="page"][href="/froth/weekly"])
            ) != []
 
+    assert Floki.find(document, ~s(nav a[href="/froth/bot-context"])) != []
+
     assert Floki.text(Floki.find(document, "article h2")) ==
              "March 2 – March 8, 2026"
 

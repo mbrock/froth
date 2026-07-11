@@ -258,6 +258,7 @@ defmodule FrothWeb.SummariesController do
     <nav aria-label="Chronicle archives">
       <a href="/froth/summaries"#{daily_current}>Daily</a>
       <a href="/froth/weekly"#{weekly_current}>Weekly</a>
+      <a href="/froth/bot-context">Bot context</a>
     </nav>
     """
   end
