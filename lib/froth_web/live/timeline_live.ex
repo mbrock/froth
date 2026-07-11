@@ -416,7 +416,10 @@ defmodule FrothWeb.TimelineLive do
           parse_body(text)
 
         photo?(m.raw) ->
-          {:photo, "/froth/media/#{chat_id}/#{m.message_id}", caption(m.raw)}
+          {width, height} = photo_dimensions(m.raw)
+
+          {:photo, "/froth/media/#{chat_id}/#{m.message_id}", caption(m.raw),
+           width, height}
 
         true ->
           :media
@@ -456,6 +459,17 @@ defmodule FrothWeb.TimelineLive do
       text when is_binary(text) and text != "" -> text
       _ -> nil
     end
+  end
+
+  defp photo_dimensions(raw) do
+    raw
+    |> get_in(["content", "photo", "sizes"])
+    |> List.wrap()
+    |> Enum.max_by(
+      fn size -> (size["width"] || 0) * (size["height"] || 0) end,
+      fn -> %{} end
+    )
+    |> then(&{&1["width"], &1["height"]})
   end
 
   defp present_text(text) when is_binary(text) do
@@ -1044,7 +1058,7 @@ defmodule FrothWeb.TimelineLive do
 
   defp multi_paragraph?(_), do: false
 
-  defp photo_body?(%{body: {:photo, _, _}}), do: true
+  defp photo_body?(%{body: {:photo, _, _, _, _}}), do: true
   defp photo_body?(_), do: false
 
   defp message_body(%{turn: %{body: :media, media_text: text}} = assigns) do
@@ -1055,15 +1069,25 @@ defmodule FrothWeb.TimelineLive do
     """
   end
 
-  defp message_body(%{turn: %{body: {:photo, url, caption}}} = assigns) do
-    assigns = assign(assigns, url: url, caption: caption)
+  defp message_body(
+         %{turn: %{body: {:photo, url, caption, width, height}}} = assigns
+       ) do
+    assigns =
+      assign(assigns,
+        url: url,
+        caption: caption,
+        width: width,
+        height: height
+      )
 
     ~H"""
     <div class="flex flex-col gap-1">
       <img
         src={@url}
         loading="lazy"
-        class="max-w-[420px] max-h-[360px] object-contain border border-line"
+        width={@width}
+        height={@height}
+        class="h-auto w-auto max-w-[420px] max-h-[360px] object-contain border border-line"
         alt="photo"
       />
       <p :if={@caption} class="text-fg-dim break-words">{@caption}</p>

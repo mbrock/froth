@@ -110,7 +110,7 @@ defmodule FrothWeb.TimelineLiveTest do
 
     assert has_element?(
              view,
-             ~s|#m-#{message_id} img[src="/froth/media/#{chat_id}/#{message_id}"]|
+             ~s|#m-#{message_id} img[src="/froth/media/#{chat_id}/#{message_id}"][width="640"][height="480"]|
            )
   end
 
