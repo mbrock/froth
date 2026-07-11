@@ -28,6 +28,20 @@ This is a web application written using the Phoenix web framework.
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps
 - For docs, prefer HexDocs and use `mix hex.search` to open/search documentation for the exact dependency versions in this project
 
+## Version Control
+
+After completing a task or request, generally commit and push proactively as a checkpoint unless the user asks not to. This is a single-developer repo; commits are cheap save points and do not need to represent a final design.
+
+When asked to "commit and push," commit all non-ignored changes in the worktree, including unrelated work, and push the current branch with plain `git push`.
+
+Keep generated files and build products out of commits; add appropriate ignore rules when necessary.
+
+Write clear commit messages. Split changes into multiple commits when there is a useful, natural separation and the changes are not entangled, but do not over-optimize for a pristine commit history.
+
+Finish with a clean worktree synchronized with its upstream branch.
+
+Do not create a pull request or use a publishing workflow unless explicitly requested.
+
 ### Phoenix v1.8 guidelines
 
 - **Always** begin your LiveView templates with `<Layouts.app flash={@flash} ...>` which wraps all inner content
