@@ -28,7 +28,15 @@ defmodule Froth.Agent.CycleRuntime do
 
   use GenServer, restart: :temporary
 
-  alias Froth.Agent.{Config, Cycle, Surface, ToolUse, Worker}
+  alias Froth.Agent.{
+    Config,
+    CreditIntervention,
+    Cycle,
+    Surface,
+    ToolUse,
+    Worker
+  }
+
   alias Froth.Agent.CycleRuntime.{Context, View}
   alias Froth.Telegram.{Bot, Bots}
   alias Froth.Telegram.Bot.Config, as: BotConfig
@@ -481,9 +489,14 @@ defmodule Froth.Agent.CycleRuntime do
   def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
-  def terminate(_reason, state) do
+  def terminate(reason, state) do
     _ = maybe_finalize_cycle_control(state.context)
     _ = maybe_append_cycle_footer(state.context)
+
+    if is_nil(state.parent_cycle_id) do
+      _ = CreditIntervention.maybe_post(reason, state.context)
+    end
+
     :ok
   end
 

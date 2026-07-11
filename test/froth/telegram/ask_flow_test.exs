@@ -8,6 +8,105 @@ defmodule Froth.Telegram.AskFlowTest do
   alias LLM.Request
   alias Froth.Telegram.PendingAsk
 
+  test "insufficient Anthropic credit parks the cycle until Okay retries it",
+       %{} do
+    chat_id = 362_441_422
+    %{bot: bot} = start_charlie_bot()
+
+    send(bot, user_update("do the thing", message_id: 10, chat_id: chat_id))
+
+    assert_receive {FakeLLM, turn_1, %Request{}}, 5_000
+
+    credit_error =
+      {:http_error, 400,
+       %{
+         "type" => "error",
+         "error" => %{
+           "type" => "invalid_request_error",
+           "message" =>
+             "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+         }
+       }}
+
+    FakeLLM.reply(turn_1, {:error, credit_error})
+
+    assert_receive {:telegram_call,
+                    %{
+                      "@type" => "sendMessage",
+                      "chat_id" => ^chat_id,
+                      "input_message_content" => %{
+                        "text" => %{"text" => "Insert coin."}
+                      },
+                      "reply_markup" => %{
+                        "rows" => [
+                          [
+                            %{
+                              "text" => "Okay",
+                              "type" => %{"data" => callback_data}
+                            }
+                          ]
+                        ]
+                      }
+                    }},
+                   5_000
+
+    assert Base.decode64!(callback_data) == "ask:0"
+
+    assert_receive {:message_send_succeeded, _temp_id, prompt_message_id,
+                    ^chat_id, "Insert coin."},
+                   5_000
+
+    assert_pending_ask_message_id(prompt_message_id)
+    assert_bot_idle(bot)
+
+    pending_ask = Repo.one!(from(p in PendingAsk, limit: 1))
+    original_cycle_id = pending_ask.cycle_id
+    assert pending_ask.config["kind"] == "inference_credit_retry"
+
+    send(
+      bot,
+      user_update("and another thing", message_id: 11, chat_id: chat_id)
+    )
+
+    state = :sys.get_state(bot)
+    assert :queue.len(state.pending_messages) == 1
+    refute_receive {FakeLLM, _turn, %Request{}}, 200
+
+    callback_query_id = "credit-retry-callback"
+
+    send(
+      bot,
+      {:telegram_update,
+       %{
+         "@type" => "updateNewCallbackQuery",
+         "id" => callback_query_id,
+         "chat_id" => chat_id,
+         "message_id" => prompt_message_id,
+         "payload" => %{
+           "@type" => "callbackQueryPayloadData",
+           "data" => Base.encode64("ask:0")
+         }
+       }}
+    )
+
+    assert_receive {:telegram_send,
+                    %{
+                      "@type" => "answerCallbackQuery",
+                      "callback_query_id" => ^callback_query_id
+                    }},
+                   5_000
+
+    assert_receive {FakeLLM, turn_2, %Request{} = retry_request}, 5_000
+    assert [%LLMMessage{role: :user}] = retry_request.messages
+    assert :sys.get_state(bot).cycle_state.cycle_id == original_cycle_id
+
+    FakeLLM.reply(turn_2, {:ok, text_response("It worked.")})
+
+    assert_receive {FakeLLM, turn_3, %Request{}}, 5_000
+    FakeLLM.reply(turn_3, {:ok, text_response("The other thing worked.")})
+    assert_bot_idle(bot)
+  end
+
   test "ask pauses a cycle, waits for a free-form answer, and resumes with a real tool result" do
     chat_id = 362_441_422
     %{bot: bot} = start_charlie_bot()

@@ -16,6 +16,7 @@ defmodule Froth.Telegram.Bot do
   alias Froth.Agent.{
     AwaitControl,
     Config,
+    CreditIntervention,
     Cycle,
     CycleRuntime,
     FailureIntervention,
@@ -585,9 +586,10 @@ defmodule Froth.Telegram.Bot do
       (is_integer(chat_id) and chat_id > 0) or mentioned? or is_reply_to_bot ->
         case PendingAsks.latest_unresolved(bot_config.id, chat_id) do
           %{} = pending_ask ->
-            if FailureIntervention.reply_required?(pending_ask),
-              do: nil,
-              else: pending_ask
+            if FailureIntervention.reply_required?(pending_ask) or
+                 CreditIntervention.retry?(pending_ask),
+               do: nil,
+               else: pending_ask
 
           other ->
             other
@@ -657,12 +659,29 @@ defmodule Froth.Telegram.Bot do
   # --- Debounce ---
 
   defp start_or_queue_cycle(%{cycle_state: nil} = state, msg) do
-    debounce_or_start(state, msg)
+    if credit_retry_pending?(state, msg) do
+      enqueue_pending_message(state, msg)
+    else
+      debounce_or_start(state, msg)
+    end
   end
 
   defp start_or_queue_cycle(state, msg) do
     enqueue_pending_message(state, msg)
   end
+
+  defp credit_retry_pending?(state, %{"chat_id" => chat_id})
+       when is_integer(chat_id) do
+    case PendingAsks.latest_unresolved(state.bot_config.id, chat_id) do
+      pending_ask when not is_nil(pending_ask) ->
+        CreditIntervention.retry?(pending_ask)
+
+      nil ->
+        false
+    end
+  end
+
+  defp credit_retry_pending?(_state, _msg), do: false
 
   defp fire_debounced_cycle(%{cycle_state: nil} = state, msg) do
     start_cycle_from_message(state, msg)
@@ -979,6 +998,9 @@ defmodule Froth.Telegram.Bot do
       AwaitControl.await?(pending_ask) ->
         AwaitControl.maybe_finalize_message(pending_ask, session_id)
 
+      CreditIntervention.retry?(pending_ask) ->
+        CreditIntervention.maybe_finalize_message(pending_ask, session_id)
+
       true ->
         :ok
     end
@@ -1012,6 +1034,9 @@ defmodule Froth.Telegram.Bot do
        )
        when is_map(pending_ask) and is_binary(answer) do
     case pending_ask_resolution(pending_ask) do
+      :retry_inference ->
+        retry_pending_inference(state, pending_ask, reply_to)
+
       {:stop_cycle, mode} ->
         stop_pending_ask_cycle(state, pending_ask, mode)
 
@@ -1111,6 +1136,9 @@ defmodule Froth.Telegram.Bot do
 
   defp pending_ask_resolution(pending_ask) do
     cond do
+      CreditIntervention.retry?(pending_ask) ->
+        :retry_inference
+
       FailureIntervention.failure_intervention?(pending_ask) ->
         case FailureIntervention.resume_tool_result(pending_ask) do
           :stop ->
@@ -1133,6 +1161,24 @@ defmodule Froth.Telegram.Bot do
       true ->
         {:tool_result,
          ToolResult.new(pending_ask.tool_use_id, pending_ask.answer || "")}
+    end
+  end
+
+  defp retry_pending_inference(state, pending_ask, reply_to) do
+    with %Cycle{} = cycle <- Repo.get(Cycle, pending_ask.cycle_id),
+         %Config{} = config <-
+           pending_ask_worker_config(state, pending_ask, reply_to) do
+      BotAdapter.send_typing(state.bot_config.session_id, pending_ask.chat_id)
+
+      launch_cycle_worker(
+        clear_pending_ask_wait(state),
+        cycle,
+        config,
+        pending_ask.chat_id,
+        reply_to || pending_ask.message_id
+      )
+    else
+      _ -> state
     end
   end
 
