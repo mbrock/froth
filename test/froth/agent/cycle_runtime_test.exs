@@ -76,12 +76,22 @@ defmodule Froth.Agent.CycleRuntimeTest do
                       message_id: 77,
                       text: "Checking X",
                       mode: :italic
+                    },
+                    control_message: %{
+                      message_id: 77,
+                      text: "Checking X",
+                      mode: :italic
                     }
                   }}
                )
 
       assert %View{
-               narration: %{message_id: 77, text: "Checking X", mode: :italic}
+               narration: %{message_id: 77, text: "Checking X", mode: :italic},
+               control_message: %{
+                 message_id: 77,
+                 text: "Checking X",
+                 mode: :italic
+               }
              } =
                :sys.get_state(runtime).context.view
     end
@@ -124,6 +134,43 @@ defmodule Froth.Agent.CycleRuntimeTest do
       view = :sys.get_state(runtime).context.view
       assert view.last_sent == %{id: 42, text: "hello"}
       assert view.narration == nil
+    end
+
+    test "keeps the stable control anchor text in sync with narration edits" do
+      runtime = start_scaffold_runtime()
+
+      :sys.replace_state(runtime, fn rstate ->
+        view = %View{
+          narration: %{message_id: 77, text: "Checking X", mode: :italic},
+          control_message: %{
+            message_id: 77,
+            text: "Checking X",
+            mode: :italic
+          }
+        }
+
+        put_in(rstate.context.view, view)
+      end)
+
+      tool_use = %ToolUse{id: "call_2", name: "run_shell", input: %{}}
+      prepared = sample_prepared(runtime, tool_use)
+
+      assert {:ok, "ok"} =
+               GenServer.call(
+                 runtime,
+                 {:commit_tool, tool_use, %{}, prepared,
+                  %{
+                    result: {:ok, "ok"},
+                    narration_message: %{
+                      message_id: 77,
+                      text: "Checking X\nChecking Y",
+                      mode: :italic
+                    }
+                  }}
+               )
+
+      assert :sys.get_state(runtime).context.view.control_message.text ==
+               "Checking X\nChecking Y"
     end
   end
 

@@ -86,6 +86,23 @@ defmodule Froth.Telegram.ControlPrompt do
       ]
   end
 
+  def open_buttons(opts) when is_list(opts) do
+    opts
+    |> buttons()
+    |> Enum.reject(fn button ->
+      get_in(button, ["type", "@type"]) == "inlineKeyboardButtonTypeCallback"
+    end)
+  end
+
+  def reply_markup(opts, state \\ :running) when is_list(opts) do
+    buttons = if state == :done, do: open_buttons(opts), else: buttons(opts)
+
+    %{
+      "@type" => "replyMarkupInlineKeyboard",
+      "rows" => if(buttons == [], do: [], else: [buttons])
+    }
+  end
+
   def adhoc_markdown(model, provider, prompt) do
     model = display_value(model, "unknown model")
     provider = display_value(provider, "unknown provider")

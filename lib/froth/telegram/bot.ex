@@ -212,7 +212,8 @@ defmodule Froth.Telegram.Bot do
     {:noreply,
      state
      |> reset_cycle_state()
-     |> maybe_resume_pending_ask()}
+     |> maybe_resume_pending_ask()
+     |> maybe_start_next_pending_message()}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -935,7 +936,7 @@ defmodule Froth.Telegram.Bot do
     state =
       if active? do
         Process.exit(cs.cycle_runtime_pid, {:shutdown, :cancelled})
-        reset_cycle_state(state)
+        state
       else
         state
       end
@@ -944,13 +945,11 @@ defmodule Froth.Telegram.Bot do
     state
   end
 
-  # Clear `cycle_state` and promote the next queued trigger if there is one.
-  # The runtime process is assumed to be terminating or already gone; background
-  # task bookkeeping lived on it and goes with it.
+  # Clear the completed runtime. The caller decides whether a parked ask or a
+  # queued trigger should run next; pending asks take priority because they are
+  # continuations of an already-started conversation.
   defp reset_cycle_state(state) do
-    state
-    |> Map.put(:cycle_state, nil)
-    |> maybe_start_next_pending_message()
+    Map.put(state, :cycle_state, nil)
   end
 
   defp maybe_resume_pending_ask(%{pending_ask_resumes: []} = state), do: state

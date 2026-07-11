@@ -32,7 +32,7 @@ defmodule Froth.Agent.CycleRuntime do
   alias Froth.Agent.CycleRuntime.{Context, View}
   alias Froth.Telegram.{Bot, Bots}
   alias Froth.Telegram.Bot.Config, as: BotConfig
-  alias Froth.Telegram.{CostFooter, ToolExecution}
+  alias Froth.Telegram.{BotAdapter, ControlPrompt, CostFooter, ToolExecution}
 
   @registry Froth.Agent.CycleRegistry
 
@@ -448,7 +448,9 @@ defmodule Froth.Agent.CycleRuntime do
        %View{
          view
          | last_sent: swap_id(view.last_sent, :id, old_id, new_id),
-           narration: swap_id(view.narration, :message_id, old_id, new_id)
+           narration: swap_id(view.narration, :message_id, old_id, new_id),
+           control_message:
+             swap_id(view.control_message, :message_id, old_id, new_id)
        }
      end)}
   end
@@ -480,6 +482,7 @@ defmodule Froth.Agent.CycleRuntime do
 
   @impl true
   def terminate(_reason, state) do
+    _ = maybe_finalize_cycle_control(state.context)
     _ = maybe_append_cycle_footer(state.context)
     :ok
   end
@@ -565,20 +568,22 @@ defmodule Froth.Agent.CycleRuntime do
   defp shape_tool_input(_name, input, _cycle_id, _reply_to), do: input
 
   defp commit_tool_call(state, _tool_use, _invocation, _prepared, outcome) do
-    {result, sent_message, narration_message, awaiting_user_input?} =
+    {result, sent_message, narration_message, control_message,
+     awaiting_user_input?} =
       case outcome do
         %{result: result} = o ->
           {result, o[:sent_message], o[:narration_message],
-           o[:awaiting_user_input] == true}
+           o[:control_message], o[:awaiting_user_input] == true}
 
         result ->
-          {result, nil, nil, false}
+          {result, nil, nil, nil, false}
       end
 
     state =
       update_view(state, fn view ->
         view
         |> apply_narration_message(narration_message)
+        |> apply_control_message(control_message)
         |> apply_sent_or_awaiting(sent_message, awaiting_user_input?)
         |> apply_task_from_result(result)
       end)
@@ -593,10 +598,30 @@ defmodule Froth.Agent.CycleRuntime do
        })
        when is_integer(mid) and is_binary(text) and
               mode in [:italic, :markdown] do
-    %View{view | narration: %{message_id: mid, text: text, mode: mode}}
+    narration = %{message_id: mid, text: text, mode: mode}
+
+    control_message =
+      case view.control_message do
+        %{message_id: ^mid} -> narration
+        other -> other
+      end
+
+    %View{view | narration: narration, control_message: control_message}
   end
 
   defp apply_narration_message(%View{} = view, _), do: view
+
+  defp apply_control_message(%View{control_message: nil} = view, %{
+         message_id: mid,
+         text: text,
+         mode: mode
+       })
+       when is_integer(mid) and is_binary(text) and
+              mode in [:italic, :markdown] do
+    %View{view | control_message: %{message_id: mid, text: text, mode: mode}}
+  end
+
+  defp apply_control_message(%View{} = view, _), do: view
 
   defp apply_sent_or_awaiting(%View{} = view, %{sent: sent, text: text}, true)
        when is_binary(text) do
@@ -732,6 +757,52 @@ defmodule Froth.Agent.CycleRuntime do
   end
 
   defp maybe_append_cycle_footer(_ctx), do: :ok
+
+  defp maybe_finalize_cycle_control(%Context{
+         bot_config: %BotConfig{id: bot_id, bot_username: username} = bc,
+         cycle_id: cycle_id,
+         surface: %Surface{chat_id: chat_id},
+         view: %View{
+           control_message: %{
+             message_id: message_id,
+             text: text,
+             mode: mode
+           }
+         }
+       })
+       when is_binary(cycle_id) and is_integer(chat_id) and
+              is_integer(message_id) and is_binary(text) and
+              mode in [:italic, :markdown] do
+    markup =
+      ControlPrompt.reply_markup(
+        [cycle_id: cycle_id, bot_id: bot_id, bot_username: username],
+        :done
+      )
+
+    opts = [reply_markup: markup]
+
+    case mode do
+      :markdown ->
+        BotAdapter.edit_message_markdown(
+          bc.session_id,
+          chat_id,
+          message_id,
+          text,
+          opts
+        )
+
+      :italic ->
+        BotAdapter.edit_message_italic(
+          bc.session_id,
+          chat_id,
+          message_id,
+          text,
+          opts
+        )
+    end
+  end
+
+  defp maybe_finalize_cycle_control(_ctx), do: :ok
 
   # --- Misc helpers ---
 

@@ -273,12 +273,12 @@ defmodule Froth.Telegram.BotAdapter do
     end
   end
 
-  def edit_message_italic(session_id, chat_id, message_id, text)
+  def edit_message_italic(session_id, chat_id, message_id, text, opts \\ [])
       when is_binary(session_id) and is_integer(chat_id) and
              is_integer(message_id) and
-             is_binary(text) do
-    edit_message_text(session_id, chat_id, message_id, text,
-      entities: [
+             is_binary(text) and is_list(opts) do
+    entities =
+      [
         %{
           "@type" => "textEntity",
           "offset" => 0,
@@ -286,6 +286,13 @@ defmodule Froth.Telegram.BotAdapter do
           "type" => %{"@type" => "textEntityTypeItalic"}
         }
       ]
+
+    edit_message_text(
+      session_id,
+      chat_id,
+      message_id,
+      text,
+      Keyword.put(opts, :entities, entities)
     )
   end
 

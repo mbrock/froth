@@ -96,14 +96,14 @@ defmodule FrothWeb.ToolLive do
           )
 
           socket
-          |> assign(
-            :agent_events,
-            socket.assigns.agent_events ++ [local_steer_event(prompt)]
-          )
-          |> assign(:loop_status, :running)
+          |> put_flash(:info, "Follow-up queued for Charlie after this run.")
 
         true ->
-          put_flash(socket, :error, "Steering is unavailable for this run.")
+          put_flash(
+            socket,
+            :error,
+            "A follow-up cannot be queued for this run."
+          )
       end
 
     {:noreply,
@@ -365,7 +365,7 @@ defmodule FrothWeb.ToolLive do
                 field={@steer_form[:prompt]}
                 type="textarea"
                 rows="1"
-                placeholder="Steer this run..."
+                placeholder="Queue a follow-up..."
                 enterkeyhint="send"
                 class="mini-input min-h-[2.75rem] resize-none"
               />
@@ -374,7 +374,7 @@ defmodule FrothWeb.ToolLive do
                 type="submit"
                 class="mini-btn mini-btn--accent min-h-[2.75rem]"
               >
-                Steer
+                Queue
               </button>
             </.form>
           </div>
@@ -937,8 +937,8 @@ defmodule FrothWeb.ToolLive do
         clear_cycle(socket, :not_found)
 
       _cycle ->
-        events = load_agent_cycle_events(cycle_id)
         cycle_link = load_cycle_link(cycle_id)
+        events = load_agent_cycle_events(cycle_id, cycle_link)
 
         socket
         |> assign(:agent_events, events)
@@ -1015,8 +1015,8 @@ defmodule FrothWeb.ToolLive do
         |> assign(:bot_id, bot_id)
 
       _cycle ->
-        events = load_agent_cycle_events(cycle_id)
         cycle_link = load_cycle_link(cycle_id)
+        events = load_agent_cycle_events(cycle_id, cycle_link)
         resolved_bot_id = (cycle_link && cycle_link.bot_id) || bot_id
 
         socket
@@ -1036,15 +1036,35 @@ defmodule FrothWeb.ToolLive do
     end
   end
 
-  defp load_agent_cycle_events(cycle_id) when is_binary(cycle_id) do
+  defp load_agent_cycle_events(cycle_id, cycle_link)
+       when is_binary(cycle_id) do
     head_id = Agent.latest_head_id(%Cycle{id: cycle_id})
 
     head_id
     |> Agent.load_messages()
     |> Enum.map(&agent_event_from_message/1)
+    |> hide_injected_context(cycle_link)
   end
 
-  defp load_agent_cycle_events(_), do: []
+  defp load_agent_cycle_events(_, _), do: []
+
+  defp hide_injected_context(events, %CycleLink{}) when is_list(events) do
+    {events, _hidden?} =
+      Enum.map_reduce(events, false, fn
+        %{role: :user, blocks: blocks} = event, false ->
+          visible_blocks =
+            Enum.reject(blocks, &match?(%{"type" => "text"}, &1))
+
+          {%{event | blocks: visible_blocks}, true}
+
+        event, hidden? ->
+          {event, hidden?}
+      end)
+
+    events
+  end
+
+  defp hide_injected_context(events, _cycle_link), do: events
 
   defp load_cycle_link(cycle_id) when is_binary(cycle_id) do
     Repo.get_by(CycleLink, cycle_id: cycle_id)
@@ -1229,14 +1249,6 @@ defmodule FrothWeb.ToolLive do
     |> String.split(~r/\n\s*\n+/, trim: true)
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
-  end
-
-  defp local_steer_event(prompt) when is_binary(prompt) do
-    %{
-      id: "steer-" <> Integer.to_string(System.unique_integer([:positive])),
-      role: :user,
-      blocks: [%{"type" => "text", "text" => prompt}]
-    }
   end
 
   defp can_stop?(status, cycle_id)

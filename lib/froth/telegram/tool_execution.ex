@@ -56,15 +56,20 @@ defmodule Froth.Telegram.ToolExecution do
       Map.get(input, "reply_to") || Map.get(input, :reply_to) || ctx_reply_to
 
     narration_message = maybe_send_narration(ctx, tool_call, reply_to)
+    control_message = maybe_control_message(ctx, narration_message)
 
     result = Tools.execute(ctx, tool_call)
 
     case FailureIntervention.maybe_intervene(result, ctx, tool_call) do
       %{result: _} = outcome ->
-        Map.put(outcome, :narration_message, narration_message)
+        outcome
+        |> Map.put(:narration_message, narration_message)
+        |> Map.put(:control_message, control_message)
 
       updated_result ->
-        build_tool_outcome(updated_result, narration_message, input)
+        updated_result
+        |> build_tool_outcome(narration_message, input)
+        |> Map.put(:control_message, control_message)
     end
   end
 
@@ -178,7 +183,12 @@ defmodule Froth.Telegram.ToolExecution do
 
   defp send_new_narration(%Context{} = ctx, reply_to, narration, mode) do
     %Surface{session_id: session_id, chat_id: chat_id} = ctx.surface
-    opts = [reply_markup: cycle_reply_markup(ctx)]
+
+    opts =
+      case ctx.view.control_message do
+        nil -> [reply_markup: cycle_reply_markup(ctx)]
+        _ -> []
+      end
 
     result =
       case mode do
@@ -212,19 +222,22 @@ defmodule Froth.Telegram.ToolExecution do
          bot_config: %BotConfig{id: bot_id} = bc
        })
        when is_binary(cycle_id) and is_binary(bot_id) do
-    %{
-      "@type" => "replyMarkupInlineKeyboard",
-      "rows" => [
-        ControlPrompt.buttons(
-          cycle_id: cycle_id,
-          bot_id: bot_id,
-          bot_username: bc.bot_username
-        )
-      ]
-    }
+    ControlPrompt.reply_markup(
+      cycle_id: cycle_id,
+      bot_id: bot_id,
+      bot_username: bc.bot_username
+    )
   end
 
   defp cycle_reply_markup(_ctx), do: nil
+
+  defp maybe_control_message(
+         %Context{view: %View{control_message: nil}},
+         message
+       ),
+       do: message
+
+  defp maybe_control_message(_ctx, _message), do: nil
 
   defp edit_narration(session_id, chat_id, message_id, narration, :markdown),
     do:

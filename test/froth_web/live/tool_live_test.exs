@@ -122,6 +122,46 @@ defmodule FrothWeb.ToolLiveTest do
     assert has_element?(view, "#tool-follow-tail")
     assert has_element?(view, "#tool-item-0 strong", "Bold")
     assert has_element?(view, "#loop-steer-form")
+    assert has_element?(view, "#loop-steer", "Queue")
+  end
+
+  test "hides injected telegram context while preserving the cycle work", %{
+    conn: conn
+  } do
+    cycle = Repo.insert!(%Cycle{})
+
+    Repo.insert!(%CycleLink{
+      cycle_id: cycle.id,
+      bot_id: "charlie",
+      chat_id: 123,
+      reply_to: 456
+    })
+
+    context =
+      Repo.insert!(
+        Message.user("<chronicle>seven weeks of private context</chronicle>")
+      )
+
+    work =
+      Repo.insert!(%{
+        Message.agent([
+          %{
+            "type" => "thinking",
+            "thinking" => "Inspecting the actual task."
+          },
+          %{"type" => "text", "text" => "Here is the useful result."}
+        ])
+        | parent_id: context.id
+      })
+
+    Agent.append_event(cycle, %{head_id: work.id, message_id: work.id})
+
+    {:ok, view, _html} =
+      live(conn, ~p"/froth/mini/tool/cycle_charlie_#{cycle.id}")
+
+    refute has_element?(view, "#tool-feed", "seven weeks of private context")
+    assert has_element?(view, "#tool-feed", "Inspecting the actual task.")
+    assert has_element?(view, "#tool-feed", "Here is the useful result.")
   end
 
   test "renders xml-like transcript tags literally instead of as html", %{
