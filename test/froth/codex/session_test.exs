@@ -26,7 +26,7 @@ defmodule Froth.Codex.SessionTest do
       end
     end)
 
-    pid = start_supervised!({Session, session_id: session_id})
+    pid = start_supervised!({Session, session_id: session_id, boot: false})
 
     assert {:ok, _snapshot} = Session.snapshot(session_id)
 
@@ -106,7 +106,12 @@ defmodule Froth.Codex.SessionTest do
       end
     end)
 
-    assert {:ok, pid} = Session.ensure_started(session_id)
+    assert {:ok, pid} =
+             DynamicSupervisor.start_child(
+               Froth.Codex.SessionSupervisor,
+               {Session, session_id: session_id, boot: false}
+             )
+
     _ = :sys.get_state(pid)
     ref = Process.monitor(pid)
     span_id = Session.span_id(session_id)
@@ -151,6 +156,57 @@ defmodule Froth.Codex.SessionTest do
                    100
 
     assert :ok = Session.close(session_id)
+  end
+
+  test "shared app-server notifications are routed to their owning thread" do
+    first_id = "s_test_route_#{System.unique_integer([:positive])}"
+    second_id = "s_test_route_#{System.unique_integer([:positive])}"
+    first = start_supervised!({Session, session_id: first_id, boot: false})
+    second = start_supervised!({Session, session_id: second_id, boot: false})
+
+    set_thread_state(first, first_id, "thr_first", "turn_first")
+    set_thread_state(second, second_id, "thr_second", "turn_second")
+
+    notification =
+      {:codex, :notification, "item/agentMessage/delta",
+       %{
+         "threadId" => "thr_first",
+         "turnId" => "turn_first",
+         "itemId" => "message-first",
+         "delta" => "only first"
+       }, %{}, nil}
+
+    send(first, notification)
+    send(second, notification)
+    _ = :sys.get_state(first)
+    _ = :sys.get_state(second)
+
+    assert {:ok, %{entries: [%{body: "only first"}]}} =
+             Session.snapshot(first_id)
+
+    assert {:ok, %{entries: []}} = Session.snapshot(second_id)
+    assert :ok = Session.close(first_id)
+    assert :ok = Session.close(second_id)
+  end
+
+  defp set_thread_state(pid, session_id, thread_id, turn_id) do
+    :sys.replace_state(pid, fn state ->
+      state
+      |> Map.merge(%{
+        session_id: session_id,
+        status: :ready,
+        thread_id: thread_id,
+        active_turn_id: turn_id,
+        active_turn_started_at_ms: nil,
+        active_assistant_entry_id: nil,
+        active_assistant_text: "",
+        active_reasoning_entry_id: nil,
+        active_reasoning_text: "",
+        tool_entry_ids_by_call: %{},
+        entry_seq: 0,
+        entries: []
+      })
+    end)
   end
 
   defp send_assistant_delta(pid, turn_id, item_id, delta) do

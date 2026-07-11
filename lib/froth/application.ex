@@ -92,6 +92,7 @@ defmodule Froth.Application do
             end
           ) ++
           [
+            Froth.Codex.Server,
             {Registry, keys: :unique, name: Froth.Codex.SessionRegistry},
             {DynamicSupervisor,
              name: Froth.Codex.SessionSupervisor, strategy: :one_for_one},

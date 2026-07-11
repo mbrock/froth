@@ -1,12 +1,13 @@
 defmodule FrothWeb.CodexLive do
   use FrothWeb, :live_view
 
-  alias Froth.Codex.Events, as: CodexEvents
+  alias Froth.Codex.Threads, as: CodexThreads
   alias Span
   alias Froth.Codex.Session, as: CodexSession
 
   @default_model "gpt-5.4"
   @reasoning_efforts ~w(low medium high xhigh)
+  @uuid_thread_id ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i
 
   @entry_kinds %{
     "assistant" => :assistant,
@@ -265,16 +266,10 @@ defmodule FrothWeb.CodexLive do
       session_id: socket.assigns.session_id
     })
 
-    case CodexSession.new_thread(socket.assigns.session_id) do
-      :ok ->
-        {:noreply, refresh_snapshot(socket)}
-
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "new thread failed: #{inspect(reason)}")
-         |> refresh_snapshot()}
-    end
+    {:noreply,
+     push_navigate(socket,
+       to: ~p"/froth/mini/codex/#{random_session_id()}"
+     )}
   end
 
   def handle_event("interrupt_turn", _, socket) do
@@ -306,6 +301,14 @@ defmodule FrothWeb.CodexLive do
     {:noreply, socket}
   end
 
+  def handle_info({:close_bootstrap_observer, session_id}, socket) do
+    if session_id != socket.assigns.thread_id do
+      _ = CodexSession.close(session_id)
+    end
+
+    {:noreply, socket}
+  end
+
   def handle_info(:tick, %{assigns: %{mode: :session}} = socket) do
     Process.send_after(self(), :tick, 1_000)
 
@@ -331,9 +334,9 @@ defmodule FrothWeb.CodexLive do
                 <p class="text-[10px] uppercase tracking-[0.2em] text-cyan-300/80">
                   Codex Live
                 </p>
-                <h1 class="text-[16px] text-zinc-100">Sessions</h1>
+                <h1 class="text-[16px] text-zinc-100">Threads</h1>
                 <p class="text-[12px] text-zinc-400">
-                  Pick one session or start a new one.
+                  Resume a Codex thread or start a new conversation.
                 </p>
               </div>
               <div class="flex items-center gap-2">
@@ -349,7 +352,7 @@ defmodule FrothWeb.CodexLive do
                   phx-click="new_session"
                   class="min-h-9 rounded-full border border-cyan-500/50 bg-cyan-500/15 px-3 text-[11px] text-cyan-100 transition hover:bg-cyan-500/25"
                 >
-                  New Session
+                  New Thread
                 </button>
               </div>
             </div>
@@ -358,13 +361,13 @@ defmodule FrothWeb.CodexLive do
               :if={@sessions == []}
               class="rounded-2xl border border-zinc-800 bg-zinc-900/60 px-4 py-6 text-center text-[12px] text-zinc-400"
             >
-              no persisted sessions yet
+              no Codex threads yet
             </div>
 
             <div :if={@sessions != []} class="space-y-2">
               <.link
                 :for={session <- @sessions}
-                navigate={~p"/froth/mini/codex/#{session.session_id}"}
+                navigate={thread_href(session.session_id)}
                 class="block rounded-2xl border border-zinc-800 bg-zinc-900/60 px-4 py-3 transition hover:border-zinc-600 hover:bg-zinc-900/80"
               >
                 <div class="flex items-center justify-between gap-3">
@@ -858,10 +861,25 @@ defmodule FrothWeb.CodexLive do
   defp maybe_pin_session_url(%{assigns: %{session_pinned?: true}} = socket),
     do: socket
 
-  defp maybe_pin_session_url(socket) do
-    push_navigate(socket,
-      to: ~p"/froth/mini/codex/#{socket.assigns.session_id}"
+  defp maybe_pin_session_url(%{assigns: %{thread_id: thread_id}} = socket)
+       when is_binary(thread_id) do
+    if codex_thread_id?(thread_id) do
+      pin_thread_url(socket, thread_id)
+    else
+      socket
+    end
+  end
+
+  defp maybe_pin_session_url(socket), do: socket
+
+  defp pin_thread_url(socket, thread_id) do
+    Process.send_after(
+      self(),
+      {:close_bootstrap_observer, socket.assigns.session_id},
+      1_000
     )
+
+    push_navigate(socket, to: ~p"/froth/mini/codex/thread/#{thread_id}")
   end
 
   defp refresh_snapshot(socket) do
@@ -1842,17 +1860,67 @@ defmodule FrothWeb.CodexLive do
   defp session_route?(_), do: false
 
   defp list_sessions do
-    CodexEvents.list_sessions(120)
-    |> Enum.map(fn session ->
-      %{
-        session_id: session.session_id,
-        last_seen_at: format_last_seen(session.last_seen_at),
-        last_kind: session.last_kind,
-        last_body: session.last_body,
-        last_metadata: session.last_metadata || %{}
-      }
-    end)
+    index =
+      Application.get_env(:froth, :codex_thread_index, CodexThreads)
+
+    case index.list_sessions(120) do
+      {:ok, threads} ->
+        Enum.map(threads, &thread_list_item/1)
+
+      sessions when is_list(sessions) ->
+        Enum.map(sessions, &legacy_list_item/1)
+
+      {:error, _reason} ->
+        []
+    end
   end
+
+  defp legacy_list_item(session) do
+    %{
+      session_id: session.session_id,
+      last_seen_at: format_last_seen(session.last_seen_at),
+      last_kind: session.last_kind,
+      last_body: session.last_body,
+      last_metadata: session.last_metadata || %{}
+    }
+  end
+
+  defp thread_list_item(thread) when is_map(thread) do
+    thread_id = thread["id"]
+    name = blank_to_nil(thread["name"])
+    cwd = blank_to_nil(thread["cwd"])
+    preview = name || cwd || "Codex thread"
+    updated_at = thread["updatedAt"] || thread["createdAt"]
+
+    %{
+      session_id: thread_id,
+      last_seen_at: format_thread_time(updated_at),
+      last_kind: "thread",
+      last_body: preview,
+      last_metadata: %{"status" => thread_status(thread["status"])}
+    }
+  end
+
+  defp thread_status(%{"type" => type}) when is_binary(type), do: type
+  defp thread_status(type) when is_binary(type), do: type
+  defp thread_status(_), do: "unknown"
+
+  defp format_thread_time(timestamp) when is_integer(timestamp) do
+    timestamp
+    |> DateTime.from_unix!()
+    |> format_last_seen()
+  rescue
+    _ -> "-"
+  end
+
+  defp format_thread_time(timestamp) when is_binary(timestamp) do
+    case DateTime.from_iso8601(timestamp) do
+      {:ok, datetime, _offset} -> format_last_seen(datetime)
+      _ -> "-"
+    end
+  end
+
+  defp format_thread_time(_), do: "-"
 
   defp session_preview_text(session) when is_map(session) do
     kind = session[:last_kind] || session["last_kind"] || "event"
@@ -1864,6 +1932,12 @@ defmodule FrothWeb.CodexLive do
         "no details yet"
 
     truncate("#{kind}: #{body}", 240)
+  end
+
+  defp thread_href(id) do
+    if codex_thread_id?(id),
+      do: ~p"/froth/mini/codex/thread/#{id}",
+      else: ~p"/froth/mini/codex/#{id}"
   end
 
   defp image_preview_fallback(%{"images" => images}) when is_list(images),
@@ -1908,7 +1982,9 @@ defmodule FrothWeb.CodexLive do
         requested_thread_id ||
         random_session_id()
 
-    {session_id, requested_thread_id, is_binary(explicit_session_id)}
+    pinned? = codex_thread_id?(session_id)
+
+    {session_id, requested_thread_id, pinned?}
   end
 
   defp resolve_session_context(_params), do: {random_session_id(), nil, false}
@@ -1926,6 +2002,9 @@ defmodule FrothWeb.CodexLive do
 
   defp normalize_thread_id(value) when is_binary(value) do
     cond do
+      Regex.match?(@uuid_thread_id, value) ->
+        value
+
       String.starts_with?(value, "thread_") ->
         suffix = String.replace_prefix(value, "thread_", "")
         if String.starts_with?(suffix, "thr_"), do: suffix, else: nil
@@ -1939,6 +2018,13 @@ defmodule FrothWeb.CodexLive do
   end
 
   defp normalize_thread_id(_), do: nil
+
+  defp codex_thread_id?(value) when is_binary(value),
+    do:
+      String.starts_with?(value, "thr_") or
+        Regex.match?(@uuid_thread_id, value)
+
+  defp codex_thread_id?(_), do: false
 
   defp random_session_id do
     "s_" <> Base.url_encode64(:crypto.strong_rand_bytes(9), padding: false)

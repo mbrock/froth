@@ -65,6 +65,8 @@ defmodule Froth.Codex.Task do
     await = Keyword.get(opts, :await, false)
 
     with {:ok, _pid} <- session_module.ensure_started(session_id, cwd: cwd),
+         {:ok, session_id} <-
+           canonical_thread_identity(session_module, session_id, cwd),
          {:ok, task} <- create_codex_task(session_id, prompt, cwd) do
       case maybe_subscribe_telegram(task.task_id, bot_id, chat_id) do
         :ok ->
@@ -125,6 +127,25 @@ defmodule Froth.Codex.Task do
       end
     end
   end
+
+  defp canonical_thread_identity(CodexSession, bootstrap_id, cwd) do
+    with {:ok, thread_id} when is_binary(thread_id) <-
+           CodexSession.current_thread_id(bootstrap_id),
+         :ok <- CodexSession.close(bootstrap_id),
+         {:ok, _pid} <-
+           CodexSession.ensure_started(thread_id,
+             thread_id: thread_id,
+             cwd: cwd
+           ) do
+      {:ok, thread_id}
+    else
+      {:ok, nil} -> {:error, :missing_thread_id}
+      error -> error
+    end
+  end
+
+  defp canonical_thread_identity(_session_module, session_id, _cwd),
+    do: {:ok, session_id}
 
   @doc """
   Dispatch an RFC to Codex for implementation.

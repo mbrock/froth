@@ -24,6 +24,7 @@ config :froth, Oban,
 config :froth, Froth.Telegram.Bot, []
 
 config :froth, :jbo_dictionary_preload, false
+config :froth, :codex_thread_index, Froth.Codex.Events
 
 # Print only warnings and errors during test
 config :logger, level: :warning
