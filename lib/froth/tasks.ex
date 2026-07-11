@@ -170,6 +170,8 @@ defmodule Froth.Tasks do
   end
 
   def list_active(bot_id, chat_id \\ nil) when is_binary(bot_id) do
+    reconcile_stale_process_tasks()
+
     query =
       from(t in Task,
         join: l in TaskTelegramLink,
@@ -190,6 +192,8 @@ defmodule Froth.Tasks do
   end
 
   def list_recent(bot_id, limit \\ 20) when is_binary(bot_id) do
+    reconcile_stale_process_tasks()
+
     from(t in Task,
       join: l in TaskTelegramLink,
       on: l.task_id == t.task_id,
@@ -199,6 +203,46 @@ defmodule Froth.Tasks do
       limit: ^limit
     )
     |> Repo.all(log: false)
+  end
+
+  @doc "Marks process-backed tasks as stopped when their owning process is gone."
+  def reconcile_stale_process_tasks do
+    # Registry membership is node-local, so only reconcile records old enough
+    # that they cannot plausibly be a task running on another Froth node.
+    cutoff = DateTime.add(DateTime.utc_now(), -24, :hour)
+
+    from(t in Task,
+      where:
+        t.status in ["pending", "running"] and
+          t.type in ["shell", "eval", "codex"] and
+          t.inserted_at < ^cutoff
+    )
+    |> Repo.all(log: false)
+    |> Enum.each(fn task ->
+      unless process_alive?(task) do
+        stop(task.task_id, %{
+          "stale" => true,
+          "stale_reason" => "owner process not running"
+        })
+      end
+    end)
+
+    :ok
+  end
+
+  defp process_alive?(%Task{type: type, task_id: task_id})
+       when type in ["shell", "eval"] do
+    Froth.Tasks.Shell.alive?(task_id)
+  end
+
+  defp process_alive?(%Task{type: "codex", metadata: metadata}) do
+    case metadata["session_id"] do
+      session_id when is_binary(session_id) ->
+        not is_nil(Froth.Codex.Session.whereis(session_id))
+
+      _ ->
+        false
+    end
   end
 
   def recent_output(task_id, limit \\ 50) when is_binary(task_id) do

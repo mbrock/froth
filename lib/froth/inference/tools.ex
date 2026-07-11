@@ -12,7 +12,6 @@ defmodule Froth.Inference.Tools do
   alias Froth.Tools.ListTasks, as: ListTasksTool
   alias Froth.Tools.Fetch, as: FetchTool
   alias Froth.Tools.Pager, as: PagerTool
-  alias Froth.Tools.RegisterHeadlines, as: RegisterHeadlinesTool
   alias Froth.Tools.RunShell, as: RunShellTool
   alias Froth.Tools.SendInput, as: SendInputTool
   alias Froth.Tools.SpawnAgent, as: SpawnAgentTool
@@ -40,7 +39,7 @@ defmodule Froth.Inference.Tools do
     FetchTool,
     TimelineTool
   ]
-  @callable_tool_modules [RegisterHeadlinesTool | @extracted_tool_modules]
+  @callable_tool_modules @extracted_tool_modules
   @tool_modules_by_name Map.new(@callable_tool_modules, &{&1.name(), &1})
   @tool_specs [
     %{

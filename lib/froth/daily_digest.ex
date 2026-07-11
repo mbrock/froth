@@ -3,9 +3,7 @@ defmodule Froth.DailyDigest do
   Scheduled UTC daily digest delivery for the main group chat.
 
   On full nodes, this process wakes shortly after midnight UTC, backfills any
-  missing daily summaries, generates missing headlines when needed, and sends
-  Charlie's digest as a single Telegram document message with the headlines in
-  the caption and the full summary attached as HTML.
+  missing daily summaries and sends Charlie's digest as an HTML document.
 
   You can also run the same pipeline manually:
 
@@ -21,7 +19,6 @@ defmodule Froth.DailyDigest do
   alias Froth.{
     ChatSummary,
     Event,
-    Headlines,
     Repo,
     Summarizer,
     Telegram,
@@ -43,7 +40,6 @@ defmodule Froth.DailyDigest do
     :run_at_utc,
     :startup_delay_ms,
     :digest_dir,
-    :headline_model,
     :timer_ref,
     :next_run_at,
     :task_ref,
@@ -94,17 +90,6 @@ defmodule Froth.DailyDigest do
         &WeeklySummarizer.summarize_range/3
       )
 
-    extract_headlines_fun =
-      Keyword.get(opts, :extract_headlines_fun, fn digest_chat_id,
-                                                   extract_opts ->
-        Headlines.extract(
-          Keyword.merge(
-            [bot: Froth.Telegram.Bot.Charlie, chat_id: digest_chat_id],
-            extract_opts
-          )
-        )
-      end)
-
     send_document_fun =
       Keyword.get(opts, :send_document_fun, &Telegram.send_document/4)
 
@@ -120,13 +105,6 @@ defmodule Froth.DailyDigest do
          {:ok, summarized_weeks} <-
            summarize_pending_weeks(chat_id, pending_weeks, summarize_week_fun),
          sendable_summaries <- unsent_daily_summaries(chat_id, today),
-         :ok <-
-           maybe_generate_missing_headlines(
-             sendable_summaries,
-             chat_id,
-             opts,
-             extract_headlines_fun
-           ),
          {:ok, sent_dates} <-
            send_digests(
              sendable_summaries,
@@ -157,8 +135,7 @@ defmodule Froth.DailyDigest do
           session_id: resolve_session_id(opts),
           run_at_utc: resolve_run_at_utc(opts),
           startup_delay_ms: resolve_startup_delay_ms(opts),
-          digest_dir: resolve_digest_dir(opts),
-          headline_model: resolve_headline_model(opts)
+          digest_dir: resolve_digest_dir(opts)
         }
         |> schedule_startup_tick()
         |> schedule_next_run()
@@ -226,8 +203,7 @@ defmodule Froth.DailyDigest do
           chat_id: state.chat_id,
           session_id: state.session_id,
           run_at_utc: state.run_at_utc,
-          digest_dir: state.digest_dir,
-          headline_model: state.headline_model
+          digest_dir: state.digest_dir
         )
       end)
 
@@ -303,42 +279,6 @@ defmodule Froth.DailyDigest do
     end)
   end
 
-  defp maybe_generate_missing_headlines(
-         [],
-         _chat_id,
-         _opts,
-         _extract_headlines_fun
-       ),
-       do: :ok
-
-  defp maybe_generate_missing_headlines(
-         sendable_summaries,
-         chat_id,
-         opts,
-         extract_headlines_fun
-       )
-       when is_list(sendable_summaries) and is_integer(chat_id) and
-              is_list(opts) and
-              is_function(extract_headlines_fun, 2) do
-    missing_dates =
-      sendable_summaries
-      |> Enum.map(&elem(&1, 0))
-      |> Enum.filter(fn date ->
-        match?(:missing, registered_headlines_for_date(chat_id, date))
-      end)
-
-    if missing_dates == [] do
-      :ok
-    else
-      extract_opts =
-        [spam: false]
-        |> maybe_put_extract_opt(:model, resolve_headline_model(opts))
-
-      _ = extract_headlines_fun.(chat_id, extract_opts)
-      :ok
-    end
-  end
-
   defp send_digests([], _chat_id, _session_id, _opts, _send_document_fun),
     do: {:ok, []}
 
@@ -354,57 +294,21 @@ defmodule Froth.DailyDigest do
               is_list(opts) and is_function(send_document_fun, 4) do
     Enum.reduce_while(sendable_summaries, {:ok, []}, fn {date, summary},
                                                         {:ok, sent_dates} ->
-      case registered_headlines_for_date(chat_id, date) do
-        {:ok, headlines} ->
-          with {:ok, path} <- write_summary_file(summary, date, opts),
-               {caption, entities} <- format_digest_caption(date, headlines),
-               {:ok, sent_message} <-
-                 send_document_fun.(session_id, chat_id, path,
-                   caption: caption,
-                   caption_entities: entities
-                 ),
-               {:ok, _event} <-
-                 store_digest_sent_event(
-                   chat_id,
-                   date,
-                   summary,
-                   sent_message,
-                   headlines
-                 ) do
-            {:cont, {:ok, sent_dates ++ [date]}}
-          else
-            {:error, reason} ->
-              {:halt, {:error, {:send_failed, date, reason}}}
-          end
-
-        :missing ->
-          {:halt, {:error, {:missing_headlines, date}}}
+      with {:ok, path} <- write_summary_file(summary, date, opts),
+           {caption, entities} <- format_digest_caption(date),
+           {:ok, sent_message} <-
+             send_document_fun.(session_id, chat_id, path,
+               caption: caption,
+               caption_entities: entities
+             ),
+           {:ok, _event} <-
+             store_digest_sent_event(chat_id, date, summary, sent_message) do
+        {:cont, {:ok, sent_dates ++ [date]}}
+      else
+        {:error, reason} ->
+          {:halt, {:error, {:send_failed, date, reason}}}
       end
     end)
-  end
-
-  defp registered_headlines_for_date(chat_id, %Date{} = date)
-       when is_integer(chat_id) do
-    date_str = Date.to_iso8601(date)
-    chat_id_string = Integer.to_string(chat_id)
-
-    Repo.one(
-      from(e in Event,
-        where:
-          e.event == "froth.headlines.registered" and
-            fragment("?->>'chat_id' = ?", e.metadata, ^chat_id_string) and
-            fragment("?->>'date' = ?", e.metadata, ^date_str),
-        order_by: [desc: e.inserted_at],
-        limit: 1,
-        select: e.metadata
-      ),
-      log: false
-    )
-    |> case do
-      %{"headlines" => headlines} when is_list(headlines) -> {:ok, headlines}
-      %{} -> {:ok, []}
-      nil -> :missing
-    end
   end
 
   defp digest_sent?(chat_id, %Date{} = date) when is_integer(chat_id) do
@@ -427,16 +331,14 @@ defmodule Froth.DailyDigest do
          chat_id,
          %Date{} = date,
          %ChatSummary{} = summary,
-         sent_message,
-         headlines
+         sent_message
        )
-       when is_integer(chat_id) and is_list(headlines) do
+       when is_integer(chat_id) do
     metadata =
       %{
         "chat_id" => Integer.to_string(chat_id),
         "date" => Date.to_iso8601(date),
-        "summary_id" => summary.id,
-        "headline_count" => length(headlines)
+        "summary_id" => summary.id
       }
       |> maybe_put_message_id(sent_message)
 
@@ -444,10 +346,7 @@ defmodule Froth.DailyDigest do
     |> Event.changeset(%{
       event: "froth.daily_digest.sent",
       metadata: metadata,
-      measurements: %{
-        "headline_count" => length(headlines),
-        "message_count" => summary.message_count || 0
-      }
+      measurements: %{"message_count" => summary.message_count || 0}
     })
     |> Repo.insert()
   end
@@ -579,122 +478,11 @@ defmodule Froth.DailyDigest do
     """
   end
 
-  defp format_digest_caption(%Date{} = date, headlines)
-       when is_list(headlines) do
-    {headline_text, headline_entities} =
-      format_headlines_caption(date, headlines)
-
-    attachment_note = "\n\nSummary attached as HTML."
-    {headline_text <> attachment_note, headline_entities}
-  end
-
-  defp format_headlines_caption(%Date{} = date, headlines)
-       when is_list(headlines) do
+  defp format_digest_caption(%Date{} = date) do
     date_text = Date.to_iso8601(date)
-    separator = "\n\n"
 
-    body =
-      headlines
-      |> Enum.map_join(separator, &headline_line/1)
-
-    text =
-      case body do
-        "" -> date_text
-        _ -> date_text <> separator <> body
-      end
-
-    header_entities = [bold_entity(0, utf16_length(date_text))]
-
-    entities =
-      headlines
-      |> Enum.reduce(
-        {header_entities, utf16_length(date_text <> separator)},
-        fn headline, {acc, offset} ->
-          title =
-            Map.get(headline, "title") || Map.get(headline, :title) || ""
-
-          line = headline_line(headline)
-          title_offset = offset + headline_title_offset(headline)
-          next_offset = offset + utf16_length(line) + utf16_length(separator)
-
-          {acc ++ [bold_entity(title_offset, utf16_length(title))],
-           next_offset}
-        end
-      )
-      |> elem(0)
-
-    {text, entities}
-  end
-
-  defp headline_line(%{
-         "emoji" => emoji,
-         "title" => title,
-         "from_time" => from_time,
-         "to_time" => to_time
-       }) do
-    "#{emoji} #{title} #{headline_time_window(from_time, to_time)}"
-  end
-
-  defp headline_line(%{
-         emoji: emoji,
-         title: title,
-         from_time: from_time,
-         to_time: to_time
-       }) do
-    headline_line(%{
-      "emoji" => emoji,
-      "title" => title,
-      "from_time" => from_time,
-      "to_time" => to_time
-    })
-  end
-
-  defp headline_line(%{"emoji" => emoji, "title" => title})
-       when is_binary(emoji) and is_binary(title),
-       do: "#{emoji} #{title}"
-
-  defp headline_line(%{emoji: emoji, title: title})
-       when is_binary(emoji) and is_binary(title),
-       do: "#{emoji} #{title}"
-
-  defp headline_line(_headline), do: "Headline"
-
-  defp headline_title_offset(%{"emoji" => emoji}) when is_binary(emoji),
-    do: utf16_length("#{emoji} ")
-
-  defp headline_title_offset(%{emoji: emoji}) when is_binary(emoji),
-    do: utf16_length("#{emoji} ")
-
-  defp headline_title_offset(_headline), do: 0
-
-  defp headline_time_window(from_time, to_time)
-       when is_binary(from_time) and is_binary(to_time) do
-    with {:ok, from_datetime} <- parse_iso8601_datetime(from_time),
-         {:ok, to_datetime} <- parse_iso8601_datetime(to_time) do
-      "(" <>
-        Calendar.strftime(from_datetime, "%H:%M") <>
-        "-" <> Calendar.strftime(to_datetime, "%H:%M") <> " UTC)"
-    else
-      _ -> ""
-    end
-  end
-
-  defp headline_time_window(_from_time, _to_time), do: ""
-
-  defp parse_iso8601_datetime(value) when is_binary(value) do
-    case DateTime.from_iso8601(value) do
-      {:ok, datetime, _offset} ->
-        {:ok, datetime}
-
-      {:error, _reason} ->
-        case NaiveDateTime.from_iso8601(value) do
-          {:ok, naive_datetime} ->
-            {:ok, DateTime.from_naive!(naive_datetime, "Etc/UTC")}
-
-          {:error, _reason} ->
-            :error
-        end
-    end
+    {date_text <> "\n\nSummary attached as HTML.",
+     [bold_entity(0, utf16_length(date_text))]}
   end
 
   defp bold_entity(offset, length)
@@ -820,24 +608,6 @@ defmodule Froth.DailyDigest do
     |> to_string()
     |> Path.expand()
   end
-
-  defp resolve_headline_model(opts) when is_list(opts) do
-    case Keyword.get(opts, :headline_model) do
-      value when is_binary(value) ->
-        case String.trim(value) do
-          "" -> nil
-          model -> model
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp maybe_put_extract_opt(opts, _key, nil), do: opts
-
-  defp maybe_put_extract_opt(opts, key, value),
-    do: Keyword.put(opts, key, value)
 
   defp normalize_integer(value, _default) when is_integer(value), do: value
 

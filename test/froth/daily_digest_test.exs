@@ -11,7 +11,7 @@ defmodule Froth.DailyDigestTest do
     :ok
   end
 
-  test "run_now summarizes a pending UTC day, generates headlines when missing, sends one HTML digest, and records the send" do
+  test "run_now summarizes a pending UTC day, sends one HTML digest, and records the send" do
     test_pid = self()
     chat_id = unique_chat_id()
     date = ~D[2026-03-22]
@@ -36,15 +36,6 @@ defmodule Froth.DailyDigestTest do
                     "Charlie wrote the whole messy chronicle."
                   )}
                end,
-               extract_headlines_fun: fn ^chat_id, opts ->
-                 send(test_pid, {:extract_headlines, opts})
-
-                 insert_headlines(chat_id, date, [
-                   %{"emoji" => "🚀", "title" => "Launch day"}
-                 ])
-
-                 {:ok, :registered}
-               end,
                send_document_fun: fn session_id, sent_chat_id, path, opts ->
                  send(
                    test_pid,
@@ -60,16 +51,12 @@ defmodule Froth.DailyDigestTest do
     assert result.no_message_dates == []
     assert result.sent_dates == [date]
 
-    assert_receive {:extract_headlines, extract_opts}, 5_000
-    assert extract_opts[:spam] == false
-
     assert_receive {:send_document, "charlie", ^chat_id, path, opts}, 5_000
     assert path == Path.join(digest_dir, "chat-#{chat_id}-2026-03-22.html")
     assert File.read!(path) =~ "Charlie wrote the whole messy chronicle."
     assert opts[:caption] =~ "2026-03-22"
-    assert opts[:caption] =~ "🚀 Launch day"
     assert opts[:caption] =~ "Summary attached as HTML."
-    assert length(opts[:caption_entities]) == 2
+    assert length(opts[:caption_entities]) == 1
 
     assert Repo.exists?(
              from(e in Event,
@@ -87,7 +74,7 @@ defmodule Froth.DailyDigestTest do
            )
   end
 
-  test "run_now re-sends an unsent stored summary without re-running headlines when they already exist" do
+  test "run_now re-sends an unsent stored summary" do
     test_pid = self()
     chat_id = unique_chat_id()
     date = ~D[2026-03-21]
@@ -99,15 +86,6 @@ defmodule Froth.DailyDigestTest do
         date,
         "Stored summary waiting for Charlie to post it."
       )
-
-    insert_headlines(chat_id, date, [
-      %{
-        "emoji" => "🛠️",
-        "title" => "Repair shift",
-        "from_time" => "2026-03-21T09:00:00Z",
-        "to_time" => "2026-03-21T09:45:00Z"
-      }
-    ])
 
     on_exit(fn -> File.rm_rf(digest_dir) end)
 
@@ -123,17 +101,11 @@ defmodule Froth.DailyDigestTest do
                summarize_day_fun: fn _chat_id, _date ->
                  flunk("summarize_day should not run")
                end,
-               extract_headlines_fun: fn _chat_id, _opts ->
-                 send(test_pid, :extract_called)
-                 {:ok, :unexpected}
-               end,
                send_document_fun: fn "charlie", ^chat_id, path, opts ->
                  send(test_pid, {:send_document, path, opts})
                  {:ok, %{"id" => 445}}
                end
              )
-
-    refute_receive :extract_called
 
     assert result.pending_dates == []
     assert result.summarized_dates == []
@@ -143,7 +115,7 @@ defmodule Froth.DailyDigestTest do
     assert_receive {:send_document, path, opts}, 5_000
     assert path == Path.join(digest_dir, "chat-#{chat_id}-2026-03-21.html")
     assert File.read!(path) =~ summary.summary_text
-    assert opts[:caption] =~ "🛠️ Repair shift (09:00-09:45 UTC)"
+    assert opts[:caption] == "2026-03-21\n\nSummary attached as HTML."
   end
 
   test "next_run_at stays explicitly in UTC" do
@@ -170,20 +142,6 @@ defmodule Froth.DailyDigestTest do
       agent: "claude-opus-4-6",
       summary_text: text,
       message_count: 1
-    })
-    |> Repo.insert!()
-  end
-
-  defp insert_headlines(chat_id, date, headlines) do
-    %Event{}
-    |> Event.changeset(%{
-      event: "froth.headlines.registered",
-      metadata: %{
-        "date" => Date.to_iso8601(date),
-        "chat_id" => Integer.to_string(chat_id),
-        "headlines" => headlines
-      },
-      measurements: %{"count" => length(headlines)}
     })
     |> Repo.insert!()
   end

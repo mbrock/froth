@@ -68,6 +68,7 @@ npm-debug.log
 
 # Database backups
 /backups/
+/output/
 
 # WebRTC / gclient vendor build artifacts
 /vendor/.cipd/

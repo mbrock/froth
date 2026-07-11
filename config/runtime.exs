@@ -111,8 +111,7 @@ config :froth, Froth.DailyDigest,
   startup_delay_ms:
     System.get_env("FROTH_DAILY_DIGEST_STARTUP_DELAY_MS", "15000"),
   digest_dir:
-    System.get_env("FROTH_DAILY_DIGEST_DIR", Path.expand("tmp/daily-digests")),
-  headline_model: System.get_env("FROTH_DAILY_DIGEST_HEADLINE_MODEL")
+    System.get_env("FROTH_DAILY_DIGEST_DIR", Path.expand("tmp/daily-digests"))
 
 config :froth, Froth.Analyzer,
   tdlib_session: System.get_env("ANALYZER_TDLIB_SESSION")

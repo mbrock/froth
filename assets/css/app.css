@@ -193,12 +193,9 @@ html {
   min-height: 100%;
   margin: 0;
   background: #000;
-  height: 100%;
-  overscroll-behavior-y: none;
-  overflow: hidden;
+  min-height: 100%;
 }
 
-.app-shell,
 .mini-shell {
   min-height: 100vh;
   height: 100vh;
@@ -208,8 +205,11 @@ html {
   text-size-adjust: 100%;
 }
 
+.app-shell {
+  min-height: 100vh;
+}
+
 @supports (-webkit-touch-callout: none) {
-  .app-shell,
   .mini-shell {
     min-height: -webkit-fill-available;
     height: -webkit-fill-available;
@@ -218,7 +218,6 @@ html {
 }
 
 @supports (height: 100dvh) {
-  .app-shell,
   .mini-shell {
     min-height: 100dvh;
     height: 100dvh;
@@ -571,151 +570,3 @@ html {
 .md-prose pre code { background: none; padding: 0; }
 .md-prose hr { border: none; border-top: 1px solid #444; margin: 1em 0; }
 .md-prose a { text-decoration: underline; }
-
-.headlines-brutalist {
-  --headline-brutalist-paper: #f4efe2;
-  --headline-brutalist-ink: #050505;
-  --headline-brutalist-acid: #d6ff38;
-  --headline-brutalist-salmon: #ff8f72;
-  --headline-brutalist-concrete: #d5cec2;
-  --headline-brutalist-warning: #ffc92e;
-  --headline-brutalist-steel: #7a746f;
-  --headline-brutalist-grid: rgba(5, 5, 5, 0.14);
-  --headline-brutalist-shadow: 12px 12px 0 var(--headline-brutalist-ink);
-  --headline-brutalist-shadow-sm: 8px 8px 0 var(--headline-brutalist-ink);
-  min-height: 100vh;
-  position: relative;
-  isolation: isolate;
-  overflow: clip;
-  color: var(--headline-brutalist-ink);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0)),
-    linear-gradient(90deg, rgba(5, 5, 5, 0.045) 1px, transparent 1px),
-    linear-gradient(rgba(5, 5, 5, 0.045) 1px, transparent 1px),
-    linear-gradient(135deg, #efe6d4 0%, #d7d0c5 100%);
-  background-size: auto, 1.5rem 1.5rem, 1.5rem 1.5rem, auto;
-}
-
-.headlines-brutalist::before,
-.headlines-brutalist::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.headlines-brutalist::before {
-  inset: auto -10vw 14rem auto;
-  height: 18rem;
-  width: 18rem;
-  border: 4px solid var(--headline-brutalist-ink);
-  background: var(--headline-brutalist-acid);
-  box-shadow: var(--headline-brutalist-shadow);
-  transform: rotate(11deg);
-  opacity: 0.9;
-}
-
-.headlines-brutalist::after {
-  inset: 0;
-  background:
-    linear-gradient(32deg, transparent 0 48%, rgba(5, 5, 5, 0.06) 48% 50%, transparent 50% 100%),
-    radial-gradient(circle at top left, rgba(255, 143, 114, 0.14), transparent 34%);
-}
-
-.headlines-brutalist > * {
-  position: relative;
-  z-index: 1;
-}
-
-.headlines-brutalist-display {
-  font-family: "Arial Black", "Impact", "Haettenschweiler", "Franklin Gothic Heavy", sans-serif;
-  font-weight: 900;
-  letter-spacing: -0.06em;
-  text-wrap: balance;
-}
-
-.headlines-brutalist-meta {
-  font-family: "Courier New", "SFMono-Regular", Consolas, monospace;
-  font-weight: 700;
-}
-
-.headlines-brutalist-shadow {
-  box-shadow: var(--headline-brutalist-shadow);
-}
-
-.headlines-brutalist-shadow-sm {
-  box-shadow: var(--headline-brutalist-shadow-sm);
-}
-
-.headlines-brutalist article,
-.headlines-brutalist section,
-.headlines-brutalist aside,
-.headlines-brutalist a {
-  transition:
-    transform 160ms ease,
-    box-shadow 160ms ease,
-    background-color 160ms ease;
-}
-
-.headlines-brutalist article {
-  position: relative;
-}
-
-.headlines-brutalist article:hover {
-  transform: translate(-4px, -4px) rotate(-0.35deg);
-  box-shadow: 16px 16px 0 var(--headline-brutalist-ink);
-}
-
-.headlines-brutalist a:hover,
-.headlines-brutalist a:focus-visible {
-  transform: translate(-2px, -2px);
-}
-
-.headlines-brutalist a:focus-visible {
-  outline: 3px solid var(--headline-brutalist-ink);
-  outline-offset: 3px;
-}
-
-[id^="month-"],
-[id^="headline-day-"] {
-  scroll-margin-top: 1rem;
-}
-
-@media (max-width: 1024px) {
-  .headlines-brutalist {
-    --headline-brutalist-shadow: 9px 9px 0 var(--headline-brutalist-ink);
-    --headline-brutalist-shadow-sm: 6px 6px 0 var(--headline-brutalist-ink);
-  }
-
-  .headlines-brutalist::before {
-    height: 11rem;
-    width: 11rem;
-    bottom: 7rem;
-  }
-}
-
-@media (max-width: 640px) {
-  .headlines-brutalist {
-    background-size: auto, 1rem 1rem, 1rem 1rem, auto;
-  }
-
-  .headlines-brutalist article:hover,
-  .headlines-brutalist a:hover {
-    transform: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .headlines-brutalist article,
-  .headlines-brutalist section,
-  .headlines-brutalist aside,
-  .headlines-brutalist a {
-    transition: none;
-  }
-
-  .headlines-brutalist article:hover,
-  .headlines-brutalist a:hover {
-    transform: none;
-  }
-}

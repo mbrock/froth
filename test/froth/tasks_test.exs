@@ -28,6 +28,31 @@ defmodule Froth.TasksTest do
     :ok
   end
 
+  test "listing tasks reconciles stale process-backed records" do
+    bot_id = "bot-#{System.unique_integer([:positive])}"
+    task_id = Tasks.generate_id("shell")
+
+    assert {:ok, _task} =
+             Tasks.create(%{
+               task_id: task_id,
+               type: "shell",
+               label: "orphaned command"
+             })
+
+    assert :ok = Tasks.start(task_id)
+    assert {:ok, _link} = Tasks.link_telegram(task_id, bot_id)
+
+    Repo.update_all(
+      from(task in Froth.Task, where: task.task_id == ^task_id),
+      set: [inserted_at: DateTime.add(DateTime.utc_now(), -2, :day)]
+    )
+
+    assert [%{task_id: ^task_id, status: "stopped"}] =
+             Tasks.list_recent(bot_id, 1)
+
+    assert Tasks.get(task_id).metadata["stale"] == true
+  end
+
   test "completion notifications send a synthetic wakeup message the bot can consume" do
     bot_id = "bot-#{System.unique_integer([:positive])}"
     chat_id = 4242

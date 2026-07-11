@@ -70,8 +70,7 @@ defmodule FrothWeb.AnalysesLive do
         on: m.chat_id == a.chat_id and m.message_id == a.message_id,
         where: m.date >= ^start_unix and m.date < ^end_unix,
         order_by: [desc: m.date],
-        select: %{a | metadata: a.metadata},
-        select_merge: %{generated_at: a.generated_at}
+        select: a
       )
       |> Froth.Repo.all()
       |> Enum.uniq_by(fn a -> {a.type, a.chat_id, a.message_id} end)
@@ -133,12 +132,6 @@ defmodule FrothWeb.AnalysesLive do
             class="text-xs text-neutral-500 hover:text-white"
           >
             inference
-          </.link>
-          <.link
-            navigate={~p"/froth/dataset"}
-            class="text-xs text-neutral-500 hover:text-white"
-          >
-            dataset
           </.link>
           <.link
             navigate={~p"/froth/rdf"}

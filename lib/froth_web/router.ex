@@ -24,25 +24,16 @@ defmodule FrothWeb.Router do
   end
 
   scope "/froth", FrothWeb do
-    pipe_through :api
-
-    get "/analyses", AnalysesApiController, :index
-    get "/analyses/:chat_id", AnalysesApiController, :show
-  end
-
-  scope "/froth", FrothWeb do
     pipe_through :browser
 
     get "/", PageController, :home
     get "/objects/*key", ObjectStoreController, :show
     get "/summaries", SummariesController, :index
-    get "/headlines", HeadlinesController, :index
     get "/podcasts", PodcastsController, :index
     live "/analyses/day", AnalysesLive, :index
     live "/analyses/day/:day", AnalysesLive, :index
     live "/inference", InferenceSessionsLive, :index
     live "/inference/:id", InferenceSessionsLive, :show
-    live "/dataset", DatasetLive, :index
     live "/rdf", RdfLive, :index
     get "/media/:chat_id/:message_id", MediaController, :show
     live "/bot-context", BotContextLive, :index
@@ -53,6 +44,14 @@ defmodule FrothWeb.Router do
     live "/jobs", JobsLive, :index
     live "/remix", RemixLive, :index
     live "/timeline", TimelineLive, :index
+  end
+
+  # Keep the literal /analyses/day LiveView routes above this dynamic API route.
+  scope "/froth", FrothWeb do
+    pipe_through :api
+
+    get "/analyses", AnalysesApiController, :index
+    get "/analyses/:chat_id", AnalysesApiController, :show
   end
 
   scope "/froth/mini", FrothWeb do

@@ -10,6 +10,9 @@ defmodule FrothWeb.PageControllerTest do
     assert Floki.find(document, "#froth-hero") != []
     assert Floki.find(document, "#froth-primary-links") != []
     assert Floki.find(document, "#froth-secondary-links") != []
+    assert Floki.find(document, "#froth-dashboard") != []
+    assert Floki.find(document, "#froth-recent-tasks") != []
+    assert Floki.find(document, "#froth-recent-analyses") != []
 
     assert Floki.find(
              document,
@@ -18,11 +21,6 @@ defmodule FrothWeb.PageControllerTest do
 
     assert Floki.find(document, ~s(#froth-link-follow[href="/froth/follow"])) !=
              []
-
-    assert Floki.find(
-             document,
-             ~s(#froth-link-headlines[href="/froth/headlines"])
-           ) != []
 
     assert Floki.find(
              document,

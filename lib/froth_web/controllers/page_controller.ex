@@ -1,11 +1,18 @@
 defmodule FrothWeb.PageController do
   use FrothWeb, :controller
 
+  import Ecto.Query
+
+  alias Froth.{Analysis, ChatSummary, Repo, Task}
+
+  @chat_id -1_003_690_254_489
+
   def home(conn, _params) do
     conn
     |> assign(:page_title, "Froth")
     |> assign(:primary_links, primary_links())
     |> assign(:secondary_links, secondary_links())
+    |> assign(:dashboard, dashboard())
     |> render(:home)
   end
 
@@ -35,18 +42,6 @@ defmodule FrothWeb.PageController do
           "border-emerald-400/20 bg-emerald-400/10 text-emerald-100",
         badge_class:
           "border-emerald-400/20 bg-emerald-400/10 text-emerald-100"
-      },
-      %{
-        id: "froth-link-headlines",
-        href: ~p"/froth/headlines",
-        title: "Headlines",
-        description:
-          "Open the tabloid headline ledger for the latest registered stories.",
-        badge: "reader",
-        path_label: "/froth/headlines",
-        icon: "hero-newspaper",
-        icon_class: "border-amber-400/20 bg-amber-400/10 text-amber-100",
-        badge_class: "border-amber-400/20 bg-amber-400/10 text-amber-100"
       },
       %{
         id: "froth-link-podcasts",
@@ -101,14 +96,6 @@ defmodule FrothWeb.PageController do
   defp secondary_links do
     [
       %{
-        id: "froth-link-dataset",
-        href: ~p"/froth/dataset",
-        title: "Dataset",
-        description: "Inspect collections, models, and other stored records.",
-        icon: "hero-cube",
-        icon_class: "border-lime-400/20 bg-lime-400/10 text-lime-100"
-      },
-      %{
         id: "froth-link-chat-stats",
         href: ~p"/froth/chat-stats",
         title: "Chat stats",
@@ -126,5 +113,93 @@ defmodule FrothWeb.PageController do
         icon_class: "border-emerald-400/20 bg-emerald-400/10 text-emerald-100"
       }
     ]
+  end
+
+  defp dashboard do
+    Froth.Tasks.reconcile_stale_process_tasks()
+
+    task_counts =
+      Repo.all(
+        from(t in Task,
+          group_by: t.status,
+          select: {t.status, count(t.task_id)}
+        ),
+        log: false
+      )
+      |> Map.new()
+
+    job_counts =
+      Repo.all(
+        from(j in Oban.Job,
+          group_by: j.state,
+          select: {j.state, count(j.id)}
+        ),
+        log: false
+      )
+      |> Map.new()
+
+    recent_tasks =
+      Repo.all(
+        from(t in Task,
+          order_by: [desc: t.inserted_at],
+          limit: 5,
+          select: %{
+            id: t.task_id,
+            label: t.label,
+            type: t.type,
+            status: t.status
+          }
+        ),
+        log: false
+      )
+
+    latest_summary =
+      Repo.one(
+        from(s in ChatSummary,
+          where: s.chat_id == ^@chat_id,
+          where: s.from_date != s.to_date,
+          where: fragment("? - ? <= 86400", s.to_date, s.from_date),
+          order_by: [desc: s.from_date, desc: s.inserted_at],
+          limit: 1
+        ),
+        log: false
+      )
+
+    recent_analyses =
+      Repo.all(
+        from(a in Analysis,
+          order_by: [desc: a.generated_at],
+          limit: 5,
+          select: %{
+            type: a.type,
+            generated_at: a.generated_at,
+            metadata: a.metadata
+          }
+        ),
+        log: false
+      )
+
+    %{
+      active_tasks:
+        Map.get(task_counts, "running", 0) +
+          Map.get(task_counts, "pending", 0),
+      failed_tasks: Map.get(task_counts, "failed", 0),
+      queued_jobs:
+        Map.get(job_counts, "available", 0) +
+          Map.get(job_counts, "scheduled", 0),
+      executing_jobs: Map.get(job_counts, "executing", 0),
+      discarded_jobs: Map.get(job_counts, "discarded", 0),
+      analysis_count: Repo.aggregate(Analysis, :count, :id),
+      weekly_count:
+        Repo.aggregate(
+          from(s in ChatSummary,
+            where: fragment("?->>'kind' = 'weekly_chronicle'", s.metadata)
+          ),
+          :count
+        ),
+      latest_summary: latest_summary,
+      recent_tasks: recent_tasks,
+      recent_analyses: recent_analyses
+    }
   end
 end
