@@ -76,6 +76,8 @@ defmodule FrothWeb.TimelineLiveTest do
 
     {:ok, view, _html} = live(conn, ~p"/froth/timeline?chat_id=#{chat_id}")
 
+    assert has_element?(view, "#timeline-shell.h-dvh.overflow-hidden")
+    assert has_element?(view, "#timeline-scroll.overflow-y-auto")
     assert has_element?(view, "#c-#{cycle.id}", "elixir")
     assert has_element?(view, "#c-#{cycle.id}", "session demo")
     assert has_element?(view, "#c-#{cycle.id}", "result")

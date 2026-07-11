@@ -851,7 +851,10 @@ defmodule FrothWeb.TimelineLive do
       <style id="timeline-syntax-highlight">
         <%= Phoenix.HTML.raw(@syntax_highlight_css) %>
       </style>
-      <div class="app-shell safe-top flex min-h-0 bg-void text-fg font-sans text-[13px] leading-5 antialiased">
+      <div
+        id="timeline-shell"
+        class="app-shell safe-top flex h-dvh max-h-dvh min-h-0 overflow-hidden bg-void text-fg font-sans text-[13px] leading-5 antialiased"
+      >
         <.sidebar
           chat_title={@chat_title}
           chat_id={@chat_id}
