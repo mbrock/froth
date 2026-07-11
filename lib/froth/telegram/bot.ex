@@ -710,7 +710,7 @@ defmodule Froth.Telegram.Bot do
       {{:value, msg}, pending_messages} ->
         state
         |> Map.put(:pending_messages, pending_messages)
-        |> start_cycle_from_message(msg)
+        |> start_cycle_from_message(refresh_queued_context(msg))
 
       {:empty, _pending_messages} ->
         state
@@ -718,6 +718,15 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp maybe_start_next_pending_message(state), do: state
+
+  # A queued trigger may have waited while the active cycle sent several
+  # replies and other people continued the conversation. Re-present it at the
+  # time it is actually processed so BotContext includes that intervening
+  # history. The original Telegram row remains untouched; this only moves the
+  # in-memory context boundary and keeps the queued request as the final focus.
+  defp refresh_queued_context(msg) when is_map(msg) do
+    Map.put(msg, "date", System.system_time(:second) + 1)
+  end
 
   defp start_cycle_from_message(state, msg) when is_map(msg) do
     chat_id = msg["chat_id"]

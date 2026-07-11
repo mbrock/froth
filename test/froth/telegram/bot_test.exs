@@ -2,7 +2,7 @@ defmodule Froth.Telegram.BotTest do
   use Froth.TelegramBotCase, async: true
 
   alias Froth.Agent.Cycle
-  alias Froth.Telegram.Bot
+  alias Froth.Telegram.{Bot, Message, SessionConfig}
   alias LLM.Request
 
   test "idle struct has no cycle_state" do
@@ -55,6 +55,65 @@ defmodule Froth.Telegram.BotTest do
     assert :queue.is_empty(state.pending_messages)
 
     reply_turns_until_idle(bot, turn_3)
+  end
+
+  test "queued turns see replies and chat activity produced while waiting" do
+    chat_id = 362_441_422
+    now = System.system_time(:second)
+    %{bot: bot, session_id: session_id} = start_charlie_bot()
+
+    Repo.insert!(
+      SessionConfig.changeset(%SessionConfig{}, %{
+        id: session_id,
+        api_id: 1,
+        api_hash: "test",
+        bot_token: "test"
+      })
+    )
+
+    send(
+      bot,
+      user_update("first", message_id: 20, chat_id: chat_id, date: now - 20)
+    )
+
+    assert_receive {FakeLLM, turn_1, %Request{}}, 5_000
+
+    send(
+      bot,
+      user_update("second", message_id: 21, chat_id: chat_id, date: now - 10)
+    )
+
+    Repo.insert!(%Message{
+      telegram_session_id: session_id,
+      chat_id: chat_id,
+      message_id: 22,
+      sender_id: 1,
+      date: now,
+      raw: %{
+        "id" => 22,
+        "chat_id" => chat_id,
+        "sender_id" => %{"user_id" => 1},
+        "date" => now,
+        "content" => %{"text" => %{"text" => "intervening Charlie reply"}}
+      }
+    })
+
+    FakeLLM.reply(turn_1, {:ok, text_response("first done")})
+
+    assert_receive {FakeLLM, turn_2, %Request{} = request_2}, 5_000
+
+    request_text =
+      request_2.messages
+      |> Enum.flat_map(fn message -> List.wrap(message.content) end)
+      |> Enum.map_join("\n", fn
+        %{"text" => text} -> text
+        block -> inspect(block)
+      end)
+
+    assert request_text =~ "intervening Charlie reply"
+    assert request_text =~ "second"
+
+    reply_turns_until_idle(bot, turn_2)
   end
 
   test "pending message queue is capped by dropping the oldest queued triggers" do
@@ -234,16 +293,24 @@ defmodule Froth.Telegram.BotTest do
     chat_id = Keyword.get(opts, :chat_id, 362_441_422)
     message_id = Keyword.fetch!(opts, :message_id)
     sender_user_id = Keyword.get(opts, :sender_user_id, 777)
+    date = Keyword.get(opts, :date)
 
     {:telegram_update,
      %{
        "@type" => "updateNewMessage",
-       "message" => %{
-         "id" => message_id,
-         "chat_id" => chat_id,
-         "sender_id" => %{"user_id" => sender_user_id},
-         "content" => %{"text" => %{"text" => text}}
-       }
+       "message" =>
+         %{
+           "id" => message_id,
+           "chat_id" => chat_id,
+           "sender_id" => %{"user_id" => sender_user_id},
+           "content" => %{"text" => %{"text" => text}}
+         }
+         |> maybe_put_date(date)
      }}
   end
+
+  defp maybe_put_date(message, date) when is_integer(date),
+    do: Map.put(message, "date", date)
+
+  defp maybe_put_date(message, _date), do: message
 end
