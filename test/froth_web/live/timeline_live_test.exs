@@ -94,6 +94,26 @@ defmodule FrothWeb.TimelineLiveTest do
     assert highlight_count == 4
   end
 
+  test "renders an uncaptioned Telegram photo instead of an empty message", %{
+    conn: conn
+  } do
+    session_id = "charlie"
+    chat_id = unique_chat_id()
+    sender_id = 700_000_000 + System.unique_integer([:positive])
+    message_id = 2_001
+
+    ensure_session(session_id)
+    ensure_username(sender_id, "Alice", session_id)
+    insert_telegram_photo(session_id, chat_id, message_id, sender_id)
+
+    {:ok, view, _html} = live(conn, ~p"/froth/timeline?chat_id=#{chat_id}")
+
+    assert has_element?(
+             view,
+             ~s|#m-#{message_id} img[src="/froth/media/#{chat_id}/#{message_id}"]|
+           )
+  end
+
   defp unique_chat_id do
     9_000_000_000 + System.unique_integer([:positive])
   end
@@ -165,6 +185,41 @@ defmodule FrothWeb.TimelineLiveTest do
       message_id: message_id,
       sender_id: sender_id,
       date: date,
+      raw: raw
+    })
+    |> Repo.insert!()
+  end
+
+  defp insert_telegram_photo(session_id, chat_id, message_id, sender_id) do
+    now = DateTime.utc_now() |> DateTime.to_unix()
+
+    raw = %{
+      "id" => message_id,
+      "chat_id" => chat_id,
+      "date" => now,
+      "sender_id" => %{"user_id" => sender_id},
+      "content" => %{
+        "@type" => "messagePhoto",
+        "caption" => %{"text" => ""},
+        "photo" => %{
+          "sizes" => [
+            %{
+              "width" => 640,
+              "height" => 480,
+              "photo" => %{"id" => 123_456}
+            }
+          ]
+        }
+      }
+    }
+
+    %TelegramMessage{}
+    |> TelegramMessage.changeset(%{
+      telegram_session_id: session_id,
+      chat_id: chat_id,
+      message_id: message_id,
+      sender_id: sender_id,
+      date: now,
       raw: raw
     })
     |> Repo.insert!()

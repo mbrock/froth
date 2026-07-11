@@ -404,7 +404,7 @@ defmodule FrothWeb.TimelineLive do
   end
 
   defp build_message_turn(m, short_names, reply_lookup, chat_id, dt) do
-    raw_text = TMsg.text(m.raw)
+    raw_text = m.raw |> TMsg.text() |> present_text()
     text = raw_text || media_placeholder(m.raw)
     reply_id = TMsg.reply_to_message_id(m.raw)
     sender_id = m.sender_id || 0
@@ -457,6 +457,15 @@ defmodule FrothWeb.TimelineLive do
       _ -> nil
     end
   end
+
+  defp present_text(text) when is_binary(text) do
+    case String.trim(text) do
+      "" -> nil
+      _ -> text
+    end
+  end
+
+  defp present_text(_), do: nil
 
   # Turn raw message text into a list of paragraphs.
   #
