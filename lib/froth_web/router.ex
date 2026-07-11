@@ -29,6 +29,7 @@ defmodule FrothWeb.Router do
     get "/", PageController, :home
     get "/objects/*key", ObjectStoreController, :show
     get "/summaries", SummariesController, :index
+    get "/weekly", SummariesController, :weekly
     get "/podcasts", PodcastsController, :index
     live "/analyses/day", AnalysesLive, :index
     live "/analyses/day/:day", AnalysesLive, :index

@@ -29,6 +29,11 @@ defmodule FrothWeb.PageControllerTest do
 
     assert Floki.find(
              document,
+             ~s(#froth-weekly-chronicle[href="/froth/weekly"])
+           ) != []
+
+    assert Floki.find(
+             document,
              ~s(#froth-link-bot-context[href="/froth/bot-context"])
            ) != []
 
