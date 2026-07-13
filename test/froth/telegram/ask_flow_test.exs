@@ -8,7 +8,7 @@ defmodule Froth.Telegram.AskFlowTest do
   alias LLM.Request
   alias Froth.Telegram.PendingAsk
 
-  test "insufficient Anthropic credit parks the cycle until Okay retries it",
+  test "a new mention retries an inaccessible credit prompt and then runs",
        %{} do
     chat_id = 362_441_422
     %{bot: bot} = start_charlie_bot()
@@ -68,37 +68,16 @@ defmodule Froth.Telegram.AskFlowTest do
       user_update("and another thing", message_id: 11, chat_id: chat_id)
     )
 
-    state = :sys.get_state(bot)
-    assert :queue.len(state.pending_messages) == 1
-    refute_receive {FakeLLM, _turn, %Request{}}, 200
-
-    callback_query_id = "credit-retry-callback"
-
-    send(
-      bot,
-      {:telegram_update,
-       %{
-         "@type" => "updateNewCallbackQuery",
-         "id" => callback_query_id,
-         "chat_id" => chat_id,
-         "message_id" => prompt_message_id,
-         "payload" => %{
-           "@type" => "callbackQueryPayloadData",
-           "data" => Base.encode64("ask:0")
-         }
-       }}
-    )
-
-    assert_receive {:telegram_send,
-                    %{
-                      "@type" => "answerCallbackQuery",
-                      "callback_query_id" => ^callback_query_id
-                    }},
-                   5_000
-
     assert_receive {FakeLLM, turn_2, %Request{} = retry_request}, 5_000
     assert [%LLMMessage{role: :user}] = retry_request.messages
     assert :sys.get_state(bot).cycle_state.cycle_id == original_cycle_id
+
+    pending_ask = Repo.get!(PendingAsk, pending_ask.id)
+    assert pending_ask.answer == "Okay"
+    assert pending_ask.answer_message_id == 11
+    assert pending_ask.answered_via == "message"
+    assert pending_ask.resolved_at
+    assert :queue.len(:sys.get_state(bot).pending_messages) == 1
 
     FakeLLM.reply(turn_2, {:ok, text_response("It worked.")})
 

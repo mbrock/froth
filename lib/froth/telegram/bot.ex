@@ -659,10 +659,12 @@ defmodule Froth.Telegram.Bot do
   # --- Debounce ---
 
   defp start_or_queue_cycle(%{cycle_state: nil} = state, msg) do
-    if credit_retry_pending?(state, msg) do
-      enqueue_pending_message(state, msg)
-    else
-      debounce_or_start(state, msg)
+    case pending_credit_retry(state, msg) do
+      nil ->
+        debounce_or_start(state, msg)
+
+      pending_ask ->
+        acknowledge_credit_retry(state, pending_ask, msg)
     end
   end
 
@@ -670,18 +672,46 @@ defmodule Froth.Telegram.Bot do
     enqueue_pending_message(state, msg)
   end
 
-  defp credit_retry_pending?(state, %{"chat_id" => chat_id})
+  defp pending_credit_retry(state, %{"chat_id" => chat_id})
        when is_integer(chat_id) do
     case PendingAsks.latest_unresolved(state.bot_config.id, chat_id) do
       pending_ask when not is_nil(pending_ask) ->
-        CreditIntervention.retry?(pending_ask)
+        if CreditIntervention.retry?(pending_ask), do: pending_ask
 
       nil ->
-        false
+        nil
     end
   end
 
-  defp credit_retry_pending?(_state, _msg), do: false
+  defp pending_credit_retry(_state, _msg), do: nil
+
+  # A credit prompt can scroll out of view or become inaccessible after a
+  # restart. Treat the next explicit bot trigger as an implicit click on its
+  # retry button, while preserving the new trigger for the following cycle.
+  defp acknowledge_credit_retry(state, pending_ask, msg) do
+    answer = CreditIntervention.retry_answer()
+    reply_to = msg["id"]
+
+    case PendingAsks.resolve(pending_ask, answer,
+           answer_message_id: reply_to,
+           answered_via: "message"
+         ) do
+      {:ok, resolved_pending_ask} ->
+        state
+        |> enqueue_pending_message(msg)
+        |> enqueue_or_resume_pending_ask(
+          resolved_pending_ask,
+          answer,
+          reply_to
+        )
+
+      {:error, :already_resolved} ->
+        debounce_or_start(state, msg)
+
+      {:error, _reason} ->
+        enqueue_pending_message(state, msg)
+    end
+  end
 
   defp fire_debounced_cycle(%{cycle_state: nil} = state, msg) do
     start_cycle_from_message(state, msg)

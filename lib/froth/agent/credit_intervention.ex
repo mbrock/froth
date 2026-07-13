@@ -24,6 +24,8 @@ defmodule Froth.Agent.CreditIntervention do
   def retry?(%PendingAsk{config: %{"kind" => @kind}}), do: true
   def retry?(_pending_ask), do: false
 
+  def retry_answer, do: @alternative
+
   def maybe_post(reason, %Context{} = context) do
     if credit_error?(reason), do: post(context), else: :ignore
   end
