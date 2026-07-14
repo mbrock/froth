@@ -234,13 +234,21 @@ defmodule Froth.TestSupport.FakeCodexSession do
     previous_entries = Map.get(previous_snapshot, :entries, [])
     next_entries = Map.get(next_snapshot, :entries, [])
 
-    merged_entries =
-      (previous_entries ++ next_entries)
-      |> Enum.uniq_by(fn entry ->
-        entry[:id] || entry["id"] || entry[:sequence] || entry["sequence"]
-      end)
+    all_entries = previous_entries ++ next_entries
+
+    keys =
+      all_entries
+      |> Enum.map(&entry_key/1)
+      |> Enum.uniq()
+
+    latest_by_key = Map.new(all_entries, &{entry_key(&1), &1})
+    merged_entries = Enum.map(keys, &Map.fetch!(latest_by_key, &1))
 
     Map.put(next_snapshot, :entries, merged_entries)
+  end
+
+  defp entry_key(entry) when is_map(entry) do
+    entry[:id] || entry["id"] || entry[:sequence] || entry["sequence"]
   end
 
   defp append_entry(snapshot, kind, body)

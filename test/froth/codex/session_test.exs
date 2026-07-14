@@ -84,6 +84,8 @@ defmodule Froth.Codex.SessionTest do
                snapshot.entries,
                &Map.take(&1, [:id, :body, :sequence])
              )
+
+    assert Enum.all?(snapshot.entries, &(&1.completed == true))
   end
 
   test "close/1 terminates a dynamically supervised session without restarting it" do

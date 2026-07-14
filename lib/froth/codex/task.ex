@@ -68,7 +68,12 @@ defmodule Froth.Codex.Task do
          {:ok, session_id} <-
            canonical_thread_identity(session_module, session_id, cwd),
          {:ok, task} <- create_codex_task(session_id, prompt, cwd) do
-      case maybe_subscribe_telegram(task.task_id, bot_id, chat_id) do
+      case maybe_subscribe_telegram(
+             task.task_id,
+             bot_id,
+             chat_id,
+             reply_to
+           ) do
         :ok ->
           case start_task_watcher(task.task_id, session_id, session_module) do
             {:ok, watcher_pid} ->
@@ -78,6 +83,7 @@ defmodule Froth.Codex.Task do
 
                   if chat_id do
                     send_micromanage_button(
+                      bot_id,
                       session_id,
                       chat_id,
                       reply_to,
@@ -192,7 +198,13 @@ defmodule Froth.Codex.Task do
   @doc "Get the LiveView URL for a Codex session."
   def url(session_id), do: "#{@base_url}#{session_id}"
 
-  defp send_micromanage_button(session_id, chat_id, reply_to, prompt) do
+  defp send_micromanage_button(
+         bot_id,
+         session_id,
+         chat_id,
+         reply_to,
+         prompt
+       ) do
     truncated =
       if String.length(prompt) > 100,
         do: String.slice(prompt, 0, 97) <> "...",
@@ -213,7 +225,7 @@ defmodule Froth.Codex.Task do
       ]
     ]
 
-    BotAdapter.send_message("charlie", chat_id, text,
+    BotAdapter.send_message(bot_id || "charlie", chat_id, text,
       reply_to: reply_to,
       reply_markup: %{
         "@type" => "replyMarkupInlineKeyboard",
@@ -259,16 +271,19 @@ defmodule Froth.Codex.Task do
     })
   end
 
-  defp maybe_subscribe_telegram(task_id, bot_id, chat_id)
+  defp maybe_subscribe_telegram(task_id, bot_id, chat_id, reply_to)
        when is_binary(task_id) and is_binary(bot_id) and is_integer(chat_id) do
-    case Froth.Tasks.subscribe_telegram(task_id, bot_id, chat_id) do
+    case Froth.Tasks.subscribe_telegram(task_id, bot_id, chat_id,
+           message_id: reply_to
+         ) do
       {:ok, _link} -> :ok
       {:error, _reason} = error -> error
       _ -> :ok
     end
   end
 
-  defp maybe_subscribe_telegram(_task_id, _bot_id, _chat_id), do: :ok
+  defp maybe_subscribe_telegram(_task_id, _bot_id, _chat_id, _reply_to),
+    do: :ok
 
   defp start_task_watcher(task_id, session_id, session_module)
        when is_binary(task_id) and is_binary(session_id) do

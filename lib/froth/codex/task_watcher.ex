@@ -54,7 +54,8 @@ defmodule Froth.Codex.TaskWatcher do
          session_pid: session_pid,
          session_ref: session_ref,
          saw_working?: working_snapshot?(snapshot),
-         last_entry_sequence: last_entry_sequence(snapshot)
+         last_entry_sequence: last_entry_sequence(snapshot),
+         relayed_assistant_ids: completed_assistant_ids(snapshot)
        }}
     else
       {:error, reason} -> {:stop, reason}
@@ -82,6 +83,20 @@ defmodule Froth.Codex.TaskWatcher do
         idle_after_turn? = state.saw_working? and not now_working?
         last_entry_sequence = last_entry_sequence(snapshot)
 
+        completed_assistant_entries =
+          unrelayed_assistant_entries(snapshot, state.relayed_assistant_ids)
+
+        Enum.each(completed_assistant_entries, fn entry ->
+          Froth.Tasks.relay_codex_message(state.task_id, entry_body(entry))
+        end)
+
+        relayed_assistant_ids =
+          Enum.reduce(
+            completed_assistant_entries,
+            state.relayed_assistant_ids,
+            &MapSet.put(&2, entry_id(&1))
+          )
+
         cond do
           error_snapshot?(snapshot) ->
             Froth.Tasks.fail(state.task_id, failure_reason(snapshot))
@@ -100,7 +115,8 @@ defmodule Froth.Codex.TaskWatcher do
              %{
                state
                | saw_working?: saw_working?,
-                 last_entry_sequence: last_entry_sequence
+                 last_entry_sequence: last_entry_sequence,
+                 relayed_assistant_ids: relayed_assistant_ids
              }}
         end
 
@@ -208,6 +224,39 @@ defmodule Froth.Codex.TaskWatcher do
 
   defp entry_sequence(entry) when is_map(entry) do
     Map.get(entry, :sequence) || Map.get(entry, "sequence") || 0
+  end
+
+  defp completed_assistant_ids(snapshot) when is_map(snapshot) do
+    snapshot
+    |> completed_assistant_entries()
+    |> Enum.map(&entry_id/1)
+    |> MapSet.new()
+  end
+
+  defp unrelayed_assistant_entries(snapshot, relayed_ids)
+       when is_map(snapshot) and is_struct(relayed_ids, MapSet) do
+    snapshot
+    |> completed_assistant_entries()
+    |> Enum.reject(&MapSet.member?(relayed_ids, entry_id(&1)))
+  end
+
+  defp completed_assistant_entries(snapshot) when is_map(snapshot) do
+    Enum.filter(snapshot_entries(snapshot), fn entry ->
+      kind = Map.get(entry, :kind) || Map.get(entry, "kind")
+      completed = Map.get(entry, :completed) || Map.get(entry, "completed")
+      body = entry_body(entry)
+
+      kind in [:assistant, "assistant"] and completed == true and
+        is_binary(body) and String.trim(body) != ""
+    end)
+  end
+
+  defp entry_id(entry) when is_map(entry) do
+    Map.get(entry, :id) || Map.get(entry, "id")
+  end
+
+  defp entry_body(entry) when is_map(entry) do
+    Map.get(entry, :body) || Map.get(entry, "body") || ""
   end
 
   defp entry_body_starts_with?(entry, prefix)

@@ -165,6 +165,7 @@ defmodule Froth.Codex.Events do
     |> maybe_put(metadata, "status")
     |> maybe_put(metadata, "output")
     |> maybe_put(metadata, "label")
+    |> maybe_put(metadata, "completed")
     |> maybe_put_list(metadata, "images")
   end
 

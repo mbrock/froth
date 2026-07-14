@@ -6,7 +6,7 @@ defmodule Froth.Tasks do
   """
 
   alias Froth.{Repo, Task, TaskEvent, TaskTelegramLink}
-  alias Froth.Telegram.SyntheticMessage
+  alias Froth.Telegram.{BotAdapter, SyntheticMessage}
   alias Span
   import Ecto.Query
 
@@ -401,6 +401,49 @@ defmodule Froth.Tasks do
         |> Ecto.Changeset.change(attrs)
         |> Repo.update()
     end
+  end
+
+  @doc "Relays a completed Codex assistant message to subscribed Telegram chats."
+  def relay_codex_message(task_id, text)
+      when is_binary(task_id) and is_binary(text) do
+    links =
+      from(l in TaskTelegramLink,
+        where:
+          l.task_id == ^task_id and l.notify == true and
+            not is_nil(l.chat_id)
+      )
+      |> Repo.all(log: false)
+
+    text
+    |> BotAdapter.split_long_text(BotAdapter.text_limit() - 16)
+    |> Enum.each(fn chunk ->
+      Enum.each(links, fn link ->
+        result = send_codex_progress(link, chunk)
+
+        Span.execute([:froth, :codex, :telegram_progress_relayed], nil, %{
+          task_id: task_id,
+          bot_id: link.bot_id,
+          chat_id: link.chat_id,
+          result: inspect(result, limit: 10)
+        })
+      end)
+    end)
+
+    :ok
+  end
+
+  defp send_codex_progress(link, chunk) do
+    BotAdapter.send_blockquote(
+      link.bot_id,
+      link.chat_id,
+      link.message_id,
+      "Codex",
+      chunk
+    )
+  rescue
+    error -> {:error, Exception.message(error)}
+  catch
+    :exit, reason -> {:error, inspect(reason)}
   end
 
   def fire_notifications(task_id) when is_binary(task_id) do

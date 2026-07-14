@@ -335,6 +335,39 @@ defmodule Froth.Telegram.BotAdapter do
     )
   end
 
+  @doc "Send a visibly attributed block quote, optionally replying to a message."
+  def send_blockquote(session_id, chat_id, reply_to, label, text, opts \\ [])
+      when is_binary(session_id) and is_integer(chat_id) and
+             is_binary(label) and is_binary(text) and is_list(opts) do
+    body = String.trim(text)
+    formatted = "#{label}\n#{body}"
+    body_offset = utf16_length(label <> "\n")
+
+    entities = [
+      %{
+        "@type" => "textEntity",
+        "offset" => 0,
+        "length" => utf16_length(label),
+        "type" => %{"@type" => "textEntityTypeBold"}
+      },
+      %{
+        "@type" => "textEntity",
+        "offset" => body_offset,
+        "length" => utf16_length(body),
+        "type" => %{"@type" => "textEntityTypeBlockQuote"}
+      }
+    ]
+
+    send_message(
+      session_id,
+      chat_id,
+      formatted,
+      opts
+      |> Keyword.put(:reply_to, reply_to)
+      |> Keyword.put(:entities, entities)
+    )
+  end
+
   def send_typing(session_id, chat_id)
       when is_binary(session_id) and is_integer(chat_id) do
     Froth.Telegram.send(session_id, %{
@@ -477,6 +510,13 @@ defmodule Froth.Telegram.BotAdapter do
   defp reply_to_msg(message_id)
        when is_integer(message_id) and message_id > 0 do
     %{"@type" => "inputMessageReplyToMessage", "message_id" => message_id}
+  end
+
+  defp utf16_length(text) when is_binary(text) do
+    text
+    |> :unicode.characters_to_binary(:utf8, {:utf16, :little})
+    |> byte_size()
+    |> div(2)
   end
 
   defp normalize_int64(value) when is_integer(value),

@@ -1334,7 +1334,12 @@ defmodule Froth.Codex.Session do
     state
     |> Map.put(:active_assistant_entry_id, assistant_id)
     |> Map.put(:active_assistant_text, text)
-    |> upsert_entry(assistant_id, :assistant, text)
+    |> upsert_entry_map(assistant_id, %{
+      id: assistant_id,
+      kind: :assistant,
+      body: text,
+      completed: true
+    })
   end
 
   defp upsert_assistant_message(state, _, _, _), do: state
