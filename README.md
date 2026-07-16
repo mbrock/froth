@@ -1,5 +1,11 @@
 # Froth
 
+## Comic strips
+
+`Froth.Comic` generates Comic Chat-inspired PNG strips from Telegram-shaped
+message maps. See [`docs/comic.md`](docs/comic.md) for the API, original
+algorithm notes, and asset regeneration workflow.
+
 ## Requirements
 
 - Elixir + Erlang/OTP via `asdf` (versions pinned in `.tool-versions`)
