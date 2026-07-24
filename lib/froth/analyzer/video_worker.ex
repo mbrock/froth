@@ -101,7 +101,7 @@ defmodule Froth.Analyzer.VideoWorker do
           "Analyze this video. Describe what you see — people, actions, setting, text overlays, audio if any. Be observant and concise."
 
         case API.gemini_with_file(
-               "gemini-3-flash-preview",
+               "gemini-3.6-flash",
                file_uri,
                mime_type,
                prompt
@@ -112,7 +112,7 @@ defmodule Froth.Analyzer.VideoWorker do
               type: "video",
               chat_id: chat_id,
               message_id: message_id,
-              agent: "gemini-3-flash-preview",
+              agent: "gemini-3.6-flash",
               analysis_text: text,
               metadata: %{"duration" => duration},
               generated_at: DateTime.utc_now() |> DateTime.truncate(:second),

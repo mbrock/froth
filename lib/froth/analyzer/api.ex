@@ -5,7 +5,7 @@ defmodule Froth.Analyzer.API do
   @xai_url "https://api.x.ai/v1/chat/completions"
   @xai_responses_url "https://api.x.ai/v1/responses"
 
-  def gemini(model \\ "gemini-3-flash-preview", contents, opts \\ []) do
+  def gemini(model \\ "gemini-3.6-flash", contents, opts \\ []) do
     api_key = Froth.ApiKeys.active_key(["gemini", "google"])
     url = "#{@gemini_url}/#{model}:generateContent?key=#{api_key}"
 
@@ -33,7 +33,7 @@ defmodule Froth.Analyzer.API do
   end
 
   def gemini_with_file(
-        model \\ "gemini-3-flash-preview",
+        model \\ "gemini-3.6-flash",
         file_uri,
         mime_type,
         prompt
@@ -51,7 +51,7 @@ defmodule Froth.Analyzer.API do
   end
 
   def gemini_with_inline(
-        model \\ "gemini-3-flash-preview",
+        model \\ "gemini-3.6-flash",
         data,
         mime_type,
         prompt

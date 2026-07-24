@@ -37,7 +37,7 @@ defmodule Froth.Analyzer.YouTubeWorker do
           }
         ]
 
-        case API.gemini("gemini-3-flash-preview", contents) do
+        case API.gemini("gemini-3.6-flash", contents) do
           {:ok, analysis_text} ->
             save(chat_id, message_id, analysis_text, url)
 
@@ -54,7 +54,7 @@ defmodule Froth.Analyzer.YouTubeWorker do
       type: "youtube",
       chat_id: chat_id,
       message_id: message_id,
-      agent: "gemini-3-flash-preview",
+      agent: "gemini-3.6-flash",
       analysis_text: analysis_text,
       metadata: %{"video_url" => url},
       generated_at: DateTime.utc_now() |> DateTime.truncate(:second),

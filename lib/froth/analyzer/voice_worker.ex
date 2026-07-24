@@ -115,7 +115,7 @@ defmodule Froth.Analyzer.VoiceWorker do
       "Transcribe this voice message and briefly describe the tone/context. Return the transcription first, then the analysis."
 
     case API.gemini_with_inline(
-           "gemini-3-flash-preview",
+           "gemini-3.6-flash",
            audio_data,
            mime_type,
            prompt
@@ -126,7 +126,7 @@ defmodule Froth.Analyzer.VoiceWorker do
           type: "voice",
           chat_id: chat_id,
           message_id: message_id,
-          agent: "gemini-3-flash-preview",
+          agent: "gemini-3.6-flash",
           analysis_text: text,
           metadata: %{"duration" => duration},
           generated_at: DateTime.utc_now() |> DateTime.truncate(:second),
