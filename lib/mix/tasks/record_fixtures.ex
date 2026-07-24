@@ -13,7 +13,7 @@ defmodule Mix.Tasks.RecordFixtures do
     Mix.Task.run("app.start")
 
     api_key = Froth.ApiKeys.active_key("anthropic")
-    model = System.get_env("ANTHROPIC_MODEL", "claude-opus-4-6")
+    model = System.get_env("ANTHROPIC_MODEL", "claude-opus-5")
 
     if is_nil(api_key) or api_key == "" do
       Mix.raise("No anthropic API key found in api_keys table")
@@ -124,7 +124,7 @@ defmodule Mix.Tasks.RecordFixtures do
       "model" => model,
       "max_tokens" => 4096,
       "stream" => true,
-      "thinking" => %{"type" => "enabled", "budget_tokens" => 1024},
+      "thinking" => %{"type" => "adaptive", "display" => "summarized"},
       "messages" => [
         %{"role" => "user", "content" => "What is 2+2? Think about it first."}
       ]

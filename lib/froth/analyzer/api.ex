@@ -138,7 +138,7 @@ defmodule Froth.Analyzer.API do
 
   def claude(messages, opts \\ []) do
     api_key = anthropic_api_key()
-    model = opts[:model] || "claude-sonnet-4-6"
+    model = opts[:model] || "claude-sonnet-5"
 
     body = %{
       "model" => model,

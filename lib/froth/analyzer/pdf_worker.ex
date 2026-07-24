@@ -114,7 +114,7 @@ defmodule Froth.Analyzer.PdfWorker do
                ]
              }
            ],
-           model: "claude-sonnet-4-6"
+           model: "claude-sonnet-5"
          ) do
       {:ok, analysis_text} ->
         %Analysis{}
@@ -122,7 +122,7 @@ defmodule Froth.Analyzer.PdfWorker do
           type: "pdf",
           chat_id: chat_id,
           message_id: message_id,
-          agent: "claude-sonnet-4-6",
+          agent: "claude-sonnet-5",
           analysis_text: analysis_text,
           metadata: %{filename: filename},
           generated_at: DateTime.utc_now() |> DateTime.truncate(:second),

@@ -44,7 +44,7 @@ defmodule Froth.WeeklySummarizerTest do
       chat_id: chat_id,
       from_date: day_start(from_date),
       to_date: day_start(Date.add(to_date, 1)),
-      agent: "claude-opus-4-6",
+      agent: "claude-opus-5",
       summary_text: "A weekly chapter.",
       message_count: 10,
       metadata: %{"kind" => WeeklySummarizer.kind()}

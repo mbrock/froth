@@ -22,7 +22,7 @@ defmodule Froth.Summarizer do
   alias Froth.Telegram.{BotContext, Queries}
   import Ecto.Query
 
-  @model "claude-opus-4-6"
+  @model "claude-opus-5"
   @max_tokens 65_536
 
   @system_prompt """

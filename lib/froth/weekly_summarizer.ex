@@ -12,7 +12,7 @@ defmodule Froth.WeeklySummarizer do
   alias Froth.Agent.{Config, Message}
   alias Froth.{ChatSummary, Repo}
 
-  @model "claude-opus-4-6"
+  @model "claude-opus-5"
   @max_tokens 65_536
   @kind "weekly_chronicle"
   @default_start_date ~D[2026-03-24]
