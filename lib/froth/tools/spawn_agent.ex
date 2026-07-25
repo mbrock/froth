@@ -104,8 +104,7 @@ defmodule Froth.Tools.SpawnAgent do
 
     with {:ok, bot_ref} <- bot_ref(bot_id),
          config = build_config(ctx, chat_id, reply_to, tool_specs, extra_opts),
-         user_message =
-           Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)}),
+         user_message = Message.user(prompt),
          cycle = Froth.Agent.begin_cycle(user_message, config),
          :ok <- maybe_link_spawned_cycle(cycle, chat_id, bot_id, reply_to),
          {:ok, task_id} <-

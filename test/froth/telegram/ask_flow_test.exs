@@ -1041,8 +1041,7 @@ defmodule Froth.Telegram.AskFlowTest do
 
   defp cycle_messages(cycle_id) do
     Froth.Repo.get!(Froth.Agent.Cycle, cycle_id)
-    |> Froth.Agent.latest_head_id()
-    |> Froth.Agent.load_messages()
+    |> Froth.Agent.list_messages()
   end
 
   defp assert_bot_idle(bot, attempts \\ 200)

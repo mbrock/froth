@@ -517,8 +517,7 @@ defmodule Froth.Mix.Follow do
       "span_id",
       "parent_id",
       "seq",
-      "kind",
-      "head_id"
+      "kind"
     ])
     |> Enum.reject(fn {_k, v} -> is_map(v) or is_list(v) end)
     |> Enum.sort_by(&pair_weight/1)

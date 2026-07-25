@@ -132,16 +132,16 @@ defmodule Froth.Agent.WorkerTest do
 
     cycle = Repo.insert!(%Cycle{})
 
-    Enum.reduce(messages, nil, fn msg, parent_id ->
-      saved =
-        Repo.insert!(%Message{
-          role: msg.role,
-          content: msg.content,
-          parent_id: parent_id
-        })
-
-      Agent.append_event(cycle, %{head_id: saved.id, message_id: saved.id})
-      saved.id
+    messages
+    |> Enum.with_index()
+    |> Enum.each(fn {message, seq} ->
+      Agent.append_message(
+        cycle,
+        message.role,
+        message.content,
+        message.metadata,
+        seq
+      )
     end)
 
     pid = start_supervised!({Worker, {cycle, config}})
@@ -152,26 +152,8 @@ defmodule Froth.Agent.WorkerTest do
     start_supervised!({TestExecutor, {fun, self()}})
   end
 
-  defp append_cycle_message(%Cycle{} = cycle, parent_id, role, content, seq) do
-    message =
-      Repo.insert!(%Message{
-        role: role,
-        content: Message.wrap(content),
-        parent_id: parent_id
-      })
-
-    Agent.append_event(
-      cycle,
-      %{
-        kind: "message.appended",
-        head_id: message.id,
-        message_id: message.id
-      },
-      seq
-    )
-
-    message
-  end
+  defp append_cycle_message(%Cycle{} = cycle, role, content, seq),
+    do: Agent.append_message(cycle, role, content, nil, seq)
 
   defp wait_for_exit(pid) do
     ref = Process.monitor(pid)
@@ -184,18 +166,8 @@ defmodule Froth.Agent.WorkerTest do
     on_exit(fn -> Phoenix.PubSub.unsubscribe(Froth.PubSub, "events") end)
   end
 
-  defp cycle_message_events(cycle_id) do
-    cycle_id
-    |> cycle_events()
-    |> Enum.filter(&(event_kind(&1) == "message.appended"))
-  end
-
   defp cycle_messages(cycle_id) do
-    cycle_id
-    |> cycle_message_events()
-    |> Enum.map(fn event ->
-      Repo.get!(Message, event_message_id(event) || event_head_id(event))
-    end)
+    Agent.list_messages(cycle_id)
   end
 
   defp cycle_events(cycle_id) do
@@ -235,19 +207,9 @@ defmodule Froth.Agent.WorkerTest do
 
   defp event_kind(_event), do: nil
 
-  defp event_head_id(%Event{metadata: metadata}) when is_map(metadata),
-    do: metadata["head_id"]
-
-  defp event_head_id(_event), do: nil
-
-  defp event_message_id(%Event{metadata: metadata}) when is_map(metadata),
-    do: metadata["message_id"]
-
-  defp event_message_id(_event), do: nil
-
   test "begin_cycle stores the full message text preview" do
     long_text = String.duplicate("there is no truncation here. ", 20)
-    message = Repo.insert!(Message.user(long_text))
+    message = Message.user(long_text)
 
     cycle = Agent.begin_cycle(message, %Config{model: "claude-opus-4-6"})
     event = latest_cycle_event(cycle.id, "message.appended")
@@ -276,7 +238,7 @@ defmodule Froth.Agent.WorkerTest do
   end
 
   test "update_cycle preserves boolean values in nested config maps" do
-    message = Repo.insert!(Message.user("hello"))
+    message = Message.user("hello")
 
     config = %Config{
       model: "claude-opus-4-6",
@@ -312,51 +274,49 @@ defmodule Froth.Agent.WorkerTest do
              false
   end
 
-  test "latest_head_ids batches current heads from message append events" do
+  test "cycle items provide direct ordered transcript reads" do
     cycle_one = Repo.insert!(%Cycle{})
     cycle_two = Repo.insert!(%Cycle{})
 
-    first_one = append_cycle_message(cycle_one, nil, :user, "one", 0)
+    first_one = append_cycle_message(cycle_one, :user, "one", 0)
 
     Agent.append_event(
       cycle_one,
-      %{kind: "tool.started", head_id: first_one.id},
+      %{kind: "tool.started", data: %{"tool_name" => "echo"}},
       1
     )
 
     latest_one =
-      append_cycle_message(cycle_one, first_one.id, :agent, "two", 2)
+      append_cycle_message(cycle_one, :agent, "two", 2)
 
     Agent.append_event(
       cycle_one,
-      %{kind: "tool.completed", head_id: latest_one.id},
+      %{
+        kind: "tool.completed",
+        data: %{
+          "tool_name" => "echo",
+          "result_type" => "text",
+          "result" => "done"
+        }
+      },
       3
     )
 
-    first_two = append_cycle_message(cycle_two, nil, :user, "alpha", 0)
+    first_two = append_cycle_message(cycle_two, :user, "alpha", 0)
 
     latest_two =
-      append_cycle_message(cycle_two, first_two.id, :agent, "beta", 1)
+      append_cycle_message(cycle_two, :agent, "beta", 1)
 
     Agent.append_event(
       cycle_two,
-      %{kind: "llm.completed", head_id: latest_two.id},
+      %{kind: "llm.completed"},
       2
     )
 
-    assert Agent.latest_head_id(cycle_one) == latest_one.id
-    assert Agent.latest_head_id(cycle_two) == latest_two.id
-
-    assert Agent.latest_head_ids([
-             cycle_two.id,
-             cycle_one.id,
-             cycle_one.id,
-             nil,
-             ""
-           ]) == %{
-             cycle_one.id => latest_one.id,
-             cycle_two.id => latest_two.id
-           }
+    assert Agent.list_messages(cycle_one) == [first_one, latest_one]
+    assert Agent.list_messages(cycle_two) == [first_two, latest_two]
+    assert Enum.map(Agent.list_items(cycle_one), & &1.seq) == [0, 1, 2, 3]
+    assert Agent.latest_agent_text(cycle_one) == "two"
   end
 
   describe "simple reply (no tools)" do
@@ -902,6 +862,9 @@ defmodule Froth.Agent.WorkerTest do
 
       assert outcome.metadata["outcome"] == "yield"
       assert outcome.metadata["reason"] == "Waiting for subscribed tasks."
+
+      assert Agent.describe_cycle_stop(cycle) ==
+               "cycle yielded: Waiting for subscribed tasks."
     end
 
     test "awaits hidden tool results without persisting a fake tool_result message" do
@@ -1336,8 +1299,7 @@ defmodule Froth.Agent.WorkerTest do
         tool_executor: executor
       }
 
-      message =
-        Repo.insert!(%Message{role: :user, content: Message.wrap("hello")})
+      message = Message.user("hello")
 
       {cycle, stream} = Froth.Agent.run(message, config)
       assert %Cycle{} = cycle
@@ -1370,11 +1332,7 @@ defmodule Froth.Agent.WorkerTest do
         tool_executor: executor
       }
 
-      message =
-        Repo.insert!(%Message{
-          role: :user,
-          content: Message.wrap("echo test message")
-        })
+      message = Message.user("echo test message")
 
       {_cycle, stream} = Froth.Agent.run(message, config)
 
@@ -1395,8 +1353,7 @@ defmodule Froth.Agent.WorkerTest do
         tool_executor: executor
       }
 
-      message =
-        Repo.insert!(%Message{role: :user, content: Message.wrap("hello")})
+      message = Message.user("hello")
 
       {_cycle, stream} = Froth.Agent.run(message, config)
       collector = Task.async(fn -> Enum.to_list(stream) end)
@@ -1451,8 +1408,7 @@ defmodule Froth.Agent.WorkerTest do
 
       prompt = "run a quick shell command and summarize it"
 
-      user_message =
-        Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
+      user_message = Message.user(prompt)
 
       cycle = Agent.begin_cycle(user_message, config)
 

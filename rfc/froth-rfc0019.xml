@@ -249,7 +249,7 @@ where event = 'froth.agent.message.appended';</code>
   </section>
   <section title="Implementation Status" id="implementation-status">
     <p>As of 2026-07-25, this RFC is partially implemented.</p>
-    <p>Froth has targeted cycle-head indexes and batched lookups, anchored and time-bucketed recent-window algorithms, exact structured tool-call rendering, typed block-backed returns, and blob-backed large outputs.</p>
-    <p>The principal chronological change is not complete. Cycle traces are still attached beneath their triggering Telegram messages rather than interleaved as independent timeline items, no sequential cycle-item projection exists, and the default Charlie configuration still uses the anchored count fallback rather than the time-and-mass window.</p>
+    <p>Froth has sequential cycle-item storage, indexed ordered reads, anchored and time-bucketed recent-window algorithms, exact structured tool-call rendering, typed block-backed returns, and blob-backed large outputs.</p>
+    <p>The principal prompt-context chronology change is not complete. Cycle traces are still attached beneath their triggering Telegram messages rather than interleaved as independent timeline items, and the default Charlie configuration still uses the anchored count fallback rather than the time-and-mass window.</p>
   </section>
 </rfc>

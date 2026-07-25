@@ -155,8 +155,7 @@ defmodule Mix.Tasks.Froth.Context do
   defp cycle_request(%Cycle{} = cycle) do
     messages =
       cycle
-      |> Froth.Agent.latest_head_id()
-      |> Froth.Agent.load_messages()
+      |> Froth.Agent.list_messages()
 
     {cycle, messages}
   end

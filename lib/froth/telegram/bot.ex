@@ -816,11 +816,7 @@ defmodule Froth.Telegram.Bot do
         user_content
       end
 
-    message =
-      Repo.insert!(%Message{
-        role: :user,
-        content: Message.wrap(initial_content)
-      })
+    message = Message.user(initial_content)
 
     base_config = %Config{
       system: system_prompt,
@@ -1074,10 +1070,9 @@ defmodule Froth.Telegram.Bot do
         with %Cycle{} = cycle <- Repo.get(Cycle, pending_ask.cycle_id),
              %Config{} = config <-
                pending_ask_worker_config(state, pending_ask, reply_to),
-             {_message, _head_id} <-
+             %Message{} <-
                Agent.append_message(
                  cycle,
-                 Agent.latest_head_id(cycle),
                  :user,
                  [ToolResult.to_api(tool_result)]
                ) do

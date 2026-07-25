@@ -67,8 +67,7 @@ defmodule Froth.WeeklySummarizer do
         tools: []
       }
 
-      user_msg =
-        Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
+      user_msg = Message.user(prompt)
 
       {cycle, stream} = Agent.run(user_msg, config)
 

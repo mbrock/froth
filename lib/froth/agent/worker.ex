@@ -46,7 +46,6 @@ defmodule Froth.Agent.Worker do
           config: Config.t(),
           phase: phase(),
           cycle: Cycle.t(),
-          head_id: String.t() | nil,
           seq: non_neg_integer(),
           cycle_span_id: String.t() | nil,
           cycle_start: integer() | nil,
@@ -67,7 +66,6 @@ defmodule Froth.Agent.Worker do
   defstruct [
     :config,
     :cycle,
-    :head_id,
     :seq,
     :cycle_span_id,
     :cycle_start,
@@ -106,7 +104,6 @@ defmodule Froth.Agent.Worker do
     Froth.Repo.allow(config.tool_executor, "worker")
 
     now = System.monotonic_time()
-    head_id = Agent.latest_head_id(cycle)
     seq = Agent.next_event_seq(cycle)
     snapshot = Agent.cycle_snapshot_attrs(config)
 
@@ -141,14 +138,12 @@ defmodule Froth.Agent.Worker do
       %__MODULE__{
         config: config,
         cycle: cycle,
-        head_id: head_id,
         seq: seq,
         cycle_span_id: span_id,
         cycle_start: now
       }
       |> append_event(%{
         kind: "cycle.started",
-        head_id: head_id,
         span_id: span_id,
         parent_span_id: config.parent_span_id,
         data: %{
@@ -384,14 +379,11 @@ defmodule Froth.Agent.Worker do
     think_span_id =
       Span.start_span([:froth, :agent, :think], worker.cycle_span_id, %{
         cycle_id: cycle.id,
-        head_id: worker.head_id,
         model: cycle.model,
         provider: cycle.provider
       })
 
-    raw_messages =
-      worker.head_id
-      |> Agent.load_messages()
+    raw_messages = Agent.list_messages(cycle)
 
     {request_messages, previous_response_id} =
       llm_request_messages(cycle.provider, raw_messages)
@@ -403,7 +395,6 @@ defmodule Froth.Agent.Worker do
       %{worker | cycle: cycle}
       |> append_event(%{
         kind: "llm.requested",
-        head_id: worker.head_id,
         span_id: think_span_id,
         parent_span_id: worker.cycle_span_id,
         data: %{
@@ -481,7 +472,6 @@ defmodule Froth.Agent.Worker do
     %{worker | cycle: cycle}
     |> append_event(%{
       kind: "llm.completed",
-      head_id: worker.head_id,
       span_id: worker.think_span_id,
       parent_span_id: worker.cycle_span_id,
       data: %{
@@ -511,7 +501,7 @@ defmodule Froth.Agent.Worker do
     cycle = Agent.update_cycle(worker.cycle, %{status: :waiting_on_tools})
 
     context =
-      %{cycle_id: cycle.id, head_id: worker.head_id}
+      %{cycle_id: cycle.id}
       |> Map.merge(worker.config.context || %{})
 
     {invocations, worker} =
@@ -1009,7 +999,6 @@ defmodule Froth.Agent.Worker do
   defp emit_tool_started_event(worker, %ToolUse{} = tool_use, span_id) do
     append_event(worker, %{
       kind: "tool.started",
-      head_id: worker.head_id,
       span_id: span_id,
       parent_span_id: worker.cycle_span_id,
       tool_use_id: tool_use.id,
@@ -1027,7 +1016,6 @@ defmodule Froth.Agent.Worker do
     worker =
       append_event(worker, %{
         kind: "tool.completed",
-        head_id: worker.head_id,
         span_id: invocation.span_id,
         parent_span_id: worker.cycle_span_id,
         tool_use_id: invocation.tool_use.id,
@@ -1073,7 +1061,6 @@ defmodule Froth.Agent.Worker do
 
     append_event(worker, %{
       kind: "tool.failed",
-      head_id: worker.head_id,
       span_id: invocation.span_id,
       parent_span_id: worker.cycle_span_id,
       tool_use_id: invocation.tool_use.id,
@@ -1104,7 +1091,6 @@ defmodule Froth.Agent.Worker do
 
     append_event(worker, %{
       kind: "tool.timed_out",
-      head_id: worker.head_id,
       span_id: invocation.span_id,
       parent_span_id: worker.cycle_span_id,
       tool_use_id: invocation.tool_use.id,
@@ -1123,7 +1109,6 @@ defmodule Froth.Agent.Worker do
 
     append_event(worker, %{
       kind: "control.outcome",
-      head_id: worker.head_id,
       span_id: span_id,
       parent_span_id: parent_span_id,
       tool_use_id: data["tool_use_id"],
@@ -1135,7 +1120,6 @@ defmodule Froth.Agent.Worker do
     Map.merge(
       %{
         "cycle_id" => worker.cycle.id,
-        "head_id" => worker.head_id,
         "tool_name" => tool_use.name,
         "tool_use_id" => tool_use.id,
         "input" => tool_use.input,
@@ -1393,7 +1377,6 @@ defmodule Froth.Agent.Worker do
         inspect(
           %{
             cycle_id: worker.cycle.id,
-            head_id: worker.head_id,
             provider: provider,
             model: worker.cycle.model,
             error: error,
@@ -1414,7 +1397,6 @@ defmodule Froth.Agent.Worker do
         inspect(
           %{
             cycle_id: worker.cycle.id,
-            head_id: worker.head_id,
             provider: worker.cycle.provider,
             model: worker.cycle.model,
             after_tool_execution: worker.saw_tool_use?,
@@ -1482,7 +1464,6 @@ defmodule Froth.Agent.Worker do
       %{worker | cycle: cycle}
       |> append_event(%{
         kind: kind,
-        head_id: worker.head_id,
         span_id: worker.cycle_span_id,
         parent_span_id: cycle.parent_span_id,
         data:
@@ -1496,23 +1477,16 @@ defmodule Froth.Agent.Worker do
           )
       })
 
-    :ok = TaskBridge.sync_cycle_task(cycle, worker.head_id, status, extra)
+    :ok = TaskBridge.sync_cycle_task(cycle, status, extra)
 
     %{worker | finalized?: true}
   end
 
   defp append_message(worker, role, content, metadata \\ nil) do
-    {_msg, head_id} =
-      Agent.append_message(
-        worker.cycle,
-        worker.head_id,
-        role,
-        content,
-        metadata,
-        worker.seq
-      )
+    _message =
+      Agent.append_message(worker.cycle, role, content, metadata, worker.seq)
 
-    %{worker | head_id: head_id, seq: worker.seq + 1}
+    %{worker | seq: worker.seq + 1}
   end
 
   defp append_event(worker, attrs) do

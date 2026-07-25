@@ -1,26 +1,26 @@
 defmodule Froth.Agent.Message do
-  use Ecto.Schema
-
   alias Froth.Agent.Message.Content
   alias LLM.Message, as: LLMMessage
 
   @type t :: %__MODULE__{
           id: String.t() | nil,
+          cycle_id: String.t() | nil,
+          seq: non_neg_integer() | nil,
           role: :user | :agent,
           content: [map()],
-          parent_id: String.t() | nil
+          metadata: map() | nil,
+          inserted_at: DateTime.t() | nil
         }
 
-  @primary_key {:id, Ecto.ULID, autogenerate: true}
-  @foreign_key_type Ecto.ULID
-
-  schema "agent_messages" do
-    field(:role, Ecto.Enum, values: [:user, :agent])
-    field(:content, Content)
-    field(:metadata, :map)
-    belongs_to(:parent, __MODULE__)
-    timestamps()
-  end
+  defstruct [
+    :id,
+    :cycle_id,
+    :seq,
+    :role,
+    :content,
+    :metadata,
+    :inserted_at
+  ]
 
   def user(content),
     do: %__MODULE__{role: :user, content: Content.to_blocks(content)}

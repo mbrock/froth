@@ -4,7 +4,7 @@ defmodule FrothWeb.ToolLiveTest do
   import Phoenix.LiveViewTest
 
   alias Froth.Agent
-  alias Froth.Agent.{Cycle, Message}
+  alias Froth.Agent.Cycle
   alias Froth.Repo
   alias Froth.Telegram.CycleLink
 
@@ -13,8 +13,7 @@ defmodule FrothWeb.ToolLiveTest do
          conn: conn
        } do
     cycle = Repo.insert!(%Cycle{})
-    message = Repo.insert!(Message.agent("complete enough to look done"))
-    Agent.append_event(cycle, %{head_id: message.id, message_id: message.id})
+    Agent.append_message(cycle, :agent, "complete enough to look done")
 
     {:ok, view, _html} =
       live(conn, ~p"/froth/mini/tool/cycle_missingbot_#{cycle.id}")
@@ -37,8 +36,10 @@ defmodule FrothWeb.ToolLiveTest do
     cycle = Repo.insert!(%Cycle{})
 
     tool_use =
-      Repo.insert!(
-        Message.agent([
+      Agent.append_message(
+        cycle,
+        :agent,
+        [
           %{
             "type" => "tool_use",
             "id" => "call_1",
@@ -56,25 +57,23 @@ defmodule FrothWeb.ToolLiveTest do
               }
             }
           }
-        ])
+        ]
       )
 
     tool_result =
-      Repo.insert!(%{
-        Message.user([
+      Agent.append_message(
+        cycle,
+        :user,
+        [
           %{
             "type" => "tool_result",
             "tool_use_id" => "call_1",
             "content" => "Shell shell:test (exit code: 139)\nsegfault"
           }
-        ])
-        | parent_id: tool_use.id
-      })
+        ]
+      )
 
-    Agent.append_event(cycle, %{
-      head_id: tool_result.id,
-      message_id: tool_result.id
-    })
+    assert tool_use.seq < tool_result.seq
 
     {:ok, view, _html} =
       live(conn, ~p"/froth/mini/tool/cycle_missingbot_#{cycle.id}")
@@ -101,9 +100,11 @@ defmodule FrothWeb.ToolLiveTest do
       reply_to: 456
     })
 
-    message =
-      Repo.insert!(
-        Message.agent([
+    _message =
+      Agent.append_message(
+        cycle,
+        :agent,
+        [
           %{"type" => "text", "text" => "**Bold** reply"},
           %{
             "type" => "tool_use",
@@ -111,10 +112,8 @@ defmodule FrothWeb.ToolLiveTest do
             "name" => "timeline",
             "input" => %{"narration" => "Checking the current logs."}
           }
-        ])
+        ]
       )
-
-    Agent.append_event(cycle, %{head_id: message.id, message_id: message.id})
 
     {:ok, view, _html} =
       live(conn, ~p"/froth/mini/tool/cycle_charlie_#{cycle.id}")
@@ -138,23 +137,26 @@ defmodule FrothWeb.ToolLiveTest do
     })
 
     context =
-      Repo.insert!(
-        Message.user("<chronicle>seven weeks of private context</chronicle>")
+      Agent.append_message(
+        cycle,
+        :user,
+        "<chronicle>seven weeks of private context</chronicle>"
       )
 
     work =
-      Repo.insert!(%{
-        Message.agent([
+      Agent.append_message(
+        cycle,
+        :agent,
+        [
           %{
             "type" => "thinking",
             "thinking" => "Inspecting the actual task."
           },
           %{"type" => "text", "text" => "Here is the useful result."}
-        ])
-        | parent_id: context.id
-      })
+        ]
+      )
 
-    Agent.append_event(cycle, %{head_id: work.id, message_id: work.id})
+    assert context.seq < work.seq
 
     {:ok, view, _html} =
       live(conn, ~p"/froth/mini/tool/cycle_charlie_#{cycle.id}")
@@ -169,18 +171,18 @@ defmodule FrothWeb.ToolLiveTest do
   } do
     cycle = Repo.insert!(%Cycle{})
 
-    message =
-      Repo.insert!(
-        Message.agent([
+    _message =
+      Agent.append_message(
+        cycle,
+        :agent,
+        [
           %{
             "type" => "text",
             "text" =>
               "<summary date=\"2026-03-22\">\nA scandal in tags.\n</summary>\n\n**Bold** still works."
           }
-        ])
+        ]
       )
-
-    Agent.append_event(cycle, %{head_id: message.id, message_id: message.id})
 
     {:ok, view, _html} =
       live(conn, ~p"/froth/mini/tool/cycle_missingbot_#{cycle.id}")

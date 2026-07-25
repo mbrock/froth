@@ -6,7 +6,16 @@ defmodule Froth.Agent do
   import Ecto.Query
 
   alias LLM
-  alias Froth.Agent.{Config, Cycle, Message, ToolDescription, Worker}
+
+  alias Froth.Agent.{
+    Config,
+    Cycle,
+    CycleItem,
+    Message,
+    ToolDescription,
+    Worker
+  }
+
   alias Froth.{Event, ObjectStore, Repo}
 
   @payload_blob_threshold 8_000
@@ -15,8 +24,7 @@ defmodule Froth.Agent do
 
   @spec run(Message.t() | Cycle.t(), Config.t()) ::
           {Cycle.t(), Enumerable.t()}
-  def run(%Message{id: id} = message, %Config{} = config)
-      when not is_nil(id) do
+  def run(%Message{} = message, %Config{} = config) do
     message
     |> begin_cycle(config)
     |> run(config)
@@ -27,22 +35,18 @@ defmodule Froth.Agent do
   end
 
   @spec begin_cycle(Message.t(), Config.t()) :: Cycle.t()
-  def begin_cycle(%Message{id: id} = message, %Config{} = config)
-      when not is_nil(id) do
+  def begin_cycle(%Message{} = message, %Config{} = config) do
     cycle =
       %Cycle{}
       |> Cycle.changeset(cycle_snapshot_attrs(config))
       |> Repo.insert!()
 
-    _event =
-      append_event(
+    _message =
+      append_message(
         cycle,
-        %{
-          kind: "message.appended",
-          head_id: message.id,
-          message_id: message.id,
-          data: message_event_data(message)
-        },
+        message.role,
+        message.content,
+        message.metadata,
         0
       )
 
@@ -114,10 +118,6 @@ defmodule Froth.Agent do
         "seq" => seq
       })
       |> maybe_put_metadata(
-        "head_id",
-        Map.get(attrs, :head_id) || Map.get(attrs, "head_id")
-      )
-      |> maybe_put_metadata(
         "message_id",
         Map.get(attrs, :message_id) || Map.get(attrs, "message_id")
       )
@@ -136,7 +136,26 @@ defmodule Froth.Agent do
 
     measurements = event_measurements(meta)
 
-    Span.execute(agent_event_path(kind), parent_id, meta, measurements)
+    event =
+      Span.execute(agent_event_path(kind), parent_id, meta, measurements)
+
+    if CycleItem.semantic_event_kind?(kind) do
+      payload =
+        meta
+        |> Map.drop(["cycle_id", "seq", "kind"])
+
+      %CycleItem{}
+      |> CycleItem.event_changeset(
+        %Cycle{id: cycle_id},
+        seq,
+        kind,
+        payload,
+        meta["span_id"]
+      )
+      |> Repo.insert!()
+    end
+
+    event
   end
 
   @spec merge_cycle_usage(Cycle.t(), map() | nil) :: Cycle.t()
@@ -157,15 +176,13 @@ defmodule Froth.Agent do
 
     outcome =
       Repo.one(
-        from(e in Event,
+        from(i in CycleItem,
           where:
-            e.event == "froth.agent.control.outcome" and
-              fragment("?->>'cycle_id' = ?", e.metadata, ^cycle_id),
-          order_by: [
-            desc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)
-          ],
+            i.cycle_id == ^cycle_id and
+              i.item_kind == "control.outcome",
+          order_by: [desc: i.seq],
           limit: 1,
-          select: e.metadata
+          select: i.payload
         )
       )
 
@@ -185,86 +202,39 @@ defmodule Froth.Agent do
     end
   end
 
-  @doc "Return the current head message ID for a cycle."
-  @spec latest_head_id(Cycle.t()) :: String.t() | nil
-  def latest_head_id(%Cycle{id: cycle_id}) do
-    latest_head_ids([cycle_id])
-    |> Map.get(cycle_id)
+  @doc "Load a cycle's semantic items in sequence order."
+  @spec list_items(Cycle.t() | String.t()) :: [CycleItem.t()]
+  def list_items(%Cycle{id: cycle_id}), do: list_items(cycle_id)
+
+  def list_items(cycle_id) when is_binary(cycle_id) do
+    Repo.all(
+      from(i in CycleItem,
+        where: i.cycle_id == ^cycle_id,
+        order_by: [asc: i.seq, asc: i.inserted_at]
+      ),
+      log: false
+    )
   end
 
-  @doc "Return the current head message IDs for cycles."
-  @spec latest_head_ids([String.t()]) :: %{optional(String.t()) => String.t()}
-  def latest_head_ids(cycle_ids) when is_list(cycle_ids) do
-    cycle_ids
-    |> normalize_cycle_ids()
-    |> case do
-      [] ->
-        %{}
-
-      cycle_ids ->
-        Repo.all(
-          from(e in Event,
-            where:
-              e.event == "froth.agent.message.appended" and
-                fragment(
-                  "?->>'cycle_id' = ANY(?)",
-                  e.metadata,
-                  type(^cycle_ids, {:array, :string})
-                ) and
-                not is_nil(fragment("?->>'head_id'", e.metadata)),
-            distinct: fragment("?->>'cycle_id'", e.metadata),
-            order_by: [
-              asc: fragment("?->>'cycle_id'", e.metadata),
-              desc: fragment("COALESCE((?->>'seq')::bigint, 0)", e.metadata)
-            ],
-            select: %{
-              cycle_id: fragment("?->>'cycle_id'", e.metadata),
-              head_id: fragment("?->>'head_id'", e.metadata)
-            }
-          ),
-          log: false
-        )
-        |> Map.new(fn %{cycle_id: cycle_id, head_id: head_id} ->
-          {cycle_id, head_id}
-        end)
-    end
-  end
-
-  @doc "Load the full message chain ending at `head_id`, oldest first."
-  @spec load_messages(String.t() | nil) :: [Message.t()]
-  def load_messages(nil), do: []
-
-  def load_messages(head_id) do
-    seed = Message |> where([m], m.id == ^head_id)
-
-    recurse =
-      Message |> join(:inner, [m], c in "chain", on: m.id == c.parent_id)
-
-    chain = seed |> union_all(^recurse)
-
-    {"chain", Message}
-    |> recursive_ctes(true)
-    |> with_cte("chain", as: ^chain)
-    |> Repo.all(log: false)
-    |> Enum.reverse()
+  @doc "Load a cycle's messages in sequence order."
+  @spec list_messages(Cycle.t() | String.t()) :: [Message.t()]
+  def list_messages(cycle_or_id) do
+    cycle_or_id
+    |> list_items()
+    |> Enum.filter(&CycleItem.message_kind?(&1.item_kind))
+    |> Enum.map(&CycleItem.to_message/1)
   end
 
   @doc "Get the text of the last agent message in a cycle."
   @spec latest_agent_text(Cycle.t()) :: String.t() | nil
   def latest_agent_text(%Cycle{} = cycle) do
-    case latest_head_id(cycle) do
-      nil ->
-        nil
-
-      head_id ->
-        head_id
-        |> load_messages()
-        |> Enum.filter(&(&1.role == :agent))
-        |> List.last()
-        |> case do
-          nil -> nil
-          message -> Message.extract_text(message)
-        end
+    cycle
+    |> list_messages()
+    |> Enum.filter(&(&1.role == :agent))
+    |> List.last()
+    |> case do
+      nil -> nil
+      message -> Message.extract_text(message)
     end
   end
 
@@ -283,95 +253,36 @@ defmodule Froth.Agent do
   @doc false
   @spec cycle_traces([String.t()]) :: %{optional(String.t()) => [map()]}
   def cycle_traces(cycle_ids) when is_list(cycle_ids) do
-    from_events = cycle_traces_from_events(cycle_ids)
-
-    # Fall back to the message-based extract for cycles that have no
-    # `tool.completed` events yet — either because they pre-date the
-    # events-driven trace renderer or because a test set up the cycle
-    # by inserting messages directly.
-    missing =
-      Enum.filter(cycle_ids, fn id -> Map.get(from_events, id, []) == [] end)
-
-    if missing == [] do
-      from_events
-    else
-      legacy =
-        missing
-        |> latest_head_ids()
-        |> Map.new(fn {cycle_id, head_id} ->
-          entries =
-            head_id
-            |> load_messages()
-            |> Enum.map(&Message.to_api/1)
-            |> extract_trace_entries()
-
-          {cycle_id, entries}
-        end)
-
-      Map.merge(from_events, legacy, fn _k, events_entries, legacy_entries ->
-        if events_entries == [], do: legacy_entries, else: events_entries
-      end)
-    end
+    cycle_traces_from_items(cycle_ids)
   end
 
-  @doc """
-  Build per-cycle trace entries directly from the `events` table's
-  `tool.completed` events.
-
-  Each `tool.completed` event carries both the tool-call input
-  (`metadata.input`) and the tool result (`metadata.result`) — enough
-  to produce both a `:call` and a `:return` entry from a single event.
-  When `metadata.result` is a structured `%Froth.Context.Frame{}`
-  (stored as a map with `"shape" => "frame"`), it's rehydrated to a
-  Frame struct for rendering via `Froth.Context.FrameHTML.output_frame/1`.
-
-  Preferred over `extract_trace_entries/1` because it doesn't read
-  from the message transcript and doesn't depend on the stringified
-  tool_result.content.
-  """
-  @spec cycle_traces_from_events([String.t()]) :: %{
+  @doc "Build structured per-cycle tool traces from ordered cycle items."
+  @spec cycle_traces_from_items([String.t()]) :: %{
           optional(String.t()) => [map()]
         }
-  def cycle_traces_from_events(cycle_ids) when is_list(cycle_ids) do
+  def cycle_traces_from_items(cycle_ids) when is_list(cycle_ids) do
     cycle_ids = normalize_cycle_ids(cycle_ids)
 
     if cycle_ids == [] do
       %{}
     else
-      events =
+      items =
         Repo.all(
-          from(e in Event,
-            # Telemetry-persisted events share this event name (see
-            # `Froth.Telemetry.Store`) but only carry metric-shaped
-            # metadata — no `input`, no `result`. The canonical
-            # tool-completion rows are the ones `Agent.append_event`
-            # writes, which always set `kind` and `seq`.
-            where:
-              e.event == "froth.agent.tool.completed" and
-                fragment("?->>'kind' = 'tool.completed'", e.metadata) and
-                fragment(
-                  "?->>'cycle_id' = ANY(?)",
-                  e.metadata,
-                  type(^cycle_ids, {:array, :string})
-                ),
-            order_by: [
-              fragment("?->>'cycle_id'", e.metadata),
-              fragment("(?->>'seq')::bigint", e.metadata),
-              e.inserted_at
-            ],
-            select: e.metadata
+          from(i in CycleItem,
+            where: i.cycle_id in ^cycle_ids and i.item_kind == "tool.result",
+            order_by: [asc: i.cycle_id, asc: i.seq, asc: i.inserted_at]
           ),
           log: false
         )
 
       base = Map.new(cycle_ids, &{&1, []})
 
-      events
-      |> Enum.reduce(base, fn meta, acc ->
-        cycle_id = meta["cycle_id"]
+      items
+      |> Enum.reduce(base, fn item, acc ->
+        cycle_id = item.cycle_id
         entries = Map.get(acc, cycle_id, [])
 
-        case trace_entries_for_event(meta) do
+        case trace_entries_for_event(item.payload) do
           [] -> acc
           new_entries -> Map.put(acc, cycle_id, entries ++ new_entries)
         end
@@ -489,86 +400,12 @@ defmodule Froth.Agent do
   defp maybe_put_attr(attrs, _k, []), do: attrs
   defp maybe_put_attr(attrs, k, v), do: Keyword.put(attrs, k, v)
 
-  @doc """
-  Legacy message-based trace extractor. Kept as a fallback for cycles
-  that don't have `tool.completed` events yet (pre-refactor cycles
-  or test fixtures that insert messages directly).
-
-  Produces the same entry shape as `cycle_traces_from_events/1`:
-  calls carry `input`, returns carry a structured `outcome`. Legacy
-  tool_result strings land as `{:ok, text}`; errored failure reports
-  surface as `:intervention` entries.
-  """
-  def extract_trace_entries(api_messages) when is_list(api_messages) do
-    Enum.flat_map(api_messages, fn
-      %{"role" => "assistant", "content" => content} when is_list(content) ->
-        Enum.flat_map(content, fn
-          %{"type" => "tool_use", "name" => "send_message"} ->
-            []
-
-          %{"type" => type, "input" => input} = block
-          when type == "tool_use" ->
-            narration = ToolDescription.text_from_input(input)
-            tool = format_trace_tool_name(block)
-
-            [
-              %{
-                kind: :call,
-                tool: tool,
-                input: input,
-                narration: narration
-              }
-            ]
-
-          _ ->
-            []
-        end)
-
-      %{"role" => "user", "content" => content} when is_list(content) ->
-        Enum.flat_map(content, fn
-          %{
-            "type" => "tool_result",
-            "content" => result_content,
-            "tool_use_id" => _id
-          } =
-              block ->
-            text = tool_result_text(result_content)
-            is_error? = block["is_error"] == true
-
-            cond do
-              String.trim(text) == "sent" ->
-                []
-
-              is_error? and failure_report?(text) ->
-                [%{kind: :intervention, text: text}]
-
-              is_error? ->
-                [%{kind: :return, outcome: {:error, text}}]
-
-              true ->
-                [%{kind: :return, outcome: {:ok, text}}]
-            end
-
-          _ ->
-            []
-        end)
-
-      _ ->
-        []
-    end)
-  end
-
-  def extract_trace_entries(_), do: []
-
   defp failure_report?(text) when is_binary(text) do
     trimmed = String.trim_leading(text)
     String.starts_with?(trimmed, "Failure report")
   end
 
   defp failure_report?(_), do: false
-
-  defp format_trace_tool_name(%{"name" => name}) when is_binary(name),
-    do: name
 
   defp normalize_cycle_ids(cycle_ids) do
     cycle_ids
@@ -600,66 +437,64 @@ defmodule Froth.Agent do
     end
   end
 
-  @doc "Append a message to the cycle, record an event, broadcast, return {message, updated_head_id}."
-  @spec append_message(Cycle.t(), String.t() | nil, :user | :agent, term()) ::
-          {Message.t(), String.t()}
-  def append_message(%Cycle{} = cycle, head_id, role, content) do
-    append_message(cycle, head_id, role, content, nil, nil)
+  @doc "Append an ordered message item to a cycle and broadcast it."
+  @spec append_message(Cycle.t(), :user | :agent, term()) :: Message.t()
+  def append_message(%Cycle{} = cycle, role, content) do
+    append_message(cycle, role, content, nil, nil)
   end
 
   @spec append_message(
           Cycle.t(),
-          String.t() | nil,
           :user | :agent,
           term(),
           map() | nil
         ) ::
-          {Message.t(), String.t()}
-  def append_message(%Cycle{} = cycle, head_id, role, content, metadata)
+          Message.t()
+  def append_message(%Cycle{} = cycle, role, content, metadata)
       when is_map(metadata) or is_nil(metadata) do
-    append_message(cycle, head_id, role, content, metadata, nil)
+    append_message(cycle, role, content, metadata, nil)
   end
 
   @spec append_message(
           Cycle.t(),
-          String.t() | nil,
           :user | :agent,
           term(),
           map() | nil,
           integer() | nil
         ) ::
-          {Message.t(), String.t()}
-  def append_message(%Cycle{} = cycle, head_id, role, content, metadata, seq)
+          Message.t()
+  def append_message(%Cycle{} = cycle, role, content, metadata, seq)
       when (is_map(metadata) or is_nil(metadata)) and
              (is_integer(seq) or is_nil(seq)) do
-    saved =
-      Repo.insert!(%Message{
-        role: role,
-        content: Message.wrap(content),
-        metadata: metadata,
-        parent_id: head_id
-      })
+    seq = seq || next_event_seq(cycle)
+
+    item =
+      %CycleItem{}
+      |> CycleItem.message_changeset(
+        cycle,
+        seq,
+        role,
+        content,
+        metadata
+      )
+      |> Repo.insert!()
+
+    message = CycleItem.to_message(item)
 
     _event =
       append_event(
         cycle,
         %{
           kind: "message.appended",
-          head_id: saved.id,
-          message_id: saved.id,
-          data: message_event_data(saved)
+          message_id: item.id,
+          data: message_event_data(message)
         },
         seq
       )
 
-    # Span.execute already broadcast {:event, event} on "events" and
-    # "cycle:#{cycle.id}". We additionally publish the hydrated
-    # Message struct on the cycle topic so consumers that want the
-    # full message (bot replies, tool view rendering) don't have to
-    # re-read it from the DB.
-    Froth.broadcast("cycle:#{cycle.id}", {:message, saved})
+    Froth.broadcast("cycle:#{cycle.id}", {:message, message})
 
-    {saved, saved.id}
+    message
   end
 
   defp initial_cycle_attrs(%Config{} = config) do
@@ -842,27 +677,6 @@ defmodule Froth.Agent do
       true -> trimmed
     end
   end
-
-  defp tool_result_text(content) when is_binary(content), do: content
-
-  defp tool_result_text(content) when is_list(content) do
-    Enum.map_join(content, "\n", &tool_result_block_text/1)
-  end
-
-  defp tool_result_text(content),
-    do: inspect(content, limit: 50, printable_limit: 2000)
-
-  defp tool_result_block_text(%{"type" => "text", "text" => text})
-       when is_binary(text), do: text
-
-  defp tool_result_block_text(%{"text" => text}) when is_binary(text),
-    do: text
-
-  defp tool_result_block_text(%{"type" => type}) when is_binary(type),
-    do: "[#{type}]"
-
-  defp tool_result_block_text(other),
-    do: inspect(other, limit: 20, printable_limit: 300)
 
   defp safe_json(map) when is_map(map) do
     Map.new(map, fn {k, v} -> {to_string(k), safe_value(v)} end)

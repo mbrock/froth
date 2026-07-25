@@ -188,8 +188,7 @@ defmodule Froth.Agent.FailureIntervention do
 
   defp build_report_ctx(%Context{} = ctx, %ToolUse{} = tool_call, error_text) do
     %Cycle{} = cycle = Repo.get!(Cycle, ctx.cycle_id)
-    head_id = Agent.latest_head_id(cycle)
-    messages = Agent.load_messages(head_id)
+    messages = Agent.list_messages(cycle)
 
     %{
       cycle: cycle,

@@ -374,9 +374,8 @@ defmodule FrothWeb.InferenceSessionsLive do
 
     {messages, aggregate_usage} =
       if selected do
-        head_id = Agent.latest_head_id(%Cycle{id: selected_id})
-        raw = Agent.load_messages(head_id)
-        usage = selected.aggregate_usage || load_cycle_usage(selected_id)
+        raw = Agent.list_messages(%Cycle{id: selected_id})
+        usage = selected.aggregate_usage
         {api_messages_for_view(raw), usage}
       else
         {[], nil}
@@ -413,12 +412,9 @@ defmodule FrothWeb.InferenceSessionsLive do
 
   defp list_cycle_summaries(filters) do
     cycles_base_query(filters)
-    |> join(:left, [l, c], u in fragment("cycle_usage"),
-      on: u.cycle_id == l.cycle_id
-    )
     |> order_by([_l, c], desc: c.inserted_at)
     |> limit(^filters.limit)
-    |> select([l, c, u], %{
+    |> select([l, c], %{
       cycle_id: l.cycle_id,
       bot_id: l.bot_id,
       chat_id: l.chat_id,
@@ -439,28 +435,35 @@ defmodule FrothWeb.InferenceSessionsLive do
       started_at: c.started_at,
       finished_at: c.finished_at,
       aggregate_usage: c.usage,
-      input_tokens: u.input_tokens,
-      output_tokens: u.output_tokens,
-      cache_read_input_tokens: u.cache_read_input_tokens,
-      turn_count: u.turn_count,
+      input_tokens:
+        fragment("COALESCE((?->>'input_tokens')::bigint, 0)", c.usage),
+      output_tokens:
+        fragment("COALESCE((?->>'output_tokens')::bigint, 0)", c.usage),
+      cache_read_input_tokens:
+        fragment(
+          "COALESCE((?->>'cache_read_input_tokens')::bigint, 0)",
+          c.usage
+        ),
+      turn_count:
+        fragment("COALESCE((?->>'turn_count')::bigint, 0)", c.usage),
       event_count:
         fragment(
-          "(SELECT COUNT(*) FROM events WHERE metadata->>'cycle_id' = ? AND event LIKE 'froth.agent.%')",
+          "(SELECT COUNT(*) FROM cycle_items WHERE cycle_id = ?)",
           l.cycle_id
         ),
       llm_call_count:
         fragment(
-          "(SELECT COUNT(*) FROM events WHERE metadata->>'cycle_id' = ? AND event = 'froth.agent.llm.completed')",
+          "(SELECT COUNT(*) FROM cycle_items WHERE cycle_id = ? AND item_kind = 'message.assistant')",
           l.cycle_id
         ),
       tool_call_count:
         fragment(
-          "(SELECT COUNT(*) FROM events WHERE metadata->>'cycle_id' = ? AND event = 'froth.agent.tool.started')",
+          "(SELECT COUNT(*) FROM cycle_items WHERE cycle_id = ? AND item_kind = 'tool.use')",
           l.cycle_id
         ),
       message_count:
         fragment(
-          "(SELECT COUNT(*) FROM events WHERE metadata->>'cycle_id' = ? AND event = 'froth.agent.message.appended')",
+          "(SELECT COUNT(*) FROM cycle_items WHERE cycle_id = ? AND role IS NOT NULL)",
           l.cycle_id
         )
     })
@@ -709,22 +712,6 @@ defmodule FrothWeb.InferenceSessionsLive do
   end
 
   defp api_messages_for_view(_), do: []
-
-  defp load_cycle_usage(cycle_id) do
-    Repo.one(
-      from(u in fragment("cycle_usage"),
-        where: u.cycle_id == type(^cycle_id, Ecto.ULID),
-        select: %{
-          "input_tokens" => u.input_tokens,
-          "output_tokens" => u.output_tokens,
-          "cache_read_input_tokens" => u.cache_read_input_tokens,
-          "cache_creation_input_tokens" => u.cache_creation_input_tokens,
-          "turn_count" => u.turn_count
-        }
-      ),
-      log: false
-    )
-  end
 
   attr :config, :map, required: true
 

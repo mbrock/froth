@@ -35,14 +35,13 @@ defmodule Froth.Agent.TaskBridge do
     end
   end
 
-  @spec sync_cycle_task(Cycle.t(), String.t() | nil, Cycle.status(), map()) ::
-          :ok
-  def sync_cycle_task(%Cycle{} = cycle, head_id, status, extra \\ %{})
+  @spec sync_cycle_task(Cycle.t(), Cycle.status(), map()) :: :ok
+  def sync_cycle_task(%Cycle{} = cycle, status, extra \\ %{})
       when status in [:completed, :failed, :cancelled] and is_map(extra) do
     case {task_id_for_cycle(cycle), cycle_task(cycle)} do
       {task_id, %Froth.Task{status: task_status}}
       when task_status in ["pending", "running"] ->
-        metadata = completion_metadata(cycle, head_id, status, extra)
+        metadata = completion_metadata(cycle, status, extra)
         append_completion_output(task_id, status, metadata)
         finish_task(task_id, status, metadata)
 
@@ -111,19 +110,19 @@ defmodule Froth.Agent.TaskBridge do
     |> maybe_put("parent_cycle_id", Keyword.get(opts, :parent_cycle_id))
   end
 
-  defp completion_metadata(%Cycle{} = cycle, head_id, status, extra)
+  defp completion_metadata(%Cycle{} = cycle, status, extra)
        when is_map(extra) do
     %{}
     |> maybe_put("cycle_id", cycle.id)
     |> maybe_put("cycle_status", Atom.to_string(status))
     |> maybe_put("model", cycle.model)
-    |> maybe_put("final_reply", final_reply_text(head_id))
+    |> maybe_put("final_reply", final_reply_text(cycle))
     |> maybe_put("error", cycle_error(extra))
   end
 
-  defp final_reply_text(head_id) when is_binary(head_id) do
-    head_id
-    |> Agent.load_messages()
+  defp final_reply_text(%Cycle{} = cycle) do
+    cycle
+    |> Agent.list_messages()
     |> Enum.reverse()
     |> Enum.find(&match?(%Message{role: :agent}, &1))
     |> case do
@@ -136,8 +135,6 @@ defmodule Froth.Agent.TaskBridge do
         nil
     end
   end
-
-  defp final_reply_text(_head_id), do: nil
 
   defp message_text(%Message{} = message) do
     case Message.extract_text(message) do

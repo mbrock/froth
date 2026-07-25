@@ -6,7 +6,8 @@
     <status>DRAFT</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-26</date>
-    <supersedes>FROTH-RFC-0014, FROTH-RFC-0015, FROTH-RFC-0016</supersedes>
+    <supersedes>FROTH-RFC-0014, FROTH-RFC-0016</supersedes>
+    <related>FROTH-RFC-0015</related>
   </meta>
 
   <section title="Situation" id="situation">
@@ -280,7 +281,7 @@ predicates:
     <p>This is a better fit for the system Froth actually is: a long-running world of continuants, occurrents, observations, participation, parthood, provenance, and temporal extent.</p>
   </section>
   <section title="Implementation Status" id="implementation-status">
-    <p>As of 2026-07-25, this RFC remains an unimplemented draft and is the canonical successor to RFC-0014, RFC-0015, and RFC-0016.</p>
-    <p>Froth still uses the RFC-0008 <tt>events</tt> table, specialized domain tables, parent-linked agent messages, and bespoke relation tables. There is no neutral <c>items</c> registry, explicit predicate family, reified temporal model, or projection layer over such a core.</p>
+    <p>As of 2026-07-25, this RFC remains an unimplemented draft and is the canonical successor to RFC-0014 and RFC-0016.</p>
+    <p>It does not supersede the focused runtime simplification in RFC-0015, which is implemented independently within the existing specialized schema. Froth still uses the RFC-0008 <tt>events</tt> table, specialized domain tables, sequential cycle items, and bespoke relation tables. There is no neutral <c>items</c> registry, explicit predicate family, reified temporal model, or projection layer over such a core.</p>
   </section>
 </rfc>

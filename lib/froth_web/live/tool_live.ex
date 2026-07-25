@@ -1038,10 +1038,8 @@ defmodule FrothWeb.ToolLive do
 
   defp load_agent_cycle_events(cycle_id, cycle_link)
        when is_binary(cycle_id) do
-    head_id = Agent.latest_head_id(%Cycle{id: cycle_id})
-
-    head_id
-    |> Agent.load_messages()
+    %Cycle{id: cycle_id}
+    |> Agent.list_messages()
     |> Enum.map(&agent_event_from_message/1)
     |> hide_injected_context(cycle_link)
   end

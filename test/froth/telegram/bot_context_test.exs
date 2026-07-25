@@ -4,7 +4,6 @@ defmodule Froth.Telegram.BotContextTest do
 
   alias Froth.Agent
   alias Froth.Agent.Cycle
-  alias Froth.Agent.Message, as: AgentMessage
   alias Froth.Analysis
   alias Froth.ChatSummary
   alias Froth.Repo
@@ -860,30 +859,41 @@ defmodule Froth.Telegram.BotContextTest do
   defp insert_tool_cycle(bot_id, chat_id, opts) do
     cycle = Repo.insert!(%Cycle{})
 
-    user_msg =
-      Repo.insert!(%AgentMessage{
-        role: :user,
-        content: AgentMessage.wrap("start")
-      })
+    assistant_blocks = Keyword.fetch!(opts, :assistant_blocks)
+    result_blocks = Keyword.fetch!(opts, :result_blocks)
 
-    assistant_msg =
-      Repo.insert!(%AgentMessage{
-        role: :agent,
-        content: AgentMessage.wrap(Keyword.fetch!(opts, :assistant_blocks)),
-        parent_id: user_msg.id
-      })
+    Agent.append_message(cycle, :user, "start", nil, 0)
+    Agent.append_message(cycle, :agent, assistant_blocks, nil, 1)
+    Agent.append_message(cycle, :user, result_blocks, nil, 2)
 
-    result_msg =
-      Repo.insert!(%AgentMessage{
-        role: :user,
-        content: AgentMessage.wrap(Keyword.fetch!(opts, :result_blocks)),
-        parent_id: assistant_msg.id
-      })
+    results_by_id =
+      Map.new(result_blocks, fn block ->
+        {block["tool_use_id"], block}
+      end)
 
-    Agent.append_event(cycle, %{
-      head_id: result_msg.id,
-      message_id: result_msg.id
-    })
+    assistant_blocks
+    |> Enum.filter(&(&1["type"] == "tool_use"))
+    |> Enum.with_index(3)
+    |> Enum.each(fn {tool_use, seq} ->
+      result = Map.fetch!(results_by_id, tool_use["id"])
+
+      Agent.append_event(
+        cycle,
+        %{
+          kind: "tool.completed",
+          tool_use_id: tool_use["id"],
+          data: %{
+            "tool_name" => tool_use["name"],
+            "tool_use_id" => tool_use["id"],
+            "input" => tool_use["input"],
+            "result_type" =>
+              if(result["is_error"], do: "error", else: "text"),
+            "result" => result["content"]
+          }
+        },
+        seq
+      )
+    end)
 
     Repo.insert!(%CycleLink{
       cycle_id: cycle.id,
