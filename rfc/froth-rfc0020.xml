@@ -3,7 +3,7 @@
 <rfc number="0020" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0020: Durable Runtime Facts and an Analytics Mirror</title>
-    <status>DRAFT</status>
+    <status>PARTIALLY IMPLEMENTED</status>
     <author>Codex</author>
     <date>2026-03-28</date>
     <related>FROTH-RFC-0008, FROTH-RFC-0015, FROTH-RFC-0018, FROTH-RFC-0019</related>
@@ -143,5 +143,10 @@
   <section title="Conclusion" id="conclusion">
     <p>Froth does not lack data. It lacks a calm, durable path from questions to facts. The fix is not &quot;write cleverer one-off queries&quot; but &quot;promote recurring questions into stable runtime summaries and stable inspection tools, then move heavy exploration onto an analytics mirror.&quot;</p>
     <p>The system should feel like it is helping the engineer understand it, not like it is hiding its truth behind five storage layers and a hand-built rake of SQL fragments.</p>
+  </section>
+  <section title="Implementation Status" id="implementation-status">
+    <p>As of 2026-07-25, this RFC is partially implemented.</p>
+    <p><tt>Froth.AgentInspect</tt> and <tt>bin/agent_inspect</tt> provide a stable operational inspection path, and large agent payloads use durable blob references with compact event summaries.</p>
+    <p>The analytics half is not implemented. There is no scheduled Parquet export, DuckDB workflow, analytics mirror, or projection-backed exploratory UI.</p>
   </section>
 </rfc>

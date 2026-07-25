@@ -3,10 +3,10 @@
 <rfc number="0016" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0016: Ontological Relational Schema with Items and Predicates</title>
-    <status>DRAFT</status>
+    <status>SUPERSEDED</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-26</date>
-    <related>FROTH-RFC-0014, FROTH-RFC-0015</related>
+    <related>FROTH-RFC-0014, FROTH-RFC-0015, FROTH-RFC-0017</related>
   </meta>
 
   <section title="Problem" id="problem">
@@ -266,5 +266,9 @@ relations:
     <p>Froth should continue toward a core of items and relations, but the next refinement should be to make those relations explicit and ontological rather than generic and stringly typed.</p>
     <p>Temporal entities should be reified as items, and timestamps should attach to them rather than being scattered as primitive properties across arbitrary rows. But time is only one case of the broader principle.</p>
     <p>The larger recommendation is to let Froth's schema grow by explicit predicates: parthood, temporal parthood, participation, causation, dependence, realization, aboutness, occupancy, and a restrained set of data properties. That is a better fit for the system Froth actually is: a long-running world of continuants, occurrents, observations, participation, parthood, provenance, and temporal extent.</p>
+  </section>
+  <section title="Disposition" id="disposition">
+    <p>RFC-0017 supersedes and consolidates this proposal. Its neutral <c>items</c> registry, explicit predicates, temporal entities, residual payloads, and derived projections are the canonical version of this design.</p>
+    <p>No ontological item, predicate, or reified-temporal schema has been implemented.</p>
   </section>
 </rfc>

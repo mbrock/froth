@@ -3,7 +3,7 @@
 <rfc number="0019" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0019: Chronological Prompt Context and Structured Cycle Trace Memory</title>
-    <status>DRAFT</status>
+    <status>PARTIALLY IMPLEMENTED</status>
     <author>Codex</author>
     <date>2026-03-28</date>
     <related>FROTH-RFC-0006, FROTH-RFC-0013, FROTH-RFC-0015</related>
@@ -246,5 +246,10 @@ where event = 'froth.agent.message.appended';</code>
     <p>Adopt a new prompt-context renderer that keeps XML-like document structure and the existing footer, but replaces the recent sliding message tail with chronological recent timeline buckets.</p>
     <p>Make tool memory formal: exact inputs, explicit statuses, explicit truncation markers, and typed outputs. Let narration remain as a compact summary field rather than as the primary representation.</p>
     <p>Use the storage direction in <rfc-ref number="0015"/> as the long-term basis for true chronological interleaving. In the meantime, narrow and batch the current head lookups and add a targeted expression index so the existing renderer stops paying a whole-table scan tax for every cycle trace.</p>
+  </section>
+  <section title="Implementation Status" id="implementation-status">
+    <p>As of 2026-07-25, this RFC is partially implemented.</p>
+    <p>Froth has targeted cycle-head indexes and batched lookups, anchored and time-bucketed recent-window algorithms, exact structured tool-call rendering, typed block-backed returns, and blob-backed large outputs.</p>
+    <p>The principal chronological change is not complete. Cycle traces are still attached beneath their triggering Telegram messages rather than interleaved as independent timeline items, no sequential cycle-item projection exists, and the default Charlie configuration still uses the anchored count fallback rather than the time-and-mass window.</p>
   </section>
 </rfc>

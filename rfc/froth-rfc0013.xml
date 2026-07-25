@@ -3,10 +3,10 @@
 <rfc number="0013" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0013: Prompt Context Architecture</title>
-    <status>DRAFT</status>
+    <status>PARTIALLY SUPERSEDED</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-25</date>
-    <related>FROTH-RFC-0006</related>
+    <related>FROTH-RFC-0006, FROTH-RFC-0019</related>
   </meta>
 
   <section title="Problem" id="problem">
@@ -42,5 +42,9 @@
 
   <section title="Implementation" id="implementation">
     <p>Modify <c>BotContext.build/2</c> to accept a list of context layer modules instead of the binary <c>lore_file</c>-or-<c>summaries</c> switch. Each layer implements <c>render/2</c>.</p>
+  </section>
+  <section title="Disposition" id="disposition">
+    <p>The layered-context goal survives in the current renderer: chronicle chapters, weekly chapters, optional daily summaries, recent messages, chat metadata, and a footer are assembled separately.</p>
+    <p>The proposed pluggable <c>render/2</c> layer-module protocol was not adopted. Direct context assembly replaced that mechanism, and RFC-0019 refined the recent-window and structured-cycle portions of the design. This RFC is therefore partially superseded rather than implemented as written.</p>
   </section>
 </rfc>

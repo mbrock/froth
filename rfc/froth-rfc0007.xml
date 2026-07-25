@@ -3,7 +3,7 @@
 <rfc number="0007" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0007: Triangulated Web Search via Multi-Provider Fan-Out</title>
-    <status>IMPLEMENTED</status>
+    <status>OBSOLETE</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-24</date>
     <related>FROTH-RFC-0002 (Native Multimodal LLM Layer)</related>
@@ -215,7 +215,7 @@ end</code>
   </section>
 
   <section title="Implementation Status" id="implementation-status">
-    <p>As of 2026-03-24, this RFC is implemented.</p>
+    <p>This RFC was implemented on 2026-03-24 and became obsolete on 2026-04-17.</p>
     <deflist>
       <def>
         <term>Grok (xAI)</term>
@@ -234,6 +234,8 @@ end</code>
         <desc>Implemented. <tt>Froth.Search</tt> collates provider outputs into a structured <tt>Froth.Search.Result</tt>, and <tt>web_search</tt> is exposed through <tt>Froth.Inference.Tools</tt> for agent use.</desc>
       </def>
     </deflist>
+    <p>Commit <tt>f1eccf1</tt> removed <tt>Froth.Search</tt>, <tt>Froth.Search.Result</tt>, and the triangulated <tt>web_search</tt> tool. Current Froth uses explicit agent delegation and provider-native search capabilities instead of this bespoke fan-out and collation subsystem.</p>
+    <p>The API specification below is retained as historical documentation and is not available in the current codebase.</p>
   </section>
 
   <section title="API Specification" id="api-specification">

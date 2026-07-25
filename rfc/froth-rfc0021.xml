@@ -193,8 +193,9 @@ GenServer.start_link(__MODULE__, opts, name: via(cycle_id))</code>
     <p>Not yet done:</p>
     <list type="bullet">
       <item><p>Step 7 — subagent re-parenting. Side-stepped for <tt>spawn_agent</tt> by starting subagents as independent roots (so they trivially outlive the parent). If we later want "user stops parent → cascade to subagents," that becomes explicit code via <tt>parent_cycle_id</tt> registry lookup rather than BEAM supervision.</p></item>
-      <item><p><tt>Froth.Search</tt> still uses <tt>Agent.run/2</tt> with the legacy Worker+cycle_stream pattern. Migrating it to <tt>CycleRuntime.event_stream_for/1</tt> would remove the last caller of <tt>Agent.run/2</tt>'s ad-hoc Worker-start path.</p></item>
+      <item><p>The original <tt>Froth.Search</tt> migration is no longer applicable because that subsystem was removed. Current <tt>spawn_agent</tt> delegation still does not use the child-supervisor path.</p></item>
     </list>
+    <p>Current architecture has diverged further from the original topology. Root cycles are supervised under each Bot's private cycle supervisor rather than one app-wide <tt>CycleSupervisor</tt>; <tt>spawn_agent</tt> starts a bot-owned root carrying <tt>parent_cycle_id</tt> rather than using the parent runtime's child supervisor; and the Bot still owns queueing and pending-ask resume behavior. The cycle-process extraction remains substantial, but the final routing and child-lifetime design is not implemented as proposed.</p>
   </section>
 
   <section title="Conclusion" id="conclusion">

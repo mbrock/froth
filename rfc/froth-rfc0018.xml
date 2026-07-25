@@ -3,11 +3,11 @@
 <rfc number="0018" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0018: Architecture Survey and Module Atlas</title>
-    <status>DRAFT</status>
+    <status>SUPERSEDED</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-26</date>
     <related>FROTH-RFC-0004, FROTH-RFC-0005, FROTH-RFC-0008, FROTH-RFC-0014, FROTH-RFC-0015, FROTH-RFC-0016, FROTH-RFC-0017</related>
-    <classification>Reference architecture survey. Not a normative design change.</classification>
+    <classification>Historical reference architecture survey. Not a normative design change.</classification>
     <research>Compiled on 2026-03-26 from mix xref graph output, git history, and live events histograms queried through bin/rpc against froth@igloo.</research>
   </meta>
 
@@ -161,5 +161,9 @@
   <section title="Conclusion" id="conclusion">
     <p>Froth is best understood as a layered BEAM runtime with a small number of strong hubs and many specialized leaves. The system is not random, but it does have enough cross-cutting behavior that a layered map is more useful than a flat module list.</p>
     <p>The practical takeaway is simple: central modules deserve caution, high-churn modules deserve scrutiny, isolated leaf modules are where cleanup is easiest, and the runtime signals should always be read by date so the architecture is not mistaken for a static snapshot.</p>
+  </section>
+  <section title="Disposition" id="disposition">
+    <p>This survey was superseded as current architecture documentation after major April 2026 deletions and refactors removed or replaced Browser, Video, Compute, Cast, Qwen voice, WsProto, Wiki, SceneEvents, JBO, and other modules described above.</p>
+    <p>The maintained architectural overview is now <tt>AGENTS.md</tt>, together with <tt>README.md</tt>, <tt>Froth.Application</tt>, and the operational scripts in <tt>bin/</tt>. This RFC remains useful only as a dated snapshot of the system on 2026-03-26.</p>
   </section>
 </rfc>

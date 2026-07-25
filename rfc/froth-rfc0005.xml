@@ -3,7 +3,7 @@
 <rfc number="0005" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0005: Legible Follow and Execution Log Reader</title>
-    <status>PARTIALLY IMPLEMENTED; core reader now landed in CLI and FollowLive</status>
+    <status>PARTIALLY IMPLEMENTED</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-23</date>
     <related>FROTH-RFC-0003, FROTH-RFC-0004</related>
@@ -61,7 +61,7 @@
     </list>
   </section>
   <section title="Current Status" id="current-status">
-    <p>As of 2026-03-24, the core reader described here is in place, but the surrounding navigation and drill-down work is still incomplete.</p>
+    <p>As of 2026-07-25, the CLI and FollowLive readers are in place, but the richer shared semantic reader described here remains incomplete.</p>
     <list type="bullet">
       <item><p><tt>Froth.Follow.Entry</tt>, <tt>Froth.Follow.Projector</tt>, and <tt>Froth.Follow.Renderer</tt> exist</p></item>
       <item><p><tt>Froth.Follow.Source</tt> now exists as the shared recent-history loader for follow readers</p></item>
@@ -75,6 +75,7 @@
       <item><p>projector behavior is covered by focused tests, including control-outcome and renderer regression coverage, and the LiveView has integration coverage for smart/raw/errors rendering</p></item>
     </list>
     <p>That means the shared semantic layer is no longer hypothetical.</p>
+    <p>The implementation was simplified again in April. Event publication now flows through <tt>Span</tt>, the dedicated renderer and timeline modules were removed, and <tt>Froth.Follow.Projector</tt> remains primarily as a compatibility layer. The current readers intentionally stay closer to event rows than this RFC's fullest semantic-projection design.</p>
     <p>What is still not done:</p>
     <list type="bullet">
       <item><p>richer durable navigation state for cycle/span/task pinning, including saved views and task-level deep links</p></item>

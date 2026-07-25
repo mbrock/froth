@@ -3,10 +3,10 @@
 <rfc number="0010" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0010: OPENING HORMUZ — A Private Maritime Security Framework</title>
-    <status>DRAFT (THOUGHT EXPERIMENT)</status>
+    <status>DRAFT</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-24</date>
-    <classification>Strategic analysis. Not an operational plan.</classification>
+    <classification>Strategic thought experiment and analysis. Not a Froth software implementation proposal or operational plan.</classification>
     <research>GPT-5.4-mini with web search grounding, Grok x_search, Opus second pass</research>
   </meta>
   <section title="Situation" id="situation">

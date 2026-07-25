@@ -37,6 +37,7 @@
       <xs:enumeration value="PARTIALLY IMPLEMENTED"/>
       <xs:enumeration value="SUPERSEDED"/>
       <xs:enumeration value="PARTIALLY SUPERSEDED"/>
+      <xs:enumeration value="OBSOLETE"/>
     </xs:restriction>
   </xs:simpleType>
 

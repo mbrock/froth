@@ -164,6 +164,11 @@
     <code>     (<tt>ImageGen</tt>, structured-output helpers, audio helpers, etc.).
 </code>
   </section>
+  <section title="Implementation Status" id="implementation-status">
+    <p>As of 2026-07-25, this RFC remains partially implemented.</p>
+    <p>Froth has native Anthropic, Gemini Interactions, and OpenAI Responses providers; a shared <tt>LLM.Message</tt> model; request-level response modality and format fields; and provider coverage for multimodal input and streamed media blocks.</p>
+    <p>The end state is not complete. Content blocks are still generic maps rather than a fully typed semantic model, capability discovery and fail-fast negotiation are not unified, and the provider-neutral edit/event vocabulary does not yet cover every multimedia output consistently.</p>
+  </section>
   <section title="Consequences" id="consequences">
     <subsection title="Benefits" id="benefits">
       <list type="bullet">

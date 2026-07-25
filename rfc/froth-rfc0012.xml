@@ -3,7 +3,7 @@
 <rfc number="0012" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0012: Staging Environment</title>
-    <status>DRAFT</status>
+    <status>PARTIALLY IMPLEMENTED</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-24</date>
     <related>FROTH-RFC-0004 (Agent Execution Spine)</related>
@@ -43,8 +43,8 @@
     <p>The details of how the env file is structured, what the startup script looks like, which port staging runs on — these are implementation decisions that should be made by whoever sets it up, not prescribed here.</p>
   </section>
   <section title="Implementation Status" id="implementation-status">
-    <p>As of 2026-03-24, this RFC remains draft.</p>
-    <p><tt>config/runtime.exs</tt> already supports env-driven deployment configuration and a <tt>FROTH_NODE_ROLE</tt> split between <tt>full</tt> and <tt>worker</tt>, which is useful groundwork.</p>
-    <p>Froth does not yet have the staging checkout, staging database, Telegram isolation, or bot-start kill switch described here, so the operational staging environment itself is not in place yet.</p>
+    <p>As of 2026-07-25, this RFC is partially implemented.</p>
+    <p><tt>config/runtime.exs</tt> supports environment-driven node roles, database URLs, ports, hosts, secrets, and Telegram bot autostart control. The local full-node workflow also demonstrates that Froth can boot with clustering and bot side effects disabled.</p>
+    <p>Froth does not yet have a dedicated staging checkout, staging database workflow, test bot identity, service definition, or staging-specific operational workflow.</p>
   </section>
 </rfc>

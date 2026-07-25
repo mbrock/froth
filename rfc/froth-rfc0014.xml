@@ -3,10 +3,10 @@
 <rfc number="0014" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0014: Facts, Links, and Projections</title>
-    <status>DRAFT</status>
+    <status>SUPERSEDED</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-26</date>
-    <related>FROTH-RFC-0004, FROTH-RFC-0005, FROTH-RFC-0008</related>
+    <related>FROTH-RFC-0004, FROTH-RFC-0005, FROTH-RFC-0008, FROTH-RFC-0017</related>
   </meta>
 
   <section title="Problem" id="problem">
@@ -174,5 +174,9 @@ link predicate=derived_from   telegram.message -&gt; tool.result
   <section title="Recommendation" id="recommendation">
     <p>The long-term core of Froth should be <tt>facts</tt> and <tt>links</tt>, with projections treated as secondary and disposable.</p>
     <p>Do not chase this by immediately deleting half the database. Do chase it by refusing to add new ontologies lightly, by renaming the existing core in a more truthful way, and by making relations explicit and generic rather than bespoke.</p>
+  </section>
+  <section title="Disposition" id="disposition">
+    <p>RFC-0017 supersedes this proposal. It retains the neutral-entity and derived-projection discipline while replacing the generic <tt>links</tt> table as the primary ontology with explicit predicate tables.</p>
+    <p>No <tt>facts</tt> or <tt>links</tt> schema from this RFC was implemented.</p>
   </section>
 </rfc>

@@ -3,7 +3,7 @@
 <rfc number="0004" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0004: Agent Execution Spine</title>
-    <status>IMPLEMENTED; event schema later revised by RFC-0008</status>
+    <status>PARTIALLY SUPERSEDED</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-23</date>
     <related>FROTH-RFC-0002, FROTH-RFC-0003</related>

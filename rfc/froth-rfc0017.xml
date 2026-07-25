@@ -279,4 +279,8 @@ predicates:
     <p>The schema should grow by adding meaningful relations rather than by multiplying bespoke object tables or burying semantics in payloads and predicate strings.</p>
     <p>This is a better fit for the system Froth actually is: a long-running world of continuants, occurrents, observations, participation, parthood, provenance, and temporal extent.</p>
   </section>
+  <section title="Implementation Status" id="implementation-status">
+    <p>As of 2026-07-25, this RFC remains an unimplemented draft and is the canonical successor to RFC-0014, RFC-0015, and RFC-0016.</p>
+    <p>Froth still uses the RFC-0008 <tt>events</tt> table, specialized domain tables, parent-linked agent messages, and bespoke relation tables. There is no neutral <c>items</c> registry, explicit predicate family, reified temporal model, or projection layer over such a core.</p>
+  </section>
 </rfc>

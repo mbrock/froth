@@ -1,23 +1,24 @@
 FROTH RFCs
 
-0001  In-Browser Video Encoding via WebCodecs     PARTIAL  2026-03-20
-0002  Native Multimodal LLM Layer                 PARTIAL  2026-03-22
-0003  Parallel Tool Execution                     IMPL     2026-03-23
-0004  Agent Execution Spine                       IMPL*    2026-03-23
-0005  Legible Follow and Execution Log Reader     PARTIAL  2026-03-24
-0006  Hierarchical Memory / Pre-Cognitive Compress PARTIAL  2026-03-23
-0007  Triangulated Web Search (Multi-Provider)    IMPL     2026-03-24
-0008  Unified Event Table                         IMPL     2026-03-23
-0009  Task Wakeup on Completion                   IMPL     2026-03-24
-0010  Opening Hormuz                              DRAFT    2026-03-23
-0012  Staging Environment                         DRAFT    2026-03-24
-0013  Prompt Context Architecture                DRAFT    2026-03-25
-0014  Facts, Links, and Projections              DRAFT    2026-03-26
-0015  Sequential Cycle Items                    DRAFT    2026-03-26
-0016  BFO-SQL Items, Relations, and Temporal Entities DRAFT 2026-03-26
-0017  Ontological Relational Core               DRAFT    2026-03-26
-0018  Architecture Survey and Module Atlas      DRAFT    2026-03-26
-0019  Chronological Prompt Context and Structured Cycle Trace Memory DRAFT 2026-03-28
-0021  Cycles as Processes, Subagents as Child Cycles DRAFT 2026-04-16
+0001  In-Browser Video Encoding via WebCodecs     OBSOLETE    2026-03-20
+0002  Native Multimodal LLM Layer                 PARTIAL     2026-03-22
+0003  Parallel Tool Execution                     IMPL        2026-03-23
+0004  Agent Execution Spine                       PART-SUP    2026-03-23
+0005  Legible Follow and Execution Log Reader     PARTIAL     2026-03-24
+0006  Hierarchical Memory / Pre-Cognitive Compress PARTIAL    2026-03-23
+0007  Triangulated Web Search (Multi-Provider)    OBSOLETE    2026-03-24
+0008  Unified Event Table                         IMPL        2026-03-23
+0009  Task Wakeup on Completion                   IMPL        2026-03-24
+0010  Opening Hormuz                              DRAFT       2026-03-24
+0012  Staging Environment                         PARTIAL     2026-03-24
+0013  Prompt Context Architecture                 PART-SUP    2026-03-25
+0014  Facts, Links, and Projections               SUPERSEDED  2026-03-26
+0015  Sequential Cycle Items                      SUPERSEDED  2026-03-26
+0016  BFO-SQL Items, Relations, and Temporal Entities SUPERSEDED 2026-03-26
+0017  Ontological Relational Core                 DRAFT       2026-03-26
+0018  Architecture Survey and Module Atlas        SUPERSEDED  2026-03-26
+0019  Chronological Prompt Context and Structured Cycle Trace Memory PARTIAL 2026-03-28
+0020  Durable Runtime Facts and an Analytics Mirror PARTIAL   2026-03-28
+0021  Cycles as Processes, Subagents as Child Cycles PARTIAL  2026-04-16
 
-* 0004 execution spine implemented; event-table schema revised by 0008.
+PART-SUP means partially superseded: the implementation remains current, but part of the design was replaced.

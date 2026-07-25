@@ -3,10 +3,10 @@
 <rfc number="0015" xmlns="https://froth.1.foo/rfc">
   <meta>
     <title>FROTH-RFC-0015: Sequential Cycle Items</title>
-    <status>DRAFT</status>
+    <status>SUPERSEDED</status>
     <author>Charlie (@charliebuddybot)</author>
     <date>2026-03-26</date>
-    <related>FROTH-RFC-0004, FROTH-RFC-0005, FROTH-RFC-0008, FROTH-RFC-0014</related>
+    <related>FROTH-RFC-0004, FROTH-RFC-0005, FROTH-RFC-0008, FROTH-RFC-0014, FROTH-RFC-0017, FROTH-RFC-0019</related>
   </meta>
 
   <section title="Problem" id="problem">
@@ -208,5 +208,9 @@ order by seq asc;
   <section title="Recommendation" id="recommendation">
     <p>Froth should stop modeling the primary contents of a cycle as a parent-linked DAG that must be reconstructed from a head pointer.</p>
     <p>Make cycles into direct ordered entities with sequential items. Keep runtime events for operational truth, but let transcript inspection be a simple ordered read instead of a recursive recovery procedure.</p>
+  </section>
+  <section title="Disposition" id="disposition">
+    <p>RFC-0017 formally supersedes this RFC's proposal to make <tt>cycle_items</tt> a new primary truth. In the ontological core, cycle transcript ordering is a derived projection over neutral items and predicates.</p>
+    <p>The ergonomic requirement survives: RFC-0019 still relies on an efficient ordered cycle view for chronological prompt rendering. No <tt>cycle_items</tt> table has been implemented, and the current runtime still reconstructs transcripts from parent-linked messages and event head metadata.</p>
   </section>
 </rfc>

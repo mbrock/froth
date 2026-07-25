@@ -155,6 +155,10 @@ Lore regeneration:  generated monthly, after monthly summary
       <item><p>Should the agent be able to request a &quot;deep dive&quot; into a compressed period — essentially decompressing a weekly back into its constituent dailies on demand? This would let the agent operate normally with compressed context but zoom in when a conversation requires detailed historical knowledge.</p></item>
     </list>
   </section>
+  <section title="Current Implementation Status" id="current-implementation-status">
+    <p>As of 2026-07-25, Froth generates durable weekly chronicle chapters from daily summaries and includes those chapters in bot context. This implements the first intermediate compression tier.</p>
+    <p>The broader hierarchy remains incomplete: there is no monthly tier, automatic lore regeneration, future-period context for pre-cognitive compression, or summary-search tool. Weekly identity is stored in summary metadata rather than the tier and parent schema proposed here.</p>
+  </section>
   <section title="Amendment: Narration-Based Cycle Trace Compression (2026-03-23)" id="amendment-narration-based-cycle-trace-compression-2026-03-23">
     <p>Implemented immediately after the transcript bloat diagnosis.</p>
     <subsection title="Changes Made" id="changes-made">
