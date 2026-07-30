@@ -558,7 +558,7 @@ defmodule Froth.Telegram.BotContextTest do
     assert prompt =~ "The first automatic weekly chapter."
   end
 
-  test "weekly chapters are followed by a fixed rolling tail of daily summaries" do
+  test "weekly chapters are followed only by uncovered daily summaries" do
     chat_id = unique_chat_id()
 
     Repo.insert!(
@@ -592,12 +592,16 @@ defmodule Froth.Telegram.BotContextTest do
       |> Enum.join("")
 
     weekly_pos = position(prompt, "The weekly chapter.")
-    first_daily_pos = position(prompt, "Daily summary 2026-04-02")
+    first_daily_pos = position(prompt, "Daily summary 2026-04-06")
 
     assert weekly_pos < first_daily_pos
-    refute prompt =~ "Daily summary 2026-04-01"
 
-    for offset <- 1..7 do
+    for offset <- 0..4 do
+      date = Date.add(~D[2026-04-01], offset)
+      refute prompt =~ "Daily summary #{date}"
+    end
+
+    for offset <- 5..7 do
       date = Date.add(~D[2026-04-01], offset)
       assert prompt =~ ~s(<daily-summary date=#{date}>)
       assert prompt =~ "Daily summary #{date}"

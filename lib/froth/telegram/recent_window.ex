@@ -42,18 +42,25 @@ defmodule Froth.Telegram.RecentWindow do
   def fetch_recent(chat_id, range_end, opts)
       when is_integer(chat_id) and is_list(opts) do
     session_id = context_session_id(chat_id, opts)
+    context_floor_unix = opt_non_negative_int(opts[:context_floor_unix])
 
-    case time_mass_config(opts) do
-      {:ok, config} ->
-        from_unix =
-          max(range_end_unix(range_end) - config.backfill_hours * 3600, 0)
+    cond do
+      is_integer(context_floor_unix) ->
+        fetch_rows(chat_id, session_id, context_floor_unix, range_end)
 
-        chat_id
-        |> fetch_rows(session_id, from_unix, range_end)
-        |> select_rows(range_end, config)
+      true ->
+        case time_mass_config(opts) do
+          {:ok, config} ->
+            from_unix =
+              max(range_end_unix(range_end) - config.backfill_hours * 3600, 0)
 
-      :error ->
-        fetch_recent_legacy(chat_id, session_id, range_end, opts)
+            chat_id
+            |> fetch_rows(session_id, from_unix, range_end)
+            |> select_rows(range_end, config)
+
+          :error ->
+            fetch_recent_legacy(chat_id, session_id, range_end, opts)
+        end
     end
   end
 
@@ -294,6 +301,18 @@ defmodule Froth.Telegram.RecentWindow do
   end
 
   defp opt_positive_int(_value), do: nil
+
+  defp opt_non_negative_int(value) when is_integer(value) and value >= 0,
+    do: value
+
+  defp opt_non_negative_int(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {n, ""} when n >= 0 -> n
+      _ -> nil
+    end
+  end
+
+  defp opt_non_negative_int(_value), do: nil
 
   defp context_session_id(chat_id, opts)
        when is_integer(chat_id) and is_list(opts) do

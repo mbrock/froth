@@ -7,7 +7,7 @@ defmodule Froth.Telegram.BotContext do
   or wrap them for an API call — that's up to the caller.
   """
 
-  alias Froth.Agent
+  alias Froth.{Agent, ChronicleRollup}
   alias Froth.Telegram.BotContextHTML
   alias Froth.Telegram.BotContextHTML.Context
   alias Froth.Telegram.{Names, Queries, RecentWindow}
@@ -76,11 +76,33 @@ defmodule Froth.Telegram.BotContext do
   defp build(chat_id, opts) when is_integer(chat_id) and is_list(opts) do
     before_unix = opt_before_unix(opts)
 
+    volumes = load_chronicle_volumes(chat_id)
+    volume_end = latest_end(volumes)
+    weekly_chapters = load_weekly_chapters(chat_id, volume_end)
+    weekly_end = latest_end(weekly_chapters)
+
     chapters =
-      load_chapters(opts[:chronicle_dir]) ++ load_weekly_chapters(chat_id)
+      load_chapters(opts[:chronicle_dir]) ++ volumes ++ weekly_chapters
+
+    summarized_through = max_end(volume_end, weekly_end)
 
     daily_summaries =
-      load_daily_summaries(chat_id, before_unix, opts[:daily_summary_limit])
+      load_daily_summaries(
+        chat_id,
+        before_unix,
+        summarized_through,
+        opts[:daily_summary_limit]
+      )
+
+    context_floor =
+      max_end(summarized_through, latest_end(daily_summaries))
+
+    opts =
+      if is_integer(context_floor) do
+        Keyword.put(opts, :context_floor_unix, context_floor)
+      else
+        opts
+      end
 
     db_rows = fetch_recent(chat_id, before_unix, opts)
     db_rows = limit_recent_rows(db_rows, opts)
@@ -122,8 +144,24 @@ defmodule Froth.Telegram.BotContext do
     end
   end
 
-  defp load_weekly_chapters(chat_id) do
+  defp load_chronicle_volumes(chat_id) do
+    ChronicleRollup.list(chat_id)
+    |> Enum.map(fn summary ->
+      %{
+        name:
+          "volume-#{date(summary.from_date)}-to-#{date(summary.to_date - 1)}",
+        text: summary.summary_text,
+        from_unix: summary.from_date,
+        to_unix: summary.to_date
+      }
+    end)
+  end
+
+  defp load_weekly_chapters(chat_id, after_unix) do
     Froth.WeeklySummarizer.list(chat_id)
+    |> Enum.filter(fn summary ->
+      not is_integer(after_unix) or summary.from_date >= after_unix
+    end)
     |> Enum.map(fn summary ->
       from_date = DateTime.from_unix!(summary.from_date) |> DateTime.to_date()
 
@@ -134,16 +172,21 @@ defmodule Froth.Telegram.BotContext do
 
       %{
         name: "week-#{from_date}-to-#{to_date}",
-        text: summary.summary_text
+        text: summary.summary_text,
+        from_unix: summary.from_date,
+        to_unix: summary.to_date
       }
     end)
   end
 
-  defp load_daily_summaries(_chat_id, _before_unix, nil), do: []
+  defp load_daily_summaries(_chat_id, _before_unix, _after_unix, nil), do: []
 
-  defp load_daily_summaries(chat_id, before_unix, limit)
+  defp load_daily_summaries(chat_id, before_unix, after_unix, limit)
        when is_integer(limit) and limit > 0 do
     Queries.daily_summaries(chat_id, before_unix)
+    |> Enum.filter(fn summary ->
+      not is_integer(after_unix) or summary.from_date >= after_unix
+    end)
     |> Enum.group_by(& &1.from_date)
     |> Enum.map(fn {_date, rows} ->
       Enum.max_by(rows, &String.length(&1.summary_text))
@@ -153,12 +196,25 @@ defmodule Froth.Telegram.BotContext do
     |> Enum.map(fn summary ->
       %{
         date: DateTime.from_unix!(summary.from_date) |> DateTime.to_date(),
-        text: summary.summary_text
+        text: summary.summary_text,
+        from_unix: summary.from_date,
+        to_unix: summary.to_date
       }
     end)
   end
 
-  defp load_daily_summaries(_chat_id, _before_unix, _limit), do: []
+  defp load_daily_summaries(_chat_id, _before_unix, _after_unix, _limit),
+    do: []
+
+  defp latest_end([]), do: nil
+  defp latest_end(items), do: items |> List.last() |> Map.get(:to_unix)
+
+  defp max_end(nil, nil), do: nil
+  defp max_end(left, nil), do: left
+  defp max_end(nil, right), do: right
+  defp max_end(left, right), do: max(left, right)
+
+  defp date(unix), do: unix |> DateTime.from_unix!() |> DateTime.to_date()
 
   defp render(%Context{} = ctx) do
     ctx
@@ -481,21 +537,26 @@ defmodule Froth.Telegram.BotContext do
   # ── helpers ───────────────────────────────────────────────────────
 
   defp limit_recent_rows(rows, opts) when is_list(rows) and is_list(opts) do
-    case {RecentWindow.time_mass_config(opts), opt_recent_message_limit(opts),
-          opt_recent_message_anchor_size(opts)} do
-      {{:ok, _config}, _n, _anchor_size} ->
-        rows
+    if is_integer(opts[:context_floor_unix]) do
+      rows
+    else
+      case {RecentWindow.time_mass_config(opts),
+            opt_recent_message_limit(opts),
+            opt_recent_message_anchor_size(opts)} do
+        {{:ok, _config}, _n, _anchor_size} ->
+          rows
 
-      {:error, n, anchor_size}
-      when is_integer(n) and n > 0 and is_integer(anchor_size) and
-             anchor_size > 1 ->
-        rows
+        {:error, n, anchor_size}
+        when is_integer(n) and n > 0 and is_integer(anchor_size) and
+               anchor_size > 1 ->
+          rows
 
-      {:error, n, _anchor_size} when is_integer(n) and n > 0 ->
-        Enum.take(rows, -n)
+        {:error, n, _anchor_size} when is_integer(n) and n > 0 ->
+          Enum.take(rows, -n)
 
-      _ ->
-        rows
+        _ ->
+          rows
+      end
     end
   end
 

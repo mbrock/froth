@@ -18,6 +18,7 @@ defmodule Froth.DailyDigest do
 
   alias Froth.{
     ChatSummary,
+    ChronicleRollup,
     Event,
     Repo,
     Summarizer,
@@ -51,6 +52,7 @@ defmodule Froth.DailyDigest do
           summarized_dates: [Date.t()],
           no_message_dates: [Date.t()],
           summarized_weeks: [{Date.t(), Date.t()}],
+          chronicle_volume: nil | {Date.t(), Date.t()} | {:error, term()},
           sent_dates: [Date.t()]
         }
 
@@ -90,6 +92,13 @@ defmodule Froth.DailyDigest do
         &WeeklySummarizer.summarize_range/3
       )
 
+    chronicle_rollup_fun =
+      Keyword.get(
+        opts,
+        :chronicle_rollup_fun,
+        &ChronicleRollup.maybe_rollup/1
+      )
+
     send_document_fun =
       Keyword.get(opts, :send_document_fun, &Telegram.send_document/4)
 
@@ -113,12 +122,15 @@ defmodule Froth.DailyDigest do
              opts,
              send_document_fun
            ) do
+      chronicle_volume = run_chronicle_rollup(chat_id, chronicle_rollup_fun)
+
       {:ok,
        %{
          pending_dates: pending_dates,
          summarized_dates: summarized_dates,
          no_message_dates: no_message_dates,
          summarized_weeks: summarized_weeks,
+         chronicle_volume: chronicle_volume,
          sent_dates: sent_dates
        }}
     end
@@ -325,6 +337,33 @@ defmodule Froth.DailyDigest do
       ),
       log: false
     )
+  end
+
+  defp run_chronicle_rollup(chat_id, chronicle_rollup_fun)
+       when is_integer(chat_id) and is_function(chronicle_rollup_fun, 1) do
+    case chronicle_rollup_fun.(chat_id) do
+      {:ok, nil} ->
+        nil
+
+      {:ok, %ChatSummary{} = summary} ->
+        {DateTime.from_unix!(summary.from_date) |> DateTime.to_date(),
+         summary.to_date
+         |> DateTime.from_unix!()
+         |> DateTime.to_date()
+         |> Date.add(-1)}
+
+      {:error, reason} ->
+        Logger.error("Chronicle rollup failed: #{inspect(reason)}")
+        {:error, reason}
+    end
+  rescue
+    error ->
+      Logger.error("Chronicle rollup crashed: #{Exception.message(error)}")
+      {:error, error}
+  catch
+    kind, reason ->
+      Logger.error("Chronicle rollup exited: #{inspect({kind, reason})}")
+      {:error, {kind, reason}}
   end
 
   defp store_digest_sent_event(
@@ -553,6 +592,7 @@ defmodule Froth.DailyDigest do
       "DailyDigest completed for chat #{state.chat_id}: " <>
         "#{length(result.summarized_dates)} summarized, " <>
         "#{length(result.summarized_weeks)} weekly chapters, " <>
+        "volume=#{inspect(result.chronicle_volume)}, " <>
         "#{length(result.no_message_dates)} empty, " <>
         "#{length(result.sent_dates)} sent."
     )
