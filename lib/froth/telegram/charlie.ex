@@ -10,7 +10,7 @@ defmodule Froth.Telegram.Charlie do
   @default_bot_id "charlie"
   @default_bot_username "charliebuddybot"
   @default_session_id "charlie"
-  @default_model "claude-opus-5"
+  @default_model "claude-opus-4-6"
   @default_max_tokens 65_536
 
   def default_config do
