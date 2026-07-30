@@ -4,6 +4,7 @@ defmodule Froth.ChronicleRollupTest do
   alias Froth.Telegram.BotContext
   alias Froth.Telegram.Message
   alias Froth.Telegram.SessionConfig
+  alias Froth.Agent.Message, as: AgentMessage
   alias Froth.{ChatSummary, ChronicleRollup, Repo}
 
   setup do
@@ -18,6 +19,34 @@ defmodule Froth.ChronicleRollupTest do
 
     assert ChronicleRollup.pending_source_weeklies(chat_id)
            |> Enum.map(& &1.id) == Enum.map(Enum.take(weeks, 6), & &1.id)
+  end
+
+  test "rollup generation stores the closed volume through the agent message path" do
+    chat_id = unique_chat_id()
+    weeks = insert_consecutive_weeklies(chat_id, ~D[2026-03-23], 3)
+
+    agent_run_fun = fn message, config ->
+      assert %AgentMessage{role: :user} = message
+      assert AgentMessage.extract_text(message) =~ "Weekly chapter 1"
+      assert config.model == "claude-opus-4-6"
+
+      {%{id: "rollup-cycle"},
+       [{:message, AgentMessage.agent("# Volume\n\nClosed narrative.")}]}
+    end
+
+    assert {:ok, volume} =
+             ChronicleRollup.maybe_rollup(chat_id,
+               keep_weeks: 1,
+               min_source_weeks: 2,
+               agent_run_fun: agent_run_fun
+             )
+
+    assert volume.from_date == hd(weeks).from_date
+    assert volume.to_date == Enum.at(weeks, 1).to_date
+    assert volume.metadata["cycle_id"] == "rollup-cycle"
+
+    assert volume.metadata["source_summary_ids"] ==
+             Enum.map(Enum.take(weeks, 2), & &1.id)
   end
 
   test "covered weeklies collapse into a volume without overlapping daily context" do

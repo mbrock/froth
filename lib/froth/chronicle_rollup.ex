@@ -73,16 +73,17 @@ defmodule Froth.ChronicleRollup do
     sources = pending_source_weeklies(chat_id, opts)
 
     if length(sources) >= min_source_weeks do
-      create(chat_id, sources)
+      create(chat_id, sources, opts)
     else
       {:ok, nil}
     end
   end
 
-  defp create(chat_id, [first | _] = sources) do
+  defp create(chat_id, [first | _] = sources, opts) do
     last = List.last(sources)
     previous = list(chat_id) |> List.last()
     prompt = build_prompt(first, last, previous, sources)
+    agent_run_fun = Keyword.get(opts, :agent_run_fun, &Agent.run/2)
 
     config = %Config{
       system: @system_prompt,
@@ -91,10 +92,7 @@ defmodule Froth.ChronicleRollup do
       tools: []
     }
 
-    user_message =
-      Repo.insert!(%Message{role: :user, content: Message.wrap(prompt)})
-
-    {cycle, stream} = Agent.run(user_message, config)
+    {cycle, stream} = agent_run_fun.(Message.user(prompt), config)
 
     text =
       Enum.reduce(stream, nil, fn
