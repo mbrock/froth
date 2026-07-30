@@ -270,12 +270,14 @@ defmodule Froth.Inference.ToolsTest do
         "weekly_chronicle"
       )
 
+    long_daily_opening = String.duplicate("Uncovered daily narrative ", 20)
+
     day =
       insert_summary(
         chat_id,
         ~D[2026-04-20],
         ~D[2026-04-21],
-        "Uncovered day"
+        long_daily_opening
       )
 
     assert {:ok, index} = Tools.execute("timeline", %{}, chat_id, [])
@@ -286,6 +288,11 @@ defmodule Froth.Inference.ToolsTest do
     assert index =~ "week:#{recent_week.id}"
     assert index =~ "day:#{day.id}"
     assert index =~ "volume → week → day"
+
+    [_, daily_title] =
+      Regex.run(~r/<interval ref="day:#{day.id}"[^>]+title="([^"]+)"/, index)
+
+    assert String.length(daily_title) <= 161
   end
 
   test "timeline open descends from a volume to its source weeks" do

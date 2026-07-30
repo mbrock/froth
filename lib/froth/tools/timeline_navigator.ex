@@ -452,15 +452,29 @@ defmodule Froth.Tools.TimelineNavigator do
   defp ref_kind(%ChatSummary{}), do: "day"
 
   defp title(text) do
-    text
-    |> String.split("\n")
-    |> Enum.find(&(String.trim(&1) != ""))
-    |> case do
+    first_line =
+      text
+      |> String.split("\n")
+      |> Enum.find(&(String.trim(&1) != ""))
+
+    case first_line do
       nil ->
         "Untitled"
 
       line ->
-        line |> String.trim() |> String.trim_leading("#") |> String.trim()
+        line
+        |> String.trim()
+        |> String.trim_leading("#")
+        |> String.trim()
+        |> truncate(160)
+    end
+  end
+
+  defp truncate(text, max_length) do
+    if String.length(text) > max_length do
+      String.slice(text, 0, max_length) <> "…"
+    else
+      text
     end
   end
 
