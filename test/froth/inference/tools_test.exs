@@ -475,6 +475,18 @@ defmodule Froth.Inference.ToolsTest do
     assert specs["fetch"]["description"] =~ "saved as a local durable file"
     assert get_in(specs, ["elixir_eval", "input_schema", "required"]) == []
 
+    assert specs["elixir_eval"]["description"] =~
+             "discover, inspect, act loop"
+
+    assert specs["elixir_eval"]["description"] =~
+             ~s(call `action="docs"` with no targets)
+
+    assert specs["elixir_eval"]["description"] =~
+             "`Froth.help(Module)` is also available"
+
+    assert specs["elixir_eval"]["description"] =~
+             "use this tool for the running BEAM system"
+
     assert get_in(specs, [
              "elixir_eval",
              "input_schema",

@@ -19,7 +19,30 @@ defmodule Froth.Tools.ElixirEval do
     %{
       "name" => name(),
       "description" =>
-        "Elixir multitool for the live Froth node. Use `action=\"eval\"` to run Elixir code against real runtime state: Ecto repos, OTP processes, registries, GenServers, and Froth modules are all available, and eval session bindings persist when you reuse `session_id`. Use `action=\"docs\"` to inspect loaded modules and functions reflexively, including signatures, docs, Froth module hierarchy, and optional source clips when available. Prefer this tool over guessing how the system works. For `eval`, the `description` field is a user-visible observer note, so fill it in concretely before acting. If an eval runs long, it continues in the background and returns a task_id that you can inspect with the task tools.",
+        """
+        Your native interface to the live Froth node: both a capability browser \
+        and an Elixir evaluator. Use a discover, inspect, act loop instead of \
+        guessing how the system works.
+
+        DISCOVER — call `action="docs"` with no targets to get an overview of \
+        the loaded Froth module hierarchy.
+
+        INSPECT — call `action="docs"` with module or function targets to get \
+        exact signatures and documentation; add `include_source=true` when the \
+        public API is not enough. `Froth.help(Module)` is also available from \
+        evaluated code as a compact module reference.
+
+        ACT — call `action="eval"` to run Elixir against real runtime state. \
+        Ecto repos, OTP processes, registries, GenServers, and loaded Froth \
+        modules are available. Bindings persist when you reuse `session_id`.
+
+        Use `run_shell` for source-tree, Git, and build work; use this tool for \
+        the running BEAM system and application APIs. Eval can mutate the live \
+        system, so inspect before destructive actions. For eval, `description` \
+        is a required user-visible observer note. Long evaluations continue in \
+        the background and return a task_id for the task tools.
+        """
+        |> String.trim(),
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
