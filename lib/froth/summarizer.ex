@@ -16,7 +16,7 @@ defmodule Froth.Summarizer do
     Froth.Summarizer.list(chat_id)
   """
 
-  alias Froth.{ChatSummary, Repo}
+  alias Froth.{ChatSummary, NarrativeContext, Repo}
   alias Froth.Agent
   alias Froth.Agent.{Config, Message}
   alias Froth.Telegram.{BotContext, Queries}
@@ -143,19 +143,7 @@ defmodule Froth.Summarizer do
   end
 
   defp fetch_prior_summaries(chat_id, before_unix) do
-    Repo.all(
-      from(s in ChatSummary,
-        where: s.chat_id == ^chat_id and s.to_date <= ^before_unix,
-        where: s.from_date != s.to_date and s.to_date - s.from_date <= 86_400,
-        order_by: [asc: s.from_date],
-        select: %{
-          from_date: s.from_date,
-          to_date: s.to_date,
-          summary_text: s.summary_text
-        }
-      ),
-      log: false
-    )
+    NarrativeContext.for_daily_summary(chat_id, before_unix)
   end
 
   defp latest_summary_date(chat_id) do

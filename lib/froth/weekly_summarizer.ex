@@ -10,7 +10,7 @@ defmodule Froth.WeeklySummarizer do
 
   alias Froth.Agent
   alias Froth.Agent.{Config, Message}
-  alias Froth.{ChatSummary, Repo}
+  alias Froth.{ChatSummary, NarrativeContext, Repo}
 
   @model "claude-opus-5"
   @max_tokens 65_536
@@ -55,10 +55,21 @@ defmodule Froth.WeeklySummarizer do
     if daily == [] do
       {:error, :no_summaries}
     else
-      prior = prior_weeklies(chat_id, from_date)
+      before_unix = day_start(from_date)
+      prior = NarrativeContext.for_weekly_summary(chat_id, before_unix)
+
+      chapter_number =
+        8 + NarrativeContext.weekly_chapter_count(chat_id, before_unix)
 
       prompt =
-        build_prompt(from_date, to_date, daily, prior, manual_chronicle())
+        build_prompt(
+          from_date,
+          to_date,
+          daily,
+          prior,
+          chapter_number,
+          manual_chronicle()
+        )
 
       config = %Config{
         system: @system_prompt,
@@ -186,22 +197,14 @@ defmodule Froth.WeeklySummarizer do
     |> Enum.sort_by(& &1.from_date)
   end
 
-  defp prior_weeklies(chat_id, before_date) do
-    before_unix = day_start(before_date)
-
-    Repo.all(
-      from(s in ChatSummary,
-        where: s.chat_id == ^chat_id and s.to_date <= ^before_unix,
-        where: fragment("?->>'kind' = ?", s.metadata, @kind),
-        order_by: [asc: s.from_date]
-      ),
-      log: false
-    )
-  end
-
-  defp build_prompt(from_date, to_date, daily, prior, foundation) do
-    chapter_number = 8 + length(prior)
-
+  defp build_prompt(
+         from_date,
+         to_date,
+         daily,
+         prior,
+         chapter_number,
+         foundation
+       ) do
     prior_text =
       Enum.map_join(prior, "\n\n", fn summary ->
         "--- #{date(summary.from_date)} to #{Date.add(date(summary.to_date), -1)} ---\n#{summary.summary_text}"
@@ -212,12 +215,26 @@ defmodule Froth.WeeklySummarizer do
         "--- #{date(summary.from_date)} ---\n#{summary.summary_text}"
       end)
 
+    continuity =
+      if Enum.any?(prior, &NarrativeContext.volume?/1) do
+        """
+        CLOSED NARRATIVE CONTEXT AT THE RIGHT RESOLUTION:
+
+        #{prior_text}
+        """
+      else
+        """
+        EXISTING HAND-WRITTEN CHRONICLE — AUTHORITATIVE CONTINUITY AND STYLE:
+
+        #{foundation}
+
+        #{if prior_text == "", do: "", else: "AUTOMATIC CHAPTERS WRITTEN SINCE THE HAND-WRITTEN FOUNDATION:\n\n#{prior_text}"}
+        """
+      end
+
     """
-    EXISTING HAND-WRITTEN CHRONICLE — AUTHORITATIVE CONTINUITY AND STYLE:
+    #{continuity}
 
-    #{foundation}
-
-    #{if prior_text == "", do: "", else: "AUTOMATIC CHAPTERS WRITTEN SINCE THE HAND-WRITTEN FOUNDATION:\n\n#{prior_text}\n\n"}
     Write Chapter #{chapter_number}, covering #{from_date} through #{to_date}.
     Begin exactly with a Markdown H1 in this form, choosing a short thematic title:
 
