@@ -173,7 +173,7 @@ defmodule Froth.Agent.FailureIntervention do
 
   defp enabled? do
     Application.get_env(:froth, __MODULE__, [])
-    |> Keyword.get(:enabled, true)
+    |> Keyword.get(:enabled, false)
   end
 
   defp supported_tool?(name) when is_binary(name) do

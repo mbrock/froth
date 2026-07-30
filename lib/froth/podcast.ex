@@ -39,6 +39,28 @@ defmodule Froth.Podcast do
       {:ok, analysis} = Froth.Podcast.analyze_voices(ep.public_url)
       # => %{speakers: [%{name: "Alex", segments: [%{from: "07:16", ...}], ...}], raw: "..."}
 
+  ## Cloning a voice from YouTube
+
+      # Ask Gemini to find clean, speaker-specific excerpts.
+      {:ok, analysis} =
+        Froth.Podcast.analyze_voices_youtube(youtube_url)
+
+      # Download through the configured Mac host and copy the audio locally.
+      {:ok, audio} =
+        Froth.Podcast.download_youtube(youtube_url, "speaker_name")
+
+      # Use timestamps selected from the analysis.
+      {:ok, clone} =
+        Froth.Podcast.clone_voice(
+          audio.local_path,
+          [{25, 38}, {91, 105}],
+          "speaker_name"
+        )
+
+  Clone the voice people actually recognize. For a fictional character, use
+  clean performance footage of the character rather than an interview with the
+  actor. Cut a few clean excerpts instead of feeding the cloner an entire raw
+  recording; overlap, applause, and background sound become part of the clone.
 
   ## Script rules for TTS
 
@@ -73,6 +95,11 @@ defmodule Froth.Podcast do
      consult our research" and gives the other speaker permission to deliver
      prepared material. Without it the episode sounds like a monologue
      with interruptions rather than a conversation with segments.
+
+  5. **Attribute learned knowledge socially.** Alex usually reaches literary
+     or philosophical material through a half-remembered teacher, university
+     course, or friend rather than citing an author as direct expertise. The
+     mediator and the imperfect memory are part of the voice.
   """
 
   alias Span

@@ -25,7 +25,6 @@ defmodule Froth.Telegram.Charlie do
       session_id: @default_session_id,
       model: @default_model,
       max_tokens: @default_max_tokens,
-      failure_report_model: "gpt-5.4",
       system_prompt_fun: &CharliePrompt.system_prompt/2,
       name_triggers: [
         "charlie",

@@ -93,7 +93,7 @@ defmodule Froth.Tools.ElixirEval do
             "type" => "array",
             "items" => %{"type" => "string"},
             "description" =>
-              "For `docs`: modules or functions to inspect, such as `Froth.Telegram`, `Froth.help/1`, or `Code.string_to_quoted_with_comments/2`. Omit or pass an empty list to get an overview of the Froth module hierarchy."
+              "For `docs`: modules or functions to inspect, such as `Froth.Podcast`, `Froth.Telegram`, `Froth.help/1`, or `Code.string_to_quoted_with_comments/2`. Omit or pass an empty list to get an overview of the Froth module hierarchy."
           },
           "include_source" => %{
             "type" => "boolean",

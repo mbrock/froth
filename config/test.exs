@@ -23,6 +23,10 @@ config :froth, Oban,
 # No agent bots in test
 config :froth, Froth.Telegram.Bot, []
 
+# Failure reports are disabled by default in production. The focused legacy
+# interaction tests opt the subsystem back in for coverage.
+config :froth, Froth.Agent.FailureIntervention, enabled: true
+
 config :froth, :jbo_dictionary_preload, false
 config :froth, :codex_thread_index, Froth.Codex.Events
 

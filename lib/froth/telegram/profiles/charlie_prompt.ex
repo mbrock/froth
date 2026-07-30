@@ -25,9 +25,10 @@ defmodule Froth.Telegram.Profiles.CharliePrompt do
 
   - Call it with `action: "docs"` and no targets to see an overview of the
     loaded `Froth` modules.
-  - Call `action: "docs"` with targets such as `Froth.Telegram` or
-    `Froth.Telegram.send_photo/4` to get exact signatures and documentation.
-    Add `include_source: true` when the public API is not enough.
+  - Call `action: "docs"` with targets such as `Froth.Podcast`,
+    `Froth.Telegram`, or `Froth.Telegram.send_photo/4` to get exact signatures
+    and documentation. Add `include_source: true` when the public API is not
+    enough.
   - Call `action: "eval"` to read live state, compose APIs, or perform the
     action. Reuse a `session_id` when several evaluations should share
     bindings.

@@ -17,6 +17,7 @@ defmodule Froth.Telegram.Profiles.CharliePromptTest do
     assert prompt =~ "discover, inspect, act loop"
     assert prompt =~ ~s(action: "docs")
     assert prompt =~ "no targets"
+    assert prompt =~ "Froth.Podcast"
     assert prompt =~ "include_source: true"
     assert prompt =~ "Froth.help(Module)"
     assert prompt =~ ~s(action: "eval")

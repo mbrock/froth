@@ -104,6 +104,10 @@ config :froth, Oban,
 # are managed by `Froth.Telegram.Bots`.
 config :froth, Froth.Telegram.Bot, []
 
+# Failed tool calls return directly to the agent. The diagnostic second-model
+# intervention remains available only as an explicit opt-in.
+config :froth, Froth.Agent.FailureIntervention, enabled: false
+
 config :libcluster, topologies: []
 
 # Import environment specific config. This must remain at the bottom

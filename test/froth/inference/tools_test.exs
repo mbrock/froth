@@ -82,6 +82,26 @@ defmodule Froth.Inference.ToolsTest do
     assert source_block.body =~ "Code.fetch_docs"
   end
 
+  test "podcast docs expose the complete voice-cloning workflow" do
+    assert {:ok, [%Block{} = block]} =
+             Tools.execute(
+               "elixir_eval",
+               %{
+                 "action" => "docs",
+                 "targets" => ["Froth.Podcast"]
+               },
+               0,
+               []
+             )
+
+    assert Block.attr(block, :kind) == "module"
+    assert block.body =~ "Cloning a voice from YouTube"
+    assert block.body =~ "Froth.Podcast.analyze_voices_youtube"
+    assert block.body =~ "Froth.Podcast.download_youtube"
+    assert block.body =~ "Froth.Podcast.clone_voice"
+    assert block.body =~ "Froth.Podcast.generate"
+  end
+
   test "view_analysis returns one block per matching analysis id" do
     first =
       Repo.insert!(
@@ -504,6 +524,14 @@ defmodule Froth.Inference.ToolsTest do
              "type"
            ]) ==
              "array"
+
+    assert get_in(specs, [
+             "elixir_eval",
+             "input_schema",
+             "properties",
+             "targets",
+             "description"
+           ]) =~ "Froth.Podcast"
 
     assert get_in(specs, [
              "elixir_eval",
