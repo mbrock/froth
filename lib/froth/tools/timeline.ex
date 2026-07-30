@@ -9,6 +9,7 @@ defmodule Froth.Tools.Timeline do
   alias Froth.Agent.ToolUse
   alias Froth.Repo
   alias Froth.Telegram.BotContext
+  alias Froth.Tools.TimelineNavigator
 
   @default_browse_limit 80
   @default_hit_limit 8
@@ -17,6 +18,7 @@ defmodule Froth.Tools.Timeline do
   @default_context_before 3
   @default_context_after 3
   @max_context_window 20
+  @max_offset 20_000
 
   @impl true
   def name, do: "timeline"
@@ -29,15 +31,38 @@ defmodule Froth.Tools.Timeline do
     %{
       "name" => name(),
       "description" =>
-        "Query chat history through the same context renderer the bot already uses for normal prompt history. In browse mode, it returns a chronological slice of messages, analyses, and linked cycle traces. In search mode, it finds literal phrase matches and includes surrounding context messages. Use this as the unified way to inspect the chat timeline.",
+        "Navigate the chat's memory at progressively finer temporal resolution. Start with action=\"index\" to see foundation chapters, closed volumes, detailed weeks, uncovered days, and the unfolding raw tail. Use action=\"search\" to find likely narrative intervals, action=\"open\" with a returned ref to descend volume → week → day, and action=\"messages\" with a week/day ref to inspect primary messages, analyses, and linked cycle traces. Reuse returned refs exactly instead of guessing timestamps. Search defaults to narrative summaries; choose scope=\"messages\" when exact original wording matters.",
       "input_schema" => %{
         "type" => "object",
         "properties" => %{
+          "action" => %{
+            "type" => "string",
+            "enum" => ["index", "search", "open", "messages"],
+            "description" =>
+              "Navigation move. Defaults intelligently: no input → index, ref → open, query → search, and date/sender/offset fields → messages."
+          },
+          "ref" => %{
+            "type" => "string",
+            "description" =>
+              "Stable opaque ref returned by index, search, or open, such as volume:208, week:185, day:207, or foundation:ch01-the-founding."
+          },
+          "detail" => %{
+            "type" => "string",
+            "enum" => ["outline", "full"],
+            "description" =>
+              "For open: outline returns a compact synopsis and child intervals; full returns the complete narrative text. Defaults to outline."
+          },
+          "scope" => %{
+            "type" => "string",
+            "enum" => ["narrative", "messages", "all"],
+            "description" =>
+              "For search: narrative searches chapters/volumes/weeks/days, messages searches exact Telegram wording with surrounding context, and all returns both. Defaults to narrative."
+          },
           "query" => %{
             "type" => "array",
             "items" => %{"type" => "string"},
             "description" =>
-              "Optional literal phrases to search for. Items are OR'd together, case-insensitively."
+              "Case-insensitive literal terms or short phrases, OR'd together. Supply several plausible terms when searching narrative memory."
           },
           "from_date" => %{
             "type" => "string",
@@ -53,6 +78,12 @@ defmodule Froth.Tools.Timeline do
             "type" => "integer",
             "description" =>
               "Optional Telegram sender ID. In search mode this filters hits, while surrounding context may still include other senders."
+          },
+          "offset" => %{
+            "type" => "integer",
+            "minimum" => 0,
+            "description" =>
+              "For paginating messages within an interval. Start at 0 and reuse next_offset from the result."
           },
           "before" => %{
             "type" => "integer",
@@ -79,32 +110,205 @@ defmodule Froth.Tools.Timeline do
   def execute(%Context{} = ctx, %ToolUse{input: input}, _hooks)
       when is_map(input) do
     chat_id = ctx_chat_id(ctx)
-    render_opts = render_opts(ctx)
-    queries = search_phrases(input["query"])
+    action = resolve_action(input)
 
-    rows =
-      if queries == [] do
-        browse_rows(chat_id, input)
-      else
-        search_rows(chat_id, input, queries)
-      end
+    case action do
+      "index" ->
+        {:ok, TimelineNavigator.index(chat_id)}
 
-    case rows do
-      [] ->
-        {:ok, empty_result_message(queries)}
+      "search" ->
+        execute_search(chat_id, input, render_opts(ctx))
 
-      rows ->
-        {:ok, BotContext.render_for_messages(chat_id, rows, render_opts)}
+      "open" ->
+        execute_open(chat_id, input)
+
+      "messages" ->
+        execute_messages(chat_id, input, render_opts(ctx))
+
+      _ ->
+        {:error, "action must be one of index, search, open, or messages"}
     end
   end
 
   def execute(%Context{}, %ToolUse{}, _hooks),
     do: {:error, "Could not load timeline for the given input."}
 
+  defp execute_search(chat_id, input, render_opts) do
+    queries = search_phrases(input["query"])
+    scope = input["scope"] || "narrative"
+
+    cond do
+      queries == [] ->
+        {:error, "query must contain at least one non-empty search term"}
+
+      scope == "narrative" ->
+        {:ok, TimelineNavigator.search(chat_id, queries, input)}
+
+      scope == "messages" ->
+        with {:ok, ranged_input} <- apply_ref_range(chat_id, input) do
+          {:ok,
+           render_message_search(
+             chat_id,
+             ranged_input,
+             queries,
+             render_opts
+           )}
+        end
+
+      scope == "all" ->
+        with {:ok, ranged_input} <- apply_ref_range(chat_id, input) do
+          narrative = TimelineNavigator.search(chat_id, queries, input)
+
+          messages =
+            render_message_search(
+              chat_id,
+              ranged_input,
+              queries,
+              render_opts
+            )
+
+          {:ok, narrative <> "\n\n" <> messages}
+        end
+
+      true ->
+        {:error, "scope must be narrative, messages, or all"}
+    end
+  end
+
+  defp execute_open(chat_id, input) do
+    ref = input["ref"]
+    detail = input["detail"] || "outline"
+
+    cond do
+      not is_binary(ref) or String.trim(ref) == "" ->
+        {:error, "ref is required for open"}
+
+      detail not in ["outline", "full"] ->
+        {:error, "detail must be outline or full"}
+
+      true ->
+        TimelineNavigator.open(chat_id, String.trim(ref), detail)
+    end
+  end
+
+  defp execute_messages(chat_id, input, render_opts) do
+    with {:ok, ranged_input} <- apply_ref_range(chat_id, input) do
+      queries = search_phrases(ranged_input["query"])
+
+      if queries == [] do
+        {rows, has_more?, offset} = browse_rows(chat_id, ranged_input)
+
+        {:ok,
+         render_message_window(
+           chat_id,
+           rows,
+           ranged_input,
+           render_opts,
+           has_more?,
+           offset
+         )}
+      else
+        {:ok,
+         render_message_search(chat_id, ranged_input, queries, render_opts)}
+      end
+    end
+  end
+
+  defp apply_ref_range(chat_id, %{"ref" => ref} = input)
+       when is_binary(ref) do
+    case TimelineNavigator.resolve_range(chat_id, String.trim(ref)) do
+      {:ok, {from_unix, to_unix}} ->
+        {:ok,
+         input
+         |> Map.put("__from_unix", from_unix)
+         |> Map.put("__to_unix", to_unix)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp apply_ref_range(_chat_id, input), do: {:ok, input}
+
+  defp render_message_search(chat_id, input, queries, render_opts) do
+    rows = search_rows(chat_id, input, queries)
+
+    case rows do
+      [] ->
+        """
+        <timeline-search scope="messages">
+          <queries>#{xml_text(inspect(queries))}</queries>
+          No exact message matches. Try narrative scope or several shorter terms.
+        </timeline-search>
+        """
+        |> String.trim()
+
+      _ ->
+        """
+        <timeline-search scope="messages">
+          <queries>#{xml_text(inspect(queries))}</queries>
+        #{BotContext.render_for_messages(chat_id, rows, render_opts)}
+          <next>
+            Use a returned message timestamp to browse a tighter interval, or
+            search narrative scope to recover the larger arc around this scene.
+          </next>
+        </timeline-search>
+        """
+        |> String.trim()
+    end
+  end
+
+  defp render_message_window(
+         _chat_id,
+         [],
+         input,
+         _render_opts,
+         _has_more?,
+         offset
+       ) do
+    """
+    <timeline-messages ref=#{xml_attr(input["ref"] || "")} offset="#{offset}" returned="0">
+      No timeline entries found for this interval.
+    </timeline-messages>
+    """
+    |> String.trim()
+  end
+
+  defp render_message_window(
+         chat_id,
+         rows,
+         input,
+         render_opts,
+         has_more?,
+         offset
+       ) do
+    next_offset = offset + length(rows)
+
+    next =
+      if has_more? do
+        """
+          <next offset="#{next_offset}">
+            Call messages again with the same ref/range and offset=#{next_offset}.
+          </next>
+        """
+      else
+        "  <next state=\"end-of-interval\" />"
+      end
+
+    """
+    <timeline-messages ref=#{xml_attr(input["ref"] || "")} offset="#{offset}" returned="#{length(rows)}">
+    #{BotContext.render_for_messages(chat_id, rows, render_opts)}
+    #{next}
+    </timeline-messages>
+    """
+    |> String.trim()
+  end
+
   defp browse_rows(chat_id, input)
        when is_integer(chat_id) and is_map(input) do
-    from_unix = parse_datetime(input["from_date"])
-    to_unix = parse_to_datetime(input["to_date"])
+    from_unix = input["__from_unix"] || parse_datetime(input["from_date"])
+    to_unix = input["__to_unix"] || parse_to_datetime(input["to_date"])
+    page_offset = bounded_offset(input["offset"])
 
     limit =
       bounded_integer(
@@ -131,7 +335,8 @@ defmodule Froth.Tools.Timeline do
         unix when is_integer(unix) ->
           query
           |> order_by([m], asc: m.date, asc: m.inserted_at, asc: m.message_id)
-          |> limit(^limit)
+          |> with_offset(page_offset)
+          |> limit(^(limit + 1))
           |> Repo.all(log: false)
 
         _ ->
@@ -141,18 +346,31 @@ defmodule Froth.Tools.Timeline do
             desc: m.inserted_at,
             desc: m.message_id
           )
-          |> limit(^limit)
+          |> with_offset(page_offset)
+          |> limit(^(limit + 1))
           |> Repo.all(log: false)
-          |> Enum.reverse()
       end
 
-    dedupe_messages(rows)
+    has_more? = length(rows) > limit
+
+    rows =
+      rows
+      |> Enum.take(limit)
+      |> then(fn selected ->
+        if is_integer(from_unix), do: selected, else: Enum.reverse(selected)
+      end)
+      |> dedupe_messages()
+
+    {rows, has_more?, page_offset}
   end
+
+  defp with_offset(query, page_offset) when is_integer(page_offset),
+    do: from(m in query, offset: ^page_offset)
 
   defp search_rows(chat_id, input, queries)
        when is_integer(chat_id) and is_map(input) and is_list(queries) do
-    from_unix = parse_datetime(input["from_date"])
-    to_unix = parse_to_datetime(input["to_date"])
+    from_unix = input["__from_unix"] || parse_datetime(input["from_date"])
+    to_unix = input["__to_unix"] || parse_to_datetime(input["to_date"])
 
     hit_limit =
       bounded_integer(input["limit"], @default_hit_limit, 1, @max_hit_limit)
@@ -221,10 +439,15 @@ defmodule Froth.Tools.Timeline do
     do: []
 
   defp surrounding_rows(chat_id, from_unix, to_unix, hit, count, :before) do
+    before_to_unix =
+      if is_integer(to_unix) and to_unix < hit.date,
+        do: to_unix,
+        else: hit.date
+
     chat_id
     |> base_message_query()
     |> maybe_filter_from_date(from_unix)
-    |> maybe_filter_to_date(min(to_unix || hit.date + 1, hit.date))
+    |> maybe_filter_to_date(before_to_unix)
     |> where([m], m.date < ^hit.date)
     |> order_by([m], desc: m.date, desc: m.inserted_at, desc: m.message_id)
     |> limit(^count)
@@ -329,11 +552,35 @@ defmodule Froth.Tools.Timeline do
   defp maybe_put_render_opt(opts, key, value),
     do: Keyword.put(opts, key, value)
 
-  defp empty_result_message([]),
-    do: "No timeline entries found for the given input."
+  defp resolve_action(%{"action" => action}) when is_binary(action),
+    do: action
 
-  defp empty_result_message(queries),
-    do: "No timeline entries found matching #{inspect(queries)}."
+  defp resolve_action(input) do
+    cond do
+      is_binary(input["ref"]) ->
+        "open"
+
+      search_phrases(input["query"]) != [] ->
+        "search"
+
+      Enum.any?(
+        [
+          "from_date",
+          "to_date",
+          "sender_id",
+          "before",
+          "after",
+          "limit",
+          "offset"
+        ],
+        &Map.has_key?(input, &1)
+      ) ->
+        "messages"
+
+      true ->
+        "index"
+    end
+  end
 
   defp search_phrases(values) when is_list(values) do
     values
@@ -356,21 +603,40 @@ defmodule Froth.Tools.Timeline do
   defp bounded_integer(value, default, lower_bound, upper_bound)
        when is_integer(default) and is_integer(lower_bound) and
               is_integer(upper_bound) do
-    parsed = parse_positive_integer(value) || default
-    parsed |> max(lower_bound) |> min(upper_bound)
+    parsed =
+      case parse_integer(value) do
+        integer when integer >= lower_bound -> integer
+        _ -> default
+      end
+
+    cond do
+      parsed < lower_bound -> lower_bound
+      parsed > upper_bound -> upper_bound
+      true -> parsed
+    end
   end
 
-  defp parse_positive_integer(value) when is_integer(value) and value > 0,
-    do: value
+  defp bounded_offset(value) do
+    parsed = parse_integer(value)
 
-  defp parse_positive_integer(value) when is_binary(value) do
+    cond do
+      not is_integer(parsed) -> 0
+      parsed < 0 -> 0
+      parsed > @max_offset -> @max_offset
+      true -> parsed
+    end
+  end
+
+  defp parse_integer(value) when is_integer(value), do: value
+
+  defp parse_integer(value) when is_binary(value) do
     case Integer.parse(String.trim(value)) do
-      {int, ""} when int > 0 -> int
+      {int, ""} -> int
       _ -> nil
     end
   end
 
-  defp parse_positive_integer(_), do: nil
+  defp parse_integer(_), do: nil
 
   defp parse_datetime(nil), do: nil
   defp parse_datetime(""), do: nil
@@ -425,4 +691,22 @@ defmodule Froth.Tools.Timeline do
        when is_integer(chat_id), do: chat_id
 
   defp ctx_chat_id(_ctx), do: 0
+
+  defp xml_attr(value) do
+    escaped =
+      value
+      |> to_string()
+      |> xml_text()
+      |> String.replace("\"", "&quot;")
+
+    ~s("#{escaped}")
+  end
+
+  defp xml_text(value) do
+    value
+    |> to_string()
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+  end
 end

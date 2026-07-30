@@ -2,6 +2,7 @@ defmodule Froth.Inference.ToolsTest do
   use Froth.TelegramBotCase, async: true
 
   alias Froth.Analysis
+  alias Froth.ChatSummary
   alias Froth.Agent.{Cycle, CycleRuntime}
   alias Froth.Context.Block
   alias Froth.Inference.Tools
@@ -34,6 +35,9 @@ defmodule Froth.Inference.ToolsTest do
 
     assert get_in(spec, ["input_schema", "properties", "query", "type"]) ==
              "array"
+
+    assert get_in(spec, ["input_schema", "properties", "action", "enum"]) ==
+             ["index", "search", "open", "messages"]
   end
 
   test "view_analysis is exposed in tool specs" do
@@ -213,6 +217,7 @@ defmodule Froth.Inference.ToolsTest do
              Tools.execute(
                "timeline",
                %{
+                 "scope" => "messages",
                  "query" => ["needle phrase"],
                  "before" => 1,
                  "after" => 1,
@@ -234,6 +239,213 @@ defmodule Froth.Inference.ToolsTest do
     assert timeline =~ ~s(<text id=tg:203)
   end
 
+  test "timeline index exposes stable refs at each active narrative resolution" do
+    chat_id = unique_chat_id()
+
+    first_week =
+      insert_summary(
+        chat_id,
+        ~D[2026-04-06],
+        ~D[2026-04-13],
+        "First week",
+        "weekly_chronicle"
+      )
+
+    volume =
+      insert_summary(
+        chat_id,
+        ~D[2026-04-06],
+        ~D[2026-04-13],
+        "# Volume: First Arc\n\nClosed arc.",
+        "chronicle_volume",
+        %{"source_summary_ids" => [first_week.id]}
+      )
+
+    recent_week =
+      insert_summary(
+        chat_id,
+        ~D[2026-04-13],
+        ~D[2026-04-20],
+        "# Chapter: Recent Week\n\nStill detailed.",
+        "weekly_chronicle"
+      )
+
+    day =
+      insert_summary(
+        chat_id,
+        ~D[2026-04-20],
+        ~D[2026-04-21],
+        "Uncovered day"
+      )
+
+    assert {:ok, index} = Tools.execute("timeline", %{}, chat_id, [])
+
+    assert index =~ "<timeline-index>"
+    assert index =~ "foundation:ch01-the-founding"
+    assert index =~ "volume:#{volume.id}"
+    assert index =~ "week:#{recent_week.id}"
+    assert index =~ "day:#{day.id}"
+    assert index =~ "volume → week → day"
+  end
+
+  test "timeline open descends from a volume to its source weeks" do
+    chat_id = unique_chat_id()
+
+    day =
+      insert_summary(
+        chat_id,
+        ~D[2026-05-04],
+        ~D[2026-05-05],
+        "The exact day."
+      )
+
+    week =
+      insert_summary(
+        chat_id,
+        ~D[2026-05-04],
+        ~D[2026-05-11],
+        "# Chapter 14: The Week\n\nWeekly detail.",
+        "weekly_chronicle",
+        %{"source_summary_ids" => [day.id]}
+      )
+
+    volume =
+      insert_summary(
+        chat_id,
+        ~D[2026-05-04],
+        ~D[2026-05-11],
+        "# Volume IV: The Volume\n\nBroad arc.",
+        "chronicle_volume",
+        %{"source_summary_ids" => [week.id]}
+      )
+
+    assert {:ok, outline} =
+             Tools.execute(
+               "timeline",
+               %{"ref" => "volume:#{volume.id}"},
+               chat_id,
+               []
+             )
+
+    assert outline =~ ~s(ref="volume:#{volume.id}")
+    assert outline =~ ~s(ref="week:#{week.id}")
+    assert outline =~ "Open a child week ref"
+
+    assert {:ok, full} =
+             Tools.execute(
+               "timeline",
+               %{
+                 "action" => "open",
+                 "ref" => "volume:#{volume.id}",
+                 "detail" => "full"
+               },
+               chat_id,
+               []
+             )
+
+    assert full =~ "Broad arc."
+
+    assert {:ok, week_outline} =
+             Tools.execute(
+               "timeline",
+               %{"action" => "open", "ref" => "week:#{week.id}"},
+               chat_id,
+               []
+             )
+
+    assert week_outline =~ ~s(ref="day:#{day.id}")
+    assert week_outline =~ "call messages with this week ref"
+  end
+
+  test "timeline narrative search returns intervals rather than raw-message guesses" do
+    chat_id = unique_chat_id()
+
+    week =
+      insert_summary(
+        chat_id,
+        ~D[2026-06-01],
+        ~D[2026-06-08],
+        "# Chapter: The Marmosets\n\nAstonishment depends on the hand.",
+        "weekly_chronicle"
+      )
+
+    assert {:ok, result} =
+             Tools.execute(
+               "timeline",
+               %{"action" => "search", "query" => ["marmosets"]},
+               chat_id,
+               []
+             )
+
+    assert result =~ ~s(<timeline-search scope="narrative")
+    assert result =~ ~s(ref="week:#{week.id}")
+    assert result =~ "Astonishment depends on the hand"
+    refute result =~ "<text id=tg:"
+  end
+
+  test "timeline messages accepts a day ref and paginates primary evidence" do
+    chat_id = unique_chat_id()
+    session_id = "timeline-ref-#{System.unique_integer([:positive])}"
+
+    day =
+      insert_summary(
+        chat_id,
+        ~D[2026-07-01],
+        ~D[2026-07-02],
+        "A summarized day"
+      )
+
+    start = day_start(~D[2026-07-01])
+
+    insert_telegram_message(session_id, chat_id, 301, 7, start + 10, "first")
+    insert_telegram_message(session_id, chat_id, 302, 8, start + 20, "second")
+    insert_telegram_message(session_id, chat_id, 303, 9, start + 30, "third")
+
+    insert_telegram_message(
+      session_id,
+      chat_id,
+      304,
+      9,
+      day_start(~D[2026-07-02]) + 10,
+      "outside"
+    )
+
+    assert {:ok, first_page} =
+             Tools.execute(
+               "timeline",
+               %{
+                 "action" => "messages",
+                 "ref" => "day:#{day.id}",
+                 "limit" => 2
+               },
+               chat_id,
+               session_id: session_id
+             )
+
+    assert first_page =~ "first"
+    assert first_page =~ "second"
+    refute first_page =~ "third"
+    refute first_page =~ "outside"
+    assert first_page =~ ~s(<next offset="2">)
+
+    assert {:ok, second_page} =
+             Tools.execute(
+               "timeline",
+               %{
+                 "action" => "messages",
+                 "ref" => "day:#{day.id}",
+                 "limit" => 2,
+                 "offset" => 2
+               },
+               chat_id,
+               session_id: session_id
+             )
+
+    assert second_page =~ "third"
+    refute second_page =~ "first"
+    assert second_page =~ ~s(state="end-of-interval")
+  end
+
   test "ask is exposed in tool specs" do
     spec = Enum.find(Tools.specs_for_api(), &(&1["name"] == "ask"))
 
@@ -251,8 +463,8 @@ defmodule Froth.Inference.ToolsTest do
     refute Map.has_key?(specs, "read_log")
     refute Map.has_key?(specs, "search")
     refute Map.has_key?(specs, "read_tool_transcript")
-    assert specs["timeline"]["description"] =~ "same context renderer"
-    assert specs["timeline"]["description"] =~ "literal phrase matches"
+    assert specs["timeline"]["description"] =~ "progressively finer"
+    assert specs["timeline"]["description"] =~ "volume → week → day"
     assert specs["fetch"]["description"] =~ "saved as a local durable file"
     assert get_in(specs, ["elixir_eval", "input_schema", "required"]) == []
 
@@ -874,6 +1086,32 @@ defmodule Froth.Inference.ToolsTest do
 
     assert working_dir != ""
   end
+
+  defp insert_summary(
+         chat_id,
+         from_date,
+         to_date,
+         text,
+         kind \\ nil,
+         metadata \\ %{}
+       ) do
+    metadata = if kind, do: Map.put(metadata, "kind", kind), else: metadata
+
+    %ChatSummary{}
+    |> ChatSummary.changeset(%{
+      chat_id: chat_id,
+      from_date: day_start(from_date),
+      to_date: day_start(to_date),
+      agent: "claude-opus-4-6",
+      summary_text: text,
+      message_count: 10,
+      metadata: metadata
+    })
+    |> Repo.insert!()
+  end
+
+  defp day_start(date),
+    do: DateTime.new!(date, ~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
 
   defp unique_chat_id do
     9_000_000_000 + System.unique_integer([:positive])
