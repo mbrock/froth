@@ -5,6 +5,14 @@ defmodule Froth.Codex.TaskTest do
   alias Froth.Codex.Task, as: CodexTask
   alias Froth.TestSupport.FakeCodexSession
 
+  test "builds mini-app links for the originating bot identity" do
+    assert CodexTask.url("codex_123", "luna") ==
+             "https://t.me/lunaluniebot/tool?startapp=codex_123"
+
+    assert CodexTask.url("codex_123") ==
+             "https://t.me/charliebuddybot/tool?startapp=codex_123"
+  end
+
   test "run/2 creates and starts a tracked Froth task for the Codex session" do
     session_id = "fake-codex-#{System.unique_integer([:positive])}"
 

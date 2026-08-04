@@ -12,13 +12,13 @@ defmodule Froth.Telegram.BotAdapterTest do
   test "a non-Charlie bot does not inherit Charlie fuzzy matching" do
     msg = text_message("hey charle")
 
-    refute BotAdapter.mentioned?(msg, "barblebot", 2, ["luna"])
+    refute BotAdapter.mentioned?(msg, "lunaluniebot", 2, ["luna"])
   end
 
   test "configured Luna names still trigger the bot" do
     msg = text_message("hey Luna")
 
-    assert BotAdapter.mentioned?(msg, "barblebot", 2, ["luna", "lulu"])
+    assert BotAdapter.mentioned?(msg, "lunaluniebot", 2, ["luna", "lulu"])
   end
 
   defp text_message(text) do

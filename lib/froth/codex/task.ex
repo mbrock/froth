@@ -36,9 +36,7 @@ defmodule Froth.Codex.Task do
   alias Span
   alias Froth.Codex.Session, as: CodexSession
   alias Froth.Codex.TaskWatcher
-  alias Froth.Telegram.BotAdapter
-
-  @base_url "https://t.me/charliebuddybot/tool?startapp="
+  alias Froth.Telegram.{Bot, BotAdapter, Charlie, Luna}
 
   @doc """
   Start a Codex task. Returns `{:ok, session_id}`.
@@ -196,7 +194,13 @@ defmodule Froth.Codex.Task do
   end
 
   @doc "Get the LiveView URL for a Codex session."
-  def url(session_id), do: "#{@base_url}#{session_id}"
+  def url(session_id), do: url(session_id, "charlie")
+
+  @doc "Get the bot-specific LiveView URL for a Codex session."
+  def url(session_id, bot_id)
+      when is_binary(session_id) and is_binary(bot_id) do
+    "https://t.me/#{bot_username(bot_id)}/tool?startapp=#{session_id}"
+  end
 
   defp send_micromanage_button(
          bot_id,
@@ -219,7 +223,7 @@ defmodule Froth.Codex.Task do
           "text" => "Micromanage",
           "type" => %{
             "@type" => "inlineKeyboardButtonTypeUrl",
-            "url" => url(session_id)
+            "url" => url(session_id, bot_id || "charlie")
           }
         }
       ]
@@ -233,6 +237,28 @@ defmodule Froth.Codex.Task do
       }
     )
   end
+
+  defp bot_username(bot_id) do
+    case running_bot_username(bot_id) do
+      username when is_binary(username) and username != "" -> username
+      _ -> default_bot_username(bot_id)
+    end
+  end
+
+  defp running_bot_username(bot_id) do
+    case Bot.snapshot(bot_id) do
+      {_pid, %{bot_username: username}} -> username
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp default_bot_username("luna"),
+    do: Luna.default_config().bot_username
+
+  defp default_bot_username(_bot_id),
+    do: Charlie.default_config().bot_username
 
   defp collect_until_done(session_id, session_module, saw_turn?) do
     receive do

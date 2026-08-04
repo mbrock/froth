@@ -9,8 +9,8 @@ defmodule Froth.Telegram.Luna do
   alias Froth.Telegram.Toolsets.Charlie, as: CharlieTools
 
   @default_bot_id "luna"
-  @default_bot_username "barblebot"
-  @default_session_id "agentbot"
+  @default_bot_username "lunaluniebot"
+  @default_session_id "luna"
   @default_model "gpt-5.6-luna"
   @default_max_tokens 65_536
 

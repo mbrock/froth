@@ -96,7 +96,10 @@ defmodule FrothWeb.ToolLive do
           )
 
           socket
-          |> put_flash(:info, "Follow-up queued for Charlie after this run.")
+          |> put_flash(
+            :info,
+            "Follow-up queued for #{bot_display_name(socket.assigns.bot_id)} after this run."
+          )
 
         true ->
           put_flash(
@@ -1082,6 +1085,11 @@ defmodule FrothWeb.ToolLive do
   defp cast_bot(socket, message) do
     Froth.Telegram.Bots.cast(socket.assigns.bot_id || "charlie", message)
   end
+
+  defp bot_display_name(bot_id) when is_binary(bot_id) and bot_id != "",
+    do: String.capitalize(bot_id)
+
+  defp bot_display_name(_bot_id), do: "the bot"
 
   defp agent_event_from_message(%AgentMessage{
          id: id,

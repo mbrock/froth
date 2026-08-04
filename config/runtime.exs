@@ -126,10 +126,10 @@ config :froth, Froth.Telegram.Charlie,
     String.to_integer(System.get_env("CHARLIE_OWNER_USER_ID", "0"))
 
 config :froth, Froth.Telegram.Luna,
-  session_id: System.get_env("LUNA_SESSION_ID", "agentbot"),
-  bot_username: System.get_env("LUNA_BOT_USERNAME", "barblebot"),
+  session_id: System.get_env("LUNA_SESSION_ID", "luna"),
+  bot_username: System.get_env("LUNA_BOT_USERNAME", "lunaluniebot"),
   bot_user_id:
-    String.to_integer(System.get_env("LUNA_BOT_USER_ID", "947429422")),
+    String.to_integer(System.get_env("LUNA_BOT_USER_ID", "8673656438")),
   owner_user_id:
     String.to_integer(System.get_env("LUNA_OWNER_USER_ID", "362441422"))
 

@@ -47,7 +47,9 @@ defmodule Froth.Telegram.BotsTest do
 
     assert config.runtime_module == Luna
     assert config.id == "luna"
-    assert config.session_id == "agentbot"
+    assert config.session_id == "luna"
+    assert config.bot_username == "lunaluniebot"
+    assert config.bot_user_id == 8_673_656_438
     assert config.model == "gpt-5.6-luna"
 
     assert config.system_prompt_fun ==
