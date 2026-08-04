@@ -16,7 +16,10 @@ defmodule Froth.Telegram.ToolExecutionTest do
     session_id =
       start_fake_session(
         request_handler: fn
-          %{"@type" => "parseTextEntities", "text" => "*just* checking"} ->
+          %{
+            "@type" => "parseTextEntities",
+            "text" => "<i>just</i> checking"
+          } ->
             {:ok,
              %{
                "@type" => "formattedText",
@@ -46,10 +49,8 @@ defmodule Froth.Telegram.ToolExecutionTest do
     assert_receive {:telegram_call,
                     %{
                       "@type" => "parseTextEntities",
-                      "parse_mode" => %{
-                        "@type" => "textParseModeMarkdown",
-                        "version" => 2
-                      }
+                      "parse_mode" => %{"@type" => "textParseModeHTML"},
+                      "text" => "<i>just</i> checking"
                     }}
 
     assert_receive {:telegram_call,

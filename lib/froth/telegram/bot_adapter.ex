@@ -506,16 +506,15 @@ defmodule Froth.Telegram.BotAdapter do
 
   defp parse_markdown(session_id, text)
        when is_binary(session_id) and is_binary(text) do
-    session_id
-    |> Froth.Telegram.call(%{
-      "@type" => "parseTextEntities",
-      "text" => text,
-      "parse_mode" => %{
-        "@type" => "textParseModeMarkdown",
-        "version" => 2
-      }
-    })
-    |> normalize_tdlib_result()
+    with {:ok, html} <- Froth.Telegram.Markdown.to_telegram_html(text) do
+      session_id
+      |> Froth.Telegram.call(%{
+        "@type" => "parseTextEntities",
+        "text" => html,
+        "parse_mode" => %{"@type" => "textParseModeHTML"}
+      })
+      |> normalize_tdlib_result()
+    end
   end
 
   defp reply_to_msg(nil), do: nil
