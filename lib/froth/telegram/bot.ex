@@ -1446,9 +1446,7 @@ defmodule Froth.Telegram.Bot do
     text
     |> BotAdapter.split_long_text()
     |> Enum.each(fn chunk ->
-      case BotAdapter.send_message(session_id, chat_id, chunk,
-             reply_to: reply_to
-           ) do
+      case send_markdown_chunk(session_id, chat_id, reply_to, chunk) do
         {:ok, sent} when is_binary(cycle_id) ->
           CycleRuntime.track_sent_message(cycle_id, sent, chunk)
 
@@ -1458,6 +1456,22 @@ defmodule Froth.Telegram.Bot do
     end)
 
     state
+  end
+
+  # Assistant responses are Markdown, not plain text. Parse each chunk through
+  # TDLib so ordinary markup such as `*just*` becomes a Telegram entity. Some
+  # model output is malformed Markdown; retain the old plain-text delivery as
+  # a lossless fallback rather than dropping the response.
+  defp send_markdown_chunk(session_id, chat_id, reply_to, chunk) do
+    case BotAdapter.send_markdown(session_id, chat_id, reply_to, chunk) do
+      {:error, _reason} ->
+        BotAdapter.send_message(session_id, chat_id, chunk,
+          reply_to: reply_to
+        )
+
+      result ->
+        result
+    end
   end
 
   defp send_message_tool_enabled?(bot_config) when is_map(bot_config) do

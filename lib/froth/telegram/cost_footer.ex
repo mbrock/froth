@@ -48,14 +48,16 @@ defmodule Froth.Telegram.CostFooter do
     footer = Keyword.fetch!(opts, :footer)
     reply_to = Keyword.get(opts, :reply_to)
 
-    full_text = append_footer(last_sent_message_text, footer)
+    markdown = String.trim_trailing(last_sent_message_text)
+    full_text = append_footer(markdown, footer)
 
     if String.length(full_text) <= BotAdapter.text_limit() do
-      case BotAdapter.edit_message_text(
+      case BotAdapter.edit_message_markdown(
              session_id,
              chat_id,
              last_sent_message_id,
-             full_text
+             markdown,
+             plain_suffix: "\n\n" <> footer
            ) do
         {:ok, _} ->
           :ok

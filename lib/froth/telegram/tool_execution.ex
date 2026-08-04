@@ -26,9 +26,7 @@ defmodule Froth.Telegram.ToolExecution do
         %ToolUse{name: "send_message", input: %{"text" => text}}
       )
       when is_binary(text) and is_binary(session_id) and is_integer(chat_id) do
-    case BotAdapter.send_message(session_id, chat_id, text,
-           reply_to: reply_to
-         ) do
+    case send_markdown_message(session_id, chat_id, reply_to, text) do
       {:ok, sent} ->
         %{result: {:ok, "sent"}, sent_message: %{sent: sent, text: text}}
 
@@ -95,6 +93,19 @@ defmodule Froth.Telegram.ToolExecution do
 
   def execute(_ctx, _tool_call),
     do: %{result: {:error, "invalid tool execution context"}}
+
+  # Model-authored send_message content may contain Markdown. Prefer TDLib's
+  # parser, but preserve the historical plain-text behavior if the markup is
+  # malformed.
+  defp send_markdown_message(session_id, chat_id, reply_to, text) do
+    case BotAdapter.send_markdown(session_id, chat_id, reply_to, text) do
+      {:error, _reason} ->
+        BotAdapter.send_message(session_id, chat_id, text, reply_to: reply_to)
+
+      result ->
+        result
+    end
+  end
 
   # --- Narration ---
 

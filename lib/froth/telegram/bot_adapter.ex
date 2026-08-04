@@ -265,6 +265,15 @@ defmodule Froth.Telegram.BotAdapter do
              is_binary(text) and is_list(opts) do
     case parse_markdown(session_id, text) do
       {:ok, %{} = formatted_text} ->
+        formatted_text =
+          case opts[:plain_suffix] do
+            suffix when is_binary(suffix) ->
+              Map.update!(formatted_text, "text", &(&1 <> suffix))
+
+            _ ->
+              formatted_text
+          end
+
         edit_formatted_message(
           session_id,
           chat_id,
