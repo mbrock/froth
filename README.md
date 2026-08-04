@@ -49,11 +49,13 @@ bin/dev_full
   the Tailscale cluster
 - `FROTH_DISABLE_CHARLIE=1` so Charlie does not auto-start before its Telegram
   session exists on this machine
+- `FROTH_DISABLE_LUNA=1` and `FROTH_DISABLE_TERRIE=1` so the additional profile
+  bots likewise wait for their local Telegram sessions
 - `FROTH_DAILY_DIGEST_ENABLED=0` so the Charlie-bound digest job stays off on a
   secondary/dev node
 
-Override those env vars if you explicitly want clustered behaviour or Charlie
-auto-start.
+Override those env vars if you explicitly want clustered behaviour or profile
+bot auto-start.
 
 If the machine's short hostname resolves to its Tailscale IP instead of
 loopback, give Froth an explicit local node alias in `.env`:

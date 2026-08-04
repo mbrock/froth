@@ -21,6 +21,12 @@ defmodule Froth.Telegram.BotAdapterTest do
     assert BotAdapter.mentioned?(msg, "lunaluniebot", 2, ["luna", "lulu"])
   end
 
+  test "configured Terrie names trigger the bot" do
+    msg = text_message("hey Terrie")
+
+    assert BotAdapter.mentioned?(msg, "terraterriebot", 3, ["terrie", "terra"])
+  end
+
   defp text_message(text) do
     %{"content" => %{"text" => %{"text" => text, "entities" => []}}}
   end

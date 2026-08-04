@@ -9,6 +9,7 @@ defmodule Froth.Telegram.Profiles.LunaPromptTest do
     assert prompt =~ "You are Luna"
     assert prompt =~ "observant,\nintellectually curious, candid"
     assert prompt =~ "Talk with people, not at them"
+    assert prompt =~ "@lunaluniebot"
     assert prompt =~ "You run on GPT-5.6 Luna"
     assert prompt =~ "family's shared\nchronicle"
     assert prompt =~ "## Native capabilities"

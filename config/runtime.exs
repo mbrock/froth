@@ -133,6 +133,14 @@ config :froth, Froth.Telegram.Luna,
   owner_user_id:
     String.to_integer(System.get_env("LUNA_OWNER_USER_ID", "362441422"))
 
+config :froth, Froth.Telegram.Terrie,
+  session_id: System.get_env("TERRIE_SESSION_ID", "terrie"),
+  bot_username: System.get_env("TERRIE_BOT_USERNAME", "terraterriebot"),
+  bot_user_id:
+    String.to_integer(System.get_env("TERRIE_BOT_USER_ID", "8422061720")),
+  owner_user_id:
+    String.to_integer(System.get_env("TERRIE_OWNER_USER_ID", "362441422"))
+
 # Auto-start the configured profile bots on full nodes. Test env and worker
 # nodes skip this. Each bot can be disabled independently.
 if config_env() != :test and node_role != :worker do
@@ -141,6 +149,9 @@ if config_env() != :test and node_role != :worker do
 
   luna_enabled? =
     System.get_env("FROTH_DISABLE_LUNA") in [nil, "", "0", "false"]
+
+  terrie_enabled? =
+    System.get_env("FROTH_DISABLE_TERRIE") in [nil, "", "0", "false"]
 
   bots =
     []
@@ -154,6 +165,13 @@ if config_env() != :test and node_role != :worker do
     |> then(fn bots ->
       if luna_enabled? do
         bots ++ [%{id: "luna", runtime_module: Froth.Telegram.Luna}]
+      else
+        bots
+      end
+    end)
+    |> then(fn bots ->
+      if terrie_enabled? do
+        bots ++ [%{id: "terrie", runtime_module: Froth.Telegram.Terrie}]
       else
         bots
       end

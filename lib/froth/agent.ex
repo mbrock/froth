@@ -933,6 +933,18 @@ defmodule Froth.Agent do
           %{input: 0.2, output: 1.2, cache_write: 0.25, cache_read: 0.02}
         end
 
+      String.contains?(downcased, "gpt-5.6-terra") ->
+        total_input_tokens =
+          usage_int(usage["input_tokens"]) +
+            usage_int(usage["cache_creation_input_tokens"]) +
+            usage_int(usage["cache_read_input_tokens"])
+
+        if total_input_tokens > 272_000 do
+          %{input: 4.0, output: 18.0, cache_write: 5.0, cache_read: 0.4}
+        else
+          %{input: 2.0, output: 12.0, cache_write: 2.5, cache_read: 0.2}
+        end
+
       String.contains?(downcased, "opus-4-7") ->
         %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
 
