@@ -12,6 +12,8 @@ defmodule Froth.Telegram.BotContext do
   alias Froth.Telegram.BotContextHTML.Context
   alias Froth.Telegram.{Names, Queries, RecentWindow}
 
+  @default_summary_overlap_seconds 3_600
+
   # ── public API ─────────────────────────────────────────────────────
 
   @doc """
@@ -99,7 +101,17 @@ defmodule Froth.Telegram.BotContext do
 
     opts =
       if is_integer(context_floor) do
-        Keyword.put(opts, :context_floor_unix, context_floor)
+        overlap_seconds =
+          opt_non_negative_int(
+            opts[:summary_overlap_seconds],
+            @default_summary_overlap_seconds
+          )
+
+        Keyword.put(
+          opts,
+          :context_floor_unix,
+          max(context_floor - overlap_seconds, 0)
+        )
       else
         opts
       end
@@ -533,6 +545,19 @@ defmodule Froth.Telegram.BotContext do
         nil
     end
   end
+
+  defp opt_non_negative_int(value, _default)
+       when is_integer(value) and value >= 0,
+       do: value
+
+  defp opt_non_negative_int(value, default) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {n, ""} when n >= 0 -> n
+      _ -> default
+    end
+  end
+
+  defp opt_non_negative_int(_value, default), do: default
 
   # ── helpers ───────────────────────────────────────────────────────
 

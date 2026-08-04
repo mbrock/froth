@@ -608,6 +608,57 @@ defmodule Froth.Telegram.BotContextTest do
     end
   end
 
+  test "recent history overlaps the latest summary by one hour" do
+    chat_id = unique_chat_id()
+    session_id = "test-session-#{System.unique_integer([:positive])}"
+    summary_end = 1_700_010_000
+
+    insert_summary(
+      chat_id,
+      summary_end - 86_400,
+      summary_end,
+      "The day so far."
+    )
+
+    insert_telegram_message(
+      session_id,
+      chat_id,
+      301,
+      7,
+      summary_end - 3_601,
+      "outside overlap"
+    )
+
+    insert_telegram_message(
+      session_id,
+      chat_id,
+      302,
+      7,
+      summary_end - 3_600,
+      "inside overlap"
+    )
+
+    insert_telegram_message(
+      session_id,
+      chat_id,
+      303,
+      7,
+      summary_end + 1,
+      "after summary"
+    )
+
+    prompt =
+      BotContext.render_parts(chat_id,
+        telegram_session_id: session_id,
+        daily_summary_limit: 7
+      )
+      |> Enum.join("")
+
+    refute prompt =~ "outside overlap"
+    assert prompt =~ "inside overlap"
+    assert prompt =~ "after summary"
+  end
+
   test "attaches cycle traces to the linked recent message and omits send_message noise" do
     bot_config = bot_config()
     chat_id = unique_chat_id()

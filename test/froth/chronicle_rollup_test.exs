@@ -81,7 +81,7 @@ defmodule Froth.ChronicleRollupTest do
     assert prompt =~ "new daily detail"
   end
 
-  test "raw context begins exactly after the latest narrative boundary" do
+  test "raw context overlaps the latest narrative boundary by one hour" do
     chat_id = unique_chat_id()
     session_id = "rollup-test"
     boundary = day_start(~D[2026-07-29])
@@ -93,7 +93,22 @@ defmodule Froth.ChronicleRollupTest do
       "Closed daily narrative."
     )
 
-    insert_message(session_id, chat_id, 1, boundary - 1, "already summarized")
+    insert_message(
+      session_id,
+      chat_id,
+      0,
+      boundary - 3_601,
+      "older summary detail"
+    )
+
+    insert_message(
+      session_id,
+      chat_id,
+      1,
+      boundary - 1,
+      "recent summary detail"
+    )
+
     insert_message(session_id, chat_id, 2, boundary, "first unfolding turn")
 
     insert_message(
@@ -113,7 +128,8 @@ defmodule Froth.ChronicleRollupTest do
       )
       |> Enum.join("\n")
 
-    refute prompt =~ "already summarized"
+    refute prompt =~ "older summary detail"
+    assert prompt =~ "recent summary detail"
     assert prompt =~ "first unfolding turn"
     assert prompt =~ "second unfolding turn"
   end
