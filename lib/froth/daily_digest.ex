@@ -282,6 +282,7 @@ defmodule Froth.DailyDigest do
       log: false
     )
     |> Enum.filter(&daily_summary?/1)
+    |> Enum.reject(&(get_in(&1.metadata, ["kind"]) == "preliminary_daily"))
     |> Enum.group_by(&summary_date(&1))
     |> Enum.sort_by(&elem(&1, 0), Date)
     |> Enum.map(fn {date, [summary | _]} -> {date, summary} end)

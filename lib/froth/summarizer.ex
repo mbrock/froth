@@ -24,6 +24,7 @@ defmodule Froth.Summarizer do
 
   @model "claude-opus-5"
   @max_tokens 65_536
+  @preliminary_kind "preliminary_daily"
 
   @system_prompt """
   You are writing a narrative daily summary of a Telegram group chat. \
@@ -37,7 +38,7 @@ defmodule Froth.Summarizer do
   One to three paragraphs. No headers, no bullets, no emoji.
   """
 
-  def summarize(chat_id, from_unix, to_unix, _opts \\ [])
+  def summarize(chat_id, from_unix, to_unix, opts \\ [])
       when is_integer(from_unix) and is_integer(to_unix) do
     messages = Queries.fetch_messages(chat_id, from_unix, to_unix)
 
@@ -49,7 +50,15 @@ defmodule Froth.Summarizer do
       max_message_unix = max_message_unix(messages)
       prompt_to_unix = max_message_unix || to_unix
       covered_to_unix = summary_covered_to_unix(max_message_unix, to_unix)
-      prompt = build_prompt(transcript, prior, from_unix, prompt_to_unix)
+
+      prompt =
+        build_prompt(
+          transcript,
+          prior,
+          from_unix,
+          prompt_to_unix,
+          Keyword.get(opts, :preliminary, false)
+        )
 
       config = %Config{
         system: @system_prompt,
@@ -60,7 +69,8 @@ defmodule Froth.Summarizer do
 
       user_msg = Message.user(prompt)
 
-      {cycle, stream} = Agent.run(user_msg, config)
+      agent_run_fun = Keyword.get(opts, :agent_run_fun, &Agent.run/2)
+      {cycle, stream} = agent_run_fun.(user_msg, config)
 
       text =
         stream
@@ -93,7 +103,8 @@ defmodule Froth.Summarizer do
           covered_to_unix,
           text,
           length(messages),
-          cycle.id
+          cycle.id,
+          Keyword.get(opts, :preliminary, false)
         )
       else
         {:error, :no_response}
@@ -101,7 +112,7 @@ defmodule Froth.Summarizer do
     end
   end
 
-  def summarize_day(chat_id, %Date{} = date) do
+  def summarize_day(chat_id, %Date{} = date, opts \\ []) do
     from_unix =
       date |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix()
 
@@ -111,7 +122,38 @@ defmodule Froth.Summarizer do
       |> DateTime.new!(~T[00:00:00], "Etc/UTC")
       |> DateTime.to_unix()
 
-    summarize(chat_id, from_unix, to_unix)
+    summarize(chat_id, from_unix, to_unix, opts)
+  end
+
+  @doc """
+  Refresh today's amendable summary after enough unsummarized context accrues.
+
+  The summary covers the whole UTC day so far, while the threshold is measured
+  only from the end of the previous preliminary summary. This advances the
+  standing-context floor without losing continuity.
+  """
+  def maybe_summarize_preliminary(chat_id, opts \\ [])
+      when is_integer(chat_id) and is_list(opts) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+    threshold = Keyword.get(opts, :char_threshold, 200_000)
+    date = DateTime.to_date(now)
+    day_start = day_start_unix(date)
+    to_unix = DateTime.to_unix(now)
+    existing = preliminary_summary(chat_id, day_start)
+    floor = if existing, do: existing.to_date, else: day_start
+    messages = Queries.fetch_messages(chat_id, floor, to_unix)
+
+    chars =
+      chat_id |> BotContext.render_for_messages(messages) |> String.length()
+
+    if chars >= threshold do
+      summarize(chat_id, day_start, to_unix,
+        preliminary: true,
+        agent_run_fun: Keyword.get(opts, :agent_run_fun, &Agent.run/2)
+      )
+    else
+      {:ok, nil}
+    end
   end
 
   def pending_summary_dates(chat_id, today \\ Date.utc_today()) do
@@ -151,6 +193,12 @@ defmodule Froth.Summarizer do
       from(s in ChatSummary,
         where: s.chat_id == ^chat_id and s.from_date != s.to_date,
         where: fragment("? - ? <= 86400", s.to_date, s.from_date),
+        where:
+          fragment(
+            "COALESCE(?->>'kind', '') != ?",
+            s.metadata,
+            @preliminary_kind
+          ),
         order_by: [desc: s.from_date],
         limit: 1,
         select: s.from_date
@@ -163,7 +211,13 @@ defmodule Froth.Summarizer do
     end
   end
 
-  defp build_prompt(transcript, prior_summaries, from_unix, to_unix) do
+  defp build_prompt(
+         transcript,
+         prior_summaries,
+         from_unix,
+         to_unix,
+         preliminary?
+       ) do
     from_str =
       DateTime.from_unix!(from_unix)
       |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
@@ -192,8 +246,21 @@ defmodule Froth.Summarizer do
         ""
       end
 
+    preliminary_instruction =
+      if preliminary? do
+        """
+        This is a preliminary summary of the current UTC day while it is still
+        in progress. Capture the day so far as a coherent narrative, without
+        implying that its stories or arguments are finished. This summary will
+        be amended as more conversation arrives and finalized after midnight.
+
+        """
+      else
+        ""
+      end
+
     """
-    #{context}Summarize the following chat context from #{from_str} to #{to_str}.
+    #{context}#{preliminary_instruction}Summarize the following chat context from #{from_str} to #{to_str}.
 
     CONTEXT:
     #{transcript}
@@ -215,8 +282,31 @@ defmodule Froth.Summarizer do
     min(to_unix, max_message_unix + 1)
   end
 
-  defp save(chat_id, from_unix, to_unix, text, message_count, cycle_id) do
-    %ChatSummary{}
+  defp save(
+         chat_id,
+         from_unix,
+         to_unix,
+         text,
+         message_count,
+         cycle_id,
+         preliminary?
+       ) do
+    summary = preliminary_summary(chat_id, from_unix) || %ChatSummary{}
+
+    metadata =
+      %{}
+      |> then(fn metadata ->
+        if cycle_id,
+          do: Map.put(metadata, "cycle_id", cycle_id),
+          else: metadata
+      end)
+      |> then(fn metadata ->
+        if preliminary?,
+          do: Map.put(metadata, "kind", @preliminary_kind),
+          else: metadata
+      end)
+
+    summary
     |> ChatSummary.changeset(%{
       chat_id: chat_id,
       from_date: from_unix,
@@ -224,9 +314,27 @@ defmodule Froth.Summarizer do
       agent: @model,
       summary_text: text,
       message_count: message_count,
-      metadata: if(cycle_id, do: %{"cycle_id" => cycle_id}, else: %{}),
+      metadata: metadata,
       inserted_at: DateTime.utc_now() |> DateTime.truncate(:second)
     })
-    |> Repo.insert()
+    |> Repo.insert_or_update()
+  end
+
+  defp preliminary_summary(chat_id, from_unix) do
+    Repo.one(
+      from(s in ChatSummary,
+        where: s.chat_id == ^chat_id and s.from_date == ^from_unix,
+        where: fragment("?->>'kind' = ?", s.metadata, @preliminary_kind),
+        order_by: [desc: s.inserted_at],
+        limit: 1
+      ),
+      log: false
+    )
+  end
+
+  defp day_start_unix(%Date{} = date) do
+    date
+    |> DateTime.new!(~T[00:00:00], "Etc/UTC")
+    |> DateTime.to_unix()
   end
 end

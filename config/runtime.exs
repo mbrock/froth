@@ -113,6 +113,21 @@ config :froth, Froth.DailyDigest,
   digest_dir:
     System.get_env("FROTH_DAILY_DIGEST_DIR", Path.expand("tmp/daily-digests"))
 
+config :froth, Froth.PreliminarySummarizer,
+  enabled:
+    (case System.get_env("FROTH_PRELIMINARY_SUMMARIZER_ENABLED") do
+       nil -> config_env() != :test and node_role != :worker
+       value -> value
+     end),
+  chat_id:
+    System.get_env("FROTH_PRELIMINARY_SUMMARIZER_CHAT_ID", "-1003690254489"),
+  interval_ms:
+    System.get_env("FROTH_PRELIMINARY_SUMMARIZER_INTERVAL_MS", "300000"),
+  startup_delay_ms:
+    System.get_env("FROTH_PRELIMINARY_SUMMARIZER_STARTUP_DELAY_MS", "30000"),
+  char_threshold:
+    System.get_env("FROTH_PRELIMINARY_SUMMARIZER_CHAR_THRESHOLD", "200000")
+
 config :froth, Froth.Analyzer,
   tdlib_session: System.get_env("ANALYZER_TDLIB_SESSION")
 

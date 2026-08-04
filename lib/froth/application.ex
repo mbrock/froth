@@ -81,6 +81,7 @@ defmodule Froth.Application do
           Froth.Telegram,
           Froth.Telegram.Bots,
           Froth.DailyDigest,
+          Froth.PreliminarySummarizer,
           {Registry, keys: :unique, name: Froth.Agent.Registry},
           {Task.Supervisor, name: Froth.Agent.TaskSupervisor},
           {Registry, keys: :unique, name: Froth.Agent.CycleRegistry}

@@ -2,6 +2,7 @@ defmodule Froth.SummarizerTest do
   use ExUnit.Case, async: true
 
   alias Froth.ChatSummary
+  alias Froth.Agent.Message, as: AgentMessage
   alias Froth.Repo
   alias Froth.Summarizer
   alias Froth.Telegram.BotContext
@@ -140,6 +141,84 @@ defmodule Froth.SummarizerTest do
     )
 
     assert Summarizer.pending_summary_dates(chat_id, ~D[2026-03-09]) == []
+  end
+
+  test "preliminary daily summary is amended in place and finalized after midnight" do
+    test_pid = self()
+    chat_id = unique_chat_id()
+    session_id = "test-session-#{System.unique_integer([:positive])}"
+    date = ~D[2026-08-04]
+    day_start = day_start_unix(date)
+
+    ensure_session(session_id)
+
+    insert_summary(
+      chat_id,
+      day_start_unix(Date.add(date, -1)),
+      day_start,
+      "The previous completed day."
+    )
+
+    insert_telegram_message(
+      session_id,
+      chat_id,
+      201,
+      7,
+      day_start + 60,
+      "The day begins noisily."
+    )
+
+    agent_run_fun = fn message, _config ->
+      send(test_pid, {:summary_prompt, AgentMessage.extract_text(message)})
+
+      {%{id: "cycle-#{System.unique_integer([:positive])}"},
+       [{:message, AgentMessage.agent("A provisional account of the day.")}]}
+    end
+
+    assert {:ok, first} =
+             Summarizer.maybe_summarize_preliminary(chat_id,
+               now: DateTime.from_unix!(day_start + 120),
+               char_threshold: 1,
+               agent_run_fun: agent_run_fun
+             )
+
+    assert first.metadata["kind"] == "preliminary_daily"
+    assert_receive {:summary_prompt, first_prompt}
+    assert first_prompt =~ "preliminary summary of the current UTC day"
+
+    insert_telegram_message(
+      session_id,
+      chat_id,
+      202,
+      8,
+      day_start + 180,
+      "The conversation keeps growing."
+    )
+
+    assert {:ok, amended} =
+             Summarizer.maybe_summarize_preliminary(chat_id,
+               now: DateTime.from_unix!(day_start + 240),
+               char_threshold: 1,
+               agent_run_fun: agent_run_fun
+             )
+
+    assert amended.id == first.id
+    assert amended.to_date > first.to_date
+
+    assert Summarizer.pending_summary_dates(chat_id, Date.add(date, 1)) == [
+             date
+           ]
+
+    assert {:ok, final} =
+             Summarizer.summarize_day(chat_id, date,
+               agent_run_fun: agent_run_fun
+             )
+
+    assert final.id == first.id
+    refute Map.has_key?(final.metadata, "kind")
+    assert_receive {:summary_prompt, _amended_prompt}
+    assert_receive {:summary_prompt, final_prompt}
+    refute final_prompt =~ "preliminary summary of the current UTC day"
   end
 
   defp insert_summary(chat_id, from_date, to_date, summary_text) do
