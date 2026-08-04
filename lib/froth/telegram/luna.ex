@@ -26,6 +26,7 @@ defmodule Froth.Telegram.Luna do
       session_id: Keyword.get(cfg, :session_id, @default_session_id),
       model: @default_model,
       max_tokens: @default_max_tokens,
+      effort: "high",
       system_prompt_fun: &LunaPrompt.system_prompt/2,
       name_triggers: ["luna", "lulu"],
       tools_module: CharlieTools,

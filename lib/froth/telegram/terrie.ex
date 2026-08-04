@@ -26,6 +26,7 @@ defmodule Froth.Telegram.Terrie do
       session_id: Keyword.get(cfg, :session_id, @default_session_id),
       model: @default_model,
       max_tokens: @default_max_tokens,
+      effort: "medium",
       system_prompt_fun: &TerriePrompt.system_prompt/2,
       name_triggers: ["terrie", "terra"],
       tools_module: CharlieTools,

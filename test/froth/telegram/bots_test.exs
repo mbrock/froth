@@ -51,6 +51,7 @@ defmodule Froth.Telegram.BotsTest do
     assert config.bot_username == "lunaluniebot"
     assert config.bot_user_id == 8_673_656_438
     assert config.model == "gpt-5.6-luna"
+    assert config.effort == "high"
 
     assert config.system_prompt_fun ==
              (&Froth.Telegram.Profiles.LunaPrompt.system_prompt/2)
@@ -68,6 +69,7 @@ defmodule Froth.Telegram.BotsTest do
     assert config.bot_username == "terraterriebot"
     assert config.bot_user_id == 8_422_061_720
     assert config.model == "gpt-5.6-terra"
+    assert config.effort == "medium"
 
     assert config.system_prompt_fun ==
              (&Froth.Telegram.Profiles.TerriePrompt.system_prompt/2)
