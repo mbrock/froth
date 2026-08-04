@@ -48,7 +48,7 @@ defmodule Froth.Telegram.BotsTest do
     assert config.runtime_module == Luna
     assert config.id == "luna"
     assert config.session_id == "agentbot"
-    assert config.model == "gpt-5.6"
+    assert config.model == "gpt-5.6-luna"
 
     assert config.system_prompt_fun ==
              (&Froth.Telegram.Profiles.LunaPrompt.system_prompt/2)
