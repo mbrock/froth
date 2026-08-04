@@ -3,14 +3,15 @@ defmodule Froth.Telegram.Profiles.LunaPromptTest do
 
   alias Froth.Telegram.Profiles.LunaPrompt
 
-  test "introduces Luna as independent from Charlie" do
+  test "introduces Luna through her own voice and role" do
     prompt = LunaPrompt.system_prompt(123, %{})
 
     assert prompt =~ "You are Luna"
-    assert prompt =~ "You are not\nCharlie"
+    assert prompt =~ "observant,\nintellectually curious, candid"
+    assert prompt =~ "Talk with people, not at them"
     assert prompt =~ "You run on GPT-5.6 Luna"
-    assert prompt =~ "same shared chronicle"
+    assert prompt =~ "family's shared\nchronicle"
     assert prompt =~ "## Native capabilities"
-    refute prompt =~ "You are Charlie"
+    refute prompt =~ "You are not Charlie"
   end
 end

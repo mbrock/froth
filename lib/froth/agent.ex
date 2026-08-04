@@ -160,8 +160,18 @@ defmodule Froth.Agent do
 
   @spec merge_cycle_usage(Cycle.t(), map() | nil) :: Cycle.t()
   def merge_cycle_usage(%Cycle{} = cycle, usage) when is_map(usage) do
-    aggregate = merge_usage_maps(cycle.usage || %{}, stringify_map(usage))
-    cost_usd = estimate_usage_cost_usd(aggregate, cycle.model)
+    usage = stringify_map(usage)
+    aggregate = merge_usage_maps(cycle.usage || %{}, usage)
+
+    cost_usd =
+      case estimate_usage_cost_usd(usage, cycle.model) do
+        increment when is_number(increment) ->
+          (cycle.cost_usd || 0.0) + increment
+
+        nil ->
+          nil
+      end
+
     update_cycle(cycle, %{usage: aggregate, cost_usd: cost_usd})
   end
 
@@ -871,7 +881,7 @@ defmodule Froth.Agent do
 
   defp estimate_usage_cost_usd(usage, model)
        when is_map(usage) and is_binary(model) do
-    case model_pricing_rates(model) do
+    case model_pricing_rates(model, usage) do
       nil ->
         nil
 
@@ -904,12 +914,25 @@ defmodule Froth.Agent do
 
   defp usage_int(_value), do: 0
 
-  # Source-of-truth rates (USD / MTok) from https://claude.com/pricing.
-  # Flat pricing — the 200K-token tier has been retired.
-  defp model_pricing_rates(model) when is_binary(model) do
+  # Source-of-truth rates (USD / MTok):
+  # https://claude.com/pricing and https://developers.openai.com/api/docs/pricing
+  defp model_pricing_rates(model, usage)
+       when is_binary(model) and is_map(usage) do
     downcased = String.downcase(model)
 
     cond do
+      String.contains?(downcased, "gpt-5.6-luna") ->
+        total_input_tokens =
+          usage_int(usage["input_tokens"]) +
+            usage_int(usage["cache_creation_input_tokens"]) +
+            usage_int(usage["cache_read_input_tokens"])
+
+        if total_input_tokens > 272_000 do
+          %{input: 0.4, output: 1.8, cache_write: 0.5, cache_read: 0.04}
+        else
+          %{input: 0.2, output: 1.2, cache_write: 0.25, cache_read: 0.02}
+        end
+
       String.contains?(downcased, "opus-4-7") ->
         %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
 
@@ -927,7 +950,7 @@ defmodule Froth.Agent do
     end
   end
 
-  defp model_pricing_rates(_model), do: nil
+  defp model_pricing_rates(_model, _usage), do: nil
 
   defp describe_control_outcome(%{"outcome" => "yield", "reason" => reason})
        when is_binary(reason) and reason != "" do

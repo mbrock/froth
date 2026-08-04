@@ -35,6 +35,42 @@ defmodule Froth.Agent.WorkerTest do
     :ok
   end
 
+  test "prices GPT-5.6 Luna usage at the documented per-request tiers" do
+    short_cycle = Repo.insert!(%Cycle{model: "gpt-5.6-luna", cost_usd: 0.0})
+
+    short_cycle =
+      Agent.merge_cycle_usage(short_cycle, %{
+        "input_tokens" => 80_000,
+        "output_tokens" => 10_000,
+        "cache_creation_input_tokens" => 4_000,
+        "cache_read_input_tokens" => 6_000
+      })
+
+    assert_in_delta short_cycle.cost_usd, 0.02912, 1.0e-9
+
+    long_cycle = Repo.insert!(%Cycle{model: "gpt-5.6-luna", cost_usd: 0.0})
+
+    long_cycle =
+      Agent.merge_cycle_usage(long_cycle, %{
+        "input_tokens" => 250_000,
+        "output_tokens" => 10_000,
+        "cache_creation_input_tokens" => 10_000,
+        "cache_read_input_tokens" => 20_001
+      })
+
+    assert_in_delta long_cycle.cost_usd, 0.12380004, 1.0e-9
+
+    multi_request_cycle =
+      Repo.insert!(%Cycle{model: "gpt-5.6-luna", cost_usd: 0.0})
+
+    multi_request_cycle =
+      Enum.reduce(1..2, multi_request_cycle, fn _, cycle ->
+        Agent.merge_cycle_usage(cycle, %{"input_tokens" => 200_000})
+      end)
+
+    assert_in_delta multi_request_cycle.cost_usd, 0.08, 1.0e-9
+  end
+
   defmodule TestExecutor do
     use GenServer
 

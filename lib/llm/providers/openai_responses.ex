@@ -181,7 +181,7 @@ defmodule LLM.Providers.OpenAIResponses do
         _store
       )
       when is_map(resp) do
-    usage = Map.get(resp, "usage", %{})
+    usage = normalize_usage(Map.get(resp, "usage", %{}))
 
     edits =
       [
@@ -189,12 +189,7 @@ defmodule LLM.Providers.OpenAIResponses do
           op: :merge,
           resource: ["message"],
           path: ["usage"],
-          value: %{
-            "prompt_tokens" => usage["input_tokens"] || 0,
-            "completion_tokens" => usage["output_tokens"] || 0,
-            "total_tokens" =>
-              (usage["input_tokens"] || 0) + (usage["output_tokens"] || 0)
-          }
+          value: usage
         },
         %Edit{
           op: :set,
@@ -285,6 +280,26 @@ defmodule LLM.Providers.OpenAIResponses do
         []
     end
   end
+
+  defp normalize_usage(usage) when is_map(usage) do
+    input_details = Map.get(usage, "input_tokens_details", %{})
+    total_input_tokens = usage_int(usage["input_tokens"])
+    cache_read_tokens = usage_int(input_details["cached_tokens"])
+    cache_write_tokens = usage_int(input_details["cache_write_tokens"])
+
+    %{
+      "input_tokens" =>
+        max(total_input_tokens - cache_read_tokens - cache_write_tokens, 0),
+      "output_tokens" => usage_int(usage["output_tokens"]),
+      "cache_creation_input_tokens" => cache_write_tokens,
+      "cache_read_input_tokens" => cache_read_tokens
+    }
+  end
+
+  defp normalize_usage(_usage), do: normalize_usage(%{})
+
+  defp usage_int(value) when is_integer(value) and value >= 0, do: value
+  defp usage_int(_value), do: 0
 
   defp reasoning_summary_edits(output) when is_list(output) do
     case extract_reasoning_summary(output) do

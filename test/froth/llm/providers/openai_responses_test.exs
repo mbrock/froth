@@ -153,7 +153,14 @@ defmodule LLM.Providers.OpenAIResponsesTest do
           "response" => %{
             "id" => "resp_123",
             "status" => "completed",
-            "usage" => %{"input_tokens" => 11, "output_tokens" => 7}
+            "usage" => %{
+              "input_tokens" => 11,
+              "input_tokens_details" => %{
+                "cached_tokens" => 3,
+                "cache_write_tokens" => 2
+              },
+              "output_tokens" => 7
+            }
           }
         },
         store
@@ -171,9 +178,10 @@ defmodule LLM.Providers.OpenAIResponsesTest do
     assert result.stop_reason == "end_turn"
 
     assert result.usage == %{
-             "prompt_tokens" => 11,
-             "completion_tokens" => 7,
-             "total_tokens" => 18
+             "input_tokens" => 6,
+             "output_tokens" => 7,
+             "cache_creation_input_tokens" => 2,
+             "cache_read_input_tokens" => 3
            }
   end
 
