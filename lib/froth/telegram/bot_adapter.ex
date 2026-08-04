@@ -90,7 +90,12 @@ defmodule Froth.Telegram.BotAdapter do
 
     mentioned?(msg, bot_username, bot_user_id) or
       name_triggered?(msg, name_triggers) or
-      fuzzy_name_match?(text, "charlie", 2)
+      (charlie_trigger?(name_triggers) and
+         fuzzy_name_match?(text, "charlie", 2))
+  end
+
+  defp charlie_trigger?(name_triggers) when is_list(name_triggers) do
+    Enum.any?(name_triggers, &(String.downcase(&1) == "charlie"))
   end
 
   defp name_triggered?(msg, triggers) when is_list(triggers) do

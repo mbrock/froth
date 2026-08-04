@@ -1,7 +1,7 @@
 defmodule Froth.Telegram.BotsTest do
   use ExUnit.Case, async: true
 
-  alias Froth.Telegram.{Bots, Charlie}
+  alias Froth.Telegram.{Bots, Charlie, Luna}
 
   defmodule DummyBot do
     use GenServer
@@ -40,6 +40,21 @@ defmodule Froth.Telegram.BotsTest do
              Charlie.default_config().tools_module.specs_for_api(),
              &(&1["name"] == "send_message")
            )
+  end
+
+  test "Luna has an independent GPT profile with Charlie's toolset" do
+    config = Luna.default_config()
+
+    assert config.runtime_module == Luna
+    assert config.id == "luna"
+    assert config.session_id == "agentbot"
+    assert config.model == "gpt-5.6"
+
+    assert config.system_prompt_fun ==
+             (&Froth.Telegram.Profiles.LunaPrompt.system_prompt/2)
+
+    assert config.tools_module == Froth.Telegram.Toolsets.Charlie
+    assert "luna" in config.name_triggers
   end
 
   test "start_bot honors the configured runtime module" do

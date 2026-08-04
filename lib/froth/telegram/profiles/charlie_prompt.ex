@@ -43,6 +43,11 @@ defmodule Froth.Telegram.Profiles.CharliePrompt do
   actions and ask when the intended impact is unclear.
   """
 
+  @doc """
+  Shared description of Froth's native capabilities for profile prompts.
+  """
+  def native_capabilities_prompt, do: @capabilities_prompt
+
   def system_prompt(_chat_id, _config) do
     base_prompt =
       @prompt_paths
