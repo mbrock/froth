@@ -1428,6 +1428,9 @@ defmodule FrothWeb.TimelineLive do
   defp normalize_body(body) when is_binary(body),
     do: String.trim_trailing(body)
 
+  defp normalize_body(body),
+    do: inspect(body, pretty: true, limit: 100, printable_limit: 5_000)
+
   defp kv_footer(attrs, key, fun) do
     case Keyword.get(attrs, key) do
       nil -> nil

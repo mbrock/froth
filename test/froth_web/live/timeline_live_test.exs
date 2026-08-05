@@ -100,6 +100,59 @@ defmodule FrothWeb.TimelineLiveTest do
     assert highlight_count == 4
   end
 
+  test "renders structured elixir eval block bodies", %{conn: conn} do
+    session_id = "charlie"
+    chat_id = unique_chat_id()
+    sender_id = 700_000_000 + System.unique_integer([:positive])
+
+    ensure_session(session_id)
+    ensure_username(sender_id, "Alice", session_id)
+    now = DateTime.utc_now() |> DateTime.to_unix()
+
+    insert_telegram_message(
+      session_id,
+      chat_id,
+      1_101,
+      sender_id,
+      now,
+      "eval"
+    )
+
+    cycle = Repo.insert!(%Cycle{})
+
+    Repo.insert!(%CycleLink{
+      cycle_id: cycle.id,
+      bot_id: "charlie",
+      chat_id: chat_id,
+      reply_to: 1_101
+    })
+
+    Agent.append_event(
+      cycle,
+      %{
+        kind: "tool.completed",
+        tool_use_id: "toolu_eval_map",
+        data: %{
+          "cycle_id" => cycle.id,
+          "tool_name" => "elixir_eval",
+          "tool_use_id" => "toolu_eval_map",
+          "input" => %{"code" => "%{}"},
+          "result_type" => "blocks",
+          "result" => %{
+            "blocks" => [
+              Block.to_map(Block.new([kind: "value"], %{}))
+            ]
+          }
+        }
+      },
+      1
+    )
+
+    {:ok, view, _html} = live(conn, ~p"/froth/timeline?chat_id=#{chat_id}")
+
+    assert has_element?(view, "#c-#{cycle.id}", "%{}")
+  end
+
   test "renders an uncaptioned Telegram photo instead of an empty message", %{
     conn: conn
   } do
