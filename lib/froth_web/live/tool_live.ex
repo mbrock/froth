@@ -30,6 +30,7 @@ defmodule FrothWeb.ToolLive do
       |> assign(:loop_topic, nil)
       |> assign(:loop_status, :loading)
       |> assign(:agent_events, [])
+      |> assign(:cycle_trace_rows, [])
       |> assign(:live_thinking, "")
       |> assign(:live_text, "")
       |> assign(:live_io, "")
@@ -650,8 +651,11 @@ defmodule FrothWeb.ToolLive do
       end)
 
     cards =
-      Enum.reduce(state.tool_order, state.cards, fn key, acc ->
+      state.tool_order
+      |> Enum.with_index()
+      |> Enum.reduce(state.cards, fn {key, index}, acc ->
         card = Map.get(acc, key, %{})
+        trace_row = Enum.at(assigns.cycle_trace_rows || [], index)
         active = key == active_key
 
         io_output =
@@ -687,7 +691,8 @@ defmodule FrothWeb.ToolLive do
             future: false,
             io_output: io_output,
             result: result,
-            is_error: is_error
+            is_error: is_error,
+            trace_result: trace_row && trace_row[:result]
         })
       end)
 
@@ -730,6 +735,7 @@ defmodule FrothWeb.ToolLive do
       future: false,
       io_output: "",
       result: "",
+      trace_result: nil,
       is_error: false
     }
 
@@ -851,9 +857,11 @@ defmodule FrothWeb.ToolLive do
       _cycle ->
         cycle_link = load_cycle_link(cycle_id)
         events = load_agent_cycle_events(cycle_id, cycle_link)
+        trace_rows = load_cycle_trace_rows(cycle_id)
 
         socket
         |> assign(:agent_events, events)
+        |> assign(:cycle_trace_rows, trace_rows)
         |> assign(:chat_id, cycle_link && cycle_link.chat_id)
         |> assign(:reply_to, cycle_link && cycle_link.reply_to)
         |> assign(
@@ -877,6 +885,7 @@ defmodule FrothWeb.ToolLive do
     |> assign(:bot_id, "charlie")
     |> assign(:loop_status, status)
     |> assign(:agent_events, [])
+    |> assign(:cycle_trace_rows, [])
     |> assign(:live_thinking, "")
     |> assign(:live_text, "")
     |> assign(:live_io, "")
@@ -929,12 +938,14 @@ defmodule FrothWeb.ToolLive do
       _cycle ->
         cycle_link = load_cycle_link(cycle_id)
         events = load_agent_cycle_events(cycle_id, cycle_link)
+        trace_rows = load_cycle_trace_rows(cycle_id)
         resolved_bot_id = (cycle_link && cycle_link.bot_id) || bot_id
 
         socket
         |> assign(:cycle_id, cycle_id)
         |> assign(:bot_id, resolved_bot_id)
         |> assign(:agent_events, events)
+        |> assign(:cycle_trace_rows, trace_rows)
         |> assign(:live_thinking, "")
         |> assign(:live_text, "")
         |> assign(:live_io, "")
@@ -957,6 +968,15 @@ defmodule FrothWeb.ToolLive do
   end
 
   defp load_agent_cycle_events(_, _), do: []
+
+  defp load_cycle_trace_rows(cycle_id) when is_binary(cycle_id) do
+    cycle_id
+    |> then(&Agent.cycle_traces([&1]))
+    |> Map.get(cycle_id, [])
+    |> WorkTimeline.summarize_cycle()
+  end
+
+  defp load_cycle_trace_rows(_), do: []
 
   defp hide_injected_context(events, %CycleLink{}) when is_list(events) do
     {events, _hidden?} =
@@ -1338,7 +1358,7 @@ defmodule FrothWeb.ToolLive do
       |> Enum.reject(&is_nil/1)
       |> Enum.join("\n\n")
 
-    result =
+    legacy_result =
       cond do
         output == "" -> nil
         tool_failure?(item) -> {:error, output}
@@ -1350,7 +1370,7 @@ defmodule FrothWeb.ToolLive do
       tool: item.name,
       narration: item.narration,
       input: item.input || %{},
-      result: result,
+      result: item.trace_result || legacy_result,
       result_summary: tool_timeline_result_summary(item)
     }
   end
