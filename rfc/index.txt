@@ -20,5 +20,6 @@ FROTH RFCs
 0019  Chronological Prompt Context and Structured Cycle Trace Memory PARTIAL 2026-03-28
 0020  Durable Runtime Facts and an Analytics Mirror PARTIAL   2026-03-28
 0021  Cycles as Processes, Subagents as Child Cycles PARTIAL  2026-04-16
+0022  Froth as a Social Agent Network             DRAFT       2026-08-05
 
 PART-SUP means partially superseded: the implementation remains current, but part of the design was replaced.

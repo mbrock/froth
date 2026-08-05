@@ -1,0 +1,235 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/rfc/rfc.xsl"?>
+<rfc number="0022" xmlns="https://froth.1.foo/rfc">
+  <meta>
+    <title>FROTH-RFC-0022: Froth as a Social Agent Network</title>
+    <status>DRAFT</status>
+    <author>Mikael Brockman and Codex</author>
+    <date>2026-08-05</date>
+    <related>FROTH-RFC-0004, FROTH-RFC-0005, FROTH-RFC-0008, FROTH-RFC-0015, FROTH-RFC-0017, FROTH-RFC-0019, FROTH-RFC-0021</related>
+    <classification>Exploratory architecture — social agent coordination, surface independence, activity streams, and provenance.</classification>
+    <research>Drafted as a durable record of an exploratory design conversation after unifying the TimelineLive and ToolLive presentation surfaces. Informed by the W3C ActivityStreams 2.0, ActivityPub, and PROV-O recommendations, but not yet by an implementation experiment.</research>
+  </meta>
+
+  <section title="Invitation" id="invitation">
+    <p>This is a request for comments in the older, useful sense: an attempt to give a promising idea a durable shape before the system has committed to one implementation. It proposes a direction and a vocabulary. It does not claim that the object model, storage design, protocol boundaries, or user interface have been settled.</p>
+    <p>The motivating intuition is that an agent harness is already a kind of chat application, but a collection of agents, humans, tasks, conversations, projects, and artifacts increasingly resembles a social network. Froth should explore that resemblance directly.</p>
+  </section>
+
+  <section title="Starting Point" id="starting-point">
+    <p>Froth is currently easiest to enter through Telegram. Telegram provides an identity, a conversation history, an addressing convention, and a delivery surface. The agent runtime then supplies cycles, tools, tasks, structured results, steering, stopping, and live progress.</p>
+    <p>The recent convergence of the full chat timeline and the focused tool mini-app makes a different shape visible. The timeline is capable of presenting human messages, agent messages, shell work, Elixir evaluation, tasks, and artifacts as one continuous history. ToolLive presents the same work with tighter controls. Neither capability is inherently Telegram-specific.</p>
+    <p>At the same time, modern coding harnesses demonstrate the value of many isolated conversations and workspaces proceeding concurrently. Isolation protects attention, but it also makes coordination a human responsibility. Subagents are usually modelled as children that report upward to a parent. That is useful, but it is not the only possible relationship between agents.</p>
+  </section>
+
+  <section title="Thesis" id="thesis">
+    <p>Froth should be able to operate as a web-native agent harness with no Telegram configuration at all. Telegram should become one surface adapter into a more general network of actors, conversations, tasks, activities, and artifacts.</p>
+    <p>The network should preserve focused, disjoint work while permitting explicit lateral coordination. Agents should not need to inhabit one giant shared conversation. They should be able to publish work, follow projects, receive mentions, accept handoffs, review artifacts, and discover relevant activity through controlled projections.</p>
+    <p>ActivityStreams supplies a promising social grammar for this network. PROV-O supplies a complementary causal grammar. Froth's cycle runtime remains the execution substrate beneath both.</p>
+  </section>
+
+  <section title="A Provisional Object Model" id="object-model">
+    <p>The following objects are useful enough to discuss even though their exact schema remains open.</p>
+    <deflist>
+      <def><term>Actor</term><desc>A human, agent identity, service, team, or project identity capable of producing and receiving activities.</desc></def>
+      <def><term>Space or project</term><desc>A durable scope for repositories, worktrees, documents, policies, credentials, tasks, conversations, and membership.</desc></def>
+      <def><term>Conversation</term><desc>A social thread among actors. It may be native to Froth or projected to and from an external surface such as Telegram.</desc></def>
+      <def><term>Task</term><desc>A durable unit of desired work with status, ownership, dependencies, artifacts, and a history that is not reducible to chat text.</desc></def>
+      <def><term>Cycle</term><desc>One bounded execution episode by an agent. A cycle may be caused by a message, a task assignment, a scheduled activity, or another agent.</desc></def>
+      <def><term>Artifact</term><desc>A patch, commit, report, file, image, deployment, dataset, review, or other durable product of work.</desc></def>
+      <def><term>Surface</term><desc>A delivery and interaction adapter such as Froth Web, Telegram, a desktop wrapper, or a future federated server.</desc></def>
+      <def><term>Subscription</term><desc>An actor's declared interest in a project, conversation, task, artifact, or another actor, including the desired level of interruption.</desc></def>
+    </deflist>
+    <p>Projects and worktrees should be resource scopes, not merely labels on conversations. A task may name a repository and worktree; a cycle uses a particular revision of those resources; artifacts retain that relationship after the conversation has moved on.</p>
+  </section>
+
+  <section title="ActivityStreams as the Social Grammar" id="activitystreams">
+    <p>ActivityStreams models actors performing activities upon objects, with collections and addressing. That vocabulary maps naturally onto agent coordination without requiring every interaction to be represented as a chat message.</p>
+    <code>Human creates Task
+Planner updates Task with Plan
+Planner offers Task to Implementer
+Implementer accepts Task
+Implementer creates Patch
+Implementer announces completion to Project
+Critic creates Review about Patch
+Human accepts Result</code>
+    <p>These activities can appear in different projections. A conversation may render some of them inline. A task page may render the task's complete activity history. An actor profile may expose an outbox. A project feed may collect activities addressed to the project. A notification view may show only activities that require attention.</p>
+    <p>The communicative activity is not necessarily the underlying work. “Charlie created Patch 42” is a social statement suitable for an inbox or feed. The cycle that produced Patch 42 is a longer-running execution with inputs, outputs, and causal history.</p>
+  </section>
+
+  <section title="PROV-O as the Causal Grammar" id="provenance">
+    <p>PROV-O distinguishes entities, activities, and agents. This also maps naturally onto Froth, but at a different semantic layer.</p>
+    <list type="bullet">
+      <item><p>A human, agent identity, model runtime, or service is a <tt>prov:Agent</tt>.</p></item>
+      <item><p>A cycle, task attempt, tool execution, review, or deployment is a <tt>prov:Activity</tt>.</p></item>
+      <item><p>A prompt, context snapshot, task revision, message, file, commit, patch, tool result, plan, review, or report is a <tt>prov:Entity</tt>.</p></item>
+    </list>
+    <code>Cycle-91 wasAssociatedWith Charlie
+Cycle-91 used TaskRevision-7
+Cycle-91 used ContextSnapshot-12
+Cycle-91 used Commit-abc
+Cycle-91 generated Patch-42
+Patch-42 wasAttributedTo Charlie
+Patch-42 wasDerivedFrom Commit-abc
+Charlie actedOnBehalfOf Mikael</code>
+    <p>This graph can answer questions that a transcript alone answers poorly: which repository state produced a patch, which context and tool outputs supported a claim, whether an artifact was reviewed, what changed after review, and which downstream work depends on a result later found to be wrong.</p>
+    <p>Mutable conceptual objects should have immutable revisions as provenance entities. “The task” may remain a stable identity, but the task state actually seen by a cycle must be a particular revision. The same principle applies to plans, documents, configurations, and context projections.</p>
+  </section>
+
+  <section title="Two Meanings of Activity" id="two-activities">
+    <p>ActivityStreams and PROV both use the word “Activity,” but they should not be collapsed casually.</p>
+    <p>An ActivityStreams activity is a communicative description of an action: an actor created, offered, accepted, announced, followed, or updated an object. It circulates socially and is addressed to audiences.</p>
+    <p>A PROV activity is the process through which entities came to exist or change. It has duration, uses inputs, generates outputs, and is associated with agents.</p>
+    <p>The ActivityStreams activity should normally link to the relevant provenance rather than attempting to contain it. A <tt>Create</tt> event concerning a patch can link to the cycle that generated the patch and the commit from which it was derived.</p>
+  </section>
+
+  <section title="Inboxes Are Not Context Windows" id="attention">
+    <p>The central systems problem is attention, not merely delivery. Receiving an activity must not imply injecting it immediately into a model's active context.</p>
+    <code>activity delivered
+        ↓
+durable inbox records it
+        ↓
+attention policy chooses
+ignore · badge · summarize · wake
+        ↓
+context projection selects relevant evidence
+        ↓
+agent cycle begins</code>
+    <p>An actor may follow a project without waking for every event. A critic may subscribe only to completed patches. An implementer may be interrupted by a direct mention but receive routine project activity in a digest. A human may watch everything in the interface without causing any agent inference.</p>
+    <p>This separation is also the primary defense against agent chatter, feedback loops, accidental mention storms, and runaway cost. Addressing, delivery, notification, wakeup, and context inclusion are distinct decisions.</p>
+  </section>
+
+  <section title="Surface Independence" id="surface-independence">
+    <p>A cycle should not require a Telegram cycle link. It should have an origin and one or more optional delivery surfaces with declared capabilities.</p>
+    <p>A native Froth Web surface may support rich blocks, streaming updates, attachments, steering, branching, and artifact inspection. Telegram may support messages, replies, keyboards, edits, and media. A future desktop client may wrap the native web surface while adding filesystem integration. Surface adapters translate network activities and presentation blocks without defining the core objects.</p>
+    <p>The tool currently named <tt>send_message</tt> illustrates the required change. At the agent boundary, its durable meaning should be closer to “publish or deliver this communication to the current audience.” Telegram delivery is one adapter implementation, not the semantic definition of the tool.</p>
+  </section>
+
+  <section title="Execution Log, Social Stream, and Provenance Graph" id="three-layers">
+    <p>Froth should not turn every token delta or shell byte into a social activity or provenance entity. Three layers serve different resolutions.</p>
+    <list type="bullet">
+      <item><p><strong>Execution log.</strong> <tt>cycle_items</tt> preserves the exact ordered runtime history: messages, tool calls, tool results, control outcomes, and streaming-relevant state.</p></item>
+      <item><p><strong>Social stream.</strong> ActivityStreams-shaped events record meaningful circulation: a task was offered, an artifact was published, a review was requested, an agent became blocked.</p></item>
+      <item><p><strong>Provenance graph.</strong> PROV-shaped relations preserve durable causal edges among meaningful agents, activities, and versioned entities.</p></item>
+    </list>
+    <p>Semantic activities and provenance relations should link back to exact cycle items when deeper evidence is needed. The semantic layer remains calm and legible without losing the underlying truth.</p>
+  </section>
+
+  <section title="Multi-Agent Coordination" id="coordination">
+    <p>Planner, implementer, and critic roles need not be invisible nested calls. They can be actors participating in a shared project while retaining separate conversations and context windows.</p>
+    <p>A planner can create a plan entity and offer a task. An implementer can accept the task, work in a scoped worktree, and publish a patch. A critic can subscribe to patch completion or be mentioned explicitly, then create a review derived from the patch. Each activity remains visible and attributable without forcing all three agents to share one transcript.</p>
+    <p>Hierarchical child cycles remain valuable for tightly bounded delegation and lifecycle control. The social model supplements rather than abolishes that structure. Some work is a child process; some work is a lateral handoff; some agents are persistent participants whose relationship outlives any one parent cycle.</p>
+  </section>
+
+  <section title="User Interface Projections" id="ui">
+    <p>The same underlying graph should admit several humane projections.</p>
+    <list type="bullet">
+      <item><p><strong>Conversation view:</strong> messages and socially relevant activities in conversational order.</p></item>
+      <item><p><strong>Live work view:</strong> the focused tool timeline for one running cycle, with stop and steering controls.</p></item>
+      <item><p><strong>Task view:</strong> ownership, dependencies, status, related conversations, cycles, artifacts, reviews, and provenance.</p></item>
+      <item><p><strong>Project feed:</strong> meaningful activity across otherwise isolated conversations and tasks.</p></item>
+      <item><p><strong>Inbox:</strong> direct mentions, offers, review requests, failures, and digestible subscriptions.</p></item>
+      <item><p><strong>Actor view:</strong> identity, capabilities, memberships, current commitments, and an attributable activity history.</p></item>
+      <item><p><strong>Artifact view:</strong> the artifact itself together with generation, derivation, review, and deployment provenance.</p></item>
+    </list>
+    <p>The existing TimelineLive and ToolLive are early examples of two projections over overlapping evidence. Their convergence is not merely a styling refactor; it suggests that a shared semantic substrate can support different levels of focus.</p>
+  </section>
+
+  <section title="ActivityPub and Federation" id="federation">
+    <p>Full ActivityPub federation is not required to gain value from this model. A sensible progression is:</p>
+    <list type="numbered">
+      <item><p>Adopt an ActivityStreams-shaped internal domain vocabulary with stable identifiers.</p></item>
+      <item><p>Build Froth-native inboxes, outboxes, audiences, subscriptions, attention policies, and context projection.</p></item>
+      <item><p>Only then evaluate ActivityPub client-to-server or server-to-server interoperability.</p></item>
+    </list>
+    <p>Federation introduces remote identity, authentication, signed delivery, trust, moderation, data retention, and capability questions that should not be smuggled into the first experiment. Designing stable IRIs and JSON-LD-compatible objects now can preserve the option without committing Froth to becoming a public federated server.</p>
+  </section>
+
+  <section title="Design Principles" id="principles">
+    <list type="bullet">
+      <item><p>Telegram is an adapter, not the substrate.</p></item>
+      <item><p>Publishing is not delivery; delivery is not notification; notification is not wakeup; wakeup is not context inclusion.</p></item>
+      <item><p>Conversations, tasks, cycles, and artifacts are related but not interchangeable.</p></item>
+      <item><p>Execution evidence remains exact even when semantic projections are compact.</p></item>
+      <item><p>Mutable objects expose immutable revisions to provenance-sensitive activities.</p></item>
+      <item><p>Every meaningful artifact can explain who produced it, through which activity, from which inputs, under whose authority.</p></item>
+      <item><p>Agents coordinate through explicit addressing and subscriptions, not ambient omniscience.</p></item>
+      <item><p>Focused work remains isolated by default; relationships between silos are visible and inspectable.</p></item>
+    </list>
+  </section>
+
+  <section title="Possible First Experiments" id="experiments">
+    <p>This RFC does not prescribe an implementation sequence, but several experiments could test the model without requiring a grand migration.</p>
+    <list type="numbered">
+      <item><p>Create a native web conversation that can start and steer cycles without a Telegram session, while reusing the existing timeline and tool presentation.</p></item>
+      <item><p>Introduce a minimal surface-neutral origin for cycles and make Telegram cycle links optional projections.</p></item>
+      <item><p>Represent one durable task, one assignment or offer, and one generated artifact using ActivityStreams-shaped maps with stable IDs.</p></item>
+      <item><p>Record a small provenance subgraph for a coding cycle: task revision, repository commit, agent identity, cycle, and generated patch.</p></item>
+      <item><p>Add an inbox that records delivery independently of agent wakeup, then implement one explicit attention policy such as “wake on direct mention only.”</p></item>
+      <item><p>Render the same activity in a conversation, task page, actor outbox, and project feed to learn which semantics survive projection.</p></item>
+    </list>
+  </section>
+
+  <section title="Open Questions" id="open-questions">
+    <list type="bullet">
+      <item><p>Is a project itself an actor, a collection, an organization, or some combination?</p></item>
+      <item><p>Which objects require globally stable IRIs from the beginning?</p></item>
+      <item><p>Should conversations own cycles, or should both relate independently to tasks and activities?</p></item>
+      <item><p>How are repository access, worktree ownership, credentials, and tool capabilities delegated and revoked?</p></item>
+      <item><p>Which activities are immutable records, and which may be updated or retracted?</p></item>
+      <item><p>How should summaries and digests preserve links to exact source activities and cycle items?</p></item>
+      <item><p>What prevents two agents from recursively waking one another through mentions or subscriptions?</p></item>
+      <item><p>When is a subagent best represented as a child cycle, and when should it be a persistent independent actor accepting a task?</p></item>
+      <item><p>How much of PROV-O should be adopted directly, and where does Froth need a narrower application profile?</p></item>
+      <item><p>Should ActivityStreams and provenance be persisted as JSON-LD, relational projections, RDF, or several synchronized representations?</p></item>
+      <item><p>What privacy and retention rules apply when an activity links across projects, surfaces, or installations?</p></item>
+    </list>
+  </section>
+
+  <section title="Non-Goals" id="non-goals">
+    <list type="bullet">
+      <item><p>This RFC does not propose replacing <tt>cycle_items</tt> with RDF or ActivityStreams.</p></item>
+      <item><p>This RFC does not require ActivityPub federation.</p></item>
+      <item><p>This RFC does not specify a complete ontology, database schema, or API.</p></item>
+      <item><p>This RFC does not require Electron or any particular desktop technology.</p></item>
+      <item><p>This RFC does not require every agent to be persistent, autonomous, or socially visible.</p></item>
+      <item><p>This RFC does not treat anthropomorphic conversation as a substitute for explicit task, capability, and provenance semantics.</p></item>
+    </list>
+  </section>
+
+  <section title="Relationship to Existing RFCs" id="relationships">
+    <p><rfc-ref number="0015"/> remains the canonical ordered execution history. This RFC adds semantic projections over that history rather than replacing it.</p>
+    <p><rfc-ref number="0021"/> describes cycles as supervised processes and subagents as child cycles. This RFC broadens the coordination model to include persistent actors and lateral social relationships while preserving child cycles where lifecycle hierarchy is appropriate.</p>
+    <p><rfc-ref number="0005"/> and <rfc-ref number="0019"/> establish the importance of legible execution timelines and structured cycle traces. This RFC treats those views as projections that can become independent of Telegram.</p>
+    <p><rfc-ref number="0017"/> explores a broader relational and ontological core. This RFC is narrower and more application-shaped: ActivityStreams for circulation, PROV-O for provenance, and Froth-native execution semantics underneath.</p>
+  </section>
+
+  <section title="Conclusion" id="conclusion">
+    <p>Froth may be more interesting as a network than as a bot harness. Humans, agents, conversations, tasks, cycles, tools, and artifacts already form a world of social actions and causal relationships. Telegram made that world accessible, but it need not define its boundaries.</p>
+    <p>The proposed direction is to preserve focused work while making relationships explicit: ActivityStreams for circulation and attention, PROV-O for causality and accountability, <tt>cycle_items</tt> for exact execution evidence, and shared timeline projections for human understanding.</p>
+    <p>The next useful step is not to settle the ontology. It is to build one small web-native path through the model and discover which distinctions remain useful when they encounter real work.</p>
+  </section>
+
+  <references>
+    <ref id="activitystreams-core">
+      <title>Activity Streams 2.0</title>
+      <url>https://www.w3.org/TR/activitystreams-core/</url>
+      <note>W3C Recommendation defining the JSON-based syntax and core model for activities.</note>
+    </ref>
+    <ref id="activitystreams-vocabulary">
+      <title>Activity Vocabulary</title>
+      <url>https://www.w3.org/TR/activitystreams-vocabulary/</url>
+      <note>W3C Recommendation defining ActivityStreams object and activity types and properties.</note>
+    </ref>
+    <ref id="activitypub">
+      <title>ActivityPub</title>
+      <url>https://www.w3.org/TR/activitypub/</url>
+      <note>W3C Recommendation for client-to-server and federated server-to-server activity delivery.</note>
+    </ref>
+    <ref id="prov-o">
+      <title>PROV-O: The PROV Ontology</title>
+      <url>https://www.w3.org/TR/prov-o/</url>
+      <note>W3C Recommendation defining provenance concepts and relations among entities, activities, and agents.</note>
+    </ref>
+  </references>
+</rfc>
