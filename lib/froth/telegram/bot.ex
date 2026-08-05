@@ -41,6 +41,7 @@ defmodule Froth.Telegram.Bot do
     :bot_config,
     :cycle_state,
     :runtime_ref,
+    :trigger_not_before,
     debounce_timer: nil,
     debounce_msg: nil,
     pending_messages: :queue.new(),
@@ -100,6 +101,11 @@ defmodule Froth.Telegram.Bot do
     bot_config = BotConfig.build(opts)
     runtime_ref = Keyword.fetch!(opts, :runtime_ref)
 
+    trigger_not_before =
+      Keyword.get_lazy(opts, :trigger_not_before, fn ->
+        System.system_time(:second)
+      end)
+
     Repo.allow(
       Froth.Telegram.Session.via(bot_config.session_id),
       "telegram bot"
@@ -117,7 +123,12 @@ defmodule Froth.Telegram.Bot do
       }
     )
 
-    {:ok, %__MODULE__{bot_config: bot_config, runtime_ref: runtime_ref}}
+    {:ok,
+     %__MODULE__{
+       bot_config: bot_config,
+       runtime_ref: runtime_ref,
+       trigger_not_before: trigger_not_before
+     }}
   end
 
   @impl true
@@ -154,7 +165,7 @@ defmodule Froth.Telegram.Bot do
 
   def handle_info({:telegram_update, update}, state) do
     bc = state.bot_config
-    action = route_update(update, bc)
+    action = route_update(update, bc, state.trigger_not_before)
 
     Span.execute(
       [:froth, :telegram, :bot, :update],
@@ -362,10 +373,28 @@ defmodule Froth.Telegram.Bot do
   end
 
   defp dispatch_update_action(state, :ignore), do: state
+  defp dispatch_update_action(state, :ignore_before_start), do: state
+
+  # TDLib delivers messages accumulated while Froth was offline as
+  # updateNewMessage events after reconnecting. Keep those events available to
+  # the independent sync subscriber, but never turn a pre-start message into a
+  # bot action.
+  defp route_update(
+         %{
+           "@type" => "updateNewMessage",
+           "message" => %{"date" => message_date}
+         },
+         _bot_config,
+         trigger_not_before
+       )
+       when is_integer(message_date) and is_integer(trigger_not_before) and
+              message_date < trigger_not_before,
+       do: :ignore_before_start
 
   defp route_update(
          %{"@type" => "updateNewMessage", "message" => msg},
-         bot_config
+         bot_config,
+         _trigger_not_before
        )
        when is_map(msg) do
     sender = TgMessage.sender_user_id(msg)
@@ -440,12 +469,13 @@ defmodule Froth.Telegram.Bot do
 
   defp route_update(
          %{"@type" => "updateNewCallbackQuery"} = query,
-         bot_config
+         bot_config,
+         _trigger_not_before
        ) do
     route_callback_query(query, bot_config)
   end
 
-  defp route_update(_, _), do: :ignore
+  defp route_update(_, _, _), do: :ignore
 
   defp route_callback_query(query, bot_config) do
     query_id = query["id"]

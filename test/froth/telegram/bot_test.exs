@@ -23,6 +23,37 @@ defmodule Froth.Telegram.BotTest do
     refute_receive {:DOWN, ^ref, :process, ^bot, _reason}, 100
   end
 
+  test "messages from before bot startup do not trigger catch-up replies" do
+    chat_id = 362_441_422
+
+    %{bot: bot} =
+      start_charlie_bot(trigger_not_before: 2_000_000_000)
+
+    send(
+      bot,
+      user_update("old mention",
+        message_id: 9,
+        chat_id: chat_id,
+        date: 1_999_999_999
+      )
+    )
+
+    _ = :sys.get_state(bot)
+    refute_receive {FakeLLM, _turn, %Request{}}, 100
+
+    send(
+      bot,
+      user_update("fresh mention",
+        message_id: 10,
+        chat_id: chat_id,
+        date: 2_000_000_000
+      )
+    )
+
+    assert_receive {FakeLLM, turn, %Request{}}, 5_000
+    reply_turns_until_idle(bot, turn)
+  end
+
   test "triggering messages queue while a cycle is active and drain one at a time" do
     chat_id = 362_441_422
     %{bot: bot} = start_charlie_bot()
@@ -60,7 +91,9 @@ defmodule Froth.Telegram.BotTest do
   test "queued turns see replies and chat activity produced while waiting" do
     chat_id = 362_441_422
     now = System.system_time(:second)
-    %{bot: bot, session_id: session_id} = start_charlie_bot()
+
+    %{bot: bot, session_id: session_id} =
+      start_charlie_bot(trigger_not_before: now - 30)
 
     Repo.insert!(
       SessionConfig.changeset(%SessionConfig{}, %{
@@ -293,7 +326,7 @@ defmodule Froth.Telegram.BotTest do
     chat_id = Keyword.get(opts, :chat_id, 362_441_422)
     message_id = Keyword.fetch!(opts, :message_id)
     sender_user_id = Keyword.get(opts, :sender_user_id, 777)
-    date = Keyword.get(opts, :date)
+    date = Keyword.get(opts, :date, System.system_time(:second))
 
     {:telegram_update,
      %{

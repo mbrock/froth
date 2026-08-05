@@ -908,6 +908,7 @@ defmodule Froth.Telegram.AskFlowTest do
     chat_id = Keyword.get(opts, :chat_id, 362_441_422)
     message_id = Keyword.fetch!(opts, :message_id)
     sender_user_id = Keyword.get(opts, :sender_user_id, 777)
+    date = Keyword.get(opts, :date, System.system_time(:second))
 
     {:telegram_update,
      %{
@@ -915,6 +916,7 @@ defmodule Froth.Telegram.AskFlowTest do
        "message" => %{
          "id" => message_id,
          "chat_id" => chat_id,
+         "date" => date,
          "sender_id" => %{"user_id" => sender_user_id},
          "content" => %{"text" => %{"text" => text}}
        }
@@ -926,6 +928,7 @@ defmodule Froth.Telegram.AskFlowTest do
     message_id = Keyword.fetch!(opts, :message_id)
     reply_to_message_id = Keyword.fetch!(opts, :reply_to_message_id)
     sender_user_id = Keyword.get(opts, :sender_user_id, 777)
+    date = Keyword.get(opts, :date, System.system_time(:second))
 
     {:telegram_update,
      %{
@@ -933,6 +936,7 @@ defmodule Froth.Telegram.AskFlowTest do
        "message" => %{
          "id" => message_id,
          "chat_id" => chat_id,
+         "date" => date,
          "sender_id" => %{"user_id" => sender_user_id},
          "reply_to" => %{
            "@type" => "messageReplyToMessage",
