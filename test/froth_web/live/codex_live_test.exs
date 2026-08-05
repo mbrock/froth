@@ -165,9 +165,13 @@ defmodule FrothWeb.CodexLiveTest do
     assert has_element?(view, "#entry-3", "Tighten the mobile layout")
     assert has_element?(view, "#entry-3", "Add follow toggle")
     assert has_element?(view, "#entry-3", "Render markdown")
-    assert has_element?(view, "#entry-4", "command")
     assert has_element?(view, "#entry-4", "rg --files lib")
-    assert has_element?(view, "#entry-4", "output")
+
+    assert has_element?(
+             view,
+             ~s|#entry-4 [data-work-timeline-tool="run_shell"]|
+           )
+
     assert has_element?(view, "#entry-4", "lib/froth_web/live/codex_live.ex")
     refute has_element?(view, "#codex-close")
 

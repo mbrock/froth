@@ -4,6 +4,8 @@ defmodule FrothWeb.CodexLive do
   alias Froth.Codex.Threads, as: CodexThreads
   alias Span
   alias Froth.Codex.Session, as: CodexSession
+  alias FrothWeb.SyntaxHighlight
+  alias FrothWeb.WorkTimeline
 
   @default_model "gpt-5.4"
   @reasoning_efforts ~w(low medium high xhigh)
@@ -23,11 +25,13 @@ defmodule FrothWeb.CodexLive do
   @impl true
   def mount(params, _session, socket) do
     socket =
-      allow_upload(socket, :images,
+      socket
+      |> allow_upload(:images,
         accept: ~w(.png .jpg .jpeg .webp .gif .avif),
         auto_upload: true,
         max_entries: 6
       )
+      |> assign(:syntax_highlight_css, SyntaxHighlight.stylesheet())
 
     if session_route?(params) do
       {session_id, requested_thread_id, session_pinned?} =
@@ -326,6 +330,9 @@ defmodule FrothWeb.CodexLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} variant={:plain}>
+      <style id="work-timeline-syntax-highlight">
+        <%= Phoenix.HTML.raw(@syntax_highlight_css) %>
+      </style>
       <%= if @mode == :index do %>
         <div class="min-h-screen bg-[radial-gradient(circle_at_top,rgba(20,20,40,0.55),rgba(5,5,8,1)_48%)] px-4 py-6 text-zinc-100 md:px-6">
           <div class="mx-auto w-full max-w-4xl">
@@ -429,7 +436,9 @@ defmodule FrothWeb.CodexLive do
                       }
                     />
                   <% entry.kind == :tool -> %>
-                    <.codex_tool_entry entry={entry} />
+                    <div class="codex-note border-l border-sky-400/45 bg-sky-950/14 px-2.5 py-2 text-fg">
+                      <WorkTimeline.tool_entry entry={codex_timeline_tool(entry)} />
+                    </div>
                   <% entry.kind == :reasoning -> %>
                     <div class="codex-note text-zinc-500">
                       <span class="codex-kicker">reasoning</span>
@@ -750,41 +759,30 @@ defmodule FrothWeb.CodexLive do
     """
   end
 
-  attr :entry, :map, required: true
+  defp codex_timeline_tool(entry) do
+    result =
+      cond do
+        entry.status == "error" -> {:error, entry.output || "tool failed"}
+        is_binary(entry.output) and entry.output != "" -> {:ok, entry.output}
+        true -> nil
+      end
 
-  defp codex_tool_entry(assigns) do
-    ~H"""
-    <div class={codex_tool_card_class(@entry.status)}>
-      <div class="flex items-center justify-between gap-3">
-        <div class="min-w-0 flex-1">
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="codex-kicker text-sky-300/80">tool call</span>
-            <div
-              :if={@entry.status == "running"}
-              class="inline-flex items-center gap-1 font-[JetBrains_Mono,ui-monospace,SFMono-Regular,Menlo,Monaco,monospace] text-[10px] text-amber-200/85"
-            >
-              <span>live</span>
-              <.working_dots />
-            </div>
-          </div>
-        </div>
-        <span class={tool_status_text_class(@entry.status)}>
-          {tool_status_text(@entry.status)}
-        </span>
-      </div>
-
-      <div class="mt-1.5">
-        <div class="codex-kicker text-zinc-500">command</div>
-        <pre class="codex-pre codex-pre--command">{@entry.body}</pre>
-      </div>
-
-      <div :if={is_binary(@entry.output) and @entry.output != ""} class="mt-1.5">
-        <div class="codex-kicker text-zinc-500">output</div>
-        <pre class="codex-pre codex-pre--output">{@entry.output}</pre>
-      </div>
-    </div>
-    """
+    %{
+      id: entry.id,
+      tool: "run_shell",
+      input: %{"command" => entry.body},
+      result: result,
+      result_summary: codex_tool_result_summary(entry.status)
+    }
   end
+
+  defp codex_tool_result_summary("running"),
+    do: %{label: "running", color: "text-amber", tooltip: nil}
+
+  defp codex_tool_result_summary("error"),
+    do: %{label: "error", color: "text-red", tooltip: nil}
+
+  defp codex_tool_result_summary(_), do: nil
 
   attr :entry, :map, required: true
 
@@ -1181,15 +1179,6 @@ defmodule FrothWeb.CodexLive do
     do:
       "mini-markdown md-prose font-[IBM_Plex_Sans,ui-sans-serif,system-ui,sans-serif] text-[14px] leading-[1.56] text-zinc-100"
 
-  defp codex_tool_card_class("error"),
-    do: "codex-note border-l border-rose-400/55 bg-rose-950/18 px-2.5 py-2"
-
-  defp codex_tool_card_class("running"),
-    do: "codex-note border-l border-amber-400/55 bg-amber-950/14 px-2.5 py-2"
-
-  defp codex_tool_card_class(_),
-    do: "codex-note border-l border-sky-400/45 bg-sky-950/14 px-2.5 py-2"
-
   defp status_entry_descriptor(entry) when is_map(entry) do
     body = blank_to_nil(entry.body) || "update"
     details = blank_to_nil(entry.output)
@@ -1424,20 +1413,6 @@ defmodule FrothWeb.CodexLive do
   defp plan_step_status_text("pending"), do: "queued"
   defp plan_step_status_text(status) when is_binary(status), do: status
   defp plan_step_status_text(_), do: "step"
-
-  defp tool_status_text_class("running"), do: "codex-kicker text-amber-300/80"
-
-  defp tool_status_text_class("ok"), do: "codex-kicker text-emerald-300/80"
-
-  defp tool_status_text_class("error"), do: "codex-kicker text-rose-300/80"
-
-  defp tool_status_text_class(_), do: "codex-kicker text-zinc-500"
-
-  defp tool_status_text("running"), do: "running"
-  defp tool_status_text("ok"), do: "done"
-  defp tool_status_text("error"), do: "error"
-  defp tool_status_text("done"), do: "done"
-  defp tool_status_text(_), do: "update"
 
   defp modeline_model(runtime) when is_map(runtime),
     do: runtime_field(runtime, :model, "model")

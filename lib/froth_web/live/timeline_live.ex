@@ -22,6 +22,7 @@ defmodule FrothWeb.TimelineLive do
 
   alias FrothWeb.RemixLive, as: Remix
   alias FrothWeb.SyntaxHighlight
+  alias FrothWeb.WorkTimeline
 
   # Charlie's group-chat by default. Override with `?chat_id=…` on the URL.
   @default_chat_id -1_003_690_254_489
@@ -447,7 +448,7 @@ defmodule FrothWeb.TimelineLive do
        name: cycle.bot_name,
        color: cycle.bot_color,
        time: format_time(dt),
-       entries: summarize_cycle(cycle.entries)
+       entries: WorkTimeline.summarize_cycle(cycle.entries)
      }}
   end
 
@@ -1043,7 +1044,7 @@ defmodule FrothWeb.TimelineLive do
       time={@cycle.time}
       block?={true}
     >
-      <.cycle_trace cycle={@cycle} />
+      <WorkTimeline.cycle_trace cycle={@cycle} />
     </Remix.turn>
     """
   end
@@ -1123,69 +1124,19 @@ defmodule FrothWeb.TimelineLive do
 
   # ─── Agent cycle (tool calls) ─────────────────────────────────────────────
 
-  defp cycle_trace(assigns) do
-    ~H"""
-    <div class="flex flex-col gap-2">
-      <%= for entry <- @cycle.entries do %>
-        <.cycle_entry entry={entry} />
-      <% end %>
-    </div>
-    """
-  end
-
-  # Pair each :call with its :return or :intervention (if any), so the
-  # UI shows one row per tool invocation. Skip `send_message` at the
-  # data layer already (Agent.cycle_traces does that); we also merge
-  # the result snippet into the call row for compactness.
-  defp summarize_cycle(entries) do
-    {rows, pending} =
-      Enum.reduce(entries, {[], nil}, fn entry, {acc, pending} ->
-        case entry.kind do
-          :call ->
-            acc = if pending, do: [pending | acc], else: acc
-            {acc, entry}
-
-          :return ->
-            row =
-              Map.put(
-                pending || %{kind: :call, tool: "?"},
-                :result,
-                entry.outcome
-              )
-
-            {[row | acc], nil}
-
-          :intervention ->
-            row =
-              Map.put(
-                pending || %{kind: :call, tool: "?"},
-                :result,
-                {:intervention, entry[:text] || entry[:data]}
-              )
-
-            {[row | acc], nil}
-
-          _ ->
-            {acc, pending}
-        end
-      end)
-
-    rows = if pending, do: [pending | rows], else: rows
-    Enum.reverse(rows)
-  end
-
-  defp cycle_entry(%{entry: entry} = assigns) do
+  def tool_entry(%{entry: entry} = assigns) do
     assigns =
       assign(assigns,
+        entry_id: entry[:id] || entry[:tool_use_id] || entry[:ref],
         tool: entry[:tool] || "?",
         narration: entry[:narration],
         input: entry[:input] || %{},
-        result: summarize_result(entry[:result]),
+        result: entry[:result_summary] || summarize_result(entry[:result]),
         output: render_output(entry[:tool] || "?", entry[:result])
       )
 
     ~H"""
-    <div class="flex flex-col gap-1">
+    <div class="flex flex-col gap-1" data-work-timeline-tool={@tool}>
       <div
         :if={@narration || (@result && @result.label != "ok")}
         class="flex items-baseline gap-2 text-2xs text-fg-mute"
@@ -1202,8 +1153,12 @@ defmodule FrothWeb.TimelineLive do
         </span>
       </div>
 
-      <.tool_input tool={@tool} input={@input} />
-      <.tool_output output={@output} />
+      <div id={@entry_id && "tool-input-#{@entry_id}"}>
+        <.tool_input tool={@tool} input={@input} />
+      </div>
+      <div id={@entry_id && "tool-output-#{@entry_id}"}>
+        <.tool_output output={@output} />
+      </div>
     </div>
     """
   end

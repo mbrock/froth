@@ -84,8 +84,9 @@ defmodule FrothWeb.ToolLiveTest do
              "Checking the shell output before replying."
            )
 
-    assert has_element?(view, "#tool-input-call_1[open]")
-    assert has_element?(view, "#tool-output-call_1[open]")
+    assert has_element?(view, "#tool-input-call_1", "printf 'froth\\n'")
+    assert has_element?(view, "#tool-output-call_1", "segfault")
+    assert has_element?(view, ~s|[data-work-timeline-tool="run_shell"]|)
     assert has_element?(view, "#tool-feed span", "exit 139")
   end
 

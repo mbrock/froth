@@ -6,6 +6,8 @@ defmodule FrothWeb.ToolLive do
   alias Froth.Agent.Message, as: AgentMessage
   alias Froth.Repo
   alias Froth.Telegram.CycleLink
+  alias FrothWeb.SyntaxHighlight
+  alias FrothWeb.WorkTimeline
 
   @impl true
   def mount(params, _session, socket) do
@@ -34,6 +36,7 @@ defmodule FrothWeb.ToolLive do
       |> assign(:live_result, nil)
       |> assign(:live_result_error, false)
       |> assign(:follow_tail?, true)
+      |> assign(:syntax_highlight_css, SyntaxHighlight.stylesheet())
       |> assign(:chat_id, nil)
       |> assign(:reply_to, nil)
       |> assign(:steer_form, to_form(%{"prompt" => ""}, as: :steer))
@@ -225,6 +228,9 @@ defmodule FrothWeb.ToolLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} variant={:plain}>
+      <style id="work-timeline-syntax-highlight">
+        <%= Phoenix.HTML.raw(@syntax_highlight_css) %>
+      </style>
       <div
         id="tool-loop-viewer"
         phx-hook="ToolScroll"
@@ -307,7 +313,9 @@ defmodule FrothWeb.ToolLive do
                       {item.result}
                     </div>
                   <% item.kind == :queue_tool -> %>
-                    <.tool_card item={item} />
+                    <div class="border-l border-line bg-void/55 px-2.5 py-2 text-fg">
+                      <WorkTimeline.tool_entry entry={tool_timeline_entry(item)} />
+                    </div>
                 <% end %>
               </div>
             <% end %>
@@ -432,107 +440,6 @@ defmodule FrothWeb.ToolLive do
       <span></span>
       <span></span>
     </span>
-    """
-  end
-
-  attr :item, :map, required: true
-
-  defp tool_card(assigns) do
-    assigns =
-      assigns
-      |> assign(:card_class, tool_card_class(assigns.item))
-      |> assign(:badge_class, tool_badge_class(assigns.item))
-      |> assign(:badge_text, tool_badge_text(assigns.item))
-      |> assign(:summary, tool_primary_summary(assigns.item))
-      |> assign(:error_note, tool_error_note(assigns.item))
-
-    ~H"""
-    <div class={@card_class}>
-      <div class="flex items-start justify-between gap-2">
-        <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-1.5">
-            <.icon
-              name="hero-wrench-screwdriver"
-              class="size-3.5 shrink-0 text-amber-300/85"
-            />
-            <p class="truncate text-[12px] font-semibold tracking-[0.02em] text-zinc-50">
-              {queue_action_title(@item.name)}
-            </p>
-            <span class="shrink-0 rounded-full border border-zinc-700/80 bg-zinc-950/85 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-              {@item.name}
-            </span>
-          </div>
-
-          <p
-            :if={@item.narration}
-            class="mt-1 font-sans text-[13px] italic leading-[1.45] text-zinc-200/90"
-          >
-            {@item.narration}
-          </p>
-
-          <div
-            :if={@summary}
-            class="mt-1 rounded-lg border border-zinc-800/80 bg-black/20 px-2 py-1 font-mono text-[11px] leading-5 text-zinc-300/85"
-          >
-            {@summary}
-          </div>
-
-          <p
-            :if={@error_note}
-            class="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-200/90"
-          >
-            {@error_note}
-          </p>
-        </div>
-
-        <span class={@badge_class}>
-          {@badge_text}
-        </span>
-      </div>
-
-      <details
-        :if={tool_has_input?(@item)}
-        id={"tool-input-#{@item.tool_use_id || @item.ref || @item.id}"}
-        class="mt-1.5 rounded-lg border border-zinc-800/80 bg-black/15"
-        open
-      >
-        <summary class="cursor-pointer list-none px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-400 [&::-webkit-details-marker]:hidden">
-          Input
-        </summary>
-        <div class="border-t border-zinc-800/80 px-2 py-2">
-          <pre class="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5 text-zinc-300/90">{@item.input_json}</pre>
-        </div>
-      </details>
-
-      <details
-        :if={tool_has_output?(@item)}
-        id={"tool-output-#{@item.tool_use_id || @item.ref || @item.id}"}
-        class="mt-1.5 rounded-lg border border-zinc-800/80 bg-black/15"
-        open
-      >
-        <summary class="cursor-pointer list-none px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-400 [&::-webkit-details-marker]:hidden">
-          Output
-        </summary>
-        <div class="space-y-2 border-t border-zinc-800/80 px-2 py-2">
-          <div :if={@item.io_output != ""}>
-            <p class="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
-              IO
-            </p>
-            <pre class="max-h-56 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5 text-zinc-400/90">{@item.io_output}</pre>
-          </div>
-
-          <div :if={@item.result != ""}>
-            <p class="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
-              Result
-            </p>
-            <.result_value
-              result={@item.result || ""}
-              is_error={tool_failure?(@item)}
-            />
-          </div>
-        </div>
-      </details>
-    </div>
     """
   end
 
@@ -679,6 +586,7 @@ defmodule FrothWeb.ToolLive do
         name: name,
         status: "executing",
         narration: ToolDescription.text_from_input(input),
+        input: input,
         summary: tool_input_summary(name, input),
         input_json: pretty_tool_input(input)
       })
@@ -813,6 +721,7 @@ defmodule FrothWeb.ToolLive do
       name: "tool",
       status: "pending",
       narration: nil,
+      input: %{},
       summary: nil,
       input_json: nil,
       queue_idx: nil,
@@ -1207,56 +1116,6 @@ defmodule FrothWeb.ToolLive do
 
   defp tool_result_block_summary(_), do: ""
 
-  attr(:result, :string, required: true)
-  attr(:is_error, :boolean, default: false)
-
-  defp result_value(assigns) do
-    doc_text = as_doc_string(assigns.result)
-    assigns = assign(assigns, :doc_text, doc_text)
-
-    ~H"""
-    <%= if @doc_text do %>
-      <div class="space-y-3 text-[13px] leading-relaxed text-zinc-200/90">
-        <p
-          :for={paragraph <- doc_paragraphs(@doc_text)}
-          class="whitespace-pre-wrap"
-        >
-          {paragraph}
-        </p>
-      </div>
-    <% else %>
-      <pre class={[
-        "whitespace-pre-wrap text-[12px] font-mono leading-snug",
-        if(@is_error, do: "text-red-300/85", else: "text-zinc-200/90")
-      ]}>{@result}</pre>
-    <% end %>
-    """
-  end
-
-  defp as_doc_string(result) when is_binary(result) do
-    with {:ok, ast} <- Code.string_to_quoted(result),
-         true <- is_binary(ast),
-         true <- doc_string?(ast) do
-      ast
-    else
-      _ -> nil
-    end
-  end
-
-  defp as_doc_string(_), do: nil
-
-  defp doc_string?(text) when is_binary(text) do
-    line_count = text |> String.split("\n", trim: false) |> length()
-    line_count >= 3
-  end
-
-  defp doc_paragraphs(text) when is_binary(text) do
-    text
-    |> String.split(~r/\n\s*\n+/, trim: true)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-  end
-
   defp can_stop?(status, cycle_id)
        when is_binary(cycle_id) and
               status not in [:stopped, :stopping, :not_found],
@@ -1349,25 +1208,6 @@ defmodule FrothWeb.ToolLive do
   defp loop_status_badge_text(:stopping), do: "stopping"
   defp loop_status_badge_text(:stopped), do: "stopped"
   defp loop_status_badge_text(_), do: "waiting"
-
-  defp tool_label("timeline"), do: "Timeline"
-  defp tool_label("view_analysis"), do: "Read analysis"
-  defp tool_label("fetch"), do: "Fetch media"
-  defp tool_label("send_message"), do: "Send message"
-  defp tool_label("elixir_eval"), do: "Run code (Elixir)"
-  defp tool_label(name) when is_binary(name), do: name
-  defp tool_label(_), do: "tool"
-
-  defp queue_action_title("elixir_eval"), do: "Code"
-  defp queue_action_title(name) when is_binary(name), do: tool_label(name)
-  defp queue_action_title(_), do: "Action"
-
-  defp queue_status_text("pending"), do: "ready"
-  defp queue_status_text("executing"), do: "running"
-  defp queue_status_text("resolved"), do: "done"
-  defp queue_status_text("stopped"), do: "stopped"
-  defp queue_status_text(status) when is_binary(status), do: status
-  defp queue_status_text(_), do: ""
 
   defp transcript_card_class(:assistant),
     do:
@@ -1484,74 +1324,6 @@ defmodule FrothWeb.ToolLive do
 
   defp short_cycle_id(_), do: nil
 
-  defp tool_card_class(item) do
-    cond do
-      tool_failure?(item) ->
-        "rounded-[0.9rem] border border-rose-500/35 bg-rose-950/30 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
-
-      item.status == "executing" ->
-        "rounded-[0.9rem] border border-amber-500/30 bg-amber-950/20 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
-
-      true ->
-        "rounded-[0.9rem] border border-zinc-800/80 bg-zinc-950/68 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
-    end
-  end
-
-  defp tool_badge_class(item) do
-    cond do
-      tool_failure?(item) ->
-        "inline-flex items-center rounded-full border border-rose-500/35 bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-rose-100"
-
-      item.status == "executing" ->
-        "inline-flex items-center rounded-full border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-amber-100"
-
-      true ->
-        "inline-flex items-center rounded-full border border-emerald-500/35 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-emerald-100"
-    end
-  end
-
-  defp tool_badge_text(item) do
-    exit_code = tool_exit_code(item)
-
-    cond do
-      item.status == "executing" -> "running"
-      is_integer(exit_code) and exit_code > 0 -> "exit #{exit_code}"
-      tool_failure?(item) -> "error"
-      true -> queue_status_text(item.status)
-    end
-  end
-
-  defp tool_error_note(item) do
-    case tool_exit_code(item) do
-      139 -> "Likely segfault"
-      code when is_integer(code) and code > 0 -> "Non-zero exit"
-      _ when item.is_error == true -> "Tool returned an error"
-      _ -> nil
-    end
-  end
-
-  defp tool_primary_summary(%{summary: summary})
-       when is_binary(summary) and summary != "",
-       do: summary
-
-  defp tool_primary_summary(%{preview: preview})
-       when is_binary(preview) and preview != "",
-       do: preview
-
-  defp tool_primary_summary(_), do: nil
-
-  defp tool_has_input?(%{input_json: text})
-       when is_binary(text) and text != "", do: true
-
-  defp tool_has_input?(_), do: false
-
-  defp tool_has_output?(%{io_output: io_output, result: result}) do
-    (is_binary(io_output) and io_output != "") or
-      (is_binary(result) and result != "")
-  end
-
-  defp tool_has_output?(_), do: false
-
   defp tool_failure?(item) when is_map(item) do
     item.is_error == true or
       item.status == "stopped" or
@@ -1559,6 +1331,50 @@ defmodule FrothWeb.ToolLive do
   end
 
   defp tool_failure?(_), do: false
+
+  defp tool_timeline_entry(item) do
+    output =
+      [blank_to_nil(item.io_output), blank_to_nil(item.result)]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join("\n\n")
+
+    result =
+      cond do
+        output == "" -> nil
+        tool_failure?(item) -> {:error, output}
+        true -> {:ok, output}
+      end
+
+    %{
+      id: item.tool_use_id || item.ref || item.id,
+      tool: item.name,
+      narration: item.narration,
+      input: item.input || %{},
+      result: result,
+      result_summary: tool_timeline_result_summary(item)
+    }
+  end
+
+  defp tool_timeline_result_summary(item) do
+    exit_code = tool_exit_code(item)
+
+    cond do
+      item.status == "executing" ->
+        %{label: "running", color: "text-amber", tooltip: nil}
+
+      is_integer(exit_code) and exit_code > 0 ->
+        %{label: "exit #{exit_code}", color: "text-red", tooltip: nil}
+
+      tool_failure?(item) ->
+        %{label: "error", color: "text-red", tooltip: nil}
+
+      item.status == "pending" ->
+        %{label: "ready", color: "text-fg-mute", tooltip: nil}
+
+      true ->
+        nil
+    end
+  end
 
   defp tool_exit_code(item) when is_map(item) do
     Enum.find_value([item.result, item.io_output], &extract_exit_code/1)
