@@ -64,4 +64,51 @@ defmodule Froth.Telegram.ToolExecutionTest do
                       }
                     }}
   end
+
+  test "narration rollover puts running controls on the new message" do
+    %{bot_ref: bot_ref, session_id: session_id} = start_charlie_bot()
+    {_pid, bot_config} = Froth.Telegram.Bot.snapshot(bot_ref)
+    old_text = String.duplicate("x", 4_090)
+
+    context = %Context{
+      cycle_id: "cycle-rollover",
+      bot_config: bot_config,
+      surface: %Surface{session_id: session_id, chat_id: 123, reply_to: 456},
+      view: %View{
+        narration: %{message_id: 77, text: old_text, mode: :italic},
+        control_message: %{message_id: 77, text: old_text, mode: :italic}
+      }
+    }
+
+    tool_use = %ToolUse{
+      id: "call-rollover",
+      name: "unknown_test_tool",
+      input: %{
+        "description" => %{
+          "action" => "Starting the next visible work segment",
+          "goals" => [],
+          "assumptions" => []
+        }
+      }
+    }
+
+    assert %{
+             narration_message: %{message_id: new_message_id},
+             control_message: %{message_id: control_message_id}
+           } = ToolExecution.execute(context, tool_use)
+
+    assert control_message_id == new_message_id
+
+    assert_receive {:telegram_call,
+                    %{
+                      "@type" => "sendMessage",
+                      "reply_markup" => %{
+                        "@type" => "replyMarkupInlineKeyboard",
+                        "rows" => [[open_button, stop_button]]
+                      }
+                    }}
+
+    assert open_button["text"] == "Open"
+    assert stop_button["text"] == "Stop"
+  end
 end

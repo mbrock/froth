@@ -310,6 +310,26 @@ defmodule Froth.Telegram.BotAdapter do
     )
   end
 
+  @doc "Replace or remove the inline keyboard on an existing message."
+  def edit_message_reply_markup(
+        session_id,
+        chat_id,
+        message_id,
+        reply_markup
+      )
+      when is_binary(session_id) and is_integer(chat_id) and
+             is_integer(message_id) and
+             (is_map(reply_markup) or is_nil(reply_markup)) do
+    session_id
+    |> Froth.Telegram.call(%{
+      "@type" => "editMessageReplyMarkup",
+      "chat_id" => chat_id,
+      "message_id" => message_id,
+      "reply_markup" => reply_markup
+    })
+    |> normalize_tdlib_result()
+  end
+
   def send_error(session_id, chat_id, message)
       when is_binary(session_id) and is_integer(chat_id) and
              is_binary(message) do

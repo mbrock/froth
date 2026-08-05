@@ -11,10 +11,12 @@ defmodule Froth.Agent.CycleRuntime.View do
     * `:narration` — `nil` or `%{message_id, text, mode}`. The
       running italic/markdown "scroll" message the cycle edits in
       place during tool execution.
-    * `:control_message` — the first narrated work message carrying the
-      cycle's Open/Stop keyboard. It remains stable even when later narration
-      starts a new message, so a cycle never leaves keyboards scattered around
-      the chat.
+    * `:control_message` — the current narrated work message carrying the
+      cycle's Open/Stop keyboard. Ownership follows narration when it rolls
+      over to a new message.
+    * `:control_reservation` — the tool-use id temporarily entitled to create
+      the first control message. This prevents parallel tools prepared before
+      the first send commits from each creating a keyboard.
     * `:last_sent` — `nil` or `%{id, text}`. The most recent
       non-narration outbound message (a plain `send_message`, etc.).
     * `:active_task_ids` — sorted, unique list of background task ids
@@ -25,6 +27,7 @@ defmodule Froth.Agent.CycleRuntime.View do
 
   defstruct narration: nil,
             control_message: nil,
+            control_reservation: nil,
             last_sent: nil,
             active_task_ids: [],
             awaiting_user_input?: false
@@ -40,6 +43,7 @@ defmodule Froth.Agent.CycleRuntime.View do
   @type t :: %__MODULE__{
           narration: narration() | nil,
           control_message: narration() | nil,
+          control_reservation: String.t() | nil,
           last_sent: last_sent() | nil,
           active_task_ids: [String.t()],
           awaiting_user_input?: boolean()

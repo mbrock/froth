@@ -1,7 +1,14 @@
 defmodule Froth.Telegram.ToolExecution do
   @moduledoc false
 
-  alias Froth.Agent.{FailureIntervention, Surface, ToolDescription, ToolUse}
+  alias Froth.Agent.{
+    CycleRuntime,
+    FailureIntervention,
+    Surface,
+    ToolDescription,
+    ToolUse
+  }
+
   alias Froth.Agent.CycleRuntime.{Context, View}
   alias Froth.Inference.Tools
   alias Froth.Telegram.Bot.Config, as: BotConfig
@@ -55,6 +62,13 @@ defmodule Froth.Telegram.ToolExecution do
 
     narration_message = maybe_send_narration(ctx, tool_call, reply_to)
     control_message = maybe_control_message(ctx, narration_message)
+
+    CycleRuntime.record_tool_narration(
+      ctx.cycle_id,
+      tool_call.id,
+      narration_message,
+      control_message
+    )
 
     result = Tools.execute(ctx, tool_call)
 
@@ -111,6 +125,19 @@ defmodule Froth.Telegram.ToolExecution do
 
   defp maybe_send_narration(%Context{spam: false}, _tool_call, _reply_to),
     do: nil
+
+  # A parallel sibling already owns the first-control reservation. Suppress
+  # this sibling's chat narration instead of creating a second, uncontrolled
+  # work message. Its execution remains visible in the shared mini app.
+  defp maybe_send_narration(
+         %Context{
+           view: %View{control_message: nil, control_reservation: reservation}
+         },
+         _tool_call,
+         _reply_to
+       )
+       when is_binary(reservation),
+       do: nil
 
   defp maybe_send_narration(
          %Context{} = ctx,
@@ -195,11 +222,7 @@ defmodule Froth.Telegram.ToolExecution do
   defp send_new_narration(%Context{} = ctx, reply_to, narration, mode) do
     %Surface{session_id: session_id, chat_id: chat_id} = ctx.surface
 
-    opts =
-      case ctx.view.control_message do
-        nil -> [reply_markup: cycle_reply_markup(ctx)]
-        _ -> []
-      end
+    opts = maybe_cycle_reply_markup(ctx)
 
     result =
       case mode do
@@ -242,10 +265,32 @@ defmodule Froth.Telegram.ToolExecution do
 
   defp cycle_reply_markup(_ctx), do: nil
 
+  defp maybe_cycle_reply_markup(%Context{
+         view: %View{control_message: nil, control_reservation: reservation}
+       })
+       when is_binary(reservation),
+       do: []
+
+  defp maybe_cycle_reply_markup(%Context{} = ctx),
+    do: [reply_markup: cycle_reply_markup(ctx)]
+
+  defp maybe_control_message(_ctx, nil), do: nil
+
   defp maybe_control_message(
-         %Context{view: %View{control_message: nil}},
+         %Context{
+           view: %View{control_message: nil, control_reservation: nil}
+         },
          message
        ),
+       do: message
+
+  defp maybe_control_message(
+         %Context{
+           view: %View{control_message: %{message_id: old_message_id}}
+         },
+         %{message_id: new_message_id} = message
+       )
+       when old_message_id != new_message_id,
        do: message
 
   defp maybe_control_message(_ctx, _message), do: nil

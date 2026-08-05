@@ -172,6 +172,147 @@ defmodule Froth.Agent.CycleRuntimeTest do
       assert :sys.get_state(runtime).context.view.control_message.text ==
                "Checking X\nChecking Y"
     end
+
+    test "reserves one initial keyboard across parallel tool preparation" do
+      runtime = start_scaffold_runtime()
+
+      first = narrated_tool("call_1", "First parallel action")
+      second = narrated_tool("call_2", "Second parallel action")
+
+      assert {:ok, first_prepared} =
+               GenServer.call(runtime, {:prepare_tool, first, %{}})
+
+      assert {:ok, second_prepared} =
+               GenServer.call(runtime, {:prepare_tool, second, %{}})
+
+      assert first_prepared.context.view.control_reservation == nil
+      assert second_prepared.context.view.control_reservation == "call_1"
+
+      first_outcome = run_prepared(first_prepared)
+      second_outcome = run_prepared(second_prepared)
+
+      assert first_outcome.control_message.message_id ==
+               first_outcome.narration_message.message_id
+
+      assert second_outcome.control_message == nil
+      assert second_outcome.narration_message == nil
+
+      assert_receive {:telegram_call,
+                      %{
+                        "@type" => "sendMessage",
+                        "reply_markup" => %{
+                          "@type" => "replyMarkupInlineKeyboard"
+                        }
+                      }}
+
+      refute_receive {:telegram_call, %{"@type" => "sendMessage"}}, 100
+
+      _ =
+        GenServer.call(
+          runtime,
+          {:commit_tool, second, %{}, second_prepared, second_outcome}
+        )
+
+      _ =
+        GenServer.call(
+          runtime,
+          {:commit_tool, first, %{}, first_prepared, first_outcome}
+        )
+
+      context = :sys.get_state(runtime).context
+      view = context.view
+      assert view.control_reservation == nil
+
+      expected_message_id =
+        Froth.Telegram.MessageIdSync.resolve(
+          context.bot_config.id,
+          context.surface.chat_id,
+          first_outcome.control_message.message_id
+        )
+
+      assert view.control_message.message_id ==
+               expected_message_id
+    end
+
+    test "transfers keyboard ownership and removes controls from the old message" do
+      runtime = start_scaffold_runtime()
+
+      :sys.replace_state(runtime, fn rstate ->
+        view = %View{
+          narration: %{message_id: 88, text: "New segment", mode: :italic},
+          control_message: %{
+            message_id: 77,
+            text: "Old segment",
+            mode: :italic
+          }
+        }
+
+        put_in(rstate.context.view, view)
+      end)
+
+      tool_use = narrated_tool("call_transfer", "New segment")
+      prepared = sample_prepared(runtime, tool_use)
+
+      assert {:error, _reason} =
+               GenServer.call(
+                 runtime,
+                 {:commit_tool, tool_use, %{}, prepared,
+                  %{
+                    result: {:error, "test result"},
+                    narration_message: %{
+                      message_id: 88,
+                      text: "New segment",
+                      mode: :italic
+                    },
+                    control_message: %{
+                      message_id: 88,
+                      text: "New segment",
+                      mode: :italic
+                    }
+                  }}
+               )
+
+      assert_receive {:telegram_call,
+                      %{
+                        "@type" => "editMessageReplyMarkup",
+                        "message_id" => 77,
+                        "reply_markup" => nil
+                      }}
+
+      assert :sys.get_state(runtime).context.view.control_message.message_id ==
+               88
+    end
+
+    test "finished cycles keep Open and remove Stop from the current owner" do
+      runtime = start_scaffold_runtime()
+
+      :sys.replace_state(runtime, fn rstate ->
+        control_message = %{
+          message_id: 77,
+          text: "Inspecting the runtime",
+          mode: :italic
+        }
+
+        put_in(rstate.context.view.control_message, control_message)
+      end)
+
+      stop_runtime(runtime)
+
+      assert_receive {:telegram_call,
+                      %{
+                        "@type" => "editMessageText",
+                        "message_id" => 77,
+                        "reply_markup" => %{
+                          "@type" => "replyMarkupInlineKeyboard",
+                          "rows" => [[open_button]]
+                        }
+                      }}
+
+      assert open_button["text"] == "Open"
+
+      refute get_in(open_button, ["type", "@type"]) ==
+               "inlineKeyboardButtonTypeCallback"
+    end
   end
 
   describe "spawn_subagent" do
@@ -246,6 +387,34 @@ defmodule Froth.Agent.CycleRuntimeTest do
       assert view.last_sent.id == 404
       assert view.narration.message_id == 303
     end
+
+    test "resolves a send-success mapping that arrived before UI state" do
+      runtime = start_scaffold_runtime()
+      context = :sys.get_state(runtime).context
+      bot_id = context.bot_config.id
+      chat_id = context.surface.chat_id
+
+      :ok =
+        Froth.Telegram.MessageIdSync.put(
+          bot_id,
+          chat_id,
+          505,
+          606
+        )
+
+      :ok =
+        CycleRuntime.record_tool_narration(
+          context.cycle_id,
+          "call_race",
+          %{message_id: 505, text: "Checking X", mode: :italic},
+          %{message_id: 505, text: "Checking X", mode: :italic}
+        )
+
+      _ = :sys.get_state(runtime)
+      view = :sys.get_state(runtime).context.view
+      assert view.narration.message_id == 606
+      assert view.control_message.message_id == 606
+    end
   end
 
   defp start_scaffold_runtime do
@@ -267,6 +436,24 @@ defmodule Froth.Agent.CycleRuntimeTest do
   defp sample_prepared(runtime, tool_use) do
     %Context{} = ctx = :sys.get_state(runtime).context
     %{context: ctx, tool_call: tool_use}
+  end
+
+  defp narrated_tool(id, action) do
+    %ToolUse{
+      id: id,
+      name: "unknown_test_tool",
+      input: %{
+        "description" => %{
+          "action" => action,
+          "goals" => [],
+          "assumptions" => []
+        }
+      }
+    }
+  end
+
+  defp run_prepared(%{execute: {module, function, args}}) do
+    apply(module, function, args)
   end
 
   defp stop_runtime(pid) when is_pid(pid) do

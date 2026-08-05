@@ -33,6 +33,7 @@ defmodule Froth.Agent.CycleRuntime do
     CreditIntervention,
     Cycle,
     Surface,
+    ToolDescription,
     ToolUse,
     Worker
   }
@@ -40,7 +41,14 @@ defmodule Froth.Agent.CycleRuntime do
   alias Froth.Agent.CycleRuntime.{Context, View}
   alias Froth.Telegram.{Bot, Bots}
   alias Froth.Telegram.Bot.Config, as: BotConfig
-  alias Froth.Telegram.{BotAdapter, ControlPrompt, CostFooter, ToolExecution}
+
+  alias Froth.Telegram.{
+    BotAdapter,
+    ControlPrompt,
+    CostFooter,
+    MessageIdSync,
+    ToolExecution
+  }
 
   @registry Froth.Agent.CycleRegistry
 
@@ -148,18 +156,57 @@ defmodule Froth.Agent.CycleRuntime do
   def active_task_ids(nil), do: []
 
   @doc """
-  Fan out a TDLib `updateMessageSendSucceeded` to every live cycle
-  runtime so each can swap old temp ids for final ids on its
-  `narration` and `last_sent` fields. Called from the Bot's PubSub
-  handler.
+  Record narrated tool UI immediately after its Telegram send, before the tool
+  itself runs. Releasing the initial keyboard reservation here prevents a
+  timed-out or killed tool from hiding controls for the rest of the cycle.
+  """
+  @spec record_tool_narration(
+          String.t() | nil,
+          String.t() | nil,
+          map() | nil,
+          map() | nil
+        ) :: :ok
+  def record_tool_narration(
+        cycle_id,
+        tool_use_id,
+        narration_message,
+        control_message
+      )
+      when is_binary(cycle_id) and is_binary(tool_use_id) do
+    case whereis(cycle_id) do
+      pid when is_pid(pid) ->
+        GenServer.cast(
+          pid,
+          {:record_tool_narration, tool_use_id, narration_message,
+           control_message}
+        )
+
+      nil ->
+        :ok
+    end
+
+    :ok
+  end
+
+  def record_tool_narration(
+        _cycle_id,
+        _tool_use_id,
+        _narration_message,
+        _control_message
+      ),
+      do: :ok
+
+  @doc """
+  Fan out a TDLib `updateMessageSendSucceeded` to every live cycle runtime so
+  each can swap old temp ids for final ids on its narration, control, and
+  last-sent fields. Called from the Bot's PubSub handler.
   """
   @spec sync_sent_message_id(integer(), integer()) :: :ok
   def sync_sent_message_id(old_id, new_id)
       when is_integer(old_id) and is_integer(new_id) do
     # Broadcast the id swap to every live cycle runtime. A cycle's
-    # `swap_id` is a no-op if neither its `:last_sent` nor its
-    # `:narration` references `old_id`, so fan-out is cheap and
-    # correct even across cycles that don't own this temp id.
+    # `swap_id` is a no-op if none of a cycle's tracked messages references
+    # `old_id`, so fan-out is cheap and correct across unrelated cycles.
     for pid <- Registry.select(@registry, [{{:_, :"$1", :_}, [], [:"$1"]}]) do
       GenServer.cast(pid, {:sync_sent_message_id, old_id, new_id})
     end
@@ -449,6 +496,27 @@ defmodule Froth.Agent.CycleRuntime do
     {:noreply, update_view(state, &add_task_id(&1, task_id))}
   end
 
+  def handle_cast(
+        {:record_tool_narration, tool_use_id, narration_message,
+         control_message},
+        state
+      )
+      when is_binary(tool_use_id) do
+    narration_message =
+      resolve_sent_message_id(state.context, narration_message)
+
+    control_message = resolve_sent_message_id(state.context, control_message)
+    state = maybe_remove_replaced_control(state, control_message)
+
+    {:noreply,
+     update_view(state, fn view ->
+       view
+       |> apply_narration_message(narration_message)
+       |> apply_control_message(control_message)
+       |> release_control_reservation(tool_use_id)
+     end)}
+  end
+
   def handle_cast({:sync_sent_message_id, old_id, new_id}, state)
       when is_integer(old_id) and is_integer(new_id) do
     {:noreply,
@@ -546,6 +614,7 @@ defmodule Froth.Agent.CycleRuntime do
     tool_call = %ToolUse{tool_use | input: shaped_input}
 
     ctx = %Context{base | surface: surface}
+    state = maybe_reserve_cycle_control(state, tool_use)
 
     prepared = %{
       context: ctx,
@@ -558,6 +627,42 @@ defmodule Froth.Agent.CycleRuntime do
 
   defp prepare_tool_call(state, _tool_use, _invocation),
     do: {{:error, "invalid tool input"}, state}
+
+  defp maybe_reserve_cycle_control(
+         %{
+           context: %Context{
+             spam: true,
+             bot_config: %BotConfig{},
+             surface: %Surface{session_id: session_id, chat_id: chat_id},
+             view: %View{
+               control_message: nil,
+               control_reservation: nil
+             }
+           }
+         } = state,
+         %ToolUse{id: tool_use_id, input: input}
+       )
+       when is_binary(session_id) and is_integer(chat_id) and
+              is_binary(tool_use_id) and is_map(input) do
+    if narrated_tool_input?(input) do
+      put_in(state.context.view.control_reservation, tool_use_id)
+    else
+      state
+    end
+  end
+
+  defp maybe_reserve_cycle_control(state, _tool_use), do: state
+
+  defp narrated_tool_input?(input) when is_map(input) do
+    is_binary(ToolDescription.text_from_input(input)) or
+      present_text?(Map.get(input, "narration_markdown")) or
+      present_text?(Map.get(input, :narration_markdown))
+  end
+
+  defp present_text?(value) when is_binary(value),
+    do: String.trim(value) != ""
+
+  defp present_text?(_value), do: false
 
   defp overlay_surface(%Surface{} = base, invocation) do
     %Surface{
@@ -580,7 +685,13 @@ defmodule Froth.Agent.CycleRuntime do
 
   defp shape_tool_input(_name, input, _cycle_id, _reply_to), do: input
 
-  defp commit_tool_call(state, _tool_use, _invocation, _prepared, outcome) do
+  defp commit_tool_call(
+         state,
+         %ToolUse{id: tool_use_id},
+         _invocation,
+         _prepared,
+         outcome
+       ) do
     {result, sent_message, narration_message, control_message,
      awaiting_user_input?} =
       case outcome do
@@ -592,11 +703,19 @@ defmodule Froth.Agent.CycleRuntime do
           {result, nil, nil, nil, false}
       end
 
+    narration_message =
+      resolve_sent_message_id(state.context, narration_message)
+
+    control_message = resolve_sent_message_id(state.context, control_message)
+
+    state = maybe_remove_replaced_control(state, control_message)
+
     state =
       update_view(state, fn view ->
         view
         |> apply_narration_message(narration_message)
         |> apply_control_message(control_message)
+        |> release_control_reservation(tool_use_id)
         |> apply_sent_or_awaiting(sent_message, awaiting_user_input?)
         |> apply_task_from_result(result)
       end)
@@ -624,7 +743,7 @@ defmodule Froth.Agent.CycleRuntime do
 
   defp apply_narration_message(%View{} = view, _), do: view
 
-  defp apply_control_message(%View{control_message: nil} = view, %{
+  defp apply_control_message(%View{} = view, %{
          message_id: mid,
          text: text,
          mode: mode
@@ -635,6 +754,58 @@ defmodule Froth.Agent.CycleRuntime do
   end
 
   defp apply_control_message(%View{} = view, _), do: view
+
+  defp release_control_reservation(
+         %View{control_reservation: tool_use_id} = view,
+         tool_use_id
+       ),
+       do: %View{view | control_reservation: nil}
+
+  defp release_control_reservation(%View{} = view, _tool_use_id), do: view
+
+  defp resolve_sent_message_id(
+         %Context{
+           bot_config: %BotConfig{id: bot_id},
+           surface: %Surface{chat_id: chat_id}
+         },
+         %{message_id: message_id} = message
+       )
+       when is_binary(bot_id) and is_integer(chat_id) and
+              is_integer(message_id) do
+    %{
+      message
+      | message_id: MessageIdSync.resolve(bot_id, chat_id, message_id)
+    }
+  end
+
+  defp resolve_sent_message_id(_context, message), do: message
+
+  defp maybe_remove_replaced_control(
+         %{
+           context: %Context{
+             bot_config: %BotConfig{} = bc,
+             surface: %Surface{chat_id: chat_id},
+             view: %View{
+               control_message: %{message_id: old_message_id}
+             }
+           }
+         } = state,
+         %{message_id: new_message_id}
+       )
+       when is_integer(chat_id) and is_integer(old_message_id) and
+              is_integer(new_message_id) and old_message_id != new_message_id do
+    _ =
+      BotAdapter.edit_message_reply_markup(
+        bc.session_id,
+        chat_id,
+        old_message_id,
+        nil
+      )
+
+    state
+  end
+
+  defp maybe_remove_replaced_control(state, _control_message), do: state
 
   defp apply_sent_or_awaiting(%View{} = view, %{sent: sent, text: text}, true)
        when is_binary(text) do
