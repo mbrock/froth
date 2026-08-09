@@ -9,7 +9,7 @@ defmodule Froth.Telegram.Session do
   use GenServer
 
   alias Span
-  alias Froth.Telegram.Calls
+  alias Froth.Telegram.{Calls, StoragePolicy}
 
   def start_link(config) when is_map(config) do
     id = Map.fetch!(config, :id)
@@ -45,6 +45,7 @@ defmodule Froth.Telegram.Session do
         id: id,
         config: config,
         connected?: false,
+        storage_policy_applied?: false,
         pending: %{},
         tgcalls_sink_pid: tgcalls_sink_pid,
         tgcalls_sink_ref: tgcalls_sink_ref
@@ -220,7 +221,7 @@ defmodule Froth.Telegram.Session do
       }
     )
 
-    {:noreply, %{state | connected?: false}}
+    {:noreply, %{state | connected?: false, storage_policy_applied?: false}}
   end
 
   def handle_info(
@@ -265,10 +266,29 @@ defmodule Froth.Telegram.Session do
          },
          state
        ) do
+    state = apply_storage_policy(state)
     handle_auth_state(auth, state)
   end
 
   defp maybe_handle_auth(_decoded, state), do: state
+
+  defp apply_storage_policy(%{storage_policy_applied?: true} = state),
+    do: state
+
+  defp apply_storage_policy(state) do
+    Enum.each(StoragePolicy.option_requests(), &send_request(state, &1))
+
+    Span.execute(
+      [:froth, :telegram, :session, :storage_policy],
+      state[:span_id],
+      %{
+        session: state.id,
+        storage_max_files_size: StoragePolicy.max_files_size_bytes()
+      }
+    )
+
+    %{state | storage_policy_applied?: true}
+  end
 
   defp maybe_route_tgcalls_update(state, decoded) when is_map(decoded) do
     sink_pid =
