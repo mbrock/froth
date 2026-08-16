@@ -19,6 +19,10 @@ option(FROTH_TDLIB_CNODE_ENABLE_TGCALLS
   "Build TgCalls support into froth_tdlib_cnode"
   ON
 )
+option(FROTH_TDLIB_CNODE_STATIC_TDJSON
+  "Link TDLib and the C++ runtime into system-toolchain cnode builds"
+  OFF
+)
 
 set(TGCALLS_DIR "${FROTH_PROJECT_ROOT}/vendor/tgcalls")
 if((FROTH_TDLIB_CNODE_ENABLE_TGCALLS OR FROTH_TGCALLS_BUILD_REGISTER_PLUGIN) AND
@@ -425,6 +429,12 @@ if(FROTH_TDLIB_CNODE_USE_CHROMIUM_TOOLCHAIN)
 else()
   add_subdirectory("${TDLIB_DIR}" "${CMAKE_BINARY_DIR}/tdlib" EXCLUDE_FROM_ALL)
 
+  if(FROTH_TDLIB_CNODE_STATIC_TDJSON)
+    set(FROTH_TDJSON_TARGET tdjson_static)
+  else()
+    set(FROTH_TDJSON_TARGET tdjson)
+  endif()
+
   if(FROTH_TDLIB_CNODE_ENABLE_TGCALLS)
     add_library(froth_tgcalls_core STATIC
       "${TGCALLS_DIR}/tgcalls/Instance.cpp"
@@ -455,11 +465,18 @@ else()
   )
 
   target_link_libraries(froth_tdlib_cnode PRIVATE
-    tdjson
+    ${FROTH_TDJSON_TARGET}
     "${EI_LIB}"
     ${CMAKE_DL_LIBS}
     Threads::Threads
   )
+
+  if(FROTH_TDLIB_CNODE_STATIC_TDJSON AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_link_options(froth_tdlib_cnode PRIVATE
+      -static-libstdc++
+      -static-libgcc
+    )
+  endif()
 
   if(FROTH_TDLIB_CNODE_ENABLE_TGCALLS)
     target_link_libraries(froth_tdlib_cnode PRIVATE
