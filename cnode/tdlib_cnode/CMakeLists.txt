@@ -39,6 +39,8 @@ set(FROTH_SYSROOT "" CACHE PATH "Path to Chromium sysroot")
 set(FROTH_OVERLAY_DIR "" CACHE PATH "Path to include overlay containing base/build/third_party symlinks")
 set(FROTH_TDJSON_LIBRARY "" CACHE FILEPATH "Path to prebuilt libtdjson shared library (required in Chromium mode)")
 set(FROTH_TDJSON_INCLUDE_DIR "" CACHE PATH "Path to TDLib build include root containing td/telegram/tdjson_export.h (required in Chromium mode)")
+set(FROTH_EI_INCLUDE_DIR "" CACHE PATH "Optional Erlang ei include directory override")
+set(FROTH_EI_LIBRARY "" CACHE FILEPATH "Optional Erlang libei archive override")
 
 option(FROTH_TGCALLS_BUILD_REGISTER_PLUGIN
   "Build a plugin exporting froth_tgcalls_register()"
@@ -105,25 +107,31 @@ if(FROTH_TGCALLS_BUILD_REGISTER_PLUGIN)
   )
 endif()
 
-# Locate Erlang/OTP "ei" headers + lib.
-execute_process(
-  COMMAND erl -noshell -eval "io:format(\"~s\", [code:root_dir()]), halt()."
-  OUTPUT_VARIABLE ERL_ROOT
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-if(NOT ERL_ROOT)
-  message(FATAL_ERROR "Failed to locate Erlang root dir via `erl`")
-endif()
+# Locate Erlang/OTP "ei" headers + lib, unless an exact OTP installation was
+# supplied for compatibility builds.
+if(FROTH_EI_INCLUDE_DIR AND FROTH_EI_LIBRARY)
+  set(EI_INCLUDE_DIR "${FROTH_EI_INCLUDE_DIR}")
+  set(EI_LIB "${FROTH_EI_LIBRARY}")
+else()
+  execute_process(
+    COMMAND erl -noshell -eval "io:format(\"~s\", [code:root_dir()]), halt()."
+    OUTPUT_VARIABLE ERL_ROOT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if(NOT ERL_ROOT)
+    message(FATAL_ERROR "Failed to locate Erlang root dir via `erl`")
+  endif()
 
-set(EI_INCLUDE_DIR "${ERL_ROOT}/usr/include")
-find_library(
-  EI_LIB
-  NAMES ei
-  PATHS "${ERL_ROOT}/usr/lib" "${ERL_ROOT}/usr/lib64"
-  NO_DEFAULT_PATH
-)
-if(NOT EI_LIB)
-  message(FATAL_ERROR "Failed to find libei under ${ERL_ROOT}/usr/lib")
+  set(EI_INCLUDE_DIR "${ERL_ROOT}/usr/include")
+  find_library(
+    EI_LIB
+    NAMES ei
+    PATHS "${ERL_ROOT}/usr/lib" "${ERL_ROOT}/usr/lib64"
+    NO_DEFAULT_PATH
+  )
+  if(NOT EI_LIB)
+    message(FATAL_ERROR "Failed to find libei under ${ERL_ROOT}/usr/lib")
+  endif()
 endif()
 
 if(FROTH_TDLIB_CNODE_ENABLE_TGCALLS)
