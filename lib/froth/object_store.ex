@@ -13,16 +13,23 @@ defmodule Froth.ObjectStore do
   def put_file(key, src_path, opts \\ [])
       when is_binary(key) and is_binary(src_path) and is_list(opts) do
     with {:ok, normalized_key} <- normalize_key(key),
-         {:ok, body} <- File.read(src_path) do
-      put_bytes(
-        normalized_key,
-        body,
-        Keyword.put_new(
+         {:ok, stat} <- File.stat(src_path),
+         {:ok, sha256} <- sha256_file(src_path) do
+      content_type =
+        Keyword.get(
           opts,
           :content_type,
           MIME.from_path(src_path) || @default_content_type
         )
-      )
+
+      metadata = %{
+        key: normalized_key,
+        content_type: content_type,
+        content_length: stat.size,
+        sha256: Keyword.get(opts, :sha256, sha256)
+      }
+
+      put_file_by_mode(normalized_key, src_path, metadata)
     end
   end
 
@@ -93,6 +100,16 @@ defmodule Froth.ObjectStore do
         :local -> get_local(normalized_key)
         :proxy -> get_proxy(normalized_key)
       end
+    end
+  end
+
+  def proxy_get(key, headers \\ [])
+      when is_binary(key) and is_list(headers) do
+    with {:ok, normalized_key} <- normalize_key(key) do
+      Req.get(internal_url(normalized_key),
+        headers: headers,
+        decode_body: false
+      )
     end
   end
 
@@ -265,6 +282,62 @@ defmodule Froth.ObjectStore do
     }
   end
 
+  defp put_file_by_mode(normalized_key, src_path, metadata) do
+    case mode() do
+      :local ->
+        path = local_path!(normalized_key)
+
+        temporary_path =
+          path <> ".upload-#{System.unique_integer([:positive])}"
+
+        with :ok <- File.mkdir_p(Path.dirname(path)),
+             :ok <- File.cp(src_path, temporary_path),
+             :ok <- File.rename(temporary_path, path),
+             :ok <- write_metadata(normalized_key, metadata) do
+          {:ok,
+           %{
+             key: normalized_key,
+             path: path,
+             url: public_url(normalized_key),
+             content_type: metadata.content_type,
+             content_length: metadata.content_length
+           }}
+        else
+          error ->
+            File.rm(temporary_path)
+            error
+        end
+
+      :proxy ->
+        headers =
+          [
+            {"content-type", metadata.content_type},
+            {"content-length", Integer.to_string(metadata.content_length)}
+          ]
+          |> maybe_put_write_token()
+
+        case Req.put(internal_url(normalized_key),
+               headers: headers,
+               body: File.stream!(src_path, 1024 * 1024)
+             ) do
+          {:ok, %{status: status}} when status in 200..299 ->
+            {:ok,
+             %{
+               key: normalized_key,
+               url: public_url(normalized_key),
+               content_type: metadata.content_type,
+               content_length: metadata.content_length
+             }}
+
+          {:ok, %{status: status, body: response_body}} ->
+            {:error, {:object_store_put_failed, status, response_body}}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+    end
+  end
+
   defp write_metadata(normalized_key, metadata) do
     path = metadata_path(normalized_key)
 
@@ -368,6 +441,12 @@ defmodule Froth.ObjectStore do
     end)
   end
 
+  defp header_value(headers, key) when is_map(headers) and is_binary(key) do
+    headers
+    |> Map.get(String.downcase(key), [])
+    |> List.first()
+  end
+
   defp sha256_from_key(normalized_key) do
     case String.split(normalized_key, "/", parts: 2) do
       [@sha256_algorithm, digest] ->
@@ -381,6 +460,17 @@ defmodule Froth.ObjectStore do
   defp sha256_hex(body) when is_binary(body) do
     :crypto.hash(:sha256, body)
     |> Base.encode16(case: :lower)
+  end
+
+  defp sha256_file(path) do
+    path
+    |> File.stream!([], 1024 * 1024)
+    |> Enum.reduce(:crypto.hash_init(:sha256), &:crypto.hash_update(&2, &1))
+    |> :crypto.hash_final()
+    |> Base.encode16(case: :lower)
+    |> then(&{:ok, &1})
+  rescue
+    error in File.Error -> {:error, error.reason}
   end
 
   defp valid_sha256_digest?(digest) when is_binary(digest) do

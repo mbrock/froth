@@ -27,10 +27,10 @@ defmodule Froth.Analyzer.Discovery do
           [{"voice", Froth.Analyzer.VoiceWorker, %{}}]
 
         "messageVideo" ->
-          [{"video", Froth.Analyzer.VideoWorker, %{}}]
+          video_jobs(raw)
 
-        "messageDocument" when mime == "application/pdf" ->
-          [{"pdf", Froth.Analyzer.PdfWorker, %{}}]
+        "messageDocument" ->
+          document_jobs(raw, mime)
 
         _ ->
           []
@@ -54,6 +54,30 @@ defmodule Froth.Analyzer.Discovery do
       do: [{type, worker, %{text: text}} | acc],
       else: acc
   end
+
+  defp video_jobs(raw) do
+    analysis = {"video", Froth.Analyzer.VideoWorker, %{}}
+
+    if Froth.Telegram.VideoHosting.host_message?(raw) do
+      [analysis, {"video_host", Froth.Telegram.VideoHostingWorker, %{}}]
+    else
+      [analysis]
+    end
+  end
+
+  defp document_jobs(_raw, "application/pdf") do
+    [{"pdf", Froth.Analyzer.PdfWorker, %{}}]
+  end
+
+  defp document_jobs(raw, "video/" <> _subtype) do
+    if Froth.Telegram.VideoHosting.host_message?(raw) do
+      [{"video_host", Froth.Telegram.VideoHostingWorker, %{}}]
+    else
+      []
+    end
+  end
+
+  defp document_jobs(_raw, _mime), do: []
 
   # Classify and enqueue jobs for a single message (called from Sync on new messages).
   # Only analyzes messages from chats that have summaries (i.e. actively monitored chats).

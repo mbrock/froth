@@ -44,6 +44,55 @@ defmodule FrothWeb.ObjectStoreControllerTest do
     assert response(get_conn, 200) == "hello world"
   end
 
+  test "GET serves byte ranges for streaming media", %{conn: conn} do
+    put_conn =
+      conn
+      |> put_req_header("x-froth-object-store-token", "secret")
+      |> put_req_header("content-type", "video/mp4")
+      |> put("/froth/objects/video/test/movie.mp4", "0123456789")
+
+    assert response(put_conn, 200)
+
+    range_conn =
+      build_conn()
+      |> put_req_header("range", "bytes=2-5")
+      |> get("/froth/objects/video/test/movie.mp4")
+
+    assert response(range_conn, 206) == "2345"
+    assert get_resp_header(range_conn, "accept-ranges") == ["bytes"]
+    assert get_resp_header(range_conn, "content-range") == ["bytes 2-5/10"]
+    assert get_resp_header(range_conn, "content-length") == ["4"]
+    assert get_resp_header(range_conn, "content-type") == ["video/mp4"]
+
+    suffix_conn =
+      build_conn()
+      |> put_req_header("range", "bytes=-3")
+      |> get("/froth/objects/video/test/movie.mp4")
+
+    assert response(suffix_conn, 206) == "789"
+    assert get_resp_header(suffix_conn, "content-range") == ["bytes 7-9/10"]
+  end
+
+  test "GET rejects unsatisfiable and multiple byte ranges", %{conn: conn} do
+    put_conn =
+      conn
+      |> put_req_header("x-froth-object-store-token", "secret")
+      |> put_req_header("content-type", "video/mp4")
+      |> put("/froth/objects/video/test/movie.mp4", "0123456789")
+
+    assert response(put_conn, 200)
+
+    for range <- ["bytes=20-30", "bytes=0-1,4-5"] do
+      range_conn =
+        build_conn()
+        |> put_req_header("range", range)
+        |> get("/froth/objects/video/test/movie.mp4")
+
+      assert response(range_conn, 416) == ""
+      assert get_resp_header(range_conn, "content-range") == ["bytes */10"]
+    end
+  end
+
   test "POST uploads a content-addressed object and serves it back with stored content type",
        %{
          conn: conn

@@ -131,6 +131,16 @@ config :froth, Froth.PreliminarySummarizer,
 config :froth, Froth.Analyzer,
   tdlib_session: System.get_env("ANALYZER_TDLIB_SESSION")
 
+config :froth, Froth.Telegram.VideoHosting,
+  public_base: System.get_env("FROTH_VIDEO_HOST_PUBLIC_BASE"),
+  threshold_bytes:
+    (case Integer.parse(
+            System.get_env("FROTH_VIDEO_HOST_THRESHOLD_BYTES", "104857600")
+          ) do
+       {bytes, ""} when bytes >= 0 -> bytes
+       _ -> 104_857_600
+     end)
+
 config :froth, Froth.Podcast,
   docroot: System.get_env("PODCAST_DOCROOT"),
   public_base: System.get_env("PODCAST_PUBLIC_BASE")

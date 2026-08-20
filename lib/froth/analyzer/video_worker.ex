@@ -26,11 +26,11 @@ defmodule Froth.Analyzer.VideoWorker do
     else
       Froth.Analyzer.with_reactions(chat_id, message_id, fn ->
         case download_video(chat_id, message_id) do
-          {:ok, video_data, mime_type, duration} ->
+          {:ok, _message, path, mime_type, duration} ->
             analyze_and_save(
               chat_id,
               message_id,
-              video_data,
+              path,
               mime_type,
               duration
             )
@@ -79,7 +79,7 @@ defmodule Froth.Analyzer.VideoWorker do
 
           case file do
             %{"local" => %{"path" => path}} when path != "" ->
-              {:ok, File.read!(path), mime, duration}
+              {:ok, msg, path, mime, duration}
 
             %{"@type" => "error", "message" => m} ->
               {:error, "downloadFile: #{m}"}
@@ -94,8 +94,8 @@ defmodule Froth.Analyzer.VideoWorker do
     end
   end
 
-  defp analyze_and_save(chat_id, message_id, video_data, mime_type, duration) do
-    case upload_to_gemini(video_data, mime_type) do
+  defp analyze_and_save(chat_id, message_id, path, mime_type, duration) do
+    case upload_to_gemini(path, mime_type) do
       {:ok, file_uri} ->
         prompt =
           "Analyze this video. Describe what you see — people, actions, setting, text overlays, audio if any. Be observant and concise."
@@ -135,19 +135,29 @@ defmodule Froth.Analyzer.VideoWorker do
     end
   end
 
-  defp upload_to_gemini(data, mime_type) do
+  defp upload_to_gemini(path, mime_type) do
     api_key = Froth.ApiKeys.active_key(["gemini", "google"])
+    content_length = File.stat!(path).size
 
     url =
       "https://generativelanguage.googleapis.com/upload/v1beta/files?key=#{api_key}"
 
     headers = [
       {"content-type", mime_type},
+      {"content-length", Integer.to_string(content_length)},
       {"x-goog-upload-command", "upload, finalize"},
-      {"x-goog-upload-protocol", "raw"}
+      {"x-goog-upload-protocol", "raw"},
+      {"x-goog-upload-header-content-length",
+       Integer.to_string(content_length)}
     ]
 
-    req = Finch.build(:post, url, headers, data)
+    req =
+      Finch.build(
+        :post,
+        url,
+        headers,
+        {:stream, File.stream!(path, 1024 * 1024)}
+      )
 
     case Finch.request(req, Froth.Finch, receive_timeout: 300_000) do
       {:ok, %Finch.Response{status: 200, body: body}} ->
