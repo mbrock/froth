@@ -11,7 +11,7 @@ defmodule Froth.Telegram.Terrie do
   @default_bot_id "terrie"
   @default_bot_username "terraterriebot"
   @default_session_id "terrie"
-  @default_model "gpt-5.6-terra"
+  @default_model "gpt-6.1-sol"
   @default_max_tokens 65_536
 
   def default_config do

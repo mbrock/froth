@@ -921,6 +921,30 @@ defmodule Froth.Agent do
     downcased = String.downcase(model)
 
     cond do
+      String.contains?(downcased, "gpt-6-luna") ->
+        total_input_tokens =
+          usage_int(usage["input_tokens"]) +
+            usage_int(usage["cache_creation_input_tokens"]) +
+            usage_int(usage["cache_read_input_tokens"])
+
+        if total_input_tokens > 272_000 do
+          %{input: 0.2, output: 0.75, cache_write: 0.25, cache_read: 0.02}
+        else
+          %{input: 0.1, output: 0.5, cache_write: 0.125, cache_read: 0.01}
+        end
+
+      String.contains?(downcased, "gpt-6.1-sol") ->
+        total_input_tokens =
+          usage_int(usage["input_tokens"]) +
+            usage_int(usage["cache_creation_input_tokens"]) +
+            usage_int(usage["cache_read_input_tokens"])
+
+        if total_input_tokens > 272_000 do
+          %{input: 4.0, output: 15.0, cache_write: 5.0, cache_read: 0.2}
+        else
+          %{input: 2.0, output: 10.0, cache_write: 2.5, cache_read: 0.1}
+        end
+
       String.contains?(downcased, "gpt-5.6-luna") ->
         total_input_tokens =
           usage_int(usage["input_tokens"]) +

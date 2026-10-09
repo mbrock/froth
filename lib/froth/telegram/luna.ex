@@ -11,7 +11,7 @@ defmodule Froth.Telegram.Luna do
   @default_bot_id "luna"
   @default_bot_username "lunaluniebot"
   @default_session_id "luna"
-  @default_model "gpt-5.6-luna"
+  @default_model "gpt-6-luna"
   @default_max_tokens 65_536
 
   def default_config do
