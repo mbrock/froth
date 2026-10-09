@@ -945,6 +945,9 @@ defmodule Froth.Agent do
           %{input: 2.0, output: 12.0, cache_write: 2.5, cache_read: 0.2}
         end
 
+      String.contains?(downcased, "opus-5-5") ->
+        %{input: 4.0, output: 20.0, cache_write: 5.0, cache_read: 0.2}
+
       String.contains?(downcased, "opus-4-7") ->
         %{input: 5.0, output: 25.0, cache_write: 6.25, cache_read: 0.5}
 

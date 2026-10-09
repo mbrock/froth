@@ -28,7 +28,7 @@ defmodule Froth.Telegram.BotsTest do
 
   test "default profile configs declare their runtime and tool modules" do
     assert Charlie.default_config().runtime_module == Charlie
-    assert Charlie.default_config().model == "claude-opus-4-6"
+    assert Charlie.default_config().model == "claude-opus-5-5"
     refute Map.has_key?(Charlie.default_config(), :failure_report_model)
 
     assert Charlie.default_config().tools_module ==

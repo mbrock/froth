@@ -85,7 +85,6 @@ defmodule Froth.MixProject do
       {:makeup_elixir, "~> 1.0"},
       {:nx, "~> 0.10"},
       {:bumblebee, "~> 0.6"},
-      {:exla, ">= 0.0.0"},
       {:image, ">= 0.0.0"},
       {:evision, ">= 0.0.0"}
     ]
