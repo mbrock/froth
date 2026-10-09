@@ -14,7 +14,7 @@ defmodule Froth.ChronicleRollup do
   alias Froth.{ChatSummary, Repo, WeeklySummarizer}
 
   @kind "chronicle_volume"
-  @model "claude-opus-4-6"
+  @model "claude-opus-5-5"
   @max_tokens 32_768
   @default_keep_weeks 4
   @default_min_source_weeks 8

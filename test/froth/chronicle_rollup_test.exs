@@ -28,7 +28,7 @@ defmodule Froth.ChronicleRollupTest do
     agent_run_fun = fn message, config ->
       assert %AgentMessage{role: :user} = message
       assert AgentMessage.extract_text(message) =~ "Weekly chapter 1"
-      assert config.model == "claude-opus-4-6"
+      assert config.model == "claude-opus-5-5"
 
       {%{id: "rollup-cycle"},
        [{:message, AgentMessage.agent("# Volume\n\nClosed narrative.")}]}
