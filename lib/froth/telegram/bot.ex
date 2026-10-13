@@ -26,6 +26,7 @@ defmodule Froth.Telegram.Bot do
 
   alias Froth.Repo
   alias Froth.Telegram.Bot.Config, as: BotConfig
+  alias Froth.Telegram.Bot.Backoff
   alias Froth.Telegram.Bot.CycleState
   alias Froth.Telegram.BotAdapter
   alias Froth.Telegram.BotContext
@@ -42,6 +43,7 @@ defmodule Froth.Telegram.Bot do
     :cycle_state,
     :runtime_ref,
     :trigger_not_before,
+    backoff: %Backoff{},
     debounce_timer: nil,
     debounce_msg: nil,
     pending_messages: :queue.new(),
@@ -166,6 +168,8 @@ defmodule Froth.Telegram.Bot do
   def handle_info({:telegram_update, update}, state) do
     bc = state.bot_config
     action = route_update(update, bc, state.trigger_not_before)
+
+    state = observe_backoff(state, update, action)
 
     Span.execute(
       [:froth, :telegram, :bot, :update],
@@ -312,8 +316,69 @@ defmodule Froth.Telegram.Bot do
     end
   end
 
+  defp observe_backoff(state, _update, :ignore_before_start), do: state
+
+  defp observe_backoff(
+         state,
+         %{"@type" => "updateUser", "user" => user},
+         _action
+       ) do
+    %{state | backoff: Backoff.cache_user(state.backoff, user)}
+  end
+
+  defp observe_backoff(
+         state,
+         %{"@type" => "updateNewMessage", "message" => msg},
+         _action
+       ) do
+    lookup = fn user_id ->
+      try do
+        Froth.Telegram.call(
+          state.bot_config.session_id,
+          %{
+            "@type" => "getUser",
+            "user_id" => user_id
+          },
+          5_000
+        )
+      rescue
+        _ -> {:error, :telegram_unavailable}
+      catch
+        :exit, _ -> {:error, :telegram_unavailable}
+      end
+    end
+
+    %{
+      state
+      | backoff:
+          Backoff.observe(
+            state.backoff,
+            msg,
+            state.bot_config.bot_user_id,
+            lookup
+          )
+    }
+  end
+
+  defp observe_backoff(state, _update, _action), do: state
+
   defp dispatch_update_action(state, {:mention, msg}) do
-    start_or_queue_cycle(state, msg)
+    base = Application.get_env(:froth, :telegram_bot_backoff_base, 2)
+
+    {allow?, metadata} =
+      Backoff.decide(state.backoff, TgMessage.chat_id(msg), base)
+
+    if allow? do
+      start_or_queue_cycle(state, msg)
+    else
+      Span.execute(
+        [:froth, :telegram, :bot, :wake_suppressed],
+        Froth.Telegram.Session.span_id(state.bot_config.session_id),
+        Map.put(metadata, :bot_id, state.bot_config.id)
+      )
+
+      state
+    end
   end
 
   defp dispatch_update_action(

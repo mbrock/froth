@@ -13,6 +13,9 @@ config :froth,
   ecto_repos: [Froth.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+# Group bot wakes use base^(-bot messages since a human spoke). Set false to disable.
+config :froth, :telegram_bot_backoff_base, 2
+
 config :froth, Froth.Codex,
   model: "gpt-6.1-sol",
   reasoning_effort: "medium",

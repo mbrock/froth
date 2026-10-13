@@ -9,6 +9,91 @@ defmodule Froth.Telegram.BotTest do
     assert %Bot{cycle_state: nil} = %Bot{}
   end
 
+  test "group backoff counts ignored bot traffic and silently suppresses mention wakes" do
+    %{bot: bot, session_id: session_id} = start_charlie_bot()
+    chat_id = -100_123
+
+    :sys.replace_state(bot, fn state ->
+      %{
+        state
+        | backoff: %Froth.Telegram.Bot.Backoff{
+            counts: %{chat_id => 10_000},
+            users: %{777 => true}
+          }
+      }
+    end)
+
+    :sys.replace_state(bot, fn state ->
+      Process.put(
+        {:chat_allowed, session_id, chat_id, state.bot_config.owner_user_id},
+        true
+      )
+
+      state
+    end)
+
+    username = :sys.get_state(bot).bot_config.bot_username
+
+    send(
+      bot,
+      user_update("@#{username} loop", message_id: 1, chat_id: chat_id)
+    )
+
+    state = :sys.get_state(bot)
+    assert state.backoff.counts[chat_id] == 10_001
+    assert state.cycle_state == nil
+    assert :queue.is_empty(state.pending_messages)
+    assert state.debounce_msg == nil
+
+    event =
+      Repo.get_by!(Froth.Event, event: "froth.telegram.bot.wake_suppressed")
+
+    assert %{
+             "chat_id" => ^chat_id,
+             "count" => 10_001,
+             "probability" => 0.0,
+             "roll" => roll
+           } = event.metadata
+
+    assert roll > 0 and roll <= 1
+    refute_receive {FakeLLM, _turn, %Request{}}, 100
+    refute_receive {:telegram_call, %{"@type" => "sendMessage"}}, 100
+
+    send(
+      bot,
+      user_update("own outgoing",
+        message_id: 2,
+        chat_id: chat_id,
+        sender_user_id: state.bot_config.bot_user_id
+      )
+    )
+
+    assert :sys.get_state(bot).backoff.counts[chat_id] == 10_002
+
+    send(
+      bot,
+      {:telegram_update,
+       %{
+         "@type" => "updateUser",
+         "user" => %{
+           "id" => 778,
+           "type" => %{"@type" => "userTypeRegular"}
+         }
+       }}
+    )
+
+    send(
+      bot,
+      user_update("human chatter",
+        message_id: 3,
+        chat_id: chat_id,
+        sender_user_id: 778
+      )
+    )
+
+    assert :sys.get_state(bot).backoff.counts[chat_id] == 0
+  end
+
   test "telegram error updates do not crash the bot" do
     %{bot: bot} = start_charlie_bot()
     ref = Process.monitor(bot)
