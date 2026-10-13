@@ -529,6 +529,10 @@ defmodule Froth.Codex.Session do
           "effort",
           get_in(state, [:runtime, :reasoning_effort])
         )
+        |> maybe_put_turn_setting(
+          "serviceTier",
+          get_in(state, [:runtime, :service_tier])
+        )
 
       case codex_call(state, :turn_start, params) do
         {:ok, result} ->
@@ -567,12 +571,13 @@ defmodule Froth.Codex.Session do
       end
 
     with {:ok, state} <- ensure_ready(state) do
-      params = %{
-        "cwd" => state.cwd,
-        "approvalPolicy" => "never",
-        "sandbox" => "danger-full-access",
-        "personality" => "friendly"
-      }
+      params =
+        Map.merge(thread_defaults(), %{
+          "cwd" => state.cwd,
+          "approvalPolicy" => "never",
+          "sandbox" => "danger-full-access",
+          "personality" => "friendly"
+        })
 
       case codex_call(state, :thread_start, params) do
         {:ok, result} ->
@@ -586,7 +591,7 @@ defmodule Froth.Codex.Session do
                 |> Map.put(:active_turn_started_at_ms, nil)
                 |> Map.put(:last_turn_elapsed_ms, nil)
                 |> reset_turn_state()
-                |> push_entry(:system, "thread started")
+                |> push_thread_entry("thread started")
 
               {:ok, state}
 
@@ -683,24 +688,46 @@ defmodule Froth.Codex.Session do
 
   defp ensure_thread(state), do: do_start_new_thread(state, false)
 
+  defp thread_defaults do
+    config = Application.fetch_env!(:froth, Froth.Codex)
+
+    %{
+      "model" => Keyword.fetch!(config, :model),
+      "serviceTier" => Keyword.fetch!(config, :service_tier),
+      "config" => %{
+        "model_reasoning_effort" => Keyword.fetch!(config, :reasoning_effort)
+      }
+    }
+  end
+
+  defp push_thread_entry(state, body) do
+    settings =
+      Map.take(state.runtime, [:model, :reasoning_effort, :service_tier])
+
+    append_entry_map(state, Map.merge(settings, %{kind: :system, body: body}))
+  end
+
   defp resume_thread(state, thread_id) when is_binary(thread_id) do
     with {:ok, state} <- ensure_ready(state) do
-      case codex_call(state, :thread_resume, %{
-             "threadId" => thread_id,
-             "cwd" => state.cwd
-           }) do
+      params =
+        Map.merge(thread_defaults(), %{
+          "threadId" => thread_id,
+          "cwd" => state.cwd
+        })
+
+      case codex_call(state, :thread_resume, params) do
         {:ok, result} ->
           resolved = get_thread_id(result) || thread_id
 
           state =
             state
-            |> apply_runtime_patch(result)
+            |> apply_runtime_patch(result, params)
             |> Map.put(:thread_id, resolved)
             |> Map.put(:active_turn_id, nil)
             |> Map.put(:active_turn_started_at_ms, nil)
             |> Map.put(:last_turn_elapsed_ms, nil)
             |> reset_turn_state()
-            |> push_entry(:system, "thread resumed")
+            |> push_thread_entry("thread resumed")
 
           {:ok, state}
 
@@ -1132,10 +1159,14 @@ defmodule Froth.Codex.Session do
     thread = Map.get(result, "thread") || %{}
 
     merge_runtime(state, %{
-      model: Map.get(result, "model"),
+      model: Map.get(result, "model") || Map.get(extra, "model"),
       model_provider:
         Map.get(result, "modelProvider") || Map.get(thread, "modelProvider"),
-      reasoning_effort: Map.get(result, "reasoningEffort"),
+      reasoning_effort:
+        Map.get(result, "reasoningEffort") ||
+          get_in(extra, ["config", "model_reasoning_effort"]),
+      service_tier:
+        Map.get(result, "serviceTier") || Map.get(extra, "serviceTier"),
       approval_policy:
         Map.get(result, "approvalPolicy") || Map.get(extra, "approvalPolicy"),
       personality:

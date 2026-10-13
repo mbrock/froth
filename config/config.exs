@@ -13,6 +13,11 @@ config :froth,
   ecto_repos: [Froth.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+config :froth, Froth.Codex,
+  model: "gpt-6.1-sol",
+  reasoning_effort: "medium",
+  service_tier: "fast"
+
 # Configure the endpoint
 config :froth, FrothWeb.Endpoint,
   url: [host: "localhost"],

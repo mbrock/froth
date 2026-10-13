@@ -10,6 +10,88 @@ defmodule Froth.Codex.SessionTest do
     :ok
   end
 
+  test "thread defaults override CLI config and effective settings are persisted and sent on turns" do
+    session_id = "s_test_settings_#{System.unique_integer([:positive])}"
+    test_pid = self()
+
+    client =
+      start_supervised!(
+        {Task,
+         fn ->
+           loop = fn loop ->
+             receive do
+               {:"$gen_call", from, {:request, method, params, _timeout}} ->
+                 send(test_pid, {:request, method, params})
+
+                 result =
+                   case method do
+                     "thread/start" ->
+                       %{
+                         "thread" => %{"id" => "thr_settings"},
+                         "model" => "gpt-6.1-sol",
+                         "reasoningEffort" => "medium",
+                         "serviceTier" => "priority"
+                       }
+
+                     "turn/start" ->
+                       %{"turn" => %{"id" => "turn_settings"}}
+                   end
+
+                 GenServer.reply(from, {:ok, result})
+                 loop.(loop)
+             end
+           end
+
+           loop.(loop)
+         end}
+      )
+
+    pid = start_supervised!({Session, session_id: session_id, boot: false})
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | status: :ready,
+          codex_pid: client,
+          runtime: %{
+            model: "inherited-model",
+            reasoning_effort: "high",
+            service_tier: "default"
+          }
+      }
+    end)
+
+    assert :ok = Session.new_thread(session_id)
+
+    assert_receive {:request, "thread/start",
+                    %{
+                      "model" => "gpt-6.1-sol",
+                      "serviceTier" => "fast",
+                      "config" => %{"model_reasoning_effort" => "medium"}
+                    }}
+
+    event =
+      Repo.get_by!(Froth.Codex.Event,
+        session_id: session_id,
+        body: "thread started"
+      )
+
+    assert %{
+             "model" => "gpt-6.1-sol",
+             "reasoning_effort" => "medium",
+             "service_tier" => "priority"
+           } = event.metadata
+
+    assert :ok = Session.send_prompt(session_id, "test prompt")
+
+    assert_receive {:request, "turn/start",
+                    %{
+                      "model" => "gpt-6.1-sol",
+                      "effort" => "medium",
+                      "serviceTier" => "priority"
+                    }}
+  end
+
   test "assistant deltas for a new item do not append onto the previous assistant entry" do
     session_id =
       "s_test_" <>
